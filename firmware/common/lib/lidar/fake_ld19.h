@@ -381,6 +381,18 @@ public:
         // emulator still has to run for that callback to fire.
         if (comm_mode_ == COMM_TOPIC)
             enabled_ = true;
+
+        // Every way of asking for a scan and getting none, named. Now that the
+        // mode is an env key, "serial" with no pin is a thing a user can ask
+        // for by leaving lidar_rx unset -- and it arms no sink at all, which on
+        // the host is indistinguishable from a dead LiDAR.
+        if (!enabled_)
+        {
+            if (comm_mode_ == COMM_SERIAL)
+                Serial.println("[lidar] comm=serial but no TX pin (set lidar_rx) — no scan");
+            else
+                Serial.println("[lidar] no scan sink could be started");
+        }
         next_pack_us_ = micros() + PACK_PERIOD_US;
     }
 
