@@ -116,12 +116,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsof usbutils udev curl ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# Nav2. Jazzy publishes ros-jazzy-navigation2 and ros-jazzy-nav2-bringup as
-# binaries and this is a one-line apt install. Lyrical publishes the nav2
-# *components* but neither the `navigation2` metapackage nor `nav2_bringup`, so
-# the best-effort apt line this replaces left the lyrical image with no
-# navigation at all -- announced in the build log and then forgotten. Recipe
-# from the console project, which solved this first:
+# Nav2. The line this replaces installed `navigation2` and `nav2_bringup` and
+# shrugged if either was missing, which on lyrical meant an image with no
+# navigation at all -- announced once in the build log and then forgotten.
+#
+# Measured on 2026-09-19: lyrical publishes 41 matching packages, `nav2_bringup`
+# and `opennav_docking` among them, but no `navigation2` metapackage. So the
+# metapackage is the only thing actually absent, and installing by pattern gets
+# the whole stack. Do not trust that on the next distro -- rolling has neither
+# nav2 nor slam_toolbox -- hence the source fallback below. Recipe from the
+# console project, which solved this first:
 #
 #   1. apt-install every published ros-<distro>-(nav2|opennav)-* package. A
 #      pattern, not a hand-kept list that drifts with each nav2 release.

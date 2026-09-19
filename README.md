@@ -237,9 +237,11 @@ in — so each board ships twice where it fits.
 
 The lyrical half of the matrix **has not been run on a robot**. It builds and the images are
 published, but every hardware run on record is jazzy. Nav2 itself is no longer the gap: lyrical
-publishes the `nav2_*` components but neither the `navigation2` metapackage nor `nav2_bringup`,
-so the image installs every published component and builds those two from source. Treat lyrical
-as a build target rather than a supported robot until someone drives one.
+publishes the `nav2_*` components individually rather than behind a `navigation2` metapackage,
+so the image installs every published `nav2_*` and `opennav_*` package by pattern — 41 of them
+on lyrical today, `nav2_bringup` and `opennav_docking` included — and falls back to a source
+build of `nav2_bringup` only on a distro that still has no binary for it. Treat lyrical as a
+build target rather than a supported robot until someone drives one.
 
 ---
 
