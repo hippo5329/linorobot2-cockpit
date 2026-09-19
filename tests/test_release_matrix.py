@@ -68,3 +68,39 @@ def test_esp32_lyrical_is_in_both_matrices():
     merely larger."""
     assert "esp32-lyrical" in _matrix_list("release.yml", "profile")
     assert "esp32_lyrical" in _matrix_list("ci.yml", "env")
+
+
+def test_every_profile_names_its_distro():
+    """`pico2-jazzy`, never a bare `pico2`.
+
+    The two images for one board are not interchangeable: board_microros_distro
+    picks the precompiled micro-ROS library the firmware links against, and a
+    jazzy image will not talk to a lyrical agent. A release that publishes
+    `pico2` beside `pico2-lyrical` invites exactly one reading of the first --
+    "the normal one" -- and it is the reading that gets a board flashed with an
+    image that enumerates over USB and then does nothing useful.
+
+    The PlatformIO envs stay asymmetric ([env:pico2] is pinned to jazzy in
+    platformio.ini), which is a build-system detail; it used to leak into the
+    published artifact names, and that is what this pins shut.
+    """
+    import build_prebuilt
+    for profile, (_stem, _env, distro, _desc) in build_prebuilt.PROFILES.items():
+        assert profile.endswith(f"-{distro}"), (
+            f"profile {profile!r} is built for {distro} but does not say so in its name")
+        assert profile.count("-") >= 1, f"profile {profile!r} carries no distro suffix"
+
+
+def test_an_env_resolves_to_the_profile_that_ships_it():
+    """fetch_prebuilt maps both spellings, so `fetch_prebuilt.py pico2` still works
+    and lands on pico2-jazzy rather than 404ing on an asset name that no longer
+    exists."""
+    import build_prebuilt
+    import fetch_prebuilt
+    for profile, (_stem, env, _distro, _desc) in build_prebuilt.PROFILES.items():
+        assert fetch_prebuilt.profile_for_env(env) == profile, (
+            f"env {env!r} maps to {fetch_prebuilt.profile_for_env(env)!r}, "
+            f"but it is {profile!r} that ships it")
+        assert fetch_prebuilt.env_for_profile(profile) == env, (
+            f"profile {profile!r} maps back to "
+            f"{fetch_prebuilt.env_for_profile(profile)!r}, not {env!r}")

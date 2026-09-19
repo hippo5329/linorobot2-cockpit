@@ -29,7 +29,7 @@ def _tarball(commit):
     import hashlib, io, tarfile, time
     payload = f"firmware for {commit}".encode()
     manifest = {
-        "profile": "esp32", "ros_distro": "jazzy", "commit": commit,
+        "profile": "esp32-jazzy", "ros_distro": "jazzy", "commit": commit,
         "built": "2026-09-19T06:37:46Z", "description": "test image",
         "files": [{"name": "firmware.bin", "offset": "0x10000", "tool": "esptool",
                    "size": len(payload),
@@ -57,7 +57,7 @@ def prebuilt_dir(tmp_path, monkeypatch):
 def _plant_stale(prebuilt_dir, commit="bb92e60", release="rc-20260918"):
     """A cache exactly as a real one looks: self-consistent, from an older release."""
     import hashlib, tarfile, io
-    p = prebuilt_dir / "esp32"
+    p = prebuilt_dir / "esp32-jazzy"
     p.mkdir()
     with tarfile.open(fileobj=io.BytesIO(_tarball(commit)), mode="r:gz") as tar:
         for m in tar.getmembers():
@@ -74,7 +74,7 @@ def test_stale_cache_is_replaced_not_served(prebuilt_dir, monkeypatch, capsys):
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", lambda repo: "rc-20260919")
     monkeypatch.setattr(fetch_prebuilt.urllib.request, "urlopen",
                         lambda *a, **k: _FakeResp(_tarball("dcfb4b2")))
-    out = fetch_prebuilt.fetch("esp32", version="dev")
+    out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "dcfb4b2"
     assert fetch_prebuilt.cached_release(out) == "rc-20260919"
 
@@ -85,7 +85,7 @@ def test_cache_from_the_same_tag_is_still_replaced(prebuilt_dir, monkeypatch):
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", lambda repo: "rc-20260919")
     monkeypatch.setattr(fetch_prebuilt.urllib.request, "urlopen",
                         lambda *a, **k: _FakeResp(_tarball("dcfb4b2")))
-    out = fetch_prebuilt.fetch("esp32", version="dev")
+    out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "dcfb4b2", \
         "a tag re-cut in place must not be served from cache"
 
@@ -95,7 +95,7 @@ def test_offline_falls_back_to_the_cache_and_says_so(prebuilt_dir, monkeypatch, 
     def boom(repo):
         raise OSError("no route to host")
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", boom)
-    out = fetch_prebuilt.fetch("esp32", version="dev")
+    out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     msg = capsys.readouterr().out
     assert "WARNING" in msg and "may not be the current release" in msg
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "bb92e60"
@@ -106,7 +106,7 @@ def test_offline_without_a_cache_is_an_error(prebuilt_dir, monkeypatch):
         raise OSError("no route to host")
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", boom)
     with pytest.raises(SystemExit) as exc:
-        fetch_prebuilt.fetch("esp32", version="dev")
+        fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     assert "not cached" in str(exc.value)
 
 

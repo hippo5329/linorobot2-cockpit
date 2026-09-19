@@ -189,9 +189,12 @@ credentials did: it is fixed at link time. `[env] board_microros_distro = jazzy`
 has no default for an unset variable, it interpolates to the empty string, and the build breaks in a way
 that does not name the cause.
 
-Releases therefore ship **4 boards x 2 distros = 8 firmware images** (`scripts/build_prebuilt.py`), the
-jazzy ones keeping the bare profile name so `--prebuilt pico2` is unchanged and the lyrical ones suffixed
-`-lyrical`.
+Releases therefore ship **4 boards x 2 distros = 8 firmware images** (`scripts/build_prebuilt.py`), every
+one of them named `<board>-<distro>`: `pico2-jazzy` and `pico2-lyrical`, not `pico2` and `pico2-lyrical`.
+The two are not interchangeable and a board flashed with the wrong one enumerates and then does nothing
+useful, so the distro is in the name rather than implied by its absence. The PlatformIO envs stay
+asymmetric — `[env:pico2]` is pinned to jazzy — and `fetch_prebuilt.py` maps an env to its profile, so
+`fetch_prebuilt.py pico2` still resolves to `pico2-jazzy`.
 
 ### The env block is MCU-independent; only where it lives is not
 The block itself — CRC32 then NUL-separated `key=value` — is the same on every board.

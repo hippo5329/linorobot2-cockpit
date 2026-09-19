@@ -2,9 +2,13 @@
 """
 fetch_prebuilt.py — download a ready-to-flash firmware image from a release.
 
-    python3 scripts/fetch_prebuilt.py pico2              # jazzy image for the pico2 env
-    python3 scripts/fetch_prebuilt.py pico2_lyrical      # the lyrical one
-    python3 scripts/fetch_prebuilt.py esp32 --version 20260918
+    python3 scripts/fetch_prebuilt.py pico2-jazzy        # by release profile
+    python3 scripts/fetch_prebuilt.py pico2-lyrical      # the other distro
+    python3 scripts/fetch_prebuilt.py pico2              # by PlatformIO env; jazzy
+    python3 scripts/fetch_prebuilt.py esp32-jazzy --version 20260918
+
+Every profile names its distro. A PlatformIO env still may not -- [env:pico2] is
+pinned to jazzy in platformio.ini -- so an env is accepted here and mapped.
 
 Profiles are published as release assets named
 `linorobot2-firmware-<profile>.tar.gz`, one per board per ROS 2 distro
@@ -38,18 +42,25 @@ RELEASE_STAMP = ".release"
 
 
 def profile_for_env(pio_env: str) -> str:
-    """PlatformIO env -> release profile: `pico2` -> `pico2`, `pico2_lyrical` -> `pico2-lyrical`."""
+    """PlatformIO env -> release profile.
+
+    `pico2` -> `pico2-jazzy`, `pico2_lyrical` -> `pico2-lyrical`. The env names
+    are asymmetric because [env:pico2] is pinned to jazzy in platformio.ini; the
+    profile names are not, because a release asset that does not say which distro
+    it is for is a trap -- the two images are not interchangeable and a board
+    flashed with the wrong one enumerates and then does nothing useful.
+    """
     env = (pio_env or "").strip()
     if "_" in env:
         board, distro = env.split("_", 1)
-        return board if distro == DEFAULT_DISTRO else f"{board}-{distro}"
-    return env
+        return f"{board}-{distro}"
+    return f"{env}-{DEFAULT_DISTRO}" if env else env
 
 
 def env_for_profile(profile: str) -> str:
     if "-" in profile:
         board, distro = profile.split("-", 1)
-        return f"{board}_{distro}"
+        return board if distro == DEFAULT_DISTRO else f"{board}_{distro}"
     return profile
 
 
@@ -223,12 +234,16 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("profile", help="release profile (pico2, esp32-lyrical, …) or PlatformIO env (pico2_lyrical)")
+    ap.add_argument("profile", help="release profile (pico2-jazzy, esp32-lyrical, …) "
+                                    "or PlatformIO env (pico2, pico2_lyrical)")
     ap.add_argument("--version", default=None, help="release tag (default: the VERSION file; '-dev' means latest)")
     ap.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub owner/name (default: {DEFAULT_REPO})")
     ap.add_argument("--force", action="store_true", help="re-download even if the profile is present")
     a = ap.parse_args()
-    profile = profile_for_env(a.profile) if "_" in a.profile else a.profile
+    # A profile always carries its distro after a hyphen; anything without one is
+    # a PlatformIO env and gets mapped. Keying on "_" instead would pass a bare
+    # `pico2` straight through as a profile name, which no longer exists.
+    profile = a.profile if "-" in a.profile else profile_for_env(a.profile)
     fetch(profile, a.version, a.repo, a.force)
 
 

@@ -5,18 +5,29 @@ PlatformIO, a cross-compiler, or anything else. They are **release assets**,
 not tracked files: this directory is empty in git and filled by
 
 ```bash
-python3 scripts/fetch_prebuilt.py pico2          # -> firmware/prebuilt/pico2/
+python3 scripts/fetch_prebuilt.py pico2-jazzy    # -> firmware/prebuilt/pico2-jazzy/
 ```
 
 | Profile | MCU | Transport |
 |---|---|---|
-| `pico2`, `pico2-lyrical` | RP2350 | USB serial |
-| `pico`, `pico-lyrical` | RP2040 | USB serial |
-| `esp32`, `esp32-lyrical` | ESP32 | serial or `udp4` — whichever the env partition asks for |
-| `esp32s3`, `esp32s3-lyrical` | ESP32-S3 | native USB CDC, serial or `udp4` |
+| `pico2-jazzy`, `pico2-lyrical` | RP2350 | USB serial |
+| `pico-jazzy`, `pico-lyrical` | RP2040 | USB serial |
+| `esp32-jazzy`, `esp32-lyrical` | ESP32 | serial or `udp4` — whichever the env partition asks for |
+| `esp32s3-jazzy`, `esp32s3-lyrical` | ESP32-S3 | native USB CDC, serial or `udp4` |
+
+Every profile names its ROS 2 distro. The two halves of a row are **not**
+interchangeable: `board_microros_distro` picks the precompiled micro-ROS library
+the image links against, and a jazzy image will not talk to a lyrical agent. A
+board flashed with the wrong one enumerates over USB and then does nothing
+useful, so the distro belongs in the name rather than being implied by its
+absence.
+
+You can also name the PlatformIO env and let it be mapped — `fetch_prebuilt.py
+pico2` fetches `pico2-jazzy`, because `[env:pico2]` is pinned to jazzy in
+`platformio.ini`. The envs are asymmetric for that reason; the profiles are not.
 
 **One image per MCU per ROS 2 distro — not one per robot.** A Waveshare General Driver
-board and a bare ESP32 DevKit run the same `esp32` image. What differs between
+board and a bare ESP32 DevKit run the same `esp32-jazzy` image. What differs between
 them — the pin matrix, the I2C bus, the LiDAR wiring, which IMU is fitted, the
 transport, the credentials — is in the `env` flash partition, not in the binary.
 A board is a configuration, not a build.
@@ -30,14 +41,14 @@ driving a real robot.
 ## Flashing
 
 ```bash
-python3 scripts/flash_mcu.py --prebuilt pico2 --port /dev/ttyACM0
+python3 scripts/flash_mcu.py --prebuilt pico2-jazzy --port /dev/ttyACM0
 ```
 
 For an ESP32, name the robot so the env block describes the board in front of
 you rather than whichever robot the image happened to be compiled for:
 
 ```bash
-python3 scripts/flash_mcu.py --prebuilt esp32 --port /dev/ttyUSB0 \
+python3 scripts/flash_mcu.py --prebuilt esp32-jazzy --port /dev/ttyUSB0 \
     --params ~/linorobot2-config/gendrv_config.yaml
 ```
 
@@ -106,7 +117,7 @@ Read a board's configuration back with `python3 scripts/mcu_env.py print env.bin
 
 ```bash
 python3 scripts/build_prebuilt.py                        # all eight, needs PlatformIO
-python3 scripts/build_prebuilt.py esp32                  # just one
+python3 scripts/build_prebuilt.py esp32-jazzy            # just one
 docker compose run --rm pio python3 scripts/build_prebuilt.py   # in the build image
 ```
 

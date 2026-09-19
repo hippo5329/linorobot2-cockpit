@@ -17,11 +17,10 @@ whole point of the env: a robot is a configuration, not a build.
 
 Distro, however, is NOT a configuration. board_microros_distro selects the
 precompiled micro_ros library the firmware links against, and a jazzy image will
-not talk to a lyrical agent, so each board ships twice. The jazzy images keep the
-bare profile name so existing `--prebuilt pico2` invocations are unchanged; the
-lyrical ones are suffixed:
+not talk to a lyrical agent, so each board ships twice -- and every profile says
+which one it is, rather than the jazzy half being spelled as the bare board name:
 
-    pico2  pico  esp32  esp32s3                       (jazzy)
+    pico2-jazzy    pico-jazzy    esp32-jazzy    esp32s3-jazzy
     pico2-lyrical  pico-lyrical  esp32-lyrical  esp32s3-lyrical
 
 Fake mode throughout: the firmware simulates the IMU, magnetometer and wheels,
@@ -68,23 +67,28 @@ BOARDS = {
     "esp32s3": ("esp32s3",     "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
 }
 
-# The distro the bare env names in firmware/platformio.ini are pinned to.
-# Everything else gets an explicit `<env>_<distro>` env there and a `-<distro>`
-# profile suffix here.
+# The distro the BARE env names in firmware/platformio.ini are pinned to; the
+# others get an explicit `<env>_<distro>` env there. That asymmetry is a
+# PlatformIO detail and it used to leak out here, where the jazzy images were
+# published under the bare board name and only the lyrical ones were suffixed --
+# so `pico2` and `pico2-lyrical` sat side by side in a release and only one of
+# them said what it was. Every profile now carries its distro.
 DEFAULT_DISTRO = "jazzy"
 DISTROS = ("jazzy", "lyrical")
 
 
 def _profiles():
-    """profile -> (config stem, pio env, distro, description)."""
+    """profile -> (config stem, pio env, distro, description).
+
+    The profile name always ends in `-<distro>`; the PlatformIO env still does
+    not, because [env:pico2] is pinned to jazzy in platformio.ini and renaming it
+    would mean re-pointing every reference config's `pio_env`.
+    """
     out = {}
     for distro in DISTROS:
         for board, (stem, env, desc) in BOARDS.items():
-            if distro == DEFAULT_DISTRO:
-                out[board] = (stem, env, distro, f"{desc} [{distro}]")
-            else:
-                out[f"{board}-{distro}"] = (stem, f"{env}_{distro}", distro,
-                                            f"{desc} [{distro}]")
+            pio_env = env if distro == DEFAULT_DISTRO else f"{env}_{distro}"
+            out[f"{board}-{distro}"] = (stem, pio_env, distro, f"{desc} [{distro}]")
     return out
 
 

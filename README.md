@@ -251,8 +251,8 @@ build target rather than a supported robot until someone drives one.
 your board and the cockpit's version:
 
 ```bash
-python3 scripts/fetch_prebuilt.py pico2                       # -> firmware/prebuilt/pico2/
-python3 scripts/flash_mcu.py --prebuilt pico2 --port /dev/ttyACM0 \
+python3 scripts/fetch_prebuilt.py pico2-jazzy                 # -> firmware/prebuilt/pico2-jazzy/
+python3 scripts/flash_mcu.py --prebuilt pico2-jazzy --port /dev/ttyACM0 \
         --params ~/linorobot2-config/rover_pico2_config.yaml
 ```
 

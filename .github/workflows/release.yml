@@ -41,7 +41,7 @@ jobs:
         # 93.4%, 8272 spare -- and has been run on a GenDrv against a lyrical
         # agent at 50 Hz. tests/test_microros_pools.py guards the pools; the
         # margin is thin enough that a new publisher needs a re-measure.
-        profile: [pico2, pico, esp32, esp32s3,
+        profile: [pico2-jazzy, pico-jazzy, esp32-jazzy, esp32s3-jazzy,
                   pico2-lyrical, pico-lyrical, esp32-lyrical, esp32s3-lyrical]
     steps:
       - uses: actions/checkout@v4
