@@ -1,0 +1,75 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# Dockerfile.pio — the firmware BUILD image
+#
+# PlatformIO plus every toolchain the firmware envs need, so a build is the
+# same on a laptop, a Raspberry Pi and in CI. The robot runtime image does not
+# carry any of this: most users flash the prebuilt release images and never
+# compile anything.
+#
+#   docker compose run --rm pio pio run -e pico2
+#   docker compose run --rm pio python3 scripts/build_prebuilt.py
+#
+# The repo is bind-mounted at /ws by docker-compose.yml, so the build output
+# lands in firmware/.pio/build/<env>/ exactly as a native `pio run` would put
+# it, and the flasher finds it there. PlatformIO's own package cache lives in
+# the image (PLATFORMIO_CORE_DIR=/pio); the micro-ROS library is compiled into
+# the mounted tree's .pio on the first build of each env.
+# =============================================================================
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PLATFORMIO_CORE_DIR=/pio \
+    PLATFORMIO_SETTING_ENABLE_TELEMETRY=0
+
+# cmake and build-essential are not optional: on the first `pio run` of a
+# micro-ROS env, micro_ros_platformio colcon-builds the ament dev dependencies
+# FOR THE HOST before it cross-compiles anything.
+ARG APT_PROXY=""
+RUN if [ -n "$APT_PROXY" ]; then echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy; fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        git curl ca-certificates cmake build-essential libusb-1.0-0 \
+    && rm -f /etc/apt/apt.conf.d/01proxy && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "platformio>=6.1" "pyyaml>=6"
+
+# Pre-install the platforms and toolchains for every env in the matrix so a
+# build in this image downloads nothing. The project is copied in only for
+# this step; the real tree is mounted at run time.
+WORKDIR /seed
+COPY firmware/platformio.ini firmware/platformio.ini
+COPY firmware/common/platformio_base.ini firmware/common/platformio_base.ini
+COPY firmware/common/build_stamp.py firmware/common/build_stamp.py
+# The packages come over HTTPS (dl.registry.platformio.org for espressif32,
+# github.com for the RP2 platform, its toolchain and framework-arduinopico), so
+# no HTTP proxy on the way can cache them, and a rebuild on a slow link spent
+# 40 minutes downloading the same 700 MB. The install therefore runs against a
+# BuildKit cache mount: a PlatformIO core dir that outlives the build on the
+# host (until `docker builder prune`). On a rebuild `pio pkg install` finds
+# every package already installed and downloads nothing; the result is then
+# copied into the image layer so the image still carries everything.
+RUN --mount=type=cache,target=/pio-seed,sharing=locked \
+    cd firmware && for env in esp32 esp32s3 pico pico2 picow pico2w; do \
+        PLATFORMIO_CORE_DIR=/pio-seed pio pkg install -e "$env" || exit 1; \
+    done \
+    && rm -rf /pio-seed/.cache/tmp \
+    && rm -rf /pio && cp -a /pio-seed /pio \
+    && cd / && rm -rf /seed \
+    # Readable by the uid that will actually run the build. This step runs as
+    # root and PlatformIO creates its platform directories 0700, so the cache
+    # baked in here was unreachable by anyone else -- and docker-compose.yml
+    # runs this service as the invoking user (so build output in the mounted
+    # checkout stays theirs). The documented command therefore died on
+    #
+    #   PermissionError: [Errno 13] Permission denied: '/pio/platforms/espressif32'
+    #
+    # before compiling a single file: `pio pkg install` had put 700 on
+    # /pio/platforms/{espressif32,raspberrypi} while /pio itself was 755, so the
+    # failure appeared two levels down and looked like a corrupt install. Write
+    # as well as read: PlatformIO updates appstate.json and .cache in the core
+    # directory on every run, and a read-only core is not a supported mode.
+    && chmod -R a+rwX /pio
+
+WORKDIR /ws
+CMD ["pio", "run", "-d", "firmware"]

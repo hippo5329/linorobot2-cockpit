@@ -1,0 +1,163 @@
+# =============================================================================
+# docker-compose.yml — the Linorobot2 Cockpit on the ROBOT COMPUTER
+#
+#   docker compose up -d                      # supervisor on :8000, rosbridge on :9090
+#   docker compose run --rm pio pio run -d firmware -e pico2   # optional: build here
+#
+# One machine: the computer the microcontroller is plugged into runs the
+# Cockpit, micro_ros_agent, bringup, SLAM and Nav2. Open http://<robot>:8000
+# from any browser on the LAN. LINUX ONLY, and two hard requirements:
+#
+#   network_mode: host  — DDS discovery is multicast, and a board on Wi-Fi has
+#                         to reach micro_ros_agent's UDP port directly.
+#   ipc: host + /dev/shm — without shared memory the DDS transport silently
+#                         drops large costmap and map messages.
+#
+# Nothing to set for file ownership: the container works out whose files these
+# are by itself. See the host-anchor mount below. COCKPIT_UID / COCKPIT_GID
+# still override it if the detection is ever wrong. Do NOT name them UID/GID:
+# compose cannot see either one -- bash keeps UID as a shell variable and never
+# exports it, and GID does not exist in bash at all, so `${UID}` in this file
+# interpolates to the empty string every time.
+#
+# Your robot configs live OUTSIDE the repo, in ~/linorobot2-config (their own
+# git repository, seeded from config/reference on first start). Override with
+# COCKPIT_CONFIG_DIR=/path in the environment or a .env file.
+#
+# Images default to the public release on Docker Hub; `docker compose build`
+# builds them from this checkout instead. COCKPIT_IMAGE / COCKPIT_PIO_IMAGE
+# pin another registry. ROS_DISTRO picks jazzy (default) or lyrical.
+#
+# Docker Hub, and only Docker Hub. The images were on ghcr first; pulling the
+# SAME blob from one machine a minute apart measured 86 KiB/s there against
+# 10289 KiB/s here, which for this 1186 MB image is 223 minutes against 1.9.
+# The first `docker compose up` on a new robot went from an afternoon to under
+# two minutes, and ghcr was retired rather than kept as a mirror nobody should
+# pull from.
+# =============================================================================
+services:
+  cockpit:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-jazzy}
+        # Optional apt cache for sites that run one (both Dockerfiles accept it):
+        #   APT_PROXY=http://cache:3142 docker compose build
+        APT_PROXY: ${APT_PROXY:-}
+    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-jazzy}}
+    container_name: linorobot2-cockpit
+    network_mode: host
+    ipc: host
+    volumes:
+      - ${COCKPIT_CONFIG_DIR:-~/linorobot2-config}:/config
+      # Compiled and fetched firmware images survive a container restart.
+      - cockpit-firmware:/ws/firmware/prebuilt
+      - cockpit-build:/ws/firmware/.pio
+      - cockpit-maps:/ws/maps
+      - cockpit-logs:/ws/logs
+      - /dev/shm:/dev/shm
+      # udev metadata: the detector reads /sys to tell an RP2040 from an ESP32
+      # by USB vendor ID before it picks which tool to probe with.
+      - /run/udev:/run/udev:ro
+      # The host's live device tree, not a snapshot of it. A `devices:` list is
+      # copied into the container once, at create time, which fails two ways:
+      #
+      #   * a node that is simply absent aborts the start --
+      #     `error gathering device information while adding custom device
+      #     "/dev/ttyUSB0": no such file or directory` -- and one board is the
+      #     normal case, so naming both ttyUSB0 and ttyACM0 broke the Quick
+      #     Start for a Pico user (no ttyUSB0) and an ESP32 user (no ttyACM0)
+      #     alike;
+      #   * a board that re-enumerates after a flash comes back as a NEW node
+      #     (ttyACM0 -> ttyACM1) that the copy never sees, so the port list the
+      #     supervisor globs out of /dev goes stale mid-run.
+      #
+      # Binding /dev fixes both. device_cgroup_rules below is what makes the
+      # nodes usable: without it they are visible but every open returns
+      # EPERM, and with it the container gains ONLY the tty and raw-USB
+      # classes -- everything else in /dev stays denied by Docker's default.
+      #
+      # rslave, not the default private propagation. On an ordinary robot
+      # computer /dev is one devtmpfs and a plain bind is enough. Where the
+      # nodes arrive as their OWN mounts -- a container host passing USB
+      # through, a nested test box -- a private bind captures only the mounts
+      # that existed when the container started, and every later one shows
+      # through as the empty placeholder file underneath it. That is exactly
+      # the node a board in BOOTSEL gets, because it re-enumerates while the
+      # container is already running: lsusb saw `2e8a:0003 RP2 Boot` while
+      # picotool insisted `No accessible RP-series devices in BOOTSEL mode
+      # were found`, because it was opening a 0-byte regular file.
+      - type: bind
+        source: /dev
+        target: /dev
+        bind:
+          propagation: rslave
+      # Whose files are these? Nothing else in this container can say.
+      #
+      # Under a ROOTFUL daemon the container starts as root, and every map, log
+      # and fetched firmware image it writes lands owned by root unless the
+      # entrypoint drops to the right uid first. Docker never tells the
+      # container who ran `docker compose up`: the daemon is root, the client's
+      # identity is not carried over, and compose cannot compute `id -u` either
+      # -- interpolation reads the environment and .env, and runs no commands.
+      # That is why this used to be a COCKPIT_UID=$(id -u) prefix on the start
+      # command, and why forgetting it left a robot writing as root.
+      #
+      # So give the container something of yours to look at. This file is owned
+      # by whoever cloned the repo, it is guaranteed to exist (compose cannot
+      # run without it), and a bind mount carries its numeric owner through
+      # unchanged. entrypoint.sh stats it and uses that uid/gid.
+      #
+      # Read-only, and never read as CONTENT -- only `stat` touches it.
+      - ./docker-compose.yml:/run/host-anchor:ro
+    device_cgroup_rules:
+      - 'c 166:* rwm'   # /dev/ttyACM* (USB CDC-ACM: Pico, Pico 2)
+      - 'c 188:* rwm'   # /dev/ttyUSB* (USB serial bridges: CP210x, CH340, FTDI)
+      - 'c 189:* rwm'   # /dev/bus/usb (picotool talks to the RP2 bootloader over raw USB)
+    group_add:
+      - dialout
+    environment:
+      - COCKPIT_CONFIG_DIR=/config
+      # Edits to the config dir must stay owned by you. Empty means "work it
+      # out from /run/host-anchor" -- set COCKPIT_UID / COCKPIT_GID in the
+      # environment or a .env file only to override that detection.
+      # Access token for the UI's write API (web/backend/access.py). Generated
+      # into the config dir on first start and printed in the logs; set
+      # COCKPIT_TOKEN to choose it, COCKPIT_AUTH=off to switch the check off.
+      - COCKPIT_AUTH=${COCKPIT_AUTH:-on}
+      - COCKPIT_TOKEN=${COCKPIT_TOKEN:-}
+      - HOST_UID=${COCKPIT_UID:-}
+      - HOST_GID=${COCKPIT_GID:-}
+      # SERIAL_GID aligns the in-container dialout group with the host's so the
+      # dropped-privilege user can still open the tty.
+      - SERIAL_GID=${SERIAL_GID:-20}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+    restart: unless-stopped
+
+  # Optional firmware build environment. Not started by `docker compose up`;
+  # run it explicitly: docker compose run --rm pio pio run -d firmware -e pico2
+  # (-d firmware, because working_dir is /ws and platformio.ini lives one level
+  # down; the image's own CMD already says -d firmware, an override must too)
+  pio:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pio
+      args:
+        APT_PROXY: ${APT_PROXY:-}
+    image: ${COCKPIT_PIO_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-pio:latest}
+    profiles: ["build"]
+    working_dir: /ws
+    volumes:
+      - .:/ws
+      - ${COCKPIT_CONFIG_DIR:-~/linorobot2-config}:/config
+    environment:
+      - COCKPIT_CONFIG_DIR=/config
+    user: "${COCKPIT_UID:-1000}:${COCKPIT_GID:-1000}"
+
+volumes:
+  cockpit-firmware:
+  cockpit-build:
+  cockpit-maps:
+  cockpit-logs:

@@ -1,0 +1,42 @@
+config/secrets.yaml
+logs/
+# Run output: the one-click pipeline saves its map here and creates the
+# directory itself (one_click_pipeline.py). Two of these were committed.
+maps/
+.pio/
+**/.pio/
+build/
+install/
+log/
+__pycache__/
+*.pyc
+*.pyo
+.vscode/
+.DS_Store
+
+# Ready-to-flash release images: fetched with scripts/fetch_prebuilt.py or
+# built with scripts/build_prebuilt.py, published as GitHub release assets.
+firmware/prebuilt/*/
+dist/
+
+# Generated from the robot config on every build; a robot is a configuration,
+# not a build, and the env partition carries the same facts at run time.
+firmware/include/custom/lino_base_config.h
+
+# Generated MCU environment blocks. These carry the Wi-Fi PSK read out of
+# config/secrets.yaml, so they are gitignored for the same reason that file is.
+env.bin
+*.env.bin
+docker/vendor/
+firmware/_flashed/
+firmware/.git_rev
+
+
+# Agent tooling: only the shared skills link is tracked.
+.claude/*
+!.claude/skills
+
+# Local compose overrides (COCKPIT_CONFIG_DIR, COCKPIT_UID/GID, image pins).
+# Machine-specific by definition and never part of a release.
+.env
+.pytest_cache/

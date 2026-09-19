@@ -1,0 +1,36 @@
+# PlatformIO build trees: ~7 GB of object files across firmware/*/.pio. The
+# image needs firmware SOURCE, never build output — binaries are compiled at
+# run time and staged separately.
+**/.pio
+.pio
+
+# Git history is ~145 MB and the container has no use for it.
+.git
+.github
+
+# The mirrored upstream wikis are 46 MB, nearly all of it animated GIFs
+# (linorobot2.gif alone is 15.9 MB), and they are reference material for
+# people reading the repo -- nothing in the running container ever opens
+# them. Baking them in put 46 MB into every `docker compose up` on every
+# robot. Keep the short docs/*.md out too; same reasoning, smaller number.
+docs/
+
+# colcon output
+build/
+install/
+log/
+logs/
+
+# Release images are fetched at run time, never baked in.
+firmware/prebuilt/*/
+dist/
+
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+.vscode/
+.DS_Store
+
+# Never bake credentials into an image that gets pushed to a registry.
+config/secrets.yaml

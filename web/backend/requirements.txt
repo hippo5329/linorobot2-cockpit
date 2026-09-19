@@ -1,0 +1,5 @@
+# Linorobot2 Cockpit Supervisor Backend — Python Requirements
+PyYAML>=6.0
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pyserial>=3.5

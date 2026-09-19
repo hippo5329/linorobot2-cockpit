@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>linorobot2_cockpit</name>
+  <!-- The ROS package version, which must be x.y.z for ROS tooling. It is NOT
+       the release version: releases are datestamped (see the VERSION file and
+       scripts/fetch_prebuilt.py), because a release publishes firmware archives
+       and container images rather than a ROS package. -->
+  <version>0.1.0</version>
+  <description>All-in-one ROS 2 autonomy, supervisor web cockpit, and embedded micro-ROS firmware tooling</description>
+  <maintainer email="hippo5329@gmail.com">Thomas Chou</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>imu_tools</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>micro_ros_agent</exec_depend>
+  <!-- Browser visualizer transport: the Web Cockpit canvas subscribes over port 9090 -->
+  <exec_depend>rosbridge_server</exec_depend>
+  <exec_depend>rosapi</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+  <exec_depend>teleop_twist_joy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

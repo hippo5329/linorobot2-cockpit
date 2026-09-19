@@ -1,0 +1,431 @@
+# pico2_mecanum -- single source of truth for this robot.
+# One robot per file, one base controller per robot.
+#
+# UNVERIFIED ON HARDWARE: generated and checked through the header and env
+# generators only; no 4-motor rig has run it yet.
+#
+# A wired Raspberry Pi Pico 2 mecanum robot: four BTS7960-class drivers in the
+# two-PWM scheme, four quadrature encoders, an MPU6050 on I2C0, a battery
+# divider on ADC0, and the LD19 on the robot computer's own USB port (the
+# MCU never sees the scan). 21 of the 26 GPIOs are used; GP0/GP1 (UART0) are
+# left free on purpose as a debug console, GP4/GP5 (UART1) for a second
+# serial device.
+robot:
+  name: pico2_mecanum
+  description: Raspberry Pi Pico 2 mecanum (4WD, real hardware)
+base_controller:
+  name: pico2
+  description: Raspberry Pi Pico 2, mecanum, real hardware
+  mcu: pico2
+  board: rpipico2
+  driver_type: BTS7960
+  transport: serial
+  serial_port: /dev/ttyACM0
+  baudrate: 921600
+  # The LD19 plugs into the robot computer, not the MCU: no MCU pins, no UART
+  # budget, and the scan never crosses the micro-ROS link.
+  lidar:
+    model: ld19
+    comm_mode: serial
+    serial_port: /dev/ttyUSB0
+    baudrate: 230400
+  sensors:
+    imu: MPU6050
+    mag: NONE
+    use_fake_imu: false
+    use_fake_mag: false
+    use_fake_wheel: false
+    use_fake_ld19: false
+    use_fake_env: false
+    current: NONE
+    env: NONE
+  pins:
+    # Two-PWM (bts7960) drivers: in_a / in_b carry the complementary PWM, pwm
+    # is the driver's enable. One GPIO (GP22) enables all four bridges -- the
+    # driver holds it HIGH, once per motor, which is idempotent. Each motor's
+    # pair sits on one RP2350 PWM slice (GP2/3 = slice 1, GP6/7 = 3, GP8/9 =
+    # 4, GP10/11 = 5) so a slice never has to serve two motors.
+    #
+    # Numbering is linorobot2's: 1 front-left, 2 front-right, 3 rear-left,
+    # 4 rear-right. The right-hand motors are inverted because they are
+    # mounted mirrored; correct that here, never by swapping wires.
+    motor1:
+      pwm: 22
+      in_a: 2
+      in_b: 3
+      invert: false
+    motor2:
+      pwm: 22
+      in_a: 6
+      in_b: 7
+      invert: true
+    motor3:
+      pwm: 22
+      in_a: 8
+      in_b: 9
+      invert: false
+    motor4:
+      pwm: 22
+      in_a: 10
+      in_b: 11
+      invert: true
+    encoder1:
+      pin_a: 12
+      pin_b: 13
+      invert: false
+    encoder2:
+      pin_a: 14
+      pin_b: 15
+      invert: true
+    encoder3:
+      pin_a: 16
+      pin_b: 17
+      invert: false
+    encoder4:
+      pin_a: 18
+      pin_b: 19
+      invert: true
+    # I2C0 on GP20/GP21 (a valid SDA0/SCL0 pair on the RP2350).
+    i2c:
+      sda: 20
+      scl: 21
+    led: 25
+    # ADC0. 30k / 7.5k divider: 5:1, so a 3S pack (12.6 V) reads 2.52 V.
+    battery:
+      pin: 26
+      r1: 30000
+      r2: 7500
+    sonar:
+      trigger: -1
+      echo: -1
+kinematics:
+  base_type: mecanum
+  stamped_cmd_vel: auto
+  # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
+  # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
+  # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
+  wheel_diameter: 0.097
+  lr_wheels_distance: 0.30
+  fr_wheels_distance: 0.24
+  max_rpm: 333
+  max_rpm_ratio: 0.85
+  # The parts, not the product: counts_per_rev = encoder_ppr x quadrature x
+  # gear_ratio = 11 x 4 x 30 = 1320, computed by the generators. Give
+  # counts_per_rev directly instead if that is the number you have.
+  encoder_ppr: 11
+  quadrature: 4
+  gear_ratio: 30
+  pwm_bits: 10
+  pwm_frequency: 20000
+  motor_operating_voltage: 12
+  motor_power_max_voltage: 12
+  pid:
+    kp: 0.6
+    ki: 0.8
+    kd: 0.5
+# The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
+# (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
+# axle positions come from kinematics above; this block is what kinematics does not say.
+geometry:
+  body: {length: 0.3855, width: 0.2636, height: 0.0291, mass: 1.0}   # the base_link box, centred on the axle midpoint
+  wheel: {width: 0.0243, mass: 0.194, z: 0.0}   # z: axle height relative to the base_link origin (negative = below)
+  laser: {x: 0.0, y: 0.0, z: 0.063, roll: 0.0, pitch: 0.0, yaw: 0.0, frame: laser}   # base_link -> laser; the LiDAR driver stamps /scan with `frame`
+  imu: {x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}   # base_link -> imu_link (the frame the firmware stamps)
+  mesh: {base: '', wheel: ''}   # optional file:// or package:// meshes instead of the box and cylinders
+ekf:
+  frequency: 50.0
+  sensor_timeout: 0.1
+  two_d_mode: true
+  transform_time_offset: 0.0
+  transform_timeout: 0.0
+  print_diagnostics: false
+  debug: false
+  map_frame: map
+  odom_frame: odom
+  base_link_frame: base_link
+  world_frame: odom
+  odom0: odom/unfiltered
+  odom0_config:
+  - true
+  - true
+  - false
+  - false
+  - false
+  - false
+  - true
+  - true
+  - false
+  - false
+  - false
+  - true
+  - false
+  - false
+  - false
+  odom0_queue_size: 10
+  odom0_nodelay: false
+  odom0_differential: false
+  odom0_relative: false
+  imu0: imu/data
+  imu0_config:
+  - false
+  - false
+  - false
+  - true
+  - true
+  - true
+  - false
+  - false
+  - false
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+  imu0_nodelay: false
+  imu0_differential: false
+  imu0_relative: false
+  imu0_queue_size: 10
+  imu0_remove_gravitational_acceleration: true
+slam:
+  solver_plugin: solver_plugins::CeresSolver
+  ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+  ceres_preconditioner: SCHUR_JACOBI
+  ceres_trust_strategy: LEVENBERG_MARQUARDT
+  ceres_dogleg_type: TRADITIONAL_DOGLEG
+  ceres_loss_function: None
+  odom_frame: odom
+  map_frame: map
+  base_frame: base_link
+  scan_topic: /scan
+  mode: mapping
+  debug_logging: false
+  throttle_scans: 1
+  transform_publish_period: 0.02
+  map_update_interval: 5.0
+  resolution: 0.05
+  max_laser_range: 20.0
+  minimum_time_interval: 0.5
+  transform_timeout: 0.2
+  tf_buffer_duration: 30.0
+  stack_size_to_use: 40000000
+  enable_interactive_mode: true
+  position_covariance_scale: 1.0
+  angle_covariance_scale: 1.0
+  do_loop_closing: true
+  loop_match_minimum_chain_size: 10
+  loop_match_maximum_variance_coarse: 3.0
+  loop_match_minimum_response_coarse: 0.35
+  loop_match_minimum_response_fine: 0.45
+  correlation_search_space_dimension: 0.5
+  correlation_search_space_resolution: 0.01
+  correlation_search_space_smear_deviation: 0.1
+  loop_search_space_dimension: 8.0
+  loop_search_space_resolution: 0.05
+  loop_search_space_smear_deviation: 0.03
+  distance_variance_penalty: 0.5
+  angle_variance_penalty: 1.0
+  fine_search_angle_offset: 0.00349
+  coarse_search_angle_offset: 0.349
+  coarse_angle_resolution: 0.0349
+  minimum_angle_penalty: 0.9
+  minimum_distance_penalty: 0.5
+  use_response_expansion: true
+nav2:
+  amcl:
+    ros__parameters:
+      use_sim_time: false
+      alpha1: 0.2
+      alpha2: 0.2
+      alpha3: 0.2
+      alpha4: 0.2
+      alpha5: 0.2
+      base_frame_id: base_link
+      beam_skip_distance: 0.5
+      beam_skip_error_threshold: 0.9
+      beam_skip_threshold: 0.3
+      do_beamskip: false
+      global_frame_id: map
+      lambda_short: 0.1
+      laser_likelihood_max_dist: 2.0
+      laser_max_range: 100.0
+      laser_min_range: -1.0
+      laser_model_type: likelihood_field
+      max_beams: 60
+      max_particles: 2000
+      min_particles: 500
+      odom_frame_id: odom
+      pf_err: 0.05
+      pf_z: 0.99
+      recovery_alpha_fast: 0.0
+      recovery_alpha_slow: 0.0
+      resample_interval: 1
+      robot_model_type: nav2_amcl::DifferentialMotionModel
+      save_pose_rate: 0.5
+      sigma_hit: 0.2
+      tf_broadcast: true
+      transform_tolerance: 1.0
+      update_min_a: 0.2
+      update_min_d: 0.25
+      z_hit: 0.5
+      z_max: 0.05
+      z_rand: 0.5
+      z_short: 0.05
+      scan_topic: scan
+  bt_navigator:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: map
+      robot_base_frame: base_link
+      odom_topic: /odom
+      bt_loop_duration: 10
+      default_server_timeout: 20
+      navigators:
+      - navigate_to_pose
+      - navigate_through_poses
+      navigate_to_pose:
+        plugin: nav2_bt_navigator::NavigateToPoseNavigator
+      navigate_through_poses:
+        plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
+  controller_server:
+    ros__parameters:
+      use_sim_time: false
+      controller_frequency: 20.0
+      min_x_velocity_threshold: 0.001
+      # Lateral motion is real on a mecanum base; 0.5 is the differential value.
+      min_y_velocity_threshold: 0.001
+      min_theta_velocity_threshold: 0.001
+      failure_tolerance: 0.3
+      progress_checker_plugin: progress_checker
+      goal_checker_plugins:
+      - general_goal_checker
+      controller_plugins:
+      - FollowPath
+      progress_checker:
+        plugin: nav2_controller::SimpleProgressChecker
+        required_movement_radius: 0.5
+        movement_time_allowance: 10.0
+      general_goal_checker:
+        stateful: true
+        plugin: nav2_controller::SimpleGoalChecker
+        xy_goal_tolerance: 0.25
+        yaw_goal_tolerance: 0.25
+      FollowPath:
+        plugin: dwb_core::DWBLocalPlanner
+        debug_trajectory_details: true
+        min_vel_x: 0.0
+        min_vel_y: 0.0
+        max_vel_x: 0.26
+        max_vel_y: 0.0
+        max_vel_theta: 1.0
+        min_speed_xy: 0.0
+        max_speed_xy: 0.26
+        min_speed_theta: 0.0
+        acc_lim_x: 2.5
+        acc_lim_y: 0.0
+        acc_lim_theta: 3.2
+        decel_lim_x: -2.5
+        decel_lim_y: 0.0
+        decel_lim_theta: -3.2
+        vx_samples: 20
+        vy_samples: 5
+        vtheta_samples: 20
+        sim_time: 1.7
+        linear_granularity: 0.05
+        angular_granularity: 0.025
+        transform_tolerance: 0.2
+        xy_goal_tolerance: 0.25
+        trans_stopped_velocity: 0.25
+        short_circuit_trajectory_evaluation: true
+        stateful: true
+        critics:
+        - RotateToGoal
+        - Oscillation
+        - BaseObstacle
+        - GoalAlign
+        - PathAlign
+        - PathDist
+        - GoalDist
+        BaseObstacle.scale: 0.02
+        PathAlign.scale: 32.0
+        PathAlign.forward_point_distance: 0.1
+        GoalAlign.scale: 24.0
+        GoalAlign.forward_point_distance: 0.1
+        PathDist.scale: 32.0
+        GoalDist.scale: 24.0
+        RotateToGoal.scale: 32.0
+        RotateToGoal.slowing_factor: 5.0
+        RotateToGoal.lookahead_time: -1.0
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        update_frequency: 1.0
+        publish_frequency: 1.0
+        global_frame: map
+        robot_base_frame: base_link
+        use_sim_time: false
+        robot_radius: 0.26
+        resolution: 0.05
+        track_unknown_space: true
+        plugins:
+        - static_layer
+        - obstacle_layer
+        - inflation_layer
+        obstacle_layer:
+          plugin: nav2_costmap_2d::ObstacleLayer
+          enabled: true
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        static_layer:
+          plugin: nav2_costmap_2d::StaticLayer
+          map_subscribe_transient_local: true
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.55
+        always_send_full_costmap: true
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        update_frequency: 5.0
+        publish_frequency: 2.0
+        global_frame: odom
+        robot_base_frame: base_link
+        use_sim_time: false
+        rolling_window: true
+        width: 3
+        height: 3
+        resolution: 0.05
+        robot_radius: 0.26
+        plugins:
+        - obstacle_layer
+        - inflation_layer
+        obstacle_layer:
+          plugin: nav2_costmap_2d::ObstacleLayer
+          enabled: true
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.55
+        always_send_full_costmap: true
+ros_distro: jazzy

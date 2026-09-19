@@ -1,0 +1,18 @@
+# User meta for the ESP32 family. Only the transport MTU: the rcutils atomic
+# override in atomic.meta is a pico-sdk matter and must not be applied here.
+#
+# A best-effort XRCE stream cannot fragment: a message has to fit one
+# transport MTU, and the client's default for a custom transport is 512
+# bytes. nav_msgs/Odometry with its two 6x6 covariances is ~720 bytes, so a
+# best-effort /odom/unfiltered failed on every cycle (fail=50/s on the UART1
+# diagnostic) while the ~300-byte Imu went through. 1024 fits it with room;
+# the cost is a few KB of stream buffers (MTU x history per stream).
+{
+    "names": {
+        "microxrcedds_client": {
+            "cmake-args": [
+                "-DUCLIENT_CUSTOM_TRANSPORT_MTU=1024"
+            ]
+        }
+    }
+}

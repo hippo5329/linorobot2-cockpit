@@ -1,0 +1,2560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linorobot2 Cockpit</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <svg class="brand-logo" width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="9" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/>
+      <circle cx="8" cy="15" r="1.6" fill="currentColor"/>
+      <circle cx="16" cy="15" r="1.6" fill="currentColor"/>
+      <path d="M12 9V5M9 5h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1 class="brand-title" style="margin:0; font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
+      <p class="brand-subtitle" style="margin:0; font-size:11px; color:var(--text-dim);">ROS 2 Autonomy &amp; Hardware Supervisor</p>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <!-- Left Stack: Robot name, branch, git version, reference design selector & 1-Click Bringup Deploy Button -->
+    <div class="reference-build-stack">
+      <div class="hdr-field" title="Robot name -> &lt;robot&gt;_config.yaml">
+        <label for="hdr-robot-name">🤖 Robot:</label>
+        <input type="text" id="hdr-robot-name" class="hdr-input" placeholder="linorobot2"
+               pattern="[a-z0-9_]+" autocomplete="off" spellcheck="false"
+               title="Lowercase name, digits and underscore only">
+        <button type="button" id="btn-robot-menu" class="hdr-caret" aria-expanded="false"
+                aria-haspopup="listbox" title="Saved robot configs">▾</button>
+        <div id="robot-menu" class="branch-menu" role="listbox" hidden></div>
+      </div>
+
+      <div class="hdr-field" id="hdr-branch-field" title="Git branch for this robot's workspace">
+        <label for="hdr-git-branch">⎇ Branch:</label>
+        <input type="text" id="hdr-git-branch" class="hdr-input" placeholder="main"
+               autocomplete="off" spellcheck="false"
+               title="Git branch for robot configuration (Enter to checkout)">
+        <button type="button" id="btn-branch-menu" class="hdr-caret" aria-expanded="false"
+                aria-haspopup="listbox" title="Local git branches">▾</button>
+        <div id="branch-menu" class="branch-menu" role="listbox" hidden></div>
+        <button type="button" id="btn-branch-to-name" class="hdr-info-btn"
+                title="Set branch = robot name and check it out">= name</button>
+      </div>
+
+      <div class="git-version-row">
+        <button id="git-version-badge" class="git-version-badge" type="button" aria-expanded="false"
+                title="Repo version the web server started on — click for branch, remotes &amp; recent commits">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/>
+          </svg>
+          <span id="git-version-text">·······</span>
+        </button>
+        <div id="git-version-popover" class="git-version-popover" hidden></div>
+      </div>
+
+      <!-- Reference Design Selector: filtered according to detected MCU type -->
+      <div class="preset-selector-group" title="Reference Build Presets — updates dynamically according to detected MCU type">
+        <label for="preset-select" class="preset-label">⚡ Reference Build:</label>
+        <select id="preset-select" class="preset-select">
+          <option value="bare" selected>🧩 Bare Module — all pins N/C (Safe Default / Fake Mode)</option>
+        </select>
+      </div>
+
+      <!-- Start 1-Click in Header! -->
+      <button type="button" id="btn-header-start-pipeline" class="btn btn-accent hdr-deploy-btn"
+              title="Run 1-Click Autonomous Bringup Pipeline (Bare Module to Map/SLAM/Nav2)">
+        <span class="btn-icon">🚀</span>
+        <span id="hdr-deploy-btn-text"><strong>Start 1-Click</strong></span>
+      </button>
+    </div>
+
+    <!-- Right Stack: Workflow Settings (ROS 2 Distro, Mode [Fake Default], Agent Engine, Registry, Detected MCU) -->
+    <div class="workflow-settings-stack">
+      <div id="hdr-settings-rows" class="hdr-settings-rows" hidden>
+      <div class="hdr-wf-row">
+        <div class="hdr-field hdr-wf-field" title="Target ROS 2 Distribution (Jazzy, Lyrical, Rolling, Humble)">
+          <label for="hdr-distro-select">🌐 ROS 2:</label>
+          <select id="hdr-distro-select" class="hdr-select distro-select" title="Switch ROS 2 Distribution">
+            <option value="jazzy" selected>Jazzy (Noble 24.04)</option>
+            <option value="lyrical">Lyrical (Resolute 26.04)</option>
+            <option value="rolling">Rolling (Nightly)</option>
+            <option value="humble">Humble (Container)</option>
+          </select>
+        </div>
+        <div class="hdr-field hdr-wf-field" title="Build &amp; Execution Mode (Auto, Native Host, Docker, Podman)">
+          <label for="hdr-install-mode">🛠️ Build:</label>
+          <select id="hdr-install-mode" class="hdr-select" title="Switch Build / Execution Environment">
+            <option value="auto" selected>Auto</option>
+            <option value="native">Native (Host)</option>
+            <option value="docker">Docker</option>
+            <option value="podman">Podman</option>
+          </select>
+        </div>
+        <div class="hdr-field hdr-wf-field" title="Pipeline &amp; Bringup Mode (Fake / Zero-Wiring is Default)">
+          <label for="hdr-pipeline-mode">🚀 Sim/Real:</label>
+          <select id="hdr-pipeline-mode" class="hdr-select">
+            <option value="fake" selected>Fake / Zero-Wiring (Default)</option>
+            <option value="real">Real Hardware (Sensors &amp; Motors)</option>
+            <option value="auto">Auto (detect by controller)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="hdr-wf-row">
+        <div class="hdr-field hdr-wf-field" title="micro-ROS Agent Runtime Engine">
+          <label for="hdr-agent-engine">🤖 Agent:</label>
+          <select id="hdr-agent-engine" class="hdr-select">
+            <option value="" selected>Auto (match workflow)</option>
+            <option value="docker">Docker (Rootless)</option>
+            <option value="podman_systemd">Podman + systemd</option>
+            <option value="podman">Podman (Container)</option>
+            <option value="native">Native (ROS 2 / ~/uros_ws)</option>
+          </select>
+        </div>
+        <div class="hdr-field hdr-wf-field" title="Container Registry for Docker Images">
+          <label for="hdr-container-registry">📦 Registry:</label>
+          <select id="hdr-container-registry" class="hdr-select">
+            <option value="auto" selected>Auto (Cluster / Hub)</option>
+            <option value="cluster">Private registry</option>
+            <option value="dockerhub">Docker Hub</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <input type="text" id="hdr-custom-registry" class="hdr-input" placeholder="host:port" style="display:none; width:110px;" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      </div>
+      <div class="hdr-wf-row">
+        <div class="hdr-field hdr-wf-field" title="Hardware USB Detected Microcontroller">
+          <label>🔌 Detected MCU:</label>
+          <span id="hdr-detected-mcu-badge" class="badge-pill badge-accent" style="font-size:0.75rem; padding:2px 8px; font-weight:700;">Scanning...</span>
+        </div>
+        <div class="hdr-field hdr-wf-field" title="System Bringup, Agent & Workspace Status">
+          <label>⚡ Agent:</label>
+          <span class="pill pill-unknown" id="hdr-agent-pill">unknown</span>
+          <button type="button" class="btn-mini" id="hdr-btn-agent-check" title="Check Agent Port Availability" style="margin-left:2px;">🔍</button>
+          <label style="margin-left:6px;">🚀 Bringup:</label>
+          <span class="pill pill-unknown" id="hdr-bringup-pill">down</span>
+          <label style="margin-left:6px;">📁 WS:</label>
+          <span class="pill pill-unknown" id="hdr-workspace-pill">--</span>
+        </div>
+      </div>
+      <button type="button" id="btn-hdr-settings" class="hdr-settings-toggle" aria-expanded="false"
+              aria-controls="hdr-settings-rows" title="ROS 2 distro, build mode, agent, registry, sim/real">⚙ Settings ▾</button>
+    </div>
+  </div>
+</header>
+
+<!-- Board-vs-robot contradiction, full width under the header. Kept OUT of the
+     header's flex row on purpose: as a flex item it wrapped the entire header
+     into a single column. -->
+<p id="hdr-mcu-mismatch" hidden
+   style="margin:0; padding:9px 24px; font-size:0.84rem; line-height:1.45;
+          background:rgba(220,38,38,0.15); border-bottom:1px solid rgba(220,38,38,0.6);
+          border-left:4px solid #dc2626; color:#fca5a5;"></p>
+
+
+<nav class="tabs" aria-label="Workflow">
+  <button class="tab-btn active" data-tab="base-mcu"><span class="tab-num">1</span>Base &amp; MCU</button>
+  <button class="tab-btn" data-tab="drive-motors"><span class="tab-num">2</span>Drive &amp; Motors</button>
+  <button class="tab-btn" data-tab="sensors"><span class="tab-num">3</span>Sensors</button>
+  <button class="tab-btn" data-tab="pin-matrix"><span class="tab-num">4</span>Pin Matrix</button>
+  <button class="tab-btn" data-tab="hw-tests"><span class="tab-num">5</span>Hardware Tests</button>
+  <button class="tab-btn" data-tab="lidar"><span class="tab-num">6</span>LiDAR / Scan</button>
+  <button class="tab-btn" data-tab="bringup"><span class="tab-num">7</span>Bringup</button>
+  <button class="tab-btn" data-tab="teleop"><span class="tab-num">8</span>Teleop</button>
+  <button class="tab-btn" data-tab="slam-nav"><span class="tab-num">9</span>SLAM &amp; Nav</button>
+  <button class="tab-btn" data-tab="cockpit"><span class="tab-num">10</span>Operations</button>
+  <span class="tab-sep" role="separator"></span>
+  <button class="tab-btn tab-tool" data-tab="rosviz">Map Viewer</button>
+  <button class="tab-btn tab-tool" data-tab="secrets">Secrets</button>
+  <button class="tab-btn tab-tool" data-tab="settings">Config Studio</button>
+  <button class="tab-btn tab-tool" data-tab="install">Install</button>
+</nav>
+
+<main class="tab-content">
+
+  <!-- 1. BASE & MCU -->
+  <section class="tab-pane active" id="tab-base-mcu">
+
+    <!-- Step 1: Hardware Discovery / Auto-Detected MCU Card -->
+    <div class="card" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Step 1 · Microcontroller Discovery</span>
+          <h3 style="margin:4px 0 0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+            <span>🔌 Auto-Detected MCU:</span>
+            <span id="base-detected-mcu-name" style="color:#38bdf8; font-family:var(--font-mono); font-weight:700;">Raspberry Pi Pico 2 (RP2350)</span>
+          </h3>
+          <p class="hint" id="base-detected-mcu-desc" style="margin:4px 0 0;">Probed via USB sysfs VID:PID on host port <code>/dev/ttyACM0</code>.</p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span id="base-mcu-status-pill" class="pill pill-ok">Online &amp; Bound</span>
+          <button type="button" id="btn-redetect-mcu" class="btn btn-secondary btn-sm" title="Re-scan connected USB serial ports">🔄 Re-scan Hardware</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fake Mode Simulation Preview Card (Active by Default) -->
+    <div class="card" id="fake-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:1.3rem;">✨</span>
+          <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="fake-mode-card-title">Fake Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
+        </div>
+        <span class="badge-pill badge-ok" id="fake-mode-state-badge" style="font-size:0.72rem; padding:2px 8px; font-weight:700;">Zero-Wiring Default ON</span>
+      </div>
+      <p class="hint" id="fake-mode-desc" style="color:#cbd5e1; margin:8px 0; line-height:1.5;">
+        Linorobot2 defaults to safe <b>Fake Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_FAKE_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_FAKE_IMU</code>), and simulated planar LiDAR scans (<code>USE_FAKE_LD19</code>).
+        This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.
+      </p>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px; margin-top:10px;">
+        <div id="sim-odom-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
+          <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (100 Hz /odom)</b>
+        </div>
+        <div id="sim-imu-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
+          <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (100 Hz /imu/data)</b>
+        </div>
+        <div id="sim-lidar-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
+          <span style="color:#94a3b8;">Simulated LiDAR:</span> <b style="color:#34d399;">Active (10 Hz /scan)</b>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" id="btn-toggle-fake-mode" class="btn btn-accent" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700;" title="Toggle Fake Mode off to begin designing real hardware">
+            ⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design
+          </button>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button type="button" id="btn-jump-preview" class="btn btn-secondary btn-sm" title="Jump to SLAM &amp; Nav tab to preview mapping and navigation in fake simulation">
+            🚀 Jump to SLAM / Nav2 Preview ➔
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">🤖 1. Base Controller &amp; Kinematics Configuration</h2>
+        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+      </div>
+      <p class="hint">Configure the base controller, kinematics type (Differential, Skid Steer, Mecanum), physical dimensions, and rated motor speed. Automatically updates <code>&lt;robot&gt;_config.yaml</code> and generates C++ firmware headers.</p>
+
+      <!-- Kinematics Physics HUD -->
+      <div class="hud-card mt-3">
+        <div class="hud-header">
+          <span class="hud-title">⚡ Live Kinematics Physics HUD</span>
+          <span class="hud-badge" id="hud-kinematics-badge">85% Headroom Safe</span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Max Linear Velocity</span>
+            <span class="metric-val" id="hud-max-speed">0.95 m/s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Max Angular Velocity</span>
+            <span class="metric-val" id="hud-max-omega">7.03 rad/s</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Wheel Circumference</span>
+            <span class="metric-val" id="hud-wheel-circ">0.478 m</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Ticks Per Meter</span>
+            <span class="metric-val" id="hud-ticks-per-m">301,556 ticks/m</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 class="section-title" style="margin:0;">Microcontroller Hardware &amp; Serial Connection</h3>
+          <span class="badge-pill badge-accent" style="font-size:0.75rem;" title="This selection is mirrored to the Operations tab and the Flash MCU button, so one screen cannot target one chip while another targets a different one.">Shared with Operations &amp; Flash</span>
+        </div>
+        <p class="hint" style="margin-bottom:12px;">Unified base controller and serial connection settings. Changes here automatically synchronize with Bringup, Hardware Tests, and Config Studio tabs.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-mcu" class="form-label">Base Controller</label>
+            <select id="cfg-mcu" class="form-select">
+              <option value="pico2" selected>Raspberry Pi Pico 2 (RP2350 - Default USB Serial)</option>
+              <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
+              <option value="pico">Raspberry Pi Pico (RP2040)</option>
+              <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
+              <option value="esp32">ESP32 DevKit DOIT V1 (Wi-Fi UDP / Serial)</option>
+              <option value="gendrv">Waveshare General Driver Board ESP32 (921.6k Baud)</option>
+              <option value="esp32s3">ESP32-S3 DevKitC-1</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-serial-port" class="form-label">Micro-ROS Serial Port</label>
+            <input type="text" id="cfg-serial-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
+            <div id="base-port-chips" class="port-chips-wrap mt-1"></div>
+            <span class="input-hint">USB serial device the board is plugged into on this robot computer</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-baudrate" class="form-label">Micro-ROS Serial Baudrate</label>
+            <select id="cfg-baudrate" class="form-select font-mono">
+              <option value="921600" selected>921,600 Baud (Standard micro-ROS)</option>
+              <option value="1500000">1,500,000 Baud (High Speed)</option>
+              <option value="115200">115,200 Baud (Legacy)</option>
+              <option value="57600">57,600 Baud</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-kinematics" class="form-label">Kinematics Base Type</label>
+            <select id="cfg-kinematics" class="form-select">
+              <option value="2wd" selected>2WD Differential Drive (2 Motors)</option>
+              <option value="4wd">4WD Skid Steer (4 Motors)</option>
+              <option value="mecanum">4WD Mecanum Drive (4 Motors)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Robot Physical Geometry</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-wheel-diameter" class="form-label">Wheel Diameter (meters)</label>
+            <input type="number" id="cfg-wheel-diameter" class="form-input" value="0.152" step="0.001" min="0.01">
+            <span class="input-hint">Default 0.152m (6 inch wheel) or 0.065m (standard rubber wheel)</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-track-width" class="form-label">Wheel Separation / Track Width (meters)</label>
+            <input type="number" id="cfg-track-width" class="form-input" value="0.271" step="0.001" min="0.01">
+            <span class="input-hint">Center-to-center distance between left and right wheels</span>
+          </div>
+          <div class="form-group" id="group-wheelbase" style="display:none;">
+            <label for="cfg-wheelbase" class="form-label">Wheelbase / Front-Rear Distance (meters)</label>
+            <input type="number" id="cfg-wheelbase" class="form-input" value="0.0" step="0.001" min="0.0">
+            <span class="input-hint">Center-to-center distance between front and rear axles (4WD/Mecanum)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section" id="section-geometry">
+        <h3 class="section-title">Body &amp; Sensor Placement (URDF)</h3>
+        <p class="hint">The TF tree is generated from these numbers at every bringup (<code>generated/&lt;robot&gt;.urdf</code> next to your config). Wheel radius and axle spacing come from the fields above. Metres, kilograms, radians, measured from the base_link origin at the axle midpoint.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="geo-body-length" class="form-label">Body Length (X, m)</label>
+            <input type="number" id="geo-body-length" class="form-input" step="0.001" min="0.01">
+          </div>
+          <div class="form-group">
+            <label for="geo-body-width" class="form-label">Body Width (Y, m)</label>
+            <input type="number" id="geo-body-width" class="form-input" step="0.001" min="0.01">
+          </div>
+          <div class="form-group">
+            <label for="geo-body-height" class="form-label">Body Height (Z, m)</label>
+            <input type="number" id="geo-body-height" class="form-input" step="0.001" min="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-body-mass" class="form-label">Body Mass (kg)</label>
+            <input type="number" id="geo-body-mass" class="form-input" step="0.1" min="0.01">
+          </div>
+          <div class="form-group">
+            <label for="geo-wheel-width" class="form-label">Tyre Width (m)</label>
+            <input type="number" id="geo-wheel-width" class="form-input" step="0.001" min="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-wheel-z" class="form-label">Axle Height vs Body Centre (m)</label>
+            <input type="number" id="geo-wheel-z" class="form-input" step="0.001">
+            <span class="input-hint">0 = axle through the body centre; negative = axle below it</span>
+          </div>
+          <div class="form-group">
+            <label for="geo-laser-x" class="form-label">LiDAR X (m, forward)</label>
+            <input type="number" id="geo-laser-x" class="form-input" step="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-laser-y" class="form-label">LiDAR Y (m, left)</label>
+            <input type="number" id="geo-laser-y" class="form-input" step="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-laser-z" class="form-label">LiDAR Z (m, up)</label>
+            <input type="number" id="geo-laser-z" class="form-input" step="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-laser-yaw" class="form-label">LiDAR Yaw (rad)</label>
+            <input type="number" id="geo-laser-yaw" class="form-input" step="0.01">
+            <span class="input-hint">0 when the LiDAR's zero points forward</span>
+          </div>
+          <div class="form-group">
+            <label for="geo-imu-x" class="form-label">IMU X (m)</label>
+            <input type="number" id="geo-imu-x" class="form-input" step="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-imu-y" class="form-label">IMU Y (m)</label>
+            <input type="number" id="geo-imu-y" class="form-input" step="0.001">
+          </div>
+          <div class="form-group">
+            <label for="geo-imu-z" class="form-label">IMU Z (m)</label>
+            <input type="number" id="geo-imu-z" class="form-input" step="0.001">
+          </div>
+          <div class="form-group" id="group-casters">
+            <label class="form-label">Casters (2WD)</label>
+            <label class="checkbox-label"><input type="checkbox" id="geo-caster-front"> Front</label>
+            <label class="checkbox-label"><input type="checkbox" id="geo-caster-rear"> Rear</label>
+          </div>
+        </div>
+        <div id="geometry-warnings" class="hint" style="margin-top:6px;"></div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Motor Speed &amp; Closed-Loop PID Gains</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-max-rpm" class="form-label">Rated Motor Max RPM</label>
+            <input type="number" id="cfg-max-rpm" class="form-input" value="140" min="10" max="10000">
+            <span class="input-hint">Max unloaded or rated RPM under operating voltage</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-cpr" class="form-label">Encoder Counts Per Revolution (CPR)</label>
+            <input type="number" id="cfg-cpr" class="form-input" value="144000" min="10" max="1000000">
+            <span class="input-hint">Total quadrature pulses per full wheel revolution</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-headroom" class="form-label">PID Headroom Ratio</label>
+            <input type="number" id="cfg-headroom" class="form-input" value="0.85" step="0.01" min="0.5" max="1.0">
+            <span class="input-hint">Default 0.85 (85% speed cap reserving 15% dynamic control headroom)</span>
+          </div>
+        </div>
+
+        <div class="form-group mt-2">
+          <label class="form-label">Velocity PID Gains (<code>K_P</code> / <code>K_I</code> / <code>K_D</code>)</label>
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;">
+            <div>
+              <label for="cfg-pid-kp" class="input-hint">K_P</label>
+              <input type="number" id="cfg-pid-kp" class="form-input font-mono" value="0.6" step="0.05" min="0">
+            </div>
+            <div>
+              <label for="cfg-pid-ki" class="input-hint">K_I</label>
+              <input type="number" id="cfg-pid-ki" class="form-input font-mono" value="0.8" step="0.05" min="0">
+            </div>
+            <div>
+              <label for="cfg-pid-kd" class="input-hint">K_D</label>
+              <input type="number" id="cfg-pid-kd" class="form-input font-mono" value="0.5" step="0.05" min="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Motor Operating Voltages</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-motor-voltage" class="form-label">Operating Voltage (V)</label>
+            <input type="number" id="cfg-motor-voltage" class="form-input" value="24.0" step="0.5">
+          </div>
+          <div class="form-group">
+            <label for="cfg-motor-max-voltage" class="form-label">Max Power Voltage (V)</label>
+            <input type="number" id="cfg-motor-max-voltage" class="form-input" value="12.0" step="0.5">
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 2: Configure Drive &amp; Motors ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. DRIVE & MOTORS -->
+  <section class="tab-pane" id="tab-drive-motors">
+    <div class="card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">⚙️ 2. Motor Driver &amp; Inversion Controls</h2>
+        <button type="button" id="btn-save-drive-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+      </div>
+      <p class="hint">Select your motor H-bridge driver architecture and configure PWM resolution, frequency, and motor/encoder spin directions.</p>
+
+      <div class="form-section">
+        <h3 class="section-title">H-Bridge Driver Architecture</h3>
+        <div class="form-grid">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label for="cfg-driver-type" class="form-label">Motor Driver Type</label>
+            <select id="cfg-driver-type" class="form-select">
+              <option value="GENERIC_2_IN" selected>GENERIC_2_IN: 3 pins per motor (PWM enable + IN_A + IN_B) — L298N, TB6612FNG with STBY, VNH5019</option>
+              <option value="BTS7960">BTS7960 / DRV8833: 2 pins per motor (Dual PWM / RPWM + LPWM, no enable pin needed — recommended)</option>
+              <option value="GENERIC_1_IN">GENERIC_1_IN: 2 pins per motor (PWM speed + single direction pin) — Cytron MD10C / MD30C</option>
+              <option value="ESC">ESC: 1 pin per motor (Standard RC servo PWM pulse)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-pwm-freq" class="form-label">PWM Frequency (Hz)</label>
+            <input type="number" id="cfg-pwm-freq" class="form-input" value="20000" min="100" max="100000">
+            <span class="input-hint">20,000 Hz eliminates audible motor coil whine</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-pwm-bits" class="form-label">PWM Resolution (Bits)</label>
+            <input type="number" id="cfg-pwm-bits" class="form-input" value="10" min="8" max="16">
+            <span class="input-hint">10 bits (0–1023 duty cycle) standard for ESP32 &amp; RP2040</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Motor Spin Direction Inversion</h3>
+        <p class="input-hint">Check to invert direction if a wheel rotates backwards when moving forward.</p>
+        <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr));">
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-m1-inv">
+            <span><strong>Motor 1 Invert</strong> (<span class="motor-pos" data-motor="m1">Front Left</span>)</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-m2-inv" checked>
+            <span><strong>Motor 2 Invert</strong> (<span class="motor-pos" data-motor="m2">Front Right</span>)</span>
+          </label>
+          <label class="checkbox-label row-m3-item" style="display:none; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-m3-inv">
+            <span><strong>Motor 3 Invert</strong> (Rear Left)</span>
+          </label>
+          <label class="checkbox-label row-m4-item" style="display:none; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-m4-inv" checked>
+            <span><strong>Motor 4 Invert</strong> (Rear Right)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Encoder Quadrature Counting Inversion</h3>
+        <p class="input-hint">Check to invert encoder ticks count to ensure positive ticks match forward rotation.</p>
+        <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr));">
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-enc-1-inv">
+            <span><strong>Encoder 1 Invert</strong> (Left)</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-enc-2-inv">
+            <span><strong>Encoder 2 Invert</strong> (Right)</span>
+          </label>
+          <label class="checkbox-label row-m3-item" style="display:none; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-enc-3-inv">
+            <span><strong>Encoder 3 Invert</strong> (Rear L)</span>
+          </label>
+          <label class="checkbox-label row-m4-item" style="display:none; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="pin-enc-4-inv">
+            <span><strong>Encoder 4 Invert</strong> (Rear R)</span>
+          </label>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base-mcu">⬅ Step 1: Base &amp; MCU</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 3: Configure Sensors ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. SENSORS -->
+  <section class="tab-pane" id="tab-sensors">
+    <div class="card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">🧭 3. Sensors, IMU, Compass &amp; Battery Peripherals</h2>
+        <button type="button" id="btn-save-sensors-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+      </div>
+      <p class="hint">The <strong>IMU and magnetometer are detected by the firmware at boot</strong> and their
+      drivers chosen at run time (<code>i2cProbeSelect</code>), so swapping either one needs no change here —
+      plug it in and reboot the board. Everything else on this page the firmware cannot discover for itself:
+      the barometer is a compile-time choice (its publishers exist only if it was built in <em>and</em> the
+      chip answered at boot), the battery monitor likewise, and the ADC divider resistors and sonar pins are
+      properties of your wiring — read them wrong and you read the battery wrong.</p>
+
+      <!-- AI I2C Sensor Auto-Detection Card -->
+      <div class="card p-3 mb-3 border-accent-glow" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.7)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; margin: 1rem 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+          <div>
+            <h4 style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0; font-weight: 600;">🤖 I2C Bus Probe</h4>
+            <p class="hint" style="margin:0;">Runs the same scan the firmware runs at every boot (WHO_AM_I identification, <code>firmware/common/lib/i2c_probe</code>) and shows what answered. This is a read-out, not a setting: whatever is on the bus is what the robot firmware will drive.</p>
+          </div>
+          <button type="button" id="btn-auto-detect-i2c" class="btn btn-primary" style="white-space:nowrap; padding:0.6rem 1.2rem;">
+            <span>⚡ Auto-Detect Sensors</span>
+          </button>
+        </div>
+        <div id="i2c-detect-results" style="display:none; padding:0.6rem; background:rgba(0,0,0,0.3); border-radius:6px; font-size:0.85rem; margin-top: 0.75rem;"></div>
+      </div>
+
+      <!-- LiDAR & Depth Camera Sensor Card -->
+      <div class="form-section">
+        <h3 class="section-title">LiDAR 2D Laser Scanner &amp; 3D Depth Camera</h3>
+        <p class="input-hint" style="margin-bottom:10px;">Primary distance perception sensors for 2D SLAM, obstacle avoidance, and Nav2 costmaps. Configured sensors synchronize with Bringup launchers.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-laser-sensor" class="form-label">Primary LiDAR Sensor</label>
+            <select id="cfg-laser-sensor" class="form-select"></select>
+            <span class="input-hint">For live radar visualization and UDP bridge setup, use the <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'lidar\']')?.click(); return false;" style="color:var(--accent-primary); font-weight:600;">LiDAR / Scan ➔</a> tab.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-depth-sensor" class="form-label">3D Depth Camera (Optional)</label>
+            <select id="cfg-depth-sensor" class="form-select"></select>
+            <span class="input-hint">Generates 3D pointclouds and synthetic 2D laser scans.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Inertial Measurement Unit (IMU) &amp; Magnetometer</h3>
+        <!-- The IMU and magnetometer dropdowns were removed on purpose. The
+             firmware probes the I2C bus during setup() and enables the driver for
+             whatever answers, so a dropdown here could only ever disagree with the
+             hardware -- and when it did, the board went into the fatal "IMU init
+             failed" blink loop and never reached micro-ROS. Forcing the simulated
+             sensors is still available, under Fake Mode below. -->
+        <div class="p-3" style="background:rgba(0,0,0,0.25); border-radius:8px; border:1px solid var(--border-soft);">
+          <p class="hint" style="margin:0;">
+            <strong>Detected at boot, not selected here.</strong> The firmware scans the
+            I2C bus during startup, prints what it found over serial
+            (<code>[i2c] IMU: the bus says MPU6050 at 0x68 …</code>) and enables that
+            driver. Swapping an IMU needs no rebuild and no configuration change —
+            plug it in and reboot the board. Use the bus probe above to see the
+            current answer, and <em>Fake Mode</em> below to force the simulated
+            sensors on a board with nothing wired.
+          </p>
+        </div>
+
+        <div class="form-group mt-2">
+          <label class="form-label">Magnetometer Hard-Iron Bias (µT) <span class="input-hint">(Optional — Leave blank if uncalibrated)</span></label>
+          <div class="form-grid" style="grid-template-columns:repeat(3,1fr);gap:12px;">
+            <div>
+              <label for="cfg-mag-bias-x" class="input-hint">X (µT)</label>
+              <input type="number" id="cfg-mag-bias-x" class="form-input font-mono" step="0.1" placeholder="0.0">
+            </div>
+            <div>
+              <label for="cfg-mag-bias-y" class="input-hint">Y (µT)</label>
+              <input type="number" id="cfg-mag-bias-y" class="form-input font-mono" step="0.1" placeholder="0.0">
+            </div>
+            <div>
+              <label for="cfg-mag-bias-z" class="input-hint">Z (µT)</label>
+              <input type="number" id="cfg-mag-bias-z" class="form-input font-mono" step="0.1" placeholder="0.0">
+            </div>
+          </div>
+        </div>
+
+        <!-- Magnetometer Calibration Tool -->
+        <div class="mt-3 p-3" style="background:rgba(0,0,0,0.25); border-radius:8px; border:1px solid var(--border-soft);">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div>
+              <span style="font-weight:600; font-size:0.9rem; color:#38bdf8;">🧭 Live Magnetometer Calibration Tool</span>
+              <p class="hint" style="margin:2px 0 0 0; font-size:0.8rem;">Spins the robot in place to sample heading offsets and compute hard-iron calibration bias.</p>
+            </div>
+            <button type="button" id="btn-mag-cal" class="btn btn-secondary btn-sm">⚡ Run Calibration</button>
+          </div>
+          <div id="mag-cal-result" class="hint" style="margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Battery Voltage Monitoring &amp; Resistor Divider</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-battery" class="form-label">Battery Monitoring Mode</label>
+            <select id="cfg-battery" class="form-select">
+              <option value="NONE" selected>None (Bare Module Default)</option>
+              <option value="ADC_DIVIDER">ADC Resistor Voltage Divider (R1 + R2)</option>
+              <option value="INA219">INA219 (I2C Digital Voltage &amp; Current Sensor)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-bat-cap" class="form-label">Rated Battery Capacity (Ah)</label>
+            <input type="number" id="cfg-bat-cap" class="form-input" value="2.2" step="0.1" min="0.1">
+          </div>
+          <div class="form-group">
+            <label for="cfg-bat-nom" class="form-label">Nominal Voltage (V)</label>
+            <input type="number" id="cfg-bat-nom" class="form-input" value="11.1" step="0.1">
+          </div>
+          <div class="form-group">
+            <label for="cfg-bat-min" class="form-label">Min Cutoff Voltage (0% V)</label>
+            <input type="number" id="cfg-bat-min" class="form-input" value="9.0" step="0.1">
+          </div>
+          <div class="form-group">
+            <label for="cfg-bat-max" class="form-label">Max Full Voltage (100% V)</label>
+            <input type="number" id="cfg-bat-max" class="form-input" value="12.6" step="0.1">
+          </div>
+        </div>
+
+        <div id="box-adc-resistors" class="sub-panel mt-2">
+          <h4 class="sub-title-sm">⚡ ADC Voltage Divider Resistors &amp; 3.0V Safety Verification</h4>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="cfg-bat-r1" class="form-label">Upper Resistor R1 (Ω)</label>
+              <input type="number" id="cfg-bat-r1" class="form-input" value="30000" step="100">
+              <span class="input-hint">High-side resistor to +VBAT (e.g. 30kΩ)</span>
+            </div>
+            <div class="form-group">
+              <label for="cfg-bat-r2" class="form-label">Lower Resistor R2 (Ω)</label>
+              <input type="number" id="cfg-bat-r2" class="form-input" value="7500" step="100">
+              <span class="input-hint">Low-side resistor to GND (e.g. 7.5kΩ)</span>
+            </div>
+            <div class="form-group">
+              <label for="cfg-bat-cap-val" class="form-label">ADC Filter Capacitor C (pF)</label>
+              <input type="number" id="cfg-bat-cap-val" class="form-input" value="1000" step="100">
+              <span class="input-hint">Parallel capacitor to GND (1000pF recommended)</span>
+            </div>
+          </div>
+
+          <!-- Real-time ADC Safety Banner -->
+          <div id="bat-adc-safety-banner" class="adc-safety-banner safe">
+            <div class="safety-banner-icon" id="safety-banner-icon">🛡️</div>
+            <div class="safety-banner-content">
+              <div class="safety-banner-title" id="safety-banner-title">ADC Input Voltage: Safe (≤ 3.0V)</div>
+              <div class="safety-banner-desc" id="safety-banner-desc">
+                Divider Ratio: <code id="lbl-divider-ratio">0.2000 (1:5)</code> | Max Pin Voltage: <code id="lbl-adc-max-v">2.52 V</code> at full charge (12.6V).
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Environmental &amp; Range Sensors</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-env" class="form-label">Environmental Barometer</label>
+            <select id="cfg-env" class="form-select">
+              <option value="NONE" selected>None</option>
+              <option value="BMP280">BMP280 (I2C Pressure + Temperature)</option>
+              <option value="BME280">BME280 (I2C Pressure + Temperature + Humidity)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sonar" class="form-label">Ultrasonic Sonar Range Sensor</label>
+            <select id="cfg-sonar" class="form-select">
+              <option value="false" selected>Disabled (Bare Module Default)</option>
+              <option value="true">Enabled (HC-SR04 on /sonar topic)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Bare Module Zero-Wiring Simulation Toggles</h3>
+        <p class="input-hint">Enables virtual software sensors on bench when physical sensors are not yet wired.</p>
+        <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px,1fr));">
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="chk-fake-imu" checked>
+            <span>Fake IMU</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="chk-fake-mag" checked>
+            <span>Fake Mag</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="chk-fake-wheel" checked>
+            <span>Fake Wheels</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="chk-fake-ld19" checked>
+            <span>Fake LD19</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+            <input type="checkbox" id="chk-fake-env">
+            <span>Fake Env</span>
+          </label>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 2: Drive &amp; Motors</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 4: Configure Pin Matrix ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. PIN MATRIX -->
+  <section class="tab-pane" id="tab-pin-matrix">
+    <div class="card">
+      <div class="section-header-flex">
+        <div>
+          <h2 style="margin:0;">🔌 4. Microcontroller Pinout Matrix</h2>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
+          <button type="button" id="btn-save-pins-config" class="btn btn-secondary btn-sm">💾 Save &amp; Regenerate Header</button>
+        </div>
+      <div id="pin-findings" class="pin-findings" hidden></div>
+      </div>
+      <p class="hint">Allocate GPIO pins for motors, encoders, I2C bus, ADC battery, and sonar. Real-time electrical inspection prevents hardware hazards (strapping pin lockups, input-only pins, SPI flash contention).</p>
+
+      <!-- Hardware Safety Inspector Card -->
+      <div class="safety-card mt-3" id="hardware-safety-card">
+        <div class="safety-header">
+          <div class="safety-indicator-wrap">
+            <span class="status-dot status-ok" id="safety-dot"></span>
+            <span class="safety-title">Hardware Safety Inspector</span>
+          </div>
+          <span class="safety-badge badge-ok" id="safety-badge">0 Errors / 0 Warnings</span>
+        </div>
+        <div class="safety-messages" id="safety-messages">
+          <div class="safety-msg-item safety-msg-ok">✅ Conflict-free pin configuration verified for this base controller.</div>
+        </div>
+      </div>
+
+      <!-- LED Pin -->
+      <div class="form-grid mb-3">
+        <div class="form-group">
+          <label for="pin-led" class="form-label">Status LED Pin (GPIO)</label>
+          <input type="number" id="pin-led" class="form-input pin-input" value="-1">
+          <span class="input-hint">Pico: 25 | Pico W: 32 | ESP32: 2 (-1 if N/C)</span>
+        </div>
+      </div>
+
+      <!-- Motor Pins Table -->
+      <h3 class="sub-title">🏎️ Motor Driver Pins</h3>
+      <div class="pin-table-wrapper">
+        <table class="pin-table">
+          <thead>
+            <tr>
+              <th>Motor</th>
+              <th id="th-m-p1">PWM / PWM_R</th>
+              <th id="th-m-p2">IN_A / PWM_L</th>
+              <th id="th-m-p3">IN_B / EN</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Motor 1 (Left / FL)</strong></td>
+              <td class="cell-m-p1"><input type="number" id="pin-m1-p1" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p2"><input type="number" id="pin-m1-p2" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p3"><input type="number" id="pin-m1-p3" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr>
+              <td><strong>Motor 2 (Right / FR)</strong></td>
+              <td class="cell-m-p1"><input type="number" id="pin-m2-p1" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p2"><input type="number" id="pin-m2-p2" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p3"><input type="number" id="pin-m2-p3" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr id="row-motor-3" style="display: none;">
+              <td><strong>Motor 3 (Rear Left)</strong></td>
+              <td class="cell-m-p1"><input type="number" id="pin-m3-p1" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p2"><input type="number" id="pin-m3-p2" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p3"><input type="number" id="pin-m3-p3" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr id="row-motor-4" style="display: none;">
+              <td><strong>Motor 4 (Rear Right)</strong></td>
+              <td class="cell-m-p1"><input type="number" id="pin-m4-p1" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p2"><input type="number" id="pin-m4-p2" class="form-input pin-input" value="-1"></td>
+              <td class="cell-m-p3"><input type="number" id="pin-m4-p3" class="form-input pin-input" value="-1"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Encoder Pins Table -->
+      <h3 class="sub-title mt-4">📟 Encoder Quadrature Pins</h3>
+      <div class="pin-table-wrapper">
+        <table class="pin-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>Encoder Pin A (Interrupt)</th>
+              <th>Encoder Pin B (Direction)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Encoder 1 (Left / FL)</strong></td>
+              <td><input type="number" id="pin-enc-1a" class="form-input pin-input" value="-1"></td>
+              <td><input type="number" id="pin-enc-1b" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr>
+              <td><strong>Encoder 2 (Right / FR)</strong></td>
+              <td><input type="number" id="pin-enc-2a" class="form-input pin-input" value="-1"></td>
+              <td><input type="number" id="pin-enc-2b" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr id="row-enc-3" style="display: none;">
+              <td><strong>Encoder 3 (Rear Left)</strong></td>
+              <td><input type="number" id="pin-enc-3a" class="form-input pin-input" value="-1"></td>
+              <td><input type="number" id="pin-enc-3b" class="form-input pin-input" value="-1"></td>
+            </tr>
+            <tr id="row-enc-4" style="display: none;">
+              <td><strong>Encoder 4 (Rear Right)</strong></td>
+              <td><input type="number" id="pin-enc-4a" class="form-input pin-input" value="-1"></td>
+              <td><input type="number" id="pin-enc-4b" class="form-input pin-input" value="-1"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Auxiliary & Bus Pins -->
+      <h3 class="sub-title mt-4">🛰️ I2C Bus, Battery &amp; Sensor Pins</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="pin-i2c-sda" class="form-label">I2C SDA Pin</label>
+          <input type="number" id="pin-i2c-sda" class="form-input pin-input" value="-1">
+        </div>
+        <div class="form-group">
+          <label for="pin-i2c-scl" class="form-label">I2C SCL Pin</label>
+          <input type="number" id="pin-i2c-scl" class="form-input pin-input" value="-1">
+        </div>
+        <div class="form-group">
+          <label for="pin-battery" class="form-label">Battery ADC Pin</label>
+          <input type="number" id="pin-battery" class="form-input pin-input" value="-1">
+          <span class="input-hint">Pico: 26 (ADC0) | ESP32: 36 (VP) | -1 disabled</span>
+        </div>
+        <div class="form-group">
+          <label for="pin-sonar-trig" class="form-label">Sonar Trigger Pin</label>
+          <input type="number" id="pin-sonar-trig" class="form-input pin-input" value="-1">
+        </div>
+        <div class="form-group">
+          <label for="pin-sonar-echo" class="form-label">Sonar Echo Pin</label>
+          <input type="number" id="pin-sonar-echo" class="form-input pin-input" value="-1">
+        </div>
+        <div class="form-group">
+          <label for="cfg-lidar-rxd" class="form-label">LiDAR Serial RX Pin</label>
+          <input type="number" id="cfg-lidar-rxd" class="form-input pin-input" value="-1">
+          <span class="input-hint">MCU GPIO wired to LiDAR TX (-1 for host USB)</span>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 3: Sensors</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 5: Step-by-Step Hardware Tests ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. HARDWARE TESTS -->
+  <section class="tab-pane" id="tab-hw-tests">
+    <div class="card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">⚡ 5. Low-Level Robot Hardware Tests &amp; Diagnostics Hub</h2>
+        <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">🔄 Refresh Ports</button>
+      </div>
+      <p class="hint">Directly compile, flash, and verify microcontroller hardware sub-systems without starting the ROS 2 autonomy stack. Stop <code>micro_ros_agent</code> automatically, flash diagnostic binaries, and inspect serial output streams in real-time.</p>
+
+      <!-- Diagnostic firmware selection & serial port bar -->
+      <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
+        <div class="form-group" style="flex:2; min-width:200px;">
+          <label for="hw-flash-target" class="form-label">Application (env <code>app</code> key)</label>
+          <select id="hw-flash-target" class="form-select">
+            <option value="test_sensors" selected>🧭 test_sensors — Sensor Diagnostics &amp; I2C Scanner</option>
+            <option value="test_motors">⚙️ test_motors — Motor Diagnostics &amp; CPR Calibration</option>
+            <option value="i2c_detect">🔍 i2c_detect — I2C Bus Probe &amp; WHO_AM_I Identifier</option>
+            <option value="test_acc">📈 test_acc — Dynamic Acceleration Profiler</option>
+            <option value="adc_calibrate">🔋 adc_calibrate — ESP32 SAR ADC DAC Sweep &amp; LUT Linearizer</option>
+            <option value="bno085_cal">🧲 bno085_cal — BNO085 Dynamic Tare &amp; Calibration</option>
+            <option value="base">🏎️ base — Main Robot micro-ROS Base Controller</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="flex:1; min-width:140px;">
+          <label for="hw-flash-env" class="form-label">Base Controller Env <span class="input-hint" style="font-weight:normal;">(Synced)</span></label>
+          <select id="hw-flash-env" class="form-select font-mono">
+            <option value="pico2" selected>pico2</option>
+            <option value="pico2w">pico2w</option>
+            <option value="pico">pico</option>
+            <option value="picow">picow</option>
+            <option value="esp32">esp32</option>
+            <option value="esp32_wifi">esp32_wifi</option>
+            <option value="esp32s3">esp32s3</option>
+          </select>
+        </div>
+
+        <div class="form-group" style="flex:2; min-width:220px;">
+          <label for="hw-flash-port" class="form-label">Upload Serial Port <span class="input-hint" style="font-weight:normal;">(Synced with Base &amp; MCU)</span></label>
+          <input type="text" id="hw-flash-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
+          <div id="hw-port-chips" class="port-chips-wrap mt-1"></div>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="btn-hw-flash" class="btn btn-primary" title="Compile and upload firmware to MCU">⚡ Flash MCU</button>
+          <button type="button" id="btn-hw-build" class="btn btn-secondary" title="Compile only without uploading">🔨 Build</button>
+          <button type="button" id="btn-hw-monitor" class="btn btn-secondary" title="Stream serial monitor">📡 Monitor</button>
+          <button type="button" id="btn-hw-stop" class="btn btn-danger" style="display:none;" title="Stop running process">⏹️ Stop</button>
+        </div>
+      </div>
+
+      <!-- Direct 1-Click Microcontroller Uploads Grid -->
+      <div class="direct-upload-section mt-4">
+        <label class="form-label" style="margin-bottom:8px; display:block;">🚀 1-Click Diagnostic Upload Buttons</label>
+        <div class="direct-upload-grid">
+          <button type="button" id="btn-upload-sensors" class="btn-direct-upload" title="Upload test_sensors">
+            <span class="direct-upload-icon">🧭</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>test_sensors</code></span>
+              <span class="direct-upload-desc">I2C Scanner &amp; Real-Time Telemetry</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+
+          <button type="button" id="btn-upload-motors" class="btn-direct-upload" title="Upload test_motors">
+            <span class="direct-upload-icon">⚙️</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>test_motors</code></span>
+              <span class="direct-upload-desc">Sequential Motor &amp; CPR Direction Test</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+
+          <button type="button" id="btn-upload-i2c" class="btn-direct-upload" title="Upload i2c_detect">
+            <span class="direct-upload-icon">🔍</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>i2c_detect</code></span>
+              <span class="direct-upload-desc">Hardware Bus Scanner &amp; Chip Probe</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+
+          <button type="button" id="btn-upload-acc" class="btn-direct-upload" title="Upload test_acc">
+            <span class="direct-upload-icon">📈</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>test_acc</code></span>
+              <span class="direct-upload-desc">Dynamic Acceleration Profiler</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+
+          <button type="button" id="btn-upload-adc" class="btn-direct-upload" title="Upload adc_calibrate">
+            <span class="direct-upload-icon">🔋</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>adc_calibrate</code></span>
+              <span class="direct-upload-desc">Hardware DAC ADC Linearization</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+
+          <button type="button" id="btn-upload-firmware" class="btn-direct-upload" title="Upload firmware">
+            <span class="direct-upload-icon">🏎️</span>
+            <div class="direct-upload-info">
+              <span class="direct-upload-title">Upload <code>firmware</code></span>
+              <span class="direct-upload-desc">Main micro-ROS Base Controller</span>
+            </div>
+            <span class="direct-upload-badge">⚡ Upload</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ESP32 ADC Calibration Studio Card -->
+      <div class="adc-studio-card mt-4" id="adc-studio-card">
+        <div class="adc-studio-header">
+          <div>
+            <h3 class="adc-studio-title">🔋 ESP32 ADC Calibration Studio &amp; 12-Bit LUT Linearizer</h3>
+            <p class="adc-studio-subtitle">Sweeps the internal DAC (0–3.3V) across the battery ADC pin to generate an inverse 4096-point lookup table, correcting non-linear ADC knees.</p>
+          </div>
+          <button type="button" id="btn-adc-run-cal" class="btn btn-primary btn-sm">⚡ Run Hardware Calibration</button>
+        </div>
+
+        <div class="form-grid" style="grid-template-columns: 2fr 1fr; gap:12px; align-items:center;">
+          <div class="form-group">
+            <label for="cfg-dac-pin" class="form-label">DAC Sweep Output Pin (Jumper to Battery ADC Pin)</label>
+            <select id="cfg-dac-pin" class="form-select font-mono">
+              <option value="25" selected>GPIO 25 (ESP32 DAC1)</option>
+              <option value="26">GPIO 26 (ESP32 DAC2)</option>
+              <option value="17">GPIO 17 (ESP32-S2 DAC1)</option>
+              <option value="18">GPIO 18 (ESP32-S2 DAC2)</option>
+            </select>
+          </div>
+          <div class="input-hint">Jumper this pin directly to the battery ADC pin (e.g. Pin 36) during calibration.</div>
+        </div>
+
+        <!-- Interactive CAD Circuit Schematic -->
+        <div class="adc-cad-schematic-card mt-3">
+          <div class="schematic-svg-container">
+            <svg id="adc-circuit-svg" viewBox="0 0 760 220" class="schematic-svg" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="grad-wire" gradientUnits="userSpaceOnUse" x1="340" y1="56" x2="570" y2="56">
+                  <stop offset="0%" stop-color="#38bdf8"/>
+                  <stop offset="100%" stop-color="#818cf8"/>
+                </linearGradient>
+                <linearGradient id="grad-dac" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#f59e0b"/>
+                  <stop offset="100%" stop-color="#10b981"/>
+                </linearGradient>
+              </defs>
+              <!-- Battery / Power In -->
+              <g class="cad-component">
+                <rect x="20" y="35" width="85" height="42" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/>
+                <text x="62" y="55" fill="#f8fafc" font-size="12" font-weight="bold" text-anchor="middle">+VBAT</text>
+                <text x="62" y="69" fill="#94a3b8" font-size="10" text-anchor="middle">12.6 V</text>
+                <line x1="105" y1="56" x2="150" y2="56" stroke="#38bdf8" stroke-width="2.5"/>
+              </g>
+              <!-- R1 -->
+              <g class="cad-component">
+                <rect x="150" y="44" width="90" height="24" rx="4" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+                <text x="195" y="60" fill="#38bdf8" font-size="11" font-family="monospace" font-weight="bold" text-anchor="middle">R1: 30 kΩ</text>
+                <line x1="240" y1="56" x2="340" y2="56" stroke="#38bdf8" stroke-width="2.5"/>
+              </g>
+              <!-- Central Node -->
+              <circle cx="340" cy="56" r="5" fill="#818cf8"/>
+              <!-- R2 to GND -->
+              <g class="cad-component">
+                <line x1="300" y1="56" x2="300" y2="90" stroke="#818cf8" stroke-width="2.5"/>
+                <rect x="270" y="90" width="60" height="36" rx="4" fill="#0f172a" stroke="#818cf8" stroke-width="2"/>
+                <text x="300" y="108" fill="#818cf8" font-size="10" font-family="monospace" font-weight="bold" text-anchor="middle">R2</text>
+                <text x="300" y="120" fill="#94a3b8" font-size="9" font-family="monospace" text-anchor="middle">7.5 kΩ</text>
+                <line x1="300" y1="126" x2="300" y2="155" stroke="#64748b" stroke-width="2"/>
+                <line x1="288" y1="155" x2="312" y2="155" stroke="#94a3b8" stroke-width="2"/>
+              </g>
+              <!-- Filter Cap -->
+              <g class="cad-component">
+                <line x1="380" y1="56" x2="380" y2="95" stroke="#818cf8" stroke-width="2.5"/>
+                <line x1="365" y1="95" x2="395" y2="95" stroke="#10b981" stroke-width="3"/>
+                <line x1="365" y1="105" x2="395" y2="105" stroke="#10b981" stroke-width="3"/>
+                <text x="405" y="104" fill="#10b981" font-size="10" font-family="monospace">1000 pF</text>
+                <line x1="380" y1="105" x2="380" y2="155" stroke="#64748b" stroke-width="2"/>
+                <line x1="368" y1="155" x2="392" y2="155" stroke="#94a3b8" stroke-width="2"/>
+              </g>
+              <!-- Wire to ADC -->
+              <line x1="340" y1="56" x2="570" y2="56" stroke="url(#grad-wire)" stroke-width="2.5"/>
+              <!-- MCU ADC Node -->
+              <g class="cad-component">
+                <rect x="570" y="32" width="165" height="48" rx="6" fill="#1e1b4b" stroke="#a855f7" stroke-width="2"/>
+                <text x="652" y="52" fill="#e9d5ff" font-size="11" font-weight="bold" text-anchor="middle">ESP32 ADC Input</text>
+                <text x="652" y="68" fill="#c084fc" font-size="10" font-family="monospace" text-anchor="middle">V_ADC ≤ 2.52 V</text>
+              </g>
+              <!-- DAC Sweep Calibration Jumper -->
+              <g class="cad-component">
+                <rect x="20" y="130" width="135" height="45" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+                <text x="87" y="148" fill="#fcd34d" font-size="11" font-weight="bold" text-anchor="middle">ESP32 DAC Output</text>
+                <text x="87" y="163" fill="#94a3b8" font-size="9" text-anchor="middle">Sweep 0–3.3V</text>
+                <path d="M 155 152 L 240 152 L 240 70 L 335 58" fill="none" stroke="url(#grad-dac)" stroke-width="2" stroke-dasharray="4,4"/>
+                <circle cx="155" cy="152" r="3.5" fill="#f59e0b"/>
+                <text x="180" y="145" fill="#f59e0b" font-size="8" font-family="monospace">CALIBRATION JUMPER</text>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <div class="adc-studio-grid">
+          <div class="adc-chart-pane">
+            <span class="sub-title">Transfer Function Plot</span>
+            <canvas id="adc-chart-canvas" width="400" height="200" style="width:100%; height:auto; margin-top:8px;"></canvas>
+          </div>
+          <div class="adc-lut-pane">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span class="sub-title">Generated ADC_LUT[4096]</span>
+              <button type="button" id="btn-copy-lut-code" class="btn btn-xs btn-secondary">📋 Copy</button>
+            </div>
+            <div class="adc-lut-code-wrap">
+              <pre id="adc-lut-code-display"><code>// Run Hardware Calibration to generate real LUT...
+const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Magnetometer Calibration Card -->
+      <div class="card mt-4">
+        <h2>🧭 Magnetometer In-Place Spin Calibration</h2>
+        <p class="hint">Spins the robot in place to determine hard-iron bias offsets. Clear surrounding obstacles before starting.</p>
+        <button id="btn-mag-cal-hw" class="btn btn-primary">Run Magnetometer Calibration</button>
+        <div id="mag-cal-hw-result" class="hint mt-2"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="pin-matrix">⬅ Step 4: Pin Matrix</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="lidar" style="background:linear-gradient(135deg,#059669,#06b6d4);">Step 6: Verify LiDAR / Scan ➔</button>
+      </div>
+    </div>
+
+    <div class="card" id="card-webserial">
+      <h2>🔌 Serial Debug Monitor <span id="webserial-status" class="badge-pill badge-idle">Not connected</span></h2>
+      <p class="hint">
+        Opens a board's serial port <b>from this browser</b> and shows its raw output — the
+        equivalent of <code>pio device monitor</code> for the machine you are sitting at. Handy for
+        reading a boot log or driving the <code>test_sensors</code> / <code>i2c_detect</code>
+        diagnostic firmwares.
+      </p>
+      <p class="hint">
+        <b>Monitoring only — this never flashes.</b> Firmware is written natively on the robot
+        computer by <code>esptool</code> / <code>picotool</code>, which is the only path that can
+        stop <code>micro_ros_agent</code>, confirm the port was released and restart it afterwards.
+        A browser tab cannot, and a half-written flash bricks the board.
+      </p>
+      <p class="hint" id="webserial-support" hidden style="color:var(--accent-danger, #f43f5e);">
+        ⚠️ Checking Web Serial availability… (replaced at run time by webserial.js, which
+        distinguishes an unsupported browser from an insecure origin — see there.)
+      </p>
+
+      <div class="row" style="align-items:flex-end; gap:10px; flex-wrap:wrap;">
+        <label>Baud
+          <select id="webserial-baud">
+            <option value="115200" selected>115200 — default monitor_speed</option>
+            <option value="230400">230400 — LD19 LiDAR</option>
+            <option value="921600">921600 — micro-ROS serial</option>
+            <option value="1500000">1500000 — GenDrv ESP32</option>
+            <option value="57600">57600</option>
+            <option value="9600">9600</option>
+          </select>
+        </label>
+        <label>Send as
+          <select id="webserial-lineending">
+            <option value="\n" selected>Newline (LF)</option>
+            <option value="\r\n">Carriage return + LF</option>
+            <option value="\r">Carriage return</option>
+            <option value="">No line ending</option>
+          </select>
+        </label>
+        <button id="btn-webserial-connect" class="btn btn-primary">Open port…</button>
+        <button id="btn-webserial-disconnect" class="btn btn-danger" disabled>Close</button>
+        <button id="btn-webserial-clear" class="btn btn-sm">Clear</button>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="webserial-autoscroll" checked> autoscroll
+        </label>
+      </div>
+
+      <pre id="webserial-output" class="webserial-output" aria-live="polite"></pre>
+      <input type="text" id="webserial-input" class="webserial-input"
+             placeholder="Type a command and press Enter to send to the board…"
+             spellcheck="false" autocomplete="off" disabled>
+    </div>
+  </section>
+
+  <!-- BRINGUP -->
+  <section class="tab-pane" id="tab-bringup">
+    <div class="card" id="card-robot-setup-bringup" style="background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.7)); border-left: 4px solid var(--accent-primary);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
+        <div>
+          <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+            <span>🤖 7. Active Robot Bringup &amp; State Estimation</span>
+            <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:700;">Read from your config</span>
+          </h2>
+          <p class="hint" style="margin:4px 0 0 0;">Unified parameters from <code>&lt;robot&gt;_config.yaml</code> passed directly to <code>bringup.launch.py</code>.</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'base-mcu\']')?.click(); return false;">⚙️ Base &amp; MCU</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">🧭 Sensors</button>
+        </div>
+      </div>
+
+      <!-- Live Summary Badges -->
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:10px;">
+        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
+          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Kinematics</span>
+          <b id="summary-bringup-base" style="color:#38bdf8; font-size:0.95rem;">2WD Differential</b>
+        </div>
+        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
+          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Micro-ROS Port</span>
+          <b id="summary-bringup-port" style="color:#34d399; font-size:0.95rem; font-family:var(--font-mono);">/dev/ttyACM0 @ 921600</b>
+        </div>
+        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
+          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">LiDAR Sensor</span>
+          <b id="summary-bringup-laser" style="color:#f59e0b; font-size:0.95rem;">LD19</b>
+        </div>
+        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
+          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Depth Camera</span>
+          <b id="summary-bringup-depth" style="color:#a78bfa; font-size:0.95rem;">None</b>
+        </div>
+      </div>
+
+      <!-- Preserved elements for transparent backwards-compatibility with launcher scripts -->
+      <select id="bringup-base-type" style="display:none;">
+        <option value="2wd" selected>2WD</option>
+        <option value="4wd">4WD</option>
+        <option value="mecanum">Mecanum</option>
+      </select>
+      <select id="bringup-laser-sensor" style="display:none;"><option value="ld19" selected>ld19</option></select>
+      <select id="bringup-depth-sensor" style="display:none;"><option value="" selected></option></select>
+      <input type="hidden" id="bringup-agent-device" value="/dev/ttyACM0">
+      <input type="hidden" id="bringup-agent-baud" value="921600">
+      <button id="btn-save-robot-config-bringup" style="display:none;"></button>
+      <span id="bringup-config-status" style="display:none;"></span>
+    </div>
+
+    <div class="card">
+      <h2>Robot bringup</h2>
+      <p class="hint"><code>bringup.launch.py</code> starts its own micro-ROS agent internally
+        (base_serial_port/transport/port below) -- Console does not launch a separate agent
+        alongside it, since two agents on the same port would just fight each other.
+        The manual agent controls in Config Studio are for other uses only (e.g. testing agent
+        connectivity on its own).</p>
+
+      <p class="hint">These select the sensor model via
+        <code>LINOROBOT2_LASER_SENSOR</code>/<code>LINOROBOT2_DEPTH_SENSOR</code>, using
+        whatever connection details are hardcoded in <code>linorobot2_bringup</code>'s own
+        launch files (e.g. YDLIDAR/RPLIDAR already use persistent <code>/dev/ydlidar</code>
+        /<code>/dev/rplidar</code> udev symlinks). For a custom serial path, baudrate, or the
+        LiDAR-over-WiFi-UDP bridge, use the Laser driver card on the Sensors tab instead of
+        going through Bringup.</p>
+      <div class="row">
+        <button id="btn-bringup-start" class="btn btn-primary">Start bringup</button>
+        <button id="btn-bringup-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="btn-bringup-logs" class="btn">Stream logs</button>
+      </div>
+      <div class="row" style="margin-top: 8px;">
+        <label class="checkbox-label">
+          <input type="checkbox" id="bringup-madgwick-toggle" checked>
+          <span>Enable Magnetometer fusion (Madgwick filter: /imu/data_raw + /imu/mag -&gt; /imu/data)</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top: 8px;">
+        <label class="checkbox-label">
+          <input type="checkbox" id="bringup-auto-toggle" checked>
+          <span>Auto-launch Bringup when Teleop, SLAM, Nav, or Calibration starts</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card" id="card-bringup-health">
+      <h2>Bringup health check (is the robot really publishing?)</h2>
+      <p class="hint">A running bringup process proves nothing on its own -- the
+        microcontroller can be unplugged, the micro-ROS agent can have no session, the
+        LiDAR can be on the wrong port. This probes the ROS graph itself: the publish rate
+        on <code>/odom/unfiltered</code> (wheel odometry straight off the MCU),
+        <code>/odom</code> (EKF-fused), <code>/imu/data</code> and <code>/scan</code>, plus
+        the <code>odom &rarr; base_footprint &rarr; laser</code> TF chain that SLAM and Nav2
+        need before they will do anything useful.</p>
+      <div class="row">
+        <button id="btn-bringup-health" class="btn btn-primary">Check bringup health</button>
+        <span id="bringup-health-summary" class="hint"></span>
+      </div>
+      <div id="bringup-health-table" class="hint" style="margin-top:10px;"></div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="lidar">⬅ Step 6: LiDAR / Scan</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="teleop">Step 8: Teleop &amp; Odometry ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLAM & NAV -->
+  <!-- MAP VIEWER — Zero-RViz browser canvas over rosbridge -->
+  <section class="tab-pane" id="tab-rosviz">
+    <div class="card">
+      <h2>🗺️ Live Map &amp; Navigation Viewer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">companion to step 9</span></h2>
+      <p class="hint">
+        Draws <code>/map</code>, <code>/scan</code> and the robot's pose straight onto an HTML5
+        canvas over <b>rosbridge</b> — no RViz, no noVNC, no X server on the robot. This is the
+        cheap viewer to reach for on a small SBC: the robot only serializes topics, and all the
+        drawing happens in this browser.
+      </p>
+      <p class="hint">
+        Started automatically by <code>bringup.launch.py</code> on port <b>9090</b>
+        (<code>rosbridge:=false</code> to suppress it). Point the URL at the <b>robot computer</b>
+        when you are viewing from a laptop.
+      </p>
+
+      <div class="row" style="align-items:flex-end; gap:10px; flex-wrap:wrap;">
+        <label style="flex:1; min-width:240px;">rosbridge WebSocket URL
+          <input type="text" id="rosviz-url" placeholder="ws://robot.local:9090" spellcheck="false" autocomplete="off">
+        </label>
+        <button id="btn-rosviz-connect" class="btn btn-primary">Connect</button>
+        <button id="btn-rosviz-disconnect" class="btn btn-danger">Disconnect</button>
+      </div>
+
+      <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+        <button id="btn-rosviz-initialpose" class="btn btn-sm" title="Click the robot's true position on the map, drag to aim its heading">
+          📍 2D Pose Estimate <span class="hint" style="opacity:0.7;">/initialpose</span>
+        </button>
+        <button id="btn-rosviz-goal" class="btn btn-sm" title="Click the destination, drag to aim the final heading">
+          🎯 Nav Goal <span class="hint" style="opacity:0.7;">/goal_pose</span>
+        </button>
+        <span style="flex:1;"></span>
+        <button id="btn-rosviz-fit" class="btn btn-sm">Fit map</button>
+        <button id="btn-rosviz-follow" class="btn btn-sm">Centre on robot</button>
+      </div>
+
+      <div class="rosviz-wrap">
+        <canvas id="rosviz-canvas"></canvas>
+      </div>
+
+      <div class="row" style="justify-content:space-between; margin-top:8px; flex-wrap:wrap; gap:8px;">
+        <span id="rosviz-status" class="hint rosviz-status rosviz-status-info">Not connected.</span>
+        <span id="rosviz-topics" class="hint" style="font-family:var(--font-mono, monospace); font-size:0.72rem;"></span>
+      </div>
+
+      <p class="hint" style="margin-top:10px;">
+        <b>Controls:</b> scroll to zoom about the cursor · drag to pan · <kbd>Esc</kbd> cancels an armed tool.
+        Scan points are projected from the robot pose rather than through TF, so a large
+        <code>base_link</code>&nbsp;→&nbsp;<code>laser</code> offset will show a small constant shift.
+      </p>
+    </div>
+  </section>
+
+  <section class="tab-pane" id="tab-slam-nav">
+
+    <!-- Fake Mode Preview Callout in SLAM & Nav -->
+    <div class="card fake-mode-preview-callout" id="slam-fake-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div style="flex:1; min-width:280px;">
+          <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Transition · Autonomy Preview</span>
+          <h3 style="margin:4px 0 0; font-size:1.05rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+            <span>✨ Finished Previewing Map / SLAM / Nav2 in Fake Mode?</span>
+            <span class="badge-pill badge-ok" id="slam-fake-mode-badge" style="font-size:0.72rem; padding:2px 8px;">Zero-Wiring Simulation Active</span>
+          </h3>
+          <p class="hint" style="margin:4px 0 0; color:#cbd5e1;">
+            Once you have verified the simulated Map, SLAM, and Nav2 navigation on your bench, switch Fake Mode <b>OFF</b> to transition into detailed physical hardware design: motor drivers, encoder resolutions, physical pin matrices, and low-level diagnostic tests.
+          </p>
+        </div>
+        <div>
+          <button type="button" class="btn btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700; padding:9px 18px;" title="Disable fake simulation and start real hardware design">
+            ⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design ➔
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🗺️ 9. Visualize &amp; SLAM Mapping / Nav2 Navigation (RViz via browser)</h2>
+      <p class="hint">Most robot computers are headless -- RViz has nowhere to open a window
+        on. This runs RViz against a virtual display and serves it over noVNC, the same idea
+        as the <code>kasmvnc</code> service in the console's <code>docker/docker-compose.yaml</code>,
+        but native (no Docker) to match how the rest of Console installs things. Works whether
+        you're viewing from the robot computer itself or a separate laptop on the network.</p>
+      <p class="hint"><b>Heavier than the rest of Console</b> -- RViz is a full Qt/OpenGL app,
+        and on a small SBC (limited CPU, 4GB RAM class) running it headlessly through Xvfb adds
+        real CPU/memory load on top of Bringup/Nav2. On constrained hardware, prefer the plain
+        Sensors tab's <code>/scan</code> canvas viewer (much cheaper) and only reach for this
+        when you actually need the full map/costmap/TF view.</p>
+      <div class="row">
+        <label>VNC display <input type="text" id="vnc-display" value=":99"></label>
+        <label>noVNC port <input type="text" id="vnc-novnc-port" value="6080"></label>
+        <label>View
+          <select id="vnc-rviz-config">
+            <option value="teleop">Teleop -- robot driving in the odom frame</option>
+            <option value="slam">SLAM -- map, scan and robot</option>
+            <option value="navigation">Navigation -- full Nav2 costmaps</option>
+            <option value="description">Robot model only</option>
+            <option value="">Empty RViz (add displays by hand)</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">The <b>Teleop</b> view is the one to use with a bare module running
+        <code>USE_FAKE_WHEEL</code> firmware: the fixed frame is <code>odom</code>, so the robot
+        is seen driving away from where it started, with odometry arrows tracing the path it
+        thinks it took. Bare <code>rviz2</code> opens with nothing configured and will look
+        empty while you drive.</p>
+      <button id="btn-vnc-start" class="btn btn-primary">Start</button>
+      <button id="btn-vnc-stop" class="btn btn-danger" disabled>Stop</button>
+      <a id="vnc-link" class="hint" href="#" target="_blank" style="display:none">Open RViz in browser &rarr;</a>
+    </div>
+    <div class="card">
+      <h2>SLAM</h2>
+      <button id="btn-slam-start" class="btn btn-primary">Start SLAM</button>
+      <button id="btn-slam-stop" class="btn btn-danger" disabled>Stop</button>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="map-save-name" placeholder="map name">
+        <button id="btn-map-save" class="btn">Save map</button>
+      </div>
+    </div>
+        <div class="card">
+      <h2>Navigation & Mapping</h2>
+      <p class="hint">Runs autonomous navigation or mapping using our unified Nav2 and SLAM launch pipeline, respecting active tuned parameters and custom footprint across ROS 2 distros.</p>
+      <div class="row">
+        <label>Map (for Navigation)
+          <select id="nav-map-select"></select>
+        </label>
+        <button id="btn-refresh-maps" class="btn">Refresh maps</button>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <input type="text" id="nav-params-file" placeholder="(custom params file override, blank = auto-resolve active console config)" style="flex: 1;">
+        <button type="button" class="btn pick-btn" data-pick="file" data-exts="yaml,yml" data-target="nav-params-file">&#128193;</button>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <button id="btn-nav-start" class="btn btn-primary">Start Navigation</button>
+        <button id="btn-nav-stop" class="btn btn-danger" disabled>Stop Navigation</button>
+      </div>
+    </div>
+    <div class="card" id="card-ai-tuning">
+      <h2>AI Navigation, SLAM & EKF Tuning Studio</h2>
+      <p class="hint">Diagnose navigation issues, optimize for specific environments, or configure kinematic parameters (holonomic Mecanum vs Differential 2WD/4WD) using our robotics AI engine and expert presets.</p>
+
+      <!-- AI Prompt Assistant -->
+      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+        <h3 style="margin-top: 0; font-size: 14px; color: var(--accent);">🤖 AI Robotics Tuning Assistant</h3>
+        <div class="row" style="margin-bottom: 8px;">
+          <input type="text" id="ai-tune-prompt" placeholder="Describe symptoms or requirements (e.g. 'Mecanum robot hesitates in 85cm doors and wobbles at goal')..." style="flex: 1;">
+          <button id="btn-ai-tune-ask" class="btn btn-primary">Ask AI</button>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+          <button class="btn btn-sm btn-chip" data-prompt="Mecanum robot needs full lateral strafe and omnidirectional navigation">🤖 Mecanum Strafe</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Robot hesitates and gets stuck in 80cm narrow doorways">🚪 80cm Doorway Hesitation</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Eliminate rotational hunting and oscillation when reaching goal pose">🔄 Stop Goal Oscillation</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Robot drifts sideways and wanders during in-place spins due to odometry slip">🧭 Fix In-Place Drift</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Smooth in-place rotation, eliminate spin slip, and tune rotation shim controller">🔄 Smooth In-Place Rotation</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Robot overshoots destination and blows past goal due to late braking">🛑 Stop Goal Overshoot</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Robot unable to reach nav dest and times out near goal">🎯 Unable to Reach Destination</button>
+          <button class="btn btn-sm btn-chip" data-prompt="High speed open warehouse navigation with smooth cornering">🚀 High Speed Warehouse</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Sub-centimeter high precision SLAM mapping without rotational blur">🗺️ High-Res SLAM</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Map continuously rotating during SLAM due to vibrating noisy IMU (Upstream #113)">🌀 Map Spinning in SLAM</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Obstacles cannot clear in local costmap even after they move out (Upstream #37)">👻 Costmap Ghost Obstacles</button>
+          <button class="btn btn-sm btn-chip" data-prompt="Heavy large robot jerks and vibrates violently under default acceleration (Upstream #76)">🚜 Heavy Robot Jerking</button>
+        </div>
+        <div id="ai-tune-output" style="display: none; background: #0c121e; border: 1px solid var(--border-soft); border-radius: 6px; padding: 12px; margin-top: 8px;">
+          <div id="ai-tune-diagnosis" style="font-size: 13px; color: #93c5fd; margin-bottom: 8px; line-height: 1.4;"></div>
+          <ul id="ai-tune-recs" style="font-size: 12px; color: #cbd5e1; margin: 0 0 10px 18px; padding: 0;"></ul>
+          <div class="row">
+            <button id="btn-ai-tune-apply" class="btn btn-primary">Apply AI Recommendations</button>
+            <span id="ai-tune-status" class="hint" style="align-self: center;"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Presets Selector -->
+      <div class="row" style="margin-bottom: 14px; align-items: flex-end;">
+        <label style="flex: 1;">Tuning Preset
+          <select id="tune-preset-select">
+            <option value="standard_diff">Standard Differential (2WD / 4WD Default)</option>
+            <option value="mecanum_omni">Mecanum (Omnidirectional Strafe Enabled)</option>
+            <option value="cautious_indoor">Cautious / Narrow Passages (80cm Doorways)</option>
+            <option value="anti_drift">Anti-Drift State Estimation (50Hz EKF, No Lateral Slip)</option>
+            <option value="smooth_rotation">Smooth In-Place Rotation (Rotation Shim & Anti-Oscillation)</option>
+            <option value="anti_overshoot">Anti-Overshoot / Active Braking (-2.8 m/s² Decel)</option>
+            <option value="destination_guarantee">Robust Goal Arrival (Anti-Stuck, 8cm Tolerance)</option>
+            <option value="fast_open_space">Fast / Large Open Space (0.8 m/s, 3.0 m/s²)</option>
+            <option value="high_res_slam">High-Definition SLAM Mapping (0.025m Resolution)</option>
+          </select>
+        </label>
+        <button id="btn-apply-preset" class="btn btn-primary">Apply Preset</button>
+      </div>
+
+      <!-- Interactive Parameter Controls -->
+      <details id="tune-interactive-details" style="margin-bottom: 14px; border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; background: rgba(15, 23, 42, 0.4);">
+        <summary style="cursor: pointer; font-weight: 600; color: #e2e8f0; outline: none;">⚡ Quick Parameter Sliders & Robot Kinematics</summary>
+        <div style="margin-top: 10px;">
+          <div class="row">
+            <label>Robot Kinematics
+              <select id="tune-base-type">
+                <option value="2wd">Differential (2WD)</option>
+                <option value="4wd">Skid Steer (4WD)</option>
+                <option value="mecanum">Mecanum (Omnidirectional)</option>
+              </select>
+            </label>
+            <label>Max Linear Vel (m/s)
+              <input type="number" step="0.05" min="0.1" max="2.0" id="tune-max-vel-x" value="0.5">
+            </label>
+            <label>Max Lateral Vel (m/s)
+              <input type="number" step="0.05" min="0.0" max="2.0" id="tune-max-vel-y" value="0.0">
+            </label>
+            <label>Max Angular Vel (rad/s)
+              <input type="number" step="0.1" min="0.5" max="5.0" id="tune-max-vel-theta" value="2.5">
+            </label>
+          </div>
+          <div class="row" style="margin-top: 8px;">
+            <label>Linear Accel (m/s²)
+              <input type="number" step="0.1" min="0.5" max="5.0" id="tune-max-accel-x" value="2.5">
+            </label>
+            <label>Angular Accel (rad/s²)
+              <input type="number" step="0.1" min="0.5" max="6.0" id="tune-max-accel-theta" value="3.2">
+            </label>
+            <label>Costmap Inflation (m)
+              <input type="number" step="0.05" min="0.3" max="1.5" id="tune-inflation-radius" value="0.7">
+            </label>
+            <label>Cost Scaling Factor
+              <input type="number" step="0.5" min="1.0" max="15.0" id="tune-cost-scaling" value="3.0">
+            </label>
+          </div>
+          <div class="row" style="margin-top: 8px;">
+            <label>EKF Frequency (Hz)
+              <input type="number" step="1.0" min="10" max="100" id="tune-ekf-freq" value="50">
+            </label>
+            <label>SLAM Resolution (m)
+              <input type="number" step="0.005" min="0.01" max="0.1" id="tune-slam-res" value="0.05">
+            </label>
+            <label class="checkbox-label" style="align-self: flex-end; margin-bottom: 6px;">
+              <input type="checkbox" id="tune-fuse-vy">
+              <span>Fuse Lateral Vel (EKF vy)</span>
+            </label>
+            <label class="checkbox-label" style="align-self: flex-end; margin-bottom: 6px;">
+              <input type="checkbox" id="tune-fuse-imu-yaw">
+              <span>Fuse IMU Yaw</span>
+            </label>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <button id="btn-apply-interactive-tuning" class="btn btn-primary">Apply Tuning to Active Configs</button>
+            <span id="tune-interactive-status" class="hint" style="align-self: center;"></span>
+          </div>
+        </div>
+      </details>
+
+      <!-- Collapsible Raw Config Editors -->
+      <details id="tune-raw-editors-details" style="border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; background: rgba(15, 23, 42, 0.4);">
+        <summary style="cursor: pointer; font-weight: 600; color: #e2e8f0; outline: none;">📝 Direct YAML Editors (Nav2, EKF & SLAM)</summary>
+        <div style="margin-top: 10px;">
+          <!-- Nav2 Sub-Editor -->
+          <h4 style="margin: 6px 0; color: var(--accent);">Nav2 Parameters</h4>
+          <div class="row" style="margin-bottom: 6px;">
+            <label>Distro:
+              <select id="nav2-editor-distro">
+                <option value="jazzy">Jazzy (Ubuntu 24.04)</option>
+                <option value="lyrical">Lyrical (Ubuntu 26.04)</option>
+                <option value="rolling">Rolling (Development)</option>
+              </select>
+            </label>
+            <button id="btn-nav2-reset-defaults" class="btn btn-sm">Reset Nav2 to Defaults</button>
+          </div>
+          <p class="hint" id="nav2-depth-costmap-hint" style="margin: 0 0 6px;"></p>
+          <textarea id="nav2-config-text" rows="10" style="width: 100%; font-family: var(--font-mono); font-size: 11px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px; margin-bottom: 6px;"></textarea>
+          <div class="row" style="margin-bottom: 14px;">
+            <button id="btn-nav2-save-config" class="btn btn-primary btn-sm">Save Nav2 YAML</button>
+            <span id="nav2-save-status" class="hint" style="align-self: center;"></span>
+          </div>
+
+          <!-- EKF Sub-Editor -->
+          <h4 style="margin: 6px 0; color: var(--accent);">EKF Parameters (robot_localization)</h4>
+          <div class="row" style="margin-bottom: 6px;">
+            <button id="btn-ekf-reset-defaults" class="btn btn-sm">Reset EKF to Defaults</button>
+          </div>
+          <textarea id="ekf-config-text" rows="8" style="width: 100%; font-family: var(--font-mono); font-size: 11px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px; margin-bottom: 6px;"></textarea>
+          <div class="row" style="margin-bottom: 14px;">
+            <button id="btn-ekf-save-config" class="btn btn-primary btn-sm">Save EKF YAML</button>
+            <span id="ekf-save-status" class="hint" style="align-self: center;"></span>
+          </div>
+
+          <!-- SLAM Sub-Editor -->
+          <h4 style="margin: 6px 0; color: var(--accent);">SLAM Toolbox Parameters</h4>
+          <div class="row" style="margin-bottom: 6px;">
+            <button id="btn-slam-reset-defaults" class="btn btn-sm">Reset SLAM to Defaults</button>
+          </div>
+          <textarea id="slam-config-text" rows="8" style="width: 100%; font-family: var(--font-mono); font-size: 11px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px; margin-bottom: 6px;"></textarea>
+          <div class="row" style="margin-bottom: 14px;">
+            <button id="btn-slam-save-config" class="btn btn-primary btn-sm">Save SLAM YAML</button>
+            <span id="slam-save-status" class="hint" style="align-self: center;"></span>
+          </div>
+
+          <!-- Export / Merge / Promote -->
+          <h4 style="margin: 6px 0; color: var(--accent);">Export &amp; Merge</h4>
+          <p class="hint" style="margin: 0 0 6px;">Take the tuned Nav2/EKF/SLAM params out of the console:
+            <b>export</b> a standalone bundle (configs + a launch file), <b>merge</b> the active config's
+            values into the repo template (comment-preserving, per-key), or <b>promote</b> a whole file
+            either direction.</p>
+          <div class="row" style="margin-bottom: 6px;">
+            <input type="text" id="params-export-dir" placeholder="export dir, e.g. ~/my_nav2_params" style="flex: 1;">
+            <button type="button" class="btn pick-btn" data-pick="dir" data-target="params-export-dir">&#128193;</button>
+            <button id="btn-params-export" class="btn btn-sm">Export bundle</button>
+          </div>
+          <div class="row" style="margin-bottom: 6px;">
+            <label style="flex: 1;">Merge active
+              <select id="params-merge-kind">
+                <option value="nav2">Nav2</option>
+                <option value="ekf">EKF</option>
+                <option value="slam">SLAM</option>
+              </select>
+              → <select id="params-merge-target">
+                <option value="template">console template</option>
+                <option value="package">package (linorobot2_navigation)</option>
+              </select>
+            </label>
+            <button id="btn-params-merge-dry" class="btn btn-sm">Preview</button>
+            <button id="btn-params-merge" class="btn btn-primary btn-sm">Merge</button>
+          </div>
+          <div class="row" style="margin-bottom: 6px;">
+            <label style="flex: 1;">Promote whole file
+              <select id="params-promote-dir">
+                <option value="active_to_template">active → console template</option>
+                <option value="template_to_active">console template → active</option>
+                <option value="active_to_package">active → package</option>
+                <option value="package_to_active">package → active</option>
+              </select>
+            </label>
+            <button id="btn-params-promote" class="btn btn-sm">Promote</button>
+          </div>
+          <details style="margin-bottom: 4px;">
+            <summary class="hint" style="cursor: pointer;">Merge an external params file into the active config</summary>
+            <textarea id="params-import-text" rows="4" placeholder="paste an external navigation_*.yaml / ekf.yaml / slam.yaml here"
+              style="width: 100%; font-family: var(--font-mono); font-size: 11px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px; margin: 6px 0;"></textarea>
+            <button id="btn-params-merge-import" class="btn btn-sm">Merge into active</button>
+          </details>
+          <pre id="params-op-result" class="hint" style="white-space: pre-wrap; margin: 4px 0 0; max-height: 160px; overflow: auto;"></pre>
+        </div>
+      </details>
+    </div>
+    <div class=card id=card-ai-custom-robot style="margin-top: 14px;">
+      <h2>🛠️ AI Custom Robot Builder Studio</h2>
+      <p class="hint">Guided end-to-end workflow for designing, tuning, and deploying your custom robot. Provide your mechanical/electrical specs or click a chassis template below to auto-generate the complete software stack (kinematics, EKF, Nav2, SLAM, and sensors).</p>
+      
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">
+        <button class="btn btn-sm btn-robot-chip" data-robot="4WD Mecanum AMR with 97mm wheels, 30cm track width, 25cm wheelbase, LD19 lidar for narrow indoor hallways">🤖 Mecanum 97mm AMR</button>
+        <button class="btn btn-sm btn-robot-chip" data-robot="Differential 2WD robot with 66mm wheels, 16cm track width, RPLIDAR A1 for home service">🐢 TurtleBot-Style 2WD</button>
+        <button class="btn btn-sm btn-robot-chip" data-robot="Heavy 4WD Skid Steer outdoor rover with 130mm wheels, 35cm track width, 28cm wheelbase, high speed">🏎️ 4WD Outdoor Rover</button>
+        <button class="btn btn-sm btn-robot-chip" data-robot="Warehouse logistics AMR with 150mm wheels, 50cm track, fast cruise speed 0.85 m/s">📦 Heavy Delivery AMR</button>
+      </div>
+
+      <div class="row" style="margin-bottom: 8px;">
+        <textarea id="ai-robot-prompt" rows="2" placeholder="Describe your custom robot: chassis type (2WD/4WD/Mecanum), wheel diameter, track width, motors, lidar, environment..." style="flex: 1; font-family: inherit;"></textarea>
+        <button id="btn-ai-robot-generate" class="btn btn-primary" style="align-self: flex-start;">Generate Robot Stack</button>
+      </div>
+
+      <!-- Generated Robot Spec Preview -->
+      <div id="ai-robot-spec-box" style="display: none; background: #0c121e; border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px; margin-top: 10px;">
+        <h3 style="margin-top: 0; color: #38bdf8; font-size: 14px;">📋 Generated Robot Architecture & Kinematics</h3>
+        <div class="row" style="font-size: 12px; color: #cbd5e1; margin-bottom: 10px;">
+          <div><strong>Kinematics:</strong> <span id="spec-base">-</span></div>
+          <div><strong>Wheels:</strong> <span id="spec-wheel">-</span></div>
+          <div><strong>Track:</strong> <span id="spec-track">-</span></div>
+          <div><strong>Wheelbase:</strong> <span id="spec-wheelbase">-</span></div>
+          <div><strong>LiDAR:</strong> <span id="spec-lidar">-</span></div>
+        </div>
+        <div id="spec-workflow" style="font-size: 12px; color: #94a3b8; margin-bottom: 12px; line-height: 1.5;"></div>
+        <div class="row">
+          <button id="btn-ai-robot-deploy" class="btn btn-primary">Deploy Custom Robot Stack (1-Click)</button>
+          <span id="ai-robot-deploy-status" class="hint" style="align-self: center;"></span>
+        </div>
+      </div>
+    </div>
+  
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="teleop">⬅ Step 8: Teleop &amp; Odometry</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="cockpit">Step 10: Mission Operations ➔</button>
+    </div>
+  </section>
+
+  <!-- TELEOP -->
+  <section class="tab-pane" id="tab-teleop">
+
+    <div class="card">
+      <h2>🕹️ 8. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:600;">no hardware needed</span></h2>
+      <p class="hint">Drive the robot from this page -- no physical joystick, and no
+        terminal for <code>teleop_twist_keyboard</code>. Drag the stick (or use the arrow
+        keys / WASD while it has focus) and Console publishes <code>/cmd_vel</code> at
+        20&nbsp;Hz. Pair it with the <b>Teleop</b> RViz view to watch the robot move,
+        which on a bare module running <code>USE_FAKE_WHEEL</code> firmware is the whole
+        robot: cmd_vel drives the simulated wheels and the odometry comes back.</p>
+      <p class="hint"><b>Deadman built in</b> -- the robot is commanded to zero if this
+        page stops sending for half a second, so closing the tab or losing Wi-Fi stops
+        the robot instead of leaving it driving on the last command.</p>
+      <div class="row">
+        <label>Max linear (m/s) <input type="number" step="0.05" id="vgp-max-linear" value="0.4"></label>
+        <label>Max angular (rad/s) <input type="number" step="0.1" id="vgp-max-angular" value="1.2"></label>
+        <label>Topic <input type="text" id="vgp-topic" value="/cmd_vel"></label>
+      </div>
+      <div class="vgp-wrap">
+        <div id="vgp-pad" class="vgp-pad" tabindex="0" role="application"
+             aria-label="Virtual gamepad: drag, or use arrow keys, to drive the robot">
+          <div class="vgp-crosshair vgp-crosshair-h"></div>
+          <div class="vgp-crosshair vgp-crosshair-v"></div>
+          <div id="vgp-knob" class="vgp-knob"></div>
+        </div>
+        <div class="vgp-readout">
+          <div>linear.x <b id="vgp-lx">0.00</b> m/s</div>
+          <div>angular.z <b id="vgp-az">0.00</b> rad/s</div>
+          <div id="vgp-state" class="hint">stopped</div>
+        </div>
+      </div>
+      <div id="vgp-stall" style="display:none; margin:0.5rem 0; padding:0.55rem 0.8rem;
+           border-radius:6px; background:rgba(220,38,38,0.15);
+           border:1px solid rgba(220,38,38,0.6); border-left:4px solid #dc2626;
+           color:#fca5a5; font-size:0.88rem;"></div>
+      <button id="btn-vgp-start" class="btn btn-primary">Start gamepad</button>
+      <button id="btn-vgp-stop" class="btn btn-danger" disabled>Stop</button>
+    </div>
+
+    <div class="card">
+      <h2>🎮 USB gamepad on the robot computer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">needs hardware</span></h2>
+      <p class="hint"><b>This card needs a physical gamepad plugged into the robot computer.</b> Start
+        runs <code>joy_linux_node</code> and <code>teleop_twist_joy</code> there; with no joystick on
+        <code>/dev/input/js*</code> they come up and publish nothing, which looks like the button did
+        not work. If you have no gamepad, use the virtual one above — it needs nothing.</p>
+      <p class="hint">The axis numbers are <em>joystick axis indices</em>, not speeds: on most pads left
+        stick vertical is axis 1 and horizontal is axis 0, which is the default below. The scales are the
+        m/s and rad/s produced at full deflection.</p>
+      <div class="row">
+        <label>Linear axis <input type="number" id="joy-axis-linear" value="1"></label>
+        <label>Linear scale <input type="number" step="0.1" id="joy-scale-linear" value="0.6"></label>
+      </div>
+      <div class="row">
+        <label>Angular axis <input type="number" id="joy-axis-angular" value="0"></label>
+        <label>Angular scale <input type="number" step="0.1" id="joy-scale-angular" value="1.4"></label>
+      </div>
+      <button id="btn-teleop-start" class="btn btn-primary">Start teleop</button>
+      <button id="btn-teleop-stop" class="btn btn-danger" disabled>Stop</button>
+    </div>
+  
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="bringup">⬅ Step 7: Robot Bringup</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="slam-nav">Step 9: SLAM &amp; Nav2 ➔</button>
+    </div>
+  </section>
+
+  <!-- LIDAR / SCAN -->
+  <section class="tab-pane" id="tab-lidar">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">📡 6. Standalone Laser Driver &amp; Radar Viewer</h2>
+        <span class="badge-pill badge-accent" style="font-size:0.75rem; font-weight:700;">Live Sensor Stream</span>
+      </div>
+      <p class="hint">Directly run and verify the 2D LiDAR driver independently of the micro-ROS autonomy stack. Configured model synchronizes with <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">Sensors</a> tab.</p>
+        micro-ROS agent -- the LiDAR talks to the robot computer directly (USB serial or its
+        own WiFi-UDP relay), not through the MCU/agent link.</p>
+      <div class="row">
+        <label>Model
+          <select id="laser-driver-model"></select>
+        </label>
+      </div>
+
+      <div id="laser-driver-simple-fields" class="row">
+        <span class="hint" id="laser-driver-simple-hint"></span>
+      </div>
+
+      <div class="row" id="laser-driver-serial-row">
+        <label style="flex:1">Serial port
+          <input type="text" id="laser-driver-serial-port" list="serial-ports-list"
+                 placeholder="/dev/serial/by-path/... (blank = driver's own /dev symlink)">
+        </label>
+        <button type="button" id="btn-laser-detect-ports" class="btn btn-sm">&#8635; detect</button>
+      </div>
+      <datalist id="serial-ports-list"></datalist>
+      <p class="hint">Stored as <code>/dev/serial/by-path/&hellip;</code> (the physical USB port),
+        which survives reboot and replug &mdash; unlike <code>/dev/ttyUSB<i>n</i></code>, and
+        unlike <code>by-id</code>, which many generic CP2102/CH340 lidar bridges can't populate.
+        Most lidars share a generic UART chip, so pick by <b>physical port</b>; re-run
+        <b>detect</b> after replugging to see which entry moved.</p>
+      <div id="serial-ports-detected" class="hint" style="font-family:monospace"></div>
+
+      <div id="laser-driver-ld-fields" style="display:none">
+        <div class="row">
+          <label>Connection
+            <select id="laser-driver-mode">
+              <option value="serial">Direct serial (USB cable to LiDAR)</option>
+              <option value="udp_bridge">LiDAR-over-WiFi-UDP bridge (linorobot2_hardware firmware feature)</option>
+              <option value="udp_server">Driver-native UDP server</option>
+              <option value="udp_client">Driver-native UDP client</option>
+            </select>
+          </label>
+          <label>Baudrate <input type="text" id="laser-driver-baud"></label>
+        </div>
+        <div class="row" id="laser-driver-udpbridge-row" style="display:none">
+          <p class="hint">The MCU relays raw LiDAR UART bytes as UDP datagrams to this port
+            (its <code>LIDAR_PORT</code>/<code>AGENT_IP</code> setting in config-engine must
+            point at this robot computer). Console bridges them into a local persistent serial
+            device with <code>socat</code>, then points the driver at that device -- there's no
+            other consumer for this feed today.</p>
+          <label>UDP listen port <input type="text" id="laser-driver-udp-port" value="8889"></label>
+          <label>Bridge device path <input type="text" id="laser-driver-bridge-path" value="/dev/lidar_udp_bridge"></label>
+        </div>
+        <div class="row" id="laser-driver-netaddr-row" style="display:none">
+          <label>Server IP <input type="text" id="laser-driver-server-ip" value="0.0.0.0"></label>
+          <label>Server port <input type="text" id="laser-driver-server-port" value="8889"></label>
+        </div>
+      </div>
+
+      <button id="btn-laser-driver-start" class="btn btn-primary">Start laser driver</button>
+      <button id="btn-laser-driver-stop" class="btn btn-danger" disabled>Stop</button>
+    </div>
+
+    <div class="card">
+      <h2>Live /scan viewer</h2>
+      <p class="hint">Plots <code>sensor_msgs/LaserScan</code> straight from the ROS graph, so it
+        needs the laser driver (or Bringup) publishing already. Cheap enough for a small SBC --
+        for the full map / costmap / TF view use the RViz-in-browser card on the
+        <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'cockpit\']')?.click(); return false;">Operations</a> tab.</p>
+      <button id="btn-lidar-start" class="btn btn-primary">Start</button>
+      <button id="btn-lidar-stop" class="btn btn-danger" disabled>Stop</button>
+      <p id="lidar-viewer-status" class="hint lidar-status"></p>
+      <canvas id="lidar-canvas" width="480" height="480"></canvas>
+    </div>
+  
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="hw-tests">⬅ Step 5: Hardware Tests</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="bringup">Step 7: Robot Bringup ➔</button>
+    </div>
+  </section>
+
+  <!-- COCKPIT DASHBOARD -->
+  <section class="tab-pane" id="tab-cockpit">
+    
+    <!-- 1-Click Autonomous Operations Card -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">🚀 10. One-Click Autonomous Operations Pipeline</h2>
+        <span id="cockpit-pipeline-badge" class="pill pill-unknown">Ready</span>
+      </div>
+      <p class="hint">Executes the automated end-to-end mission on this robot computer: micro-ROS agent ➔ bringup ➔ Topic Echo &amp; Rate (Hz) verification gate ➔ SLAM mapping &amp; exploration ➔ Map saver ➔ Nav2 lifecycle activation ➔ Clean teardown.</p>
+      
+      <div class="row" style="margin-top:14px;">
+        <label>Base Controller
+          <select id="cockpit-target-select" style="min-width:260px;">
+            <option value="pico2" selected>Raspberry Pi Pico 2 (Default - Recommended for Beginners)</option>
+            <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
+            <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
+            <option value="esp32">ESP32 DevKit (Default ESP32 controller - Wi-Fi UDP + Fake LiDAR UDP)</option>
+            <option value="esp32_wifi">ESP32 DevKit (Wi-Fi UDP Transport via secrets.yaml)</option>
+
+            <option value="gendrv">Waveshare ESP32 GenDrv (Extensive test controller - Pin 4 LiDAR @ 1.5M)</option>
+            <option value="gendrv_real">Waveshare ESP32 GenDrv (Real Physical Sensors via I2C)</option>
+            <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>
+            <option value="pico">Raspberry Pi Pico (RP2040)</option>
+          </select>
+        </label>
+
+        <label>Bringup Mode
+          <select id="cockpit-pipeline-mode" style="min-width:180px;">
+            <option value="fake" selected>Fake / Zero-Wiring (Default)</option>
+            <option value="real">Real Physical Sensors via I2C</option>
+            <option value="auto">Auto (detect by controller)</option>
+          </select>
+        </label>
+        
+        <label>Explore Duration
+          <div style="display:flex; align-items:center; gap:6px;">
+            <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" style="width:75px; min-width:unset;">
+            <span style="color:var(--text-dim); font-size:12px;">sec</span>
+          </div>
+        </label>
+
+        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;">
+          <input type="checkbox" id="cockpit-no-nav2">
+          <span>Skip Nav2</span>
+        </label>
+
+        <!-- Two settings, because they answer different questions. Auto-update is
+             about a board that has FALLEN BEHIND the tree: on (the default) the
+             run brings it up to date, off leaves it strictly alone, which is the
+             setting for an assembled robot in the field. "Update firmware" forces
+             a write even when the board already runs this build. Neither affects
+             the 4 KB env block, which is written on its own terms whenever the
+             config or the selected application changed. -->
+        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+               title="On (default): when the probe reports the board is running a different build, the run rebuilds and reflashes it. Off: the board keeps its firmware and the run says so before testing against it.">
+          <input type="checkbox" id="cockpit-auto-update" checked>
+          <span>Auto-update firmware when stale</span>
+        </label>
+
+        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+               title="Force a reflash even when the board already runs this build. Leave off unless you mean to rewrite a matching image.">
+          <input type="checkbox" id="cockpit-update-firmware">
+          <span>Force firmware update</span>
+        </label>
+
+        <button type="button" id="btn-cockpit-oneclick" class="btn btn-primary">▶ Start 1-Click Pipeline</button>
+        <button type="button" id="btn-cockpit-stop-pipeline" class="btn btn-danger" disabled>⏹ Abort</button>
+      </div>
+      <div id="cockpit-pipeline-msg" class="hint" style="margin-top:4px;"></div>
+      <div id="cockpit-wifi-hint" class="hint" style="display:none; margin-top:6px; color:#38bdf8;">
+        📡 Wi-Fi credentials are saved in <code>secrets.yaml</code>. <a href="#" id="link-goto-secrets" style="color:#60a5fa; text-decoration:underline;">Configure Wi-Fi Keys &amp; IPs in Config Studio ↗</a>
+      </div>
+
+      <!-- Post-Preview Hardware Design Callout -->
+      <div id="cockpit-fake-mode-banner" style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div style="flex:1; min-width:260px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-weight:700;font-size:0.88rem;color:#38bdf8;">✨ Finished Previewing 1-Click Autonomy?</span>
+            <span class="badge-pill badge-ok" id="cockpit-fake-mode-badge" style="font-size:0.7rem; padding:1px 6px;">Fake Mode Active</span>
+          </div>
+          <span style="font-size:0.8rem;color:#cbd5e1;display:block;margin-top:2px;">Switch Fake Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4);font-weight:700;">
+          ⚡ Switch Fake OFF &amp; Design Hardware ➔
+        </button>
+      </div>
+    </div>
+
+    <!-- Live ROS 2 Topic Echo & Rate Verification Gate Card -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">🔍 ROS 2 Topic Echo &amp; Publishing Rate (Hz) Gate</h2>
+        <button type="button" id="btn-cockpit-verify-topics" class="btn">⚡ Run Rate &amp; Echo Audit</button>
+      </div>
+      <p class="hint">Audits live topic rates (Hz) and validates payload frame IDs (<code>odom</code>, <code>base_footprint</code>, <code>laser</code>) before SLAM/Nav2 gating per <code>scripts/verify_topics.py</code>.</p>
+      
+      <div id="cockpit-topics-container" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-top:12px;">
+        
+        <!-- Odom Card -->
+        <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <b style="font-family:var(--font-mono); color:var(--text-primary);">/odom</b>
+            <span id="topic-badge-odom" class="pill pill-unknown">-- Hz</span>
+          </div>
+          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>10.0 Hz</b></div>
+          <div id="topic-echo-odom" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+        </div>
+
+        <!-- IMU Card -->
+        <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <b style="font-family:var(--font-mono); color:var(--text-primary);">/imu/data</b>
+            <span id="topic-badge-imu" class="pill pill-unknown">-- Hz</span>
+          </div>
+          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>10.0 Hz</b></div>
+          <div id="topic-echo-imu" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+        </div>
+
+        <!-- Scan Card -->
+        <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <b style="font-family:var(--font-mono); color:var(--text-primary);">/scan</b>
+            <span id="topic-badge-scan" class="pill pill-unknown">-- Hz</span>
+          </div>
+          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>5.0 Hz</b></div>
+          <div id="topic-echo-scan" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- UDP Syslog Server & Live Telemetry Logger Card -->
+    <div class="card" id="card-syslog-server">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">📡 UDP Syslog Server &amp; Live Telemetry Logger</h2>
+        <span id="syslog-status-badge" class="pill pill-warn">Syslog: Offline</span>
+      </div>
+      <p class="hint">Captures debug telemetry and live logs over UDP from ESP32, Pico W, and Pico 2 W microcontrollers (UDP port 5140 by default; set <code>telemetry.syslog_port</code> in secrets.yaml to change it).</p>
+      <div class="row" style="gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <label style="flex:0.6; min-width:110px;">UDP Port
+          <input type="number" id="cfg-syslog-server-port" placeholder="514 or 5140" value="5140">
+        </label>
+        <div style="display:flex; gap:8px; align-items:flex-end;">
+          <button type="button" id="btn-syslog-start" class="btn btn-primary">▶️ Launch Syslog Server</button>
+          <button type="button" id="btn-syslog-stop" class="btn btn-danger" style="display:none;">⏹️ Stop Syslog Server</button>
+          <button type="button" id="btn-syslog-logs" class="btn">📂 Inspect Logs</button>
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-left:auto;">
+          <input type="checkbox" id="chk-stream-syslog-terminal" checked> Stream into Terminal
+        </label>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; background:#0c1220; border:1px solid var(--border-soft); border-radius:6px; padding:10px; font-size:12px;">
+        <div><span style="color:var(--text-dim);">Active Log:</span> <code id="syslog-stat-file" style="color:#38bdf8;">logs/syslog_YYYYMMDD.log</code></div>
+        <div><span style="color:var(--text-dim);">Packets Received:</span> <strong id="syslog-stat-packets" style="color:var(--success);">0</strong></div>
+        <div><span style="color:var(--text-dim);">Last Sender:</span> <span id="syslog-stat-client" style="font-family:var(--font-mono); color:var(--warning);">--</span></div>
+      </div>
+    </div>
+
+    <!-- SSoT Profile Callout Card -->
+    <div class="card" style="background:linear-gradient(135deg,rgba(15,23,42,0.8),rgba(30,41,59,0.7)); border-left:4px solid var(--accent-primary);">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+            <span>⚙️ Central Parameter Profile (<code>&lt;robot&gt;_config.yaml</code>)</span>
+            <span class="badge-pill badge-accent" style="font-size:0.75rem;">Single Source of Truth</span>
+          </h2>
+          <p class="hint" style="margin:4px 0 0;">Robot kinematics, motor pins, EKF fusion matrices, and Nav2 costmaps are edited, imported, exported, and validated centrally in <strong>Config Studio</strong>.</p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'settings\']')?.click(); return false;">⚙️ Open Config Studio ➔</button>
+      </div>
+      <!-- Hidden elements preserved for JS event handler compatibility -->
+      <textarea id="cockpit-params-yaml" style="display:none;"></textarea>
+      <button type="button" id="btn-cockpit-reload-params" style="display:none;"></button>
+      <button type="button" id="btn-cockpit-save-params" style="display:none;"></button>
+      <span id="cockpit-params-msg" style="display:none;"></span>
+    </div>
+
+    <!-- Saved Maps Gallery Card -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">🗺️ Saved SLAM Maps Gallery</h2>
+        <button type="button" id="btn-cockpit-refresh-maps" class="btn">🔄 Refresh Maps</button>
+      </div>
+      <p class="hint">Saved occupancy grid maps located in <code>maps/</code>.</p>
+      <div id="cockpit-maps-container" style="display:flex; gap:16px; flex-wrap:wrap; margin-top:12px;"></div>
+    </div>
+
+  
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="slam-nav">⬅ Step 9: SLAM &amp; Nav2</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="secrets">Step 11: 🔐 Secrets ➔</button>
+    </div>
+  </section>
+
+  <!-- SECRETS (secrets.yaml) -->
+  <section class="tab-pane" id="tab-secrets">
+    <div class="card" id="card-secrets-settings">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">🔐 Wi-Fi &amp; Network Secrets (<code>secrets.yaml</code>)</h2>
+        <span class="pill pill-unknown" id="secrets-status-pill">checking...</span>
+      </div>
+      <p class="hint">
+        Credentials, Wi-Fi keys, and telemetry IP endpoints are strictly isolated to the gitignored
+        <code>secrets.yaml</code> (Invariant 3). Entering values here automatically writes
+        <code>secrets.yaml</code> and triggers firmware header generation (<code>lino_base_config.h</code>)
+        without ever committing plain-text keys to Git.
+      </p>
+
+      <!-- Wi-Fi Station Credentials Section -->
+      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">📡 Wi-Fi Station Credentials (ESP32 / Pico W / Pico 2 W)</h3>
+      <div class="row" style="gap:12px; flex-wrap:wrap;">
+        <label style="flex:1; min-width:200px;">Wi-Fi SSID
+          <input type="text" id="secrets-wifi-ssid" placeholder="Enter Wi-Fi SSID..." autocomplete="off">
+        </label>
+        <label style="flex:1; min-width:200px;">Wi-Fi Password
+          <div style="display:flex; gap:6px;">
+            <input type="password" id="secrets-wifi-password" placeholder="Enter Wi-Fi Password..." autocomplete="new-password" style="flex:1;">
+            <button type="button" class="btn" id="btn-toggle-secrets-pw" title="Show/Hide Password">👁️</button>
+          </div>
+        </label>
+      </div>
+
+      <!-- Static IP / Addressing (Optional) -->
+      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">🌐 IP Addressing (Blank = DHCP)</h3>
+      <div class="row" style="gap:12px; flex-wrap:wrap;">
+        <label style="flex:1; min-width:140px;">Static IP (optional)
+          <input type="text" id="secrets-wifi-static-ip" placeholder="Leave blank for DHCP (e.g. 192.168.1.50)">
+        </label>
+        <label style="flex:1; min-width:140px;">Gateway (optional)
+          <input type="text" id="secrets-wifi-gateway" placeholder="e.g. 192.168.1.1">
+        </label>
+        <label style="flex:1; min-width:140px;">Subnet Mask
+          <input type="text" id="secrets-wifi-subnet" placeholder="255.255.255.0" value="255.255.255.0">
+        </label>
+        <label style="flex:1; min-width:140px;">DNS Server
+          <input type="text" id="secrets-wifi-dns" placeholder="8.8.8.8" value="8.8.8.8">
+        </label>
+      </div>
+
+      <!-- micro-ROS & Telemetry Endpoints -->
+      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">🎯 micro-ROS &amp; Telemetry Endpoints</h3>
+      <div class="row" style="gap:12px; flex-wrap:wrap;">
+        <label style="flex:1; min-width:160px;">micro-ROS Agent IP
+          <input type="text" id="secrets-agent-ip" placeholder="192.168.1.100">
+        </label>
+        <label style="flex:0.6; min-width:100px;">Agent UDP Port
+          <input type="number" id="secrets-agent-port" placeholder="8888" value="8888">
+        </label>
+        <label style="flex:1; min-width:160px;">Syslog Server IP
+          <input type="text" id="secrets-syslog-server" placeholder="192.168.1.100">
+        </label>
+        <label style="flex:0.6; min-width:100px;">Syslog Port
+          <input type="number" id="secrets-syslog-port" placeholder="514 or 5140" value="514">
+          <span style="font-size:10.5px; color:var(--text-dim); display:block; margin-top:2px;">(Falls back to 5140 in rootless)</span>
+        </label>
+        <label style="flex:0.6; min-width:100px;">ArduinoOTA Port
+          <input type="number" id="secrets-ota-port" placeholder="3232" value="3232">
+        </label>
+      </div>
+
+      <!-- Actions -->
+      <div class="row" style="margin-top:14px; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button type="button" id="btn-save-secrets" class="btn btn-primary">💾 Save secrets.yaml &amp; Generate Header</button>
+        <button type="button" id="btn-reload-secrets" class="btn">🔄 Reload</button>
+        <button type="button" id="btn-toggle-secrets-yaml" class="btn">📋 Toggle Raw YAML</button>
+        <span id="secrets-save-status" class="hint" style="margin-left:8px;"></span>
+      </div>
+
+      <!-- Optional Raw YAML editor (collapsible) -->
+      <div id="secrets-raw-container" style="display:none; margin-top:12px;">
+        <p class="hint" style="margin-bottom:4px;">Direct <code>secrets.yaml</code> editor:</p>
+        <textarea id="secrets-raw-editor" rows="10" style="width:100%; font-family:var(--font-mono); font-size:12px; background:#0c121e; color:#cbd5e1; border:1px solid var(--border-soft); border-radius:6px; padding:10px;"></textarea>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="cockpit">⬅ Step 10: Operations</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="settings">Step 12: Config Studio ➔</button>
+    </div>
+  </section>
+
+  <!-- CONFIG STUDIO (SYSTEM & ROBOT PROFILE) -->
+  <section class="tab-pane" id="tab-settings">
+    <div class="card" style="border-left: 4px solid var(--accent); margin-bottom: 14px;">
+      <h3 style="margin:0 0 6px 0;">⚙️ Config Studio &amp; System Runtime</h3>
+      <p class="hint" style="margin:0;">
+        Authoritative studio for the single source of truth <code>&lt;robot&gt;_config.yaml</code> profile, workspace path, container runtime engines, and headless boot autostart daemons.<br>
+        • <strong>MCU &amp; Serial Connection:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'base-mcu\']')?.click(); return false;" style="color:var(--accent);">Base &amp; MCU</a>.<br>
+        • <strong>Wi-Fi &amp; Network Passwords:</strong> Managed securely in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'secrets\']')?.click(); return false;" style="color:var(--accent);">🔐 Secrets</a>.
+      </p>
+    </div>
+
+    <div class="card" id="card-config-dir">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <h2 style="margin:0;">Config Directory</h2>
+        <span class="pill" id="config-git-pill">checking…</span>
+      </div>
+      <p class="hint" style="margin:0 0 8px;">Your robot configs live outside this repo, in their own git
+        repository, so an update of the cockpit never touches them and your robots travel with you.
+        Set <code>COCKPIT_CONFIG_DIR</code> to move it. Credentials (<code>secrets.yaml</code>), the access
+        token and the generated URDF are ignored by that repo and are never committed.</p>
+      <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center;">
+        <code id="config-dir-path" style="flex:1; min-width:220px; word-break:break-all;">…</code>
+        <input type="text" id="config-commit-message" placeholder="Commit message (optional)"
+               style="flex:1; min-width:200px;">
+        <button id="btn-config-commit" class="btn btn-primary">Commit config</button>
+        <button id="btn-config-git-refresh" class="btn">Refresh</button>
+      </div>
+      <p class="hint" id="config-git-detail" style="margin:8px 0 0;"></p>
+      <pre id="config-git-changes" style="display:none; margin:8px 0 0; padding:8px; max-height:160px; overflow:auto; background:#0c121e; color:#cbd5e1; border:1px solid var(--border-soft); border-radius:6px; font-size:12px;"></pre>
+    </div>
+
+    <div class="card" id="card-unified-config-settings">
+      <h2>Robot &amp; Nav2 Configuration Studio (<code>robot_config.yaml</code>)</h2>
+      <p class="hint">The single file of truth holding Linorobot2 robot parameters (kinematics, sensors, micro-ROS) + Nav2 navigation stack + EKF sensor fusion + SLAM mapping. Import or export to clone your entire robot configuration across machines with one click.</p>
+      <div class="row" style="margin-bottom: 8px; gap: 8px; flex-wrap: wrap;">
+        <button id="btn-unified-load" class="btn">Reload from Active</button>
+        <button id="btn-unified-save" class="btn btn-primary">Save robot_config.yaml</button>
+        <button id="btn-unified-export" class="btn">Download robot_config.yaml</button>
+        <span id="unified-status" class="hint" style="align-self: center;"></span>
+      </div>
+      <textarea id="unified-config-editor" rows="18" style="width: 100%; font-family: var(--font-mono); font-size: 12px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 10px;" placeholder="Loading robot_config.yaml..."></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Workspace Directory</h2>
+      <div class="row">
+        <input type="text" id="cfg-workspace"><button type="button" class="btn pick-btn" data-pick="dir" data-target="cfg-workspace">&#128193;</button>
+        <button id="btn-save-workspace" class="btn">Save</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">Container Engine &amp; Image Registry</h2>
+        <span class="pill pill-ok">Runtime Environment</span>
+      </div>
+      <p class="hint">Select rootless container runtime or native host execution. Note: the base controller and its serial connection are configured centrally in <strong>Base &amp; MCU</strong>. Agent launch and monitoring are handled in <strong>Bringup</strong>.</p>
+      <div class="row" style="align-items: flex-end; gap: 10px;">
+        <label style="flex: 1;">Agent Engine
+          <select id="cfg-agent-engine">
+            <option value="" selected>Auto -- follow the Workflow setting (native / docker / podman)</option>
+            <option value="docker">Docker (Rootless container image, skips source build)</option>
+            <option value="podman_systemd">Podman + systemd (Persistent user service)</option>
+            <option value="podman">Podman (Rootless container, no daemon)</option>
+            <option value="native">Native (ros2 run / ~/uros_ws build)</option>
+          </select>
+        </label>
+        <button type="button" class="btn" id="btn-settings-rootless-guide">❓ Rootless Guide</button>
+      </div>
+      <div class="row" style="align-items: flex-end; gap: 10px; margin-top: 8px;">
+        <label style="flex: 1;">Container Registry
+          <select id="cfg-container-registry">
+            <option value="auto" selected>Auto (Cluster probe, fallback to Docker Hub)</option>
+            <option value="cluster">Private registry (set host below)</option>
+            <option value="dockerhub">Docker Hub (Direct / Official)</option>
+            <option value="custom">Custom Registry...</option>
+          </select>
+        </label>
+        <input type="text" id="cfg-custom-registry" placeholder="hostname:port" style="display:none; flex:1; max-width:200px;">
+      </div>
+      <!-- Hidden legacy inputs retained for backwards-compatible state serialization -->
+      <input type="checkbox" id="cfg-agent-use-docker" checked style="display:none;">
+      <select id="cfg-agent-transport" style="display:none;"><option value="serial">Serial</option><option value="udp4">UDP4</option></select>
+      <input type="text" id="cfg-agent-device" style="display:none;">
+      <input type="text" id="cfg-agent-port" style="display:none;">
+      <input type="text" id="cfg-agent-baud" style="display:none;">
+      <div class="row" style="margin-top:12px;">
+        <button id="btn-save-agent" class="btn">Save Engine Preferences</button>
+      </div>
+    </div>
+    <div class="card" id="card-robot-autostart">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;">⚡ Robot Boot Autostart (Headless Daemon)</h2>
+        <span class="pill pill-unknown" id="autostart-status-pill">checking...</span>
+      </div>
+      <p class="hint">Enable automatic unattended startup of micro-ROS Agent, Robot Bringup, and Nav2 Navigation when the robot computer powers on (via Linux user systemd &amp; lingering). Survives reboots and reconnects without requiring SSH login or browser interaction.</p>
+      
+      <div class="row" style="gap:12px; flex-wrap:wrap;">
+        <label style="flex:1; min-width:220px;">Target Autostart Stack
+          <select id="autostart-stack-select">
+            <option value="full_nav2" selected>Full Autonomous Stack (Agent + Bringup + Nav2)</option>
+            <option value="agent_bringup">Sensors &amp; Teleop (micro-ROS Agent + Robot Bringup)</option>
+            <option value="agent_only">micro-ROS Agent Only</option>
+          </select>
+        </label>
+        <label style="flex:1; min-width:220px;">Navigation Map / Mode
+          <input type="text" id="autostart-map-path" placeholder="empty = SLAM online mapping mode">
+        </label>
+        <button type="button" class="btn pick-btn" data-pick="file" data-exts="yaml,yml" data-target="autostart-map-path" style="align-self:flex-end;">&#128193;</button>
+      </div>
+
+      <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+        <button type="button" id="btn-autostart-enable" class="btn btn-primary">⚡ Enable Boot Autostart</button>
+        <button type="button" id="btn-autostart-disable" class="btn btn-danger">🛑 Disable Autostart</button>
+        <button type="button" id="btn-autostart-status" class="btn">🔍 Check Status</button>
+        <button type="button" id="btn-autostart-logs" class="btn">📜 View Journal Logs</button>
+      </div>
+
+      <div id="autostart-info-box" style="margin-top:10px; display:none; background:#0c121e; border:1px solid var(--border-soft); border-radius:6px; padding:10px; font-size:12px;">
+        <div id="autostart-summary-text" style="color:#38bdf8; font-weight:600; margin-bottom:4px;"></div>
+        <pre id="autostart-details-text" style="margin:0; max-height:160px; overflow-y:auto; color:#94a3b8; font-family:var(--font-mono); font-size:11px;"></pre>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ROS 2 Distribution &amp; Automation</h2>
+      <div class="row">
+        <label>ROS 2 Distro
+          <select id="cfg-ros-distro">
+            <option value="jazzy">Jazzy (Ubuntu 24.04 LTS)</option>
+            <option value="lyrical">Lyrical (Ubuntu 26.04 Next-Gen)</option>
+            <option value="rolling">Rolling (Rolling Development)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="cfg-auto-bringup" checked>
+          <span>Automatically start Robot Bringup when Teleop, SLAM, Nav, or Calibration starts</span>
+        </label>
+      </div>
+      <p class="hint">Console automatically adapts ROS environment sourcing, git branch fallbacks (<code>$ROS_DISTRO</code> &rarr; <code>main</code> &rarr; <code>jazzy</code>), micro-ROS container images, and Nav2 launch configurations across distributions.</p>
+      <button id="btn-save-distro" class="btn">Save</button>
+    </div>
+  
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="secrets">⬅ Step 11: 🔐 Secrets</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="install">Step 13: Containers &amp; System Install ➔</button>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="tab-pane" id="tab-install">
+    <div class="card">
+      <h2>Import or export a robot profile</h2>
+      <p class="hint">Move a robot between machines as one file. A profile is a
+      <b><code>&lt;robot&gt;_config.yaml</code></b> from <code>~/linorobot2-config/</code> — kinematics,
+      pins, sensors, micro-ROS transport, EKF, SLAM and Nav2 in one place — and importing one writes it
+      there, where <strong>Config Studio</strong> edits it and where it is the single source of truth for
+      every tab. Firmware, pinouts and flashing live in <em>this</em> repo, not in
+      <code>linorobot2_hardware</code>; a legacy <code>custom_config.h</code> from that project can be
+      imported here and is converted.</p>
+      <div class="row">
+        <input type="text" id="import-path" placeholder="/path/to/robot_config.yaml or custom_config.h">
+        <button type="button" class="btn pick-btn" data-pick="file" data-exts="yaml,yml,h" data-target="import-path">&#128193;</button>
+        <button id="btn-import" class="btn btn-primary">Import Profile</button>
+        <button id="btn-export-unified" class="btn">Export robot_config.yaml</button>
+      </div>
+      <div id="import-result" class="hint"></div>
+    </div>
+
+    <div class="card">
+      <h2>Install mode</h2>
+      <div class="row">
+        <label>Mode
+          <select id="install-mode">
+            <option value="native">Native (build directly on this machine)</option>
+            <option value="docker">Docker</option>
+            <option value="podman">Podman</option>
+          </select>
+        </label>
+        <label>Base type
+          <select id="install-base">
+            <option value="2wd">Differential drive (2WD)</option>
+            <option value="4wd">Skid steer (4WD)</option>
+            <option value="mecanum">Mecanum</option>
+          </select>
+        </label>
+        <label>Workspace path
+          <input type="text" id="install-workspace"><button type="button" class="btn pick-btn" data-pick="dir" data-target="install-workspace">&#128193;</button>
+        </label>
+      </div>
+      <p class="hint">Docker/Podman need no ROS install on this machine at all -- linorobot2's
+        own <code>docker/Dockerfile</code> builds everything (including sensor drivers) inside
+        the image; the console drives it from its own compose stack at
+        <code>tools/console/docker/</code>. Useful on unsupported OS versions, or when
+        you'd rather not touch the host. Native builds directly on this machine instead.</p>
+    </div>
+
+    <div id="install-native-cards">
+      <div class="card">
+        <h2>1. Base install</h2>
+        <p class="hint">Clones <code>linorobot2</code> (branch = detected <code>$ROS_DISTRO</code>) into the
+          workspace, skips the Gazebo package, then <code>rosdep install</code> + <code>colcon build</code>.
+          No setup script is invoked.</p>
+        <button id="btn-install-base" class="btn btn-primary">Run base install</button>
+      </div>
+
+      <div class="card">
+        <h2>2. Laser sensor (optional)</h2>
+        <div class="row">
+          <select id="install-laser"><option value="">-- none --</option></select>
+          <label class="checkbox"><input type="checkbox" id="laser-skip-udev"> Skip udev rules</label>
+          <button id="btn-install-laser" class="btn">Install</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>3. Depth camera (optional)</h2>
+        <div class="row">
+          <select id="install-depth"><option value="">-- none --</option></select>
+          <label class="checkbox"><input type="checkbox" id="depth-skip-udev"> Skip udev rules</label>
+          <button id="btn-install-depth" class="btn">Install</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="install-docker-card" style="display:none">
+      <div class="card">
+        <h2>1. Build image</h2>
+        <div class="row">
+          <label>Image type
+            <select id="docker-base-image">
+              <option value="hardware">hardware (physical robot)</option>
+              <option value="gazebo">gazebo (simulation)</option>
+              <option value="gazebo-cuda">gazebo-cuda (simulation, NVIDIA GPU)</option>
+            </select>
+          </label>
+          <label>Laser sensor
+            <select id="docker-laser-sensor"><option value="">-- none --</option></select>
+          </label>
+          <label>Depth sensor
+            <select id="docker-depth-sensor"><option value="">-- none --</option></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>Base serial port <input type="text" id="docker-base-serial-port" value="/dev/ttyACM0"></label>
+          <button type="button" class="btn pick-btn" data-pick="serial" data-target="docker-base-serial-port">&#128268; ports</button>
+          <label>ROS_DOMAIN_ID <input type="text" id="docker-ros-domain-id" value="0"></label>
+          <label>GPU_ID (gazebo-cuda only) <input type="text" id="docker-gpu-id" value="0"></label>
+        </div>
+        <p class="hint">Writes <code>tools/console/docker/.env</code> +
+          <code>devices.generated.yaml</code> (the base serial + lidar device mappings) into the
+          <b>console's own</b> compose dir -- the repo's <code>docker/</code> is never written --
+          then clones linorobot2 (if needed) and runs
+          <code>docker compose --env-file .env -f docker-compose.yaml -f devices.generated.yaml build</code>.
+          Sensor drivers install <i>inside</i> the image via linorobot2's own <code>install.bash</code>
+          (the documented Docker build path, not run on this host).</p>
+        <button id="btn-docker-build" class="btn btn-primary">Write config + build image</button>
+      </div>
+
+      <div class="card">
+        <h2>2. Host udev rules</h2>
+        <p class="hint">The image already contains the sensor drivers -- this only creates the
+          persistent <code>/dev/&lt;sensor&gt;</code> symlink on the host, using Console's own
+          native udev-rule commands (same as the native Laser/Depth sensor install cards above),
+          not <code>install.bash</code>.</p>
+        <button id="btn-docker-udev" class="btn">Install udev rules for selected sensors</button>
+      </div>
+
+      <div class="card">
+        <h2>3. Run a service</h2>
+        <div class="row">
+          <select id="docker-service">
+            <option value="kasmvnc">kasmvnc -- browser visualization at http://&lt;host&gt;:3000</option>
+            <option value="bringup">bringup -- robot hardware stack</option>
+            <option value="slam">slam</option>
+            <option value="navigate">navigate</option>
+            <option value="save-map">save-map (one-shot)</option>
+            <option value="rviz">rviz</option>
+            <option value="gazebo">gazebo (simulation)</option>
+            <option value="dev">dev (shell container, sleeps)</option>
+          </select>
+        </div>
+        <p class="hint">Runs in the foreground through the same console pane as everything else
+          in Console -- Stop sends the container(s) a normal <code>compose stop</code> signal.
+          Start <code>kasmvnc</code> alongside <code>bringup</code>/<code>slam</code>/etc. (in a
+          second Console tab, since each occupies the one exec slot) for GUI output from any of
+          them.</p>
+        <button id="btn-docker-service-start" class="btn btn-primary">Start</button>
+        <button id="btn-docker-service-stop" class="btn btn-danger" disabled>Stop</button>
+        <button id="btn-docker-down" class="btn">Stop + remove all containers</button>
+        <a id="btn-open-vnc" class="btn" href="http://localhost:3000/" target="_blank" rel="noopener">Open VNC Display (:3000) ↗</a>
+      </div>
+    </div>
+  
+    <div style="display:flex; justify-content:flex-start; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="settings">⬅ Step 12: Config Studio</button>
+    </div>
+  </section>
+
+</main>
+
+<div class="console-wrap" id="console-wrap">
+  <div class="console-header" id="console-header" title="Click header or toggle button to shrink/expand terminal into one line">
+    <span class="console-icon">💻</span>
+    <span id="console-title" style="font-weight:600;">Output</span>
+    <span id="console-last-line" class="console-last-line"></span>
+    <button type="button" id="console-clear" class="btn-mini" title="Clear console output">Clear</button>
+    <button type="button" id="console-collapse" class="btn-console-toggle" title="Shrink terminal into one line">
+      <span id="console-collapse-icon">_</span>
+      <span id="console-collapse-label">1-Line</span>
+    </button>
+  </div>
+  <pre class="console-pane" id="console-pane"></pre>
+</div>
+
+<div id="picker-overlay">
+  <div id="picker-panel" role="dialog" aria-modal="true">
+    <div class="pk-head"><span id="picker-title">Pick</span><button id="picker-close" class="btn-mini">&times;</button></div>
+    <div id="picker-path" hidden>
+      <button id="picker-up" class="btn-mini" title="Up one level">&#8593;</button>
+      <code id="picker-cwd">/</code>
+    </div>
+    <div id="picker-list"></div>
+    <div class="pk-foot">
+      <span class="hint" id="picker-hint"></span>
+      <button id="picker-refresh" class="btn btn-sm">&#8635; rescan</button>
+      <button id="picker-use" class="btn btn-primary btn-sm" hidden>Use this folder</button>
+      <button id="picker-cancel" class="btn btn-sm">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script src="rosviz.js"></script>
+<script src="webserial.js"></script>
+<!-- micro-ROS Agent Port Conflict Modal -->
+<div id="port-modal-overlay">
+  <div id="port-modal-panel">
+    <div class="pk-head">
+      <span style="color:#ef4444; font-size:14px; font-weight:bold;">⚠️ micro-ROS Agent Port Conflict</span>
+      <button type="button" class="btn btn-sm" id="btn-close-port-modal" style="margin-left:auto;">&times;</button>
+    </div>
+    <div style="padding: 14px;">
+      <p id="port-conflict-summary" style="font-weight:600; font-size:14px; margin:0 0 10px 0; color:#fca5a5;"></p>
+      <div id="port-conflict-details" style="font-family:monospace; font-size:12px; background:rgba(0,0,0,0.45); padding:10px; border-radius:6px; margin-bottom:15px; max-height:160px; overflow-y:auto; white-space:pre-wrap; color:#e2e8f0;"></div>
+      <p class="hint" style="margin:0 0 15px 0;">Another process, agent, or container is currently accessing this port. If you proceed without releasing the port, serial connection or agent startup will fail.</p>
+      <div class="row" style="gap:10px; justify-content:flex-end;">
+        <button type="button" class="btn" id="btn-ignore-port-conflict">Ignore</button>
+        <button type="button" class="btn btn-danger" id="btn-release-port-conflict">⚡ Release Port &amp; Stop Agent</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Rootless Docker Daemon & Podman Setup Guide Modal -->
+<div id="modal-rootless-docker" class="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(8px);">
+  <div class="modal-card" style="background:var(--bg-card, #111827);border:1px solid #38bdf8;border-radius:14px;padding:26px 30px;min-width:420px;max-width:680px;width:90%;box-shadow:0 25px 65px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:1.6rem;">🐳</span>
+        <div>
+          <h3 style="margin:0;font-size:1.15rem;color:#f8fafc;">Linux Rootless Container Guide</h3>
+          <p style="margin:2px 0 0 0;font-size:0.8rem;color:#94a3b8;">Prevent root file ownership on bind-mounted directories</p>
+        </div>
+      </div>
+      <button type="button" id="btn-close-rootless-modal" class="btn btn-sm" style="font-size:1.1rem;padding:2px 8px;">✕</button>
+    </div>
+
+    <div style="background:rgba(56, 189, 248, 0.1);border:1px solid rgba(56, 189, 248, 0.3);border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+      <div style="font-weight:600;font-size:0.84rem;color:#38bdf8;margin-bottom:4px;">💡 Why Rootless Docker on Linux?</div>
+      <p style="margin:0;font-size:0.8rem;color:#cbd5e1;line-height:1.45;">
+        When standard (rootful) Docker executes container builds with volume mounts (<code>-v "$(pwd):/workspace"</code>), all generated files (such as <code>.env</code>, <code>devices.generated.yaml</code>, and build artifacts) are written as <strong>root:root</strong>. This causes local Git commit errors and permission denies during local development.
+        <strong>Rootless Docker</strong> and <strong>Podman</strong> run completely inside your user namespace, guaranteeing all files stay owned by your normal user account.
+      </p>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;">⚡ 1-Click Setup: Ubuntu / Debian / Raspberry Pi OS</span>
+        <button type="button" id="btn-copy-rootless-ubuntu" class="btn btn-sm" style="font-size:0.75rem;">📋 Copy Script</button>
+      </div>
+      <pre style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:6px;font-family:var(--font-mono, monospace);font-size:0.75rem;color:#38bdf8;overflow-x:auto;margin:0;"><code id="code-rootless-ubuntu"># 1. Install prerequisites
+sudo apt-get update && sudo apt-get install -y uidmap dbus-user-session slirp4netns
+# 2. Run official rootless installer (non-root)
+dockerd-rootless-setuptool.sh install
+# 3. Enable user systemd service and persistent lingering
+systemctl --user enable --now docker.service
+loginctl enable-linger $USER
+# 4. Point DOCKER_HOST to your user socket
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"
+grep -q "DOCKER_HOST" ~/.bashrc || echo 'export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"' >> ~/.bashrc</code></pre>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;">🦭 Alternative: Podman (Rootless by Default — No Daemon!)</span>
+        <button type="button" id="btn-copy-rootless-podman" class="btn btn-sm" style="font-size:0.75rem;">📋 Copy</button>
+      </div>
+      <pre style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:6px;font-family:var(--font-mono, monospace);font-size:0.75rem;color:#a78bfa;overflow-x:auto;margin:0;"><code id="code-rootless-podman">sudo apt-get install -y podman  # Fedora: sudo dnf install -y podman
+# Podman works immediately with zero daemon configuration:
+podman run --rm hello-world</code></pre>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;display:block;margin-bottom:6px;">🖥️ Windows &amp; macOS Note</span>
+      <p style="margin:0;font-size:0.78rem;color:#94a3b8;line-height:1.4;">
+        On Windows (WSL2 / Docker Desktop) and macOS (Docker Desktop / Colima), volume mount permissions are already automatically mapped to the host user by the hypervisor layer. No rootless daemon configuration is required.
+      </p>
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.1);padding-top:14px;">
+      <div id="rootless-status-text" style="font-size:0.78rem;color:#38bdf8;">Status: Ready to test container engine.</div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" id="btn-setup-rootless-docker" class="btn btn-sm btn-accent" style="background:#0284c7;color:#fff;">⚡ Setup Rootless Now</button>
+        <button type="button" id="btn-test-rootless-daemon" class="btn btn-sm">🔍 Test Daemon</button>
+        <button type="button" id="btn-close-rootless-modal-foot" class="btn btn-sm btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,28 @@
+# This is an user meta for pico/pico2 to override the default in common.meta, which
+# enables atomic ops functions in micro-ros/rcutils. But pico-sdk has build-in
+# atomic ops, so they conflict and result in link errors.
+#
+# https://github.com/micro-ROS/micro_ros_platformio/blob/main/metas/common.meta#L25
+# https://github.com/micro-ROS/rcutils/blob/kilted/CMakeLists.txt#L8
+#
+#
+# A best-effort XRCE stream cannot fragment: a message has to fit one
+# transport MTU, and the client's default for a custom transport is 512
+# bytes. nav_msgs/Odometry with its two 6x6 covariances is ~720 bytes, so a
+# best-effort /odom/unfiltered failed on every cycle (fail=50/s on the UART1
+# diagnostic) while the ~300-byte Imu went through. 1024 fits it with room;
+# the cost is a few KB of stream buffers (MTU x history per stream).
+{
+    "names": {
+        "rcutils": {
+            "cmake-args": [
+                "-DRCUTILS_NO_64_ATOMIC=OFF"
+            ]
+        },
+        "microxrcedds_client": {
+            "cmake-args": [
+                "-DUCLIENT_CUSTOM_TRANSPORT_MTU=1024"
+            ]
+        }
+    }
+}

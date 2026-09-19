@@ -1,0 +1,139 @@
+# Release: prebuilt firmware for every board x distro as release assets, and
+# the robot runtime + PlatformIO build images on Docker Hub.
+#
+# Triggered by a datestamped tag:
+#   git tag 20260918 && git push origin 20260918        # release
+#   git tag rc-20260918 && git push origin rc-20260918  # candidate (prerelease)
+#
+# workflow_dispatch rebuilds and republishes the IMAGES only, refreshing the
+# floating tags (:jazzy, :lyrical, :latest) without touching firmware archives
+# or creating a release. That is the button for "the registry lost something".
+name: Release
+
+on:
+  push:
+    tags: ['[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]', 'rc-*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Firmware archives are release assets, so they only make sense for a tag.
+  # A workflow_dispatch is the "republish the images" button -- see the images
+  # job -- and must not manufacture a GitHub release named after the branch.
+  firmware:
+    name: Prebuilt firmware ${{ matrix.profile }}
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [pico2, pico, esp32, esp32s3,
+                  pico2-lyrical, pico-lyrical, esp32-lyrical, esp32s3-lyrical]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+          key: pio-release-${{ matrix.profile }}-${{ hashFiles('firmware/common/platformio_base.ini', 'firmware/platformio.ini') }}
+      - run: pip install --upgrade platformio pyyaml
+      - name: Build the image
+        run: |
+          export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
+          python3 scripts/build_prebuilt.py ${{ matrix.profile }} --dist dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.profile }}
+          path: dist/linorobot2-firmware-${{ matrix.profile }}.tar.gz
+
+  publish-firmware:
+    name: Attach firmware to the release
+    needs: firmware
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          # `pattern` is not optional: without it this downloads EVERY artifact of
+          # the run, and docker/build-push-action's `*.dockerbuild` build records are
+          # still being uploaded by the image jobs, which fails the whole download.
+          pattern: firmware-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          prerelease: ${{ startsWith(github.ref_name, 'rc-') }}
+          generate_release_notes: true
+
+  images:
+    name: Docker image ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: robot-jazzy
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: jazzy
+          - name: robot-lyrical
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: lyrical
+          - name: pio
+            dockerfile: docker/Dockerfile.pio
+            image: linorobot2-cockpit-pio
+            distro: ''
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage the sibling ROS package (LD19 driver)
+        if: matrix.distro != ''
+        run: bash scripts/prepare_docker_vendor.sh
+      - uses: docker/setup-buildx-action@v3
+      # Docker Hub only. ghcr was the original home and is gone: the same blob
+      # measured 86 KiB/s there against 10289 KiB/s on Docker Hub from the same
+      # machine a minute apart -- 223 minutes versus 1.9 for the robot image --
+      # and a mirror nobody should pull from is just another thing to keep in
+      # step. Needs DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access token,
+      # not the account password) in the repo secrets.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Tags
+        id: tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          base="docker.io/$DOCKERHUB_USERNAME/${{ matrix.image }}"
+          # The datestamped tag is only meaningful on a tag build. On a
+          # workflow_dispatch the ref is a branch, and "robot:main-jazzy" would
+          # be a tag nobody asked for that never gets cleaned up -- so a
+          # dispatch refreshes only the floating tags.
+          if [ -n "${{ matrix.distro }}" ]; then
+            tags="$base:${{ matrix.distro }}"
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }}-${{ matrix.distro }},$tags" ;; esac
+          else
+            tags="$base:latest"
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }},$tags" ;; esac
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            ROS_DISTRO=${{ matrix.distro || 'jazzy' }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
