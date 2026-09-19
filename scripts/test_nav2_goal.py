@@ -10,7 +10,16 @@
 #   1. /navigate_to_pose action server availability.
 #   2. Planned path (/plan) circumvents the obstacle wall (|y| > 1.3m near x=2.0m).
 #   3. Active /cmd_vel velocities issued by controller to execute path.
-#   4. Robot movement tracked via /odom.
+#   4. The base ACTUALLY MOVED in response, measured on /odom.
+#
+# (4) used to say "tracked", and that is all it did: the odom delta was computed,
+# formatted into the success message, and never compared to anything. The pass
+# condition was (2) and (3) alone -- a plan from the planner and a count of the
+# controller's own publications, both entirely host-side. An unplugged board
+# satisfies both, and so does a board whose firmware subscribes to a /cmd_vel
+# type the controller does not publish. That is not hypothetical: every -lyrical
+# prebuilt image in rc-20260919 was built without USE_STAMPED_CMD_VEL while nav2
+# on lyrical publishes TwistStamped, and this test passed all of them.
 # ==============================================================================
 
 import argparse
@@ -46,6 +55,12 @@ except ImportError as exc:
     sys.exit(1)
 
 
+def _yaw(q) -> float:
+    """Yaw from a quaternion. Enough for "did this thing turn at all"."""
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                      1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+
 class Nav2GoalTester(Node):
     def __init__(self, goal_x: float = 3.0, goal_y: float = 0.0, timeout_sec: float = 30.0,
                  cmd_vel_type: str = "auto"):
@@ -62,6 +77,8 @@ class Nav2GoalTester(Node):
         self.cmd_vel_stamped_count: int = 0
         self.initial_odom: Optional[Odometry] = None
         self.latest_odom: Optional[Odometry] = None
+        self.odom_max_dist: float = 0.0
+        self.odom_max_yaw: float = 0.0
         self.goal_accepted: bool = False
         self.goal_completed: bool = False
 
@@ -148,6 +165,15 @@ class Nav2GoalTester(Node):
         if self.initial_odom is None:
             self.initial_odom = msg
         self.latest_odom = msg
+        # The PEAK excursion from the start pose, not the current one. A robot that
+        # drives out and comes back, or that spins past its start yaw, has moved --
+        # and the only thing this check exists to catch is a base that never moved
+        # at all, where every sample is identical to the first.
+        p0 = self.initial_odom.pose.pose.position
+        p1 = msg.pose.pose.position
+        self.odom_max_dist = max(self.odom_max_dist, math.hypot(p1.x - p0.x, p1.y - p0.y))
+        dyaw = abs(_yaw(msg.pose.pose.orientation) - _yaw(self.initial_odom.pose.pose.orientation))
+        self.odom_max_yaw = max(self.odom_max_yaw, min(dyaw, 2 * math.pi - dyaw))
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -194,10 +220,41 @@ class Nav2GoalTester(Node):
 
 
 def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, min_cmds: int = 5,
-             cmd_vel_type: str = "auto") -> bool:
+             cmd_vel_type: str = "auto", min_motion_m: float = 0.02,
+             min_motion_rad: float = 0.05, require_motion: bool = True) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
+
+    def moved() -> bool:
+        return (node.odom_max_dist >= min_motion_m) or (node.odom_max_yaw >= min_motion_rad)
+
+    def verdict(headline: str) -> bool:
+        """Every exit goes through here, so the motion rule cannot be skipped by one
+        branch -- which is how the old version passed. It computed this same odom
+        delta, formatted it into the success message, and never compared it to
+        anything."""
+        detail = (f"{node.cmd_vel_count} cmd_vel msgs ({node.cmd_vel_stamped_count} stamped), "
+                  f"odom moved {node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad")
+        if not require_motion or moved():
+            print(f"✅ {headline}: {detail}")
+            return True
+        print(f"❌ {headline}, BUT THE BASE NEVER MOVED: {detail}")
+        if node.cmd_vel_count >= min_cmds:
+            # The diagnostic that matters. Nav2 is commanding and the base is not
+            # responding, which on this stack is nearly always one thing: the
+            # firmware subscribes to a different /cmd_vel type than the controller
+            # publishes. nav2 >= kilted publishes TwistStamped; an image built
+            # without USE_STAMPED_CMD_VEL listens for plain Twist and hears nothing.
+            print(f"   The controller published {node.cmd_vel_count} commands as "
+                  f"{node.cmd_vel_type} and /odom did not change. Check that the "
+                  f"firmware was built for this distro's /cmd_vel contract "
+                  f"(USE_STAMPED_CMD_VEL in lino_base_config.h); a mismatch is silent "
+                  f"on both sides.")
+        else:
+            print(f"   Only {node.cmd_vel_count} commands were published, so the "
+                  f"controller -- not the base -- is the place to look.")
+        return False
 
     try:
         if not node.send_goal():
@@ -207,28 +264,24 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         while time.time() - start_time < timeout:
             rclpy.spin_once(node, timeout_sec=0.2)
 
-            # Check if path planned around obstacle wall AND controller actively commanding velocities
-            if node.path_avoids_wall and node.cmd_vel_count >= min_cmds:
-                odom_dist = 0.0
-                if node.initial_odom and node.latest_odom:
-                    dx = node.latest_odom.pose.pose.position.x - node.initial_odom.pose.pose.position.x
-                    dy = node.latest_odom.pose.pose.position.y - node.initial_odom.pose.pose.position.y
-                    odom_dist = math.hypot(dx, dy)
-                
-                print(f"✅ NAV2 VERIFICATION SUCCESS: Path planned around obstacle wall, "
-                      f"{node.cmd_vel_count} cmd_vel msgs ({node.cmd_vel_stamped_count} stamped) emitted, odom delta={odom_dist:.3f}m")
-                return True
+            # Planned around the wall AND commanding AND the base answered. The
+            # first two are measured entirely host-side: the plan comes from the
+            # planner and the count from the controller's own publications, so a
+            # board that is unplugged satisfies both.
+            if node.path_avoids_wall and node.cmd_vel_count >= min_cmds and \
+                    (moved() or not require_motion):
+                return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
 
-            if node.goal_completed:
-                print("✅ NAV2 GOAL COMPLETED SUCCESSFULLY")
-                return True
+            if node.goal_completed and (moved() or not require_motion):
+                return verdict("NAV2 GOAL COMPLETED SUCCESSFULLY")
 
         print(f"⚠️ Nav2 test timeout after {timeout}s: goal_accepted={node.goal_accepted}, "
-              f"path_avoids_wall={node.path_avoids_wall}, cmd_vel_count={node.cmd_vel_count}")
-        # Even if not fully reached in short bench timeout, if goal was accepted and path planned around wall:
+              f"path_avoids_wall={node.path_avoids_wall}, cmd_vel_count={node.cmd_vel_count}, "
+              f"odom_max_dist={node.odom_max_dist:.3f}m, odom_max_yaw={node.odom_max_yaw:.3f}rad")
+        if node.goal_completed:
+            return verdict("NAV2 GOAL COMPLETED (after the window)")
         if node.goal_accepted and node.path_avoids_wall:
-            print("✅ NAV2 PATH PLANNING AROUND OBSTACLE WALL VERIFIED (Progress confirmed).")
-            return True
+            return verdict("NAV2 PATH PLANNING AROUND THE OBSTACLE WALL VERIFIED")
         return False
 
     finally:
@@ -244,10 +297,22 @@ def main():
     parser.add_argument("--min-cmds", type=int, default=5, help="Minimum cmd_vel commands to confirm driving")
     parser.add_argument("--cmd-vel-type", choices=["auto", "twist", "twist_stamped"], default="auto",
                         help="Type published on /cmd_vel; 'auto' reads it off the graph")
+    parser.add_argument("--min-motion-m", type=float, default=0.02,
+                        help="Metres of /odom travel that count as the base having responded")
+    parser.add_argument("--min-motion-rad", type=float, default=0.05,
+                        help="Radians of /odom rotation that count as the base having responded "
+                             "(a robot that turns in place translates almost nothing)")
+    parser.add_argument("--no-require-motion", action="store_true",
+                        help="Pass on planning alone, without the base responding. For bringing "
+                             "a host-side stack up with no board attached; never for a release "
+                             "test, where a firmware that ignores /cmd_vel is exactly the fault "
+                             "this catches.")
     args = parser.parse_args()
 
     success = run_test(goal_x=args.goal_x, goal_y=args.goal_y, timeout=args.timeout,
-                       min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type)
+                       min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type,
+                       min_motion_m=args.min_motion_m, min_motion_rad=args.min_motion_rad,
+                       require_motion=not args.no_require_motion)
     sys.exit(0 if success else 1)
 
 
