@@ -218,7 +218,7 @@ body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than th
 
 ## Supported boards
 
-Four microcontrollers. **One firmware image per MCU per ROS 2 distro — not one per robot.**
+Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robot.**
 
 | MCU | PlatformIO env | Firmware profiles | Transport |
 |---|---|---|---|
@@ -227,44 +227,23 @@ Four microcontrollers. **One firmware image per MCU per ROS 2 distro — not one
 | **ESP32** | `esp32` | `esp32-jazzy`, `esp32-lyrical` | serial or Wi-Fi |
 | **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | serial or Wi-Fi |
 
-A Waveshare General Driver board and a bare ESP32 DevKit run the **same** `esp32-jazzy`
-image. What differs between them — the pin matrix, the I2C bus, the LiDAR wiring, which IMU
-is fitted, the transport, the credentials — lives in the `env` flash partition, not in the
-binary. That is why the list above is four rows rather than one per robot: a robot is a
-configuration, not a build, and re-keying a board never involves a compiler.
+A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
+the pin matrix, I2C bus, LiDAR wiring, transport and credentials all live in the `env` flash
+partition, not the binary. A robot is a configuration, not a build.
 
-The Wi-Fi variants of the RP2 boards build from the same sources and have their own
-PlatformIO envs — `picow` and `pico2w` for micro-ROS over USB serial with the radio carrying
-only syslog and OTA, `picow_wifi` and `pico2w_wifi` for micro-ROS over Wi-Fi. None of the four
-ships a prebuilt image, and the `pico`/`pico2` image will **not** run on them: the board
-definition differs (`rpipicow` against `rpipico`), so a Pico W needs a local build rather than
-an env key.
+**Flash the row half that matches your ROS 2 distro.** The micro-ROS library and the
+`/cmd_vel` type are both fixed at link time — lyrical takes `TwistStamped`, jazzy plain
+`Twist` — so the wrong half gives a board that enumerates, publishes odometry, and never
+moves.
 
-Two things are fixed at link time and cannot be env keys. The **ROS 2 distro**, because
-`board_microros_distro` selects the precompiled micro-ROS library the firmware links against
-and a jazzy image will not talk to a lyrical agent — which is why every board ships twice and
-why every profile name says which one it is. And the **`/cmd_vel` message type**, because
-nav2 1.4 (kilted) flipped `TwistPublisher` to `TwistStamped`: a lyrical image subscribes to
-`TwistStamped`, a jazzy one to plain `Twist`. Flash the wrong half of a row and the board
-enumerates, publishes odometry at 50 Hz, and never moves; the release refuses to attach an
-image whose `/cmd_vel` type does not match its distro.
+Notes: an ESP32 DevKit's 921 600 baud UART cannot carry a scan, so fake-mode LiDAR needs
+`udp4`. The ESP32-S3's serial is native USB CDC, so its port comes and goes with the firmware
+rather than the cable. The Pico W boards (`picow`, `pico2w`, and `*_wifi` for micro-ROS over
+Wi-Fi) need a local build — their board definition differs and they ship no prebuilt image.
+The mecanum RP2350 config builds but has not been run on hardware.
 
-Some boards need a word of their own:
-
-- **ESP32 DevKit, fake mode.** A 921 600 baud UART cannot carry a scan, so fake-mode LiDAR
-  needs `udp4`. The GenDrv's real LD19 runs at 1.5 Mbaud over its own UART and is unaffected.
-- **Waveshare General Driver.** Fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19.
-- **ESP32-S3.** Its serial is native USB CDC rather than a USB-to-UART bridge, so the port
-  appears and disappears with the firmware rather than with the cable. The board is proven
-  upstream — [linorobot2_hardware](https://github.com/linorobot/linorobot2_hardware) runs it —
-  and both its images build and are published here every release; what has not yet happened is
-  a run of *these* release images on an S3, which is expected in early October 2026.
-- **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
-  divider. It builds and has **not yet been run on hardware**.
-
-Reference robots for all of these ship in `config/reference/` and are copied into your config
-directory on first start — see [Your robot's configuration](#your-robots-configuration). They
-are starting points for a config, not separate firmware.
+Reference robots ship in `config/reference/` and are copied into your config directory on
+first start — see [Your robot's configuration](#your-robots-configuration).
 
 ---
 
