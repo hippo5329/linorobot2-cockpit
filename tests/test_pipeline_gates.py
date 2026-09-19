@@ -59,3 +59,30 @@ def test_the_slam_step_asks_for_a_message_not_a_name():
         "the /map gate is back to checking the topic NAME, which a lifecycle "
         "node satisfies by configuring and never activating"
     )
+
+
+def test_the_launcher_itself_recovers_a_missed_activation():
+    """The pipeline's self-heal only helps a run that goes through the pipeline.
+
+    `ros2 launch linorobot2_cockpit slam.launch.py` is also how a person starts
+    SLAM, and that path hit the same lost transition_event with nothing to
+    recover it. The guard belongs in the launcher, where both paths get it.
+    """
+    text = open(os.path.join(REPO_ROOT, "launchers", "slam.launch.py")).read()
+    assert "ros2 lifecycle set /slam_toolbox activate" in text, (
+        "slam.launch.py no longer activates a slam_toolbox that its own launch "
+        "file left in 'inactive'"
+    )
+    assert "ros2 lifecycle get /slam_toolbox" in text, (
+        "the guard must read the state first -- an unconditional activate hides "
+        "whether the race happened at all"
+    )
+    assert "TimerAction" in text, "the guard has to run after the node has had time to configure"
+
+
+def test_the_guard_is_off_when_autostart_is():
+    """autostart=false means the caller drives the lifecycle. Do not fight it."""
+    text = open(os.path.join(REPO_ROOT, "launchers", "slam.launch.py")).read()
+    assert 'autostart.lower() in ("true", "1", "yes")' in text, (
+        "the activation guard must be conditional on autostart"
+    )

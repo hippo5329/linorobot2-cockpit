@@ -10,7 +10,9 @@ import sys
 import tempfile
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
+                            IncludeLaunchDescription, LogInfo, OpaqueFunction,
+                            TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
@@ -117,7 +119,7 @@ def launch_setup(context, *args, **kwargs):
     slam_pkg = FindPackageShare("slam_toolbox").find("slam_toolbox")
     slam_launch_path = os.path.join(slam_pkg, "launch", "online_async_launch.py")
 
-    return [
+    actions = [
         LogInfo(msg="[Linorobot2 Cockpit] Launching SLAM Toolbox (Lifecycle Online Async)"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch_path),
@@ -128,6 +130,56 @@ def launch_setup(context, *args, **kwargs):
             }.items(),
         ),
     ]
+    if autostart.lower() in ("true", "1", "yes"):
+        actions.append(activation_guard())
+    return actions
+
+
+# The activation of slam_toolbox hangs on ONE volatile message.
+#
+# online_async_launch.py emits ChangeState(CONFIGURE) and then activates from a
+# RegisterEventHandler(OnStateTransition(start_state="configuring",
+# goal_state="inactive")). What feeds that handler is the node's own
+# ~/transition_event topic, created by rclcpp_lifecycle with the default QoS --
+# reliable, VOLATILE, depth 5 -- and published exactly once as the configure
+# transition completes. The launch process subscribes to it, but if that
+# subscription has not matched the just-started node's publisher at the instant
+# it fires, the message is dropped, the handler never runs, and slam_toolbox
+# sits in `inactive` for the rest of the run. The configure itself is a service
+# call, discovered separately and retried until it answers, so it always
+# succeeds; only the notification is lossy.
+#
+# The failure does not look like a SLAM failure. on_configure() is where
+# slam_toolbox creates its publishers, so /map is listed and has a publisher
+# and never carries a message. Nav2 comes up behind it and dies 30 s later on
+# `Invalid frame ID "map" ... frame does not exist`, which reads as a Nav2 or a
+# TF fault. Measured on a pico2 jazzy bench: "Configuring", the Ceres solver line,
+# then 120 s of silence with no "[LifecycleLaunch] Slamtoolbox node is
+# activating." It is not reproducible on demand; it is a discovery race.
+#
+# So ask, once, late, and only if it is actually needed. Reading the state
+# first keeps this a no-op on every healthy run -- and makes the recovery
+# visible in the log rather than papering over a race that would otherwise be
+# diagnosed again from scratch.
+def activation_guard():
+    script = """
+for i in $(seq 1 12); do
+  s=$(ros2 lifecycle get /slam_toolbox 2>/dev/null)
+  case "$s" in
+    *inactive*)
+      echo "[Linorobot2 Cockpit] slam_toolbox is still inactive -- its launch file missed the transition event. Activating it."
+      ros2 lifecycle set /slam_toolbox activate
+      exit 0 ;;
+    *active*)
+      exit 0 ;;
+  esac
+  sleep 3
+done
+echo "[Linorobot2 Cockpit] slam_toolbox never reached 'inactive' -- it did not configure. Check the params file."
+"""
+    return TimerAction(period=15.0, actions=[
+        ExecuteProcess(cmd=["bash", "-c", script], output="screen"),
+    ])
 
 
 def generate_launch_description():
