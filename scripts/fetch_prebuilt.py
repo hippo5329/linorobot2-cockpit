@@ -32,6 +32,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PREBUILT_DIR = os.path.join(REPO_ROOT, "firmware", "prebuilt")
 DEFAULT_REPO = os.environ.get("COCKPIT_RELEASE_REPO", "hippo5329/linorobot2-cockpit")
 DEFAULT_DISTRO = "jazzy"
+# Names the release a cached profile came from; absent in caches written before
+# version-aware caching, which are therefore always re-downloaded.
+RELEASE_STAMP = ".release"
 
 
 def profile_for_env(pio_env: str) -> str:
@@ -105,20 +108,59 @@ def verify(profile_dir: str) -> dict:
     return manifest
 
 
+def cached_release(profile_dir: str) -> str:
+    """Which release the cached profile came from, or '' if it predates the stamp."""
+    try:
+        with open(os.path.join(profile_dir, RELEASE_STAMP)) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
 def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
           force: bool = False, quiet: bool = False) -> str:
-    """Ensure firmware/prebuilt/<profile>/ exists and is verified; return its path."""
+    """
+    Ensure firmware/prebuilt/<profile>/ holds the CURRENT release image, verified.
+
+    The archive is re-downloaded on every call when the network allows; the
+    cached copy is an offline fallback, not a fast path. It used to be the
+    other way round -- a hit needed only `manifest.json` to exist -- and that
+    is unfixable by keying on the release name, because a candidate tag gets
+    re-cut in place: `rc-20260919` was force-moved and its assets replaced
+    under the same name on 2026-09-19, so name and content had already come
+    apart. verify() cannot catch it either: it checks the cached files against
+    the cached manifest, so a stale directory is always self-consistent. At
+    165-690 KB an unconditional download is cheaper than any of the ways of
+    being clever about it, and the failure it removes -- flashing last week's
+    firmware and being told nothing -- costs an afternoon to find.
+    """
     profile_dir = os.path.join(PREBUILT_DIR, profile)
-    if not force and os.path.isfile(os.path.join(profile_dir, "manifest.json")):
-        verify(profile_dir)
+    have_cache = os.path.isfile(os.path.join(profile_dir, "manifest.json"))
+
+    def fall_back(why: str) -> str:
+        if not have_cache:
+            raise SystemExit(
+                f"fetch_prebuilt: cannot reach {repo} ({why}) and {profile} is not "
+                f"cached.\n  Build the image yourself: python3 scripts/build_prebuilt.py {profile}")
+        manifest = verify(profile_dir)
+        print(f"[fetch_prebuilt] WARNING: cannot reach {repo} ({why}); using the cached "
+              f"{profile} from {cached_release(profile_dir) or 'an unrecorded release'} "
+              f"(built {manifest.get('built')}, commit {manifest.get('commit')}) -- "
+              f"it may not be the current release")
         return profile_dir
 
     version = version or repo_version()
     if is_floating(version):
-        resolved = newest_release_tag(repo)
+        try:
+            resolved = newest_release_tag(repo)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            return fall_back(str(exc))
         if not quiet:
             print(f"[fetch_prebuilt] {version or 'dev'} -> newest release {resolved}")
         version = resolved
+
     blob = None
     tried = []
     for candidate in (version, None):
@@ -144,10 +186,7 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
                 raise SystemExit(f"fetch_prebuilt: could not download {url}: {exc}")
             last = exc
         except Exception as exc:
-            raise SystemExit(
-                f"fetch_prebuilt: could not download {url}: {exc}\n"
-                f"  Check the release name (--version), or build the image yourself:\n"
-                f"    python3 scripts/build_prebuilt.py {profile}")
+            return fall_back(f"{url}: {exc}")
     if blob is None:
         raise SystemExit(
             f"fetch_prebuilt: {asset_name(profile)} is in no release of {repo} "
@@ -170,6 +209,10 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise SystemExit("fetch_prebuilt: the archive carries no manifest.json")
     manifest = verify(tmp_dir)
+    # Written inside the profile so it travels with the directory, and after
+    # verify() so a half-extracted archive never looks like a good cache.
+    with open(os.path.join(tmp_dir, RELEASE_STAMP), "w") as fh:
+        fh.write(tried[-1] + "\n")
     shutil.rmtree(profile_dir, ignore_errors=True)
     os.rename(tmp_dir, profile_dir)
     if not quiet:
