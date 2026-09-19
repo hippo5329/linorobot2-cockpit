@@ -229,9 +229,17 @@ body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than th
 | `linorobot2` | RP2350 | `pico2` | USB serial | a wired 2WD robot |
 | `pico2_mecanum` | RP2350 | `pico2` | USB serial | a wired mecanum 4WD: four two-PWM bridges, four encoders, MPU6050, battery ADC through a divider; builds, **not yet run on hardware** |
 
-Release firmware profiles: `pico2 pico esp32 esp32s3`, each also as `<profile>-lyrical`.
-The ROS 2 distro is the one thing that cannot be a run-time setting — the micro-ROS library is
-linked in — so each board ships twice.
+Release firmware profiles: `pico2 pico esp32 esp32s3`, each also as `<profile>-lyrical`
+**except the classic ESP32**, whose lyrical build does not fit: lyrical's micro-ROS overruns
+the ESP32's data RAM by about 14 KB, unchanged across every transport MTU tried. The ROS 2
+distro is the one thing that cannot be a run-time setting — the micro-ROS library is linked
+in — so each board ships twice where it fits.
+
+The lyrical half of the matrix **has not been run on a robot**. It builds, and the images are
+published, but every hardware run on record is jazzy, and the lyrical container installs Nav2
+best-effort because the distro has no `nav2-bringup` binary yet — bringup and SLAM work there,
+`nav2.launch.py` does not. Treat lyrical as a build target, not a supported robot, until that
+changes.
 
 ---
 
@@ -364,7 +372,7 @@ board side, `flashing.md` for how images get written, `ros2-stack.md` for the la
 
 ## Releases
 
-Datestamped tags (`20260918`; `rc-20260918` for a two-week candidate) publish eight firmware
+Datestamped tags (`20260918`; `rc-20260918` for a two-week candidate) publish the firmware
 archives as release assets and three images on Docker Hub:
 `linorobot2-cockpit-robot:{jazzy,lyrical}` and `linorobot2-cockpit-pio`.
 `docker-compose.yml` defaults to those images; `docker compose build` builds them from your
