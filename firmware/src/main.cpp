@@ -262,13 +262,28 @@ static bool fake_lidar_on = false;
 #ifdef USE_FAKE_LD19_RAW_SCAN
 rcl_publisher_t raw_scan_publisher;
 std_msgs__msg__UInt8MultiArray raw_scan_msg;
-static uint8_t raw_scan_batch[512];
+// Heap, and only on a board that actually publishes raw_scan. Held statically
+// this was 512 bytes of .bss on every image, including every serial robot whose
+// scan leaves over a UART and never touches it. Allocated by initRawScan() when
+// the emulator is turned on, never freed -- rcl_publish() reads it for the rest
+// of the run.
+#define RAW_SCAN_BATCH_CAP 512
+static uint8_t *raw_scan_batch = NULL;
 static size_t raw_scan_batch_len = 0;
 bool raw_scan_pub_ready = false;
 
+void initRawScan(void)
+{
+    if (!raw_scan_batch)
+        raw_scan_batch = (uint8_t *)malloc(RAW_SCAN_BATCH_CAP);
+    if (!raw_scan_batch)
+        Serial.println("[lidar] no heap for the raw_scan batch — raw_scan off");
+}
+
 void onRawScanPacket(const uint8_t *pkt, size_t len)
 {
-    if (raw_scan_batch_len + len <= sizeof(raw_scan_batch))
+    if (!raw_scan_batch) return;
+    if (raw_scan_batch_len + len <= RAW_SCAN_BATCH_CAP)
     {
         memcpy(raw_scan_batch + raw_scan_batch_len, pkt, len);
         raw_scan_batch_len += len;
@@ -277,13 +292,13 @@ void onRawScanPacket(const uint8_t *pkt, size_t len)
 
 void flushRawScan()
 {
-    if (raw_scan_batch_len > 0)
+    if (raw_scan_batch && raw_scan_batch_len > 0)
     {
         if (raw_scan_pub_ready && state == AGENT_CONNECTED)
         {
             raw_scan_msg.data.data = raw_scan_batch;
             raw_scan_msg.data.size = raw_scan_batch_len;
-            raw_scan_msg.data.capacity = sizeof(raw_scan_batch);
+            raw_scan_msg.data.capacity = RAW_SCAN_BATCH_CAP;
             (void)rcl_publish(&raw_scan_publisher, &raw_scan_msg, NULL);
         }
         raw_scan_batch_len = 0;
@@ -816,6 +831,7 @@ void setup()
     if (fake_lidar_on)
     {
 #ifdef USE_FAKE_LD19_RAW_SCAN
+        initRawScan();
         fake_ld19.setPacketCallback(onRawScanPacket);
 #endif
         // Where on the robot the scan is taken from: geometry.laser.x, the

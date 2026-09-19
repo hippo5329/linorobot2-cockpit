@@ -181,7 +181,13 @@ private:
 #ifdef USE_LIDAR_UDP
     WiFiUDP udp_;
     bool udp_enabled_ = false;
-    uint8_t udp_buf_[UDP_DATAGRAM_LIMIT];
+    // Heap, not .bss. This is 1410 bytes held by a global object for the whole
+    // run on a chip whose entire static segment is 124580 bytes, and a board
+    // that is not streaming its scan over UDP -- every serial robot, and every
+    // board whose env turns the emulator off -- never touches a byte of it.
+    // Allocated when the sink is enabled, and never freed: it must outlive
+    // every emitPack() for the rest of the run, which is the whole run.
+    uint8_t *udp_buf_ = nullptr;
     uint16_t udp_buf_len_ = 0;
     // What the UDP sink actually did, for the syslog line main.cpp prints
     // every few seconds. Measured on the GenDrv bench (2026-09-18): with the
@@ -313,8 +319,20 @@ public:
         }
 
 #ifdef USE_LIDAR_UDP
-        udp_enabled_ = true;
-        enabled_ = true;
+        // A failed allocation here is not fatal and must not be silent: the
+        // board keeps running and simply has no UDP scan, which on a robot whose
+        // only scan source is this looks exactly like a LiDAR fault.
+        if (!udp_buf_)
+            udp_buf_ = (uint8_t *)malloc(UDP_DATAGRAM_LIMIT);
+        if (udp_buf_)
+        {
+            udp_enabled_ = true;
+            enabled_ = true;
+        }
+        else
+        {
+            Serial.println("[lidar] no heap for the UDP scan buffer — UDP sink off");
+        }
 #endif
         next_pack_us_ = micros() + PACK_PERIOD_US;
     }
@@ -533,7 +551,7 @@ private:
 #ifdef USE_LIDAR_UDP
     void flushUdp()
     {
-        if (!udp_enabled_ || udp_buf_len_ == 0) return;
+        if (!udp_enabled_ || !udp_buf_ || udp_buf_len_ == 0) return;
         // No radio, no datagram -- and this is not just a dropped scan.
         // WiFiUDP::beginPacket() calls into lwIP, and lwIP has no tcpip thread
         // until the Wi-Fi stack starts one, so on a board built from the Wi-Fi
@@ -610,7 +628,7 @@ private:
         }
 
 #ifdef USE_LIDAR_UDP
-        if (udp_enabled_)
+        if (udp_enabled_ && udp_buf_)
         {
             if (udp_buf_len_ + 47 > UDP_DATAGRAM_LIMIT)
             {
