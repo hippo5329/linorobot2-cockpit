@@ -65,12 +65,10 @@ EncoderInterface *motor1_encoder = NULL, *motor2_encoder = NULL,
 MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
                  *motor3_controller = NULL, *motor4_controller = NULL;
 
-nav_msgs__msg__Odometry odom_msg;
-sensor_msgs__msg__Imu imu_msg;
-sensor_msgs__msg__MagneticField mag_msg;
-geometry_msgs__msg__Twist twist_msg;
-sensor_msgs__msg__BatteryState battery_msg;
-sensor_msgs__msg__Range range_msg;
+// All six of these came from main.cpp when this tool was split out and not one
+// of them is referenced here -- 1376 bytes of .bss, on every board, for
+// nothing. They survive to the link because they have external linkage and the
+// ESP32 build sets no -fdata-sections/--gc-sections.
 
 #if defined(LED_PIN) && (LED_PIN) >= 0
 #define LED_ACTIVE

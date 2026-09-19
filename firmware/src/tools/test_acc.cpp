@@ -75,12 +75,12 @@ EncoderInterface *motor1_encoder = NULL, *motor2_encoder = NULL,
 MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
                  *motor3_controller = NULL, *motor4_controller = NULL;
 
-nav_msgs__msg__Odometry odom_msg;
+// Only imu_msg is used here. The other five came along from main.cpp when this
+// tool was split out and were never referenced -- 1056 bytes of .bss in an
+// image whose static segment is 124580 bytes total, carried on every board.
+// Nothing collects them: they have external linkage and the ESP32 build sets
+// no -fdata-sections/--gc-sections, so unused globals survive to the link.
 sensor_msgs__msg__Imu imu_msg;
-sensor_msgs__msg__MagneticField mag_msg;
-geometry_msgs__msg__Twist twist_msg;
-sensor_msgs__msg__BatteryState battery_msg;
-sensor_msgs__msg__Range range_msg;
 
 
 
@@ -173,7 +173,10 @@ const float dt = ticks * 0.001f;
 const unsigned run_time = 1000; // 1s
 const unsigned buf_size = run_time / ticks * 4;
 Kinematics::velocities buf[buf_size];
-float batt[buf_size];
+// No batt[] here any more: it was written once per sample and never read, so
+// it was 800 bytes of static RAM recording something nobody looked at. If a
+// battery trace is wanted alongside the velocity trace, add it back WITH the
+// code that prints it.
 float imu_max_acc_x, imu_min_acc_x;
 unsigned idx = 0;
 
@@ -190,7 +193,6 @@ void record(unsigned n) {
 
         if (idx < buf_size) {
             buf[idx] = kinematics.getVelocities(rpm1, rpm2, rpm3, rpm4);
-            batt[idx] = 0.0f;
         }
         delay(ticks);
         runWifis();
