@@ -163,6 +163,31 @@ def collect(profile, env, build_dir, out_dir):
     return files
 
 
+def header_cmd(cfg, distro):
+    """The gen_firmware_header.py invocation for one profile.
+
+    A function rather than three lines inline, because the --distro argument is
+    the entire /cmd_vel contract of the image and nothing downstream can detect
+    it being wrong. gen_firmware_header.py resolves `stamped_cmd_vel: auto` --
+    which is what EVERY reference config says -- from this flag alone, falling
+    back to $ROS_DISTRO; the release runner that builds these images is a bare
+    ubuntu with pip platformio and no ROS, so that fallback is the empty string.
+    Omitting the flag shipped all four -lyrical images subscribing to plain
+    Twist while nav2 >= kilted publishes /cmd_vel as TwistStamped: a board that
+    links, flashes, enumerates, publishes odometry at 50 Hz, and never moves
+    under autonomy. The pio env chooses the micro-ROS library; only this
+    chooses the contract.
+
+    --no-embed-secrets unconditionally, for every image without exception. The
+    first build of these did leak, from the profile least expected to: a board
+    running micro-ROS over SERIAL still brings Wi-Fi up for syslog and OTA, so
+    its header embedded the SSID and PSK exactly as a udp4 one did. A profile's
+    transport says nothing about whether it has credentials to leak.
+    """
+    return [sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+            "--params", cfg, "--distro", distro, "--no-embed-secrets"]
+
+
 def build(profile, keep_going=False):
     cfg_stem, env, distro, description = PROFILES[profile]
     cfg = os.path.join(cockpit_paths.REFERENCE_CONFIG_DIR, f"{cfg_stem}_config.yaml")
@@ -170,14 +195,7 @@ def build(profile, keep_going=False):
 
     print(f"\n=== {profile}  ({cfg_stem}_config.yaml -> pio env {env})", flush=True)
 
-    # --no-embed-secrets unconditionally, for every image without exception.
-    # The first build of these did leak, from the profile least expected to: a
-    # board running micro-ROS over SERIAL still brings Wi-Fi up for syslog and
-    # OTA, so its header embedded the SSID and PSK exactly as a udp4 one did. A
-    # profile's transport says nothing about whether it has credentials to leak.
-    gen = [sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
-           "--params", cfg, "--no-embed-secrets"]
-    sh(gen)
+    sh(header_cmd(cfg, distro))
 
     # Whether this profile needs an env block is a property of the header that
     # was just generated, not a guess from the env name. USE_MCU_ENV appears
