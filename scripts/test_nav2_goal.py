@@ -309,8 +309,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             if node.goal_completed and (moved() or not require_motion):
                 return verdict("NAV2 GOAL COMPLETED SUCCESSFULLY")
 
+        # The commanded peak belongs here too. Without it a timeout line says the
+        # base reported 0.059 rad/s and leaves the reader unable to tell a base
+        # ignoring a brisk command from one faithfully following a tiny one --
+        # which is the whole question when a run fails.
         print(f"⚠️ Nav2 test timeout after {timeout}s: goal_accepted={node.goal_accepted}, "
               f"path_avoids_wall={node.path_avoids_wall}, cmd_vel_count={node.cmd_vel_count}, "
+              f"cmd_peak={node.cmd_peak_lin:.3f}m/s,{node.cmd_peak_ang:.3f}rad/s, "
               f"odom_peak={node.odom_peak_lin:.3f}m/s,{node.odom_peak_ang:.3f}rad/s, "
               f"odom_moved={node.odom_max_dist:.3f}m,{node.odom_max_yaw:.3f}rad")
         if node.goal_completed:

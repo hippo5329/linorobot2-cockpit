@@ -228,8 +228,10 @@ Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robo
 | **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | serial or Wi-Fi |
 
 A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
-the pin matrix, I2C bus, LiDAR wiring, transport and credentials all live in the `env` flash
-partition, not the binary. A robot is a configuration, not a build.
+the pin matrix, I2C bus, LiDAR pin and baud, micro-ROS transport and credentials all live in
+the `env` flash partition, not the binary. A robot is a configuration, not a build. The one
+thing the env cannot move is how the scan leaves the board — `comm_mode` is compiled in, so
+an image built for `udp` will not serve a robot wired for `serial`.
 
 **Flash the row half that matches your ROS 2 distro.** The micro-ROS library and the
 `/cmd_vel` type are both fixed at link time — lyrical takes `TwistStamped`, jazzy plain
