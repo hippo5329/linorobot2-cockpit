@@ -218,30 +218,57 @@ body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than th
 
 ## Supported boards
 
-| Reference config | MCU | PlatformIO env | Transport | Notes |
-|---|---|---|---|---|
-| `rover_pico2` | RP2350 | `pico2` | USB serial | **Default.** Bare module runs the whole pipeline; UF2 flashing |
-| `pico2w` | RP2350 + CYW43 | `pico2w` | USB serial + Wi-Fi syslog | serial micro-ROS, Wi-Fi for telemetry only |
-| `pico`, `picow` | RP2040 | `pico`, `picow` | USB serial | as above, RP2040 |
-| `esp32`, `esp32_wifi` | ESP32 | `esp32` | serial or `udp4` | one binary; the transport is an env key. A DevKit's 921 600 baud UART cannot carry a scan, so fake-mode LiDAR needs `udp4` |
-| `gendrv`, `gendrv_real` | ESP32 | `esp32` | serial: 921 600 fake, **1.5 Mbaud** with the real sensors | Waveshare General Driver Board: fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19 |
-| `esp32s3` | ESP32-S3 | `esp32s3` | native USB CDC | |
-| `linorobot2` | RP2350 | `pico2` | USB serial | a wired 2WD robot |
-| `pico2_mecanum` | RP2350 | `pico2` | USB serial | a wired mecanum 4WD: four two-PWM bridges, four encoders, MPU6050, battery ADC through a divider; builds, **not yet run on hardware** |
+Four microcontrollers. **One firmware image per MCU per ROS 2 distro — not one per robot.**
 
-Release firmware profiles: `pico2 pico esp32 esp32s3`, each also as `<profile>-lyrical`
-**except the classic ESP32**, whose lyrical build does not fit: lyrical's micro-ROS overruns
-the ESP32's data RAM by about 14 KB, unchanged across every transport MTU tried. The ROS 2
-distro is the one thing that cannot be a run-time setting — the micro-ROS library is linked
-in — so each board ships twice where it fits.
+| MCU | PlatformIO env | Firmware profiles | Transport |
+|---|---|---|---|
+| **RP2350** | `pico2` | `pico2-jazzy`, `pico2-lyrical` | USB serial |
+| **RP2040** | `pico` | `pico-jazzy`, `pico-lyrical` | USB serial |
+| **ESP32** | `esp32` | `esp32-jazzy`, `esp32-lyrical` | serial or `udp4` |
+| **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | native USB CDC |
 
-The lyrical half of the matrix **has not been run on a robot**. It builds and the images are
-published, but every hardware run on record is jazzy. Nav2 itself is no longer the gap: lyrical
-publishes the `nav2_*` components individually rather than behind a `navigation2` metapackage,
-so the image installs every published `nav2_*` and `opennav_*` package by pattern — 41 of them
-on lyrical today, `nav2_bringup` and `opennav_docking` included — and falls back to a source
-build of `nav2_bringup` only on a distro that still has no binary for it. Treat lyrical as a
-build target rather than a supported robot until someone drives one.
+A Waveshare General Driver board and a bare ESP32 DevKit run the **same** `esp32-jazzy`
+image. What differs between them — the pin matrix, the I2C bus, the LiDAR wiring, which IMU
+is fitted, the transport, the credentials — lives in the `env` flash partition, not in the
+binary. That is why the list above is four rows rather than one per robot: a robot is a
+configuration, not a build, and re-keying a board never involves a compiler.
+
+The Wi-Fi variants of the RP2 boards build from the same sources and have their own
+PlatformIO envs — `picow` and `pico2w` for micro-ROS over USB serial with the radio carrying
+only syslog and OTA, `picow_wifi` and `pico2w_wifi` for micro-ROS over Wi-Fi. None of the four
+ships a prebuilt image, and the `pico`/`pico2` image will **not** run on them: the board
+definition differs (`rpipicow` against `rpipico`), so a Pico W needs a local build rather than
+an env key.
+
+Two things are fixed at link time and cannot be env keys. The **ROS 2 distro**, because
+`board_microros_distro` selects the precompiled micro-ROS library the firmware links against
+and a jazzy image will not talk to a lyrical agent — which is why every board ships twice and
+why every profile name says which one it is. And the **`/cmd_vel` message type**, because
+nav2 1.4 (kilted) flipped `TwistPublisher` to `TwistStamped`: a lyrical image subscribes to
+`TwistStamped`, a jazzy one to plain `Twist`. Flash the wrong half of a row and the board
+enumerates, publishes odometry at 50 Hz, and never moves; the release refuses to attach an
+image whose `/cmd_vel` type does not match its distro.
+
+Some boards need a word of their own:
+
+- **ESP32 DevKit, fake mode.** A 921 600 baud UART cannot carry a scan, so fake-mode LiDAR
+  needs `udp4`. The GenDrv's real LD19 runs at 1.5 Mbaud over its own UART and is unaffected.
+- **Waveshare General Driver.** Fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19.
+- **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
+  divider. It builds and has **not yet been run on hardware**.
+
+**Where lyrical stands.** All four boards build and publish for it, the classic ESP32
+included — its image had overrun the chip's data RAM by 14 KB until the micro-ROS entity pools
+were sized to what the firmware actually creates, and it now links at 116 308 bytes of a
+124 580-byte segment. It has been run on hardware: a GenDrv on a lyrical agent holds
+`/odom/unfiltered` at 50.0 Hz and `/imu/data_raw` at 49.8 Hz. Until this release the lyrical
+prebuilt images were built for the jazzy `/cmd_vel` contract, so a lyrical board enumerated
+and published normally and never responded to Nav2 — fixed here, and the release will no
+longer attach an image with the wrong contract.
+
+Reference robots for all of these ship in `config/reference/` and are copied into your config
+directory on first start — see [Your robot's configuration](#your-robots-configuration). They
+are starting points for a config, not separate firmware.
 
 ---
 
@@ -374,8 +401,9 @@ board side, `flashing.md` for how images get written, `ros2-stack.md` for the la
 
 ## Releases
 
-Datestamped tags (`20260918`; `rc-20260918` for a two-week candidate) publish the firmware
-archives as release assets and three images on Docker Hub:
+Datestamped tags (`20260918`; `rc-20260918` for a two-week candidate) publish **eight firmware
+archives** — four MCUs x two ROS 2 distros, `linorobot2-firmware-<board>-<distro>.tar.gz` —
+and three images on Docker Hub:
 `linorobot2-cockpit-robot:{jazzy,lyrical}` and `linorobot2-cockpit-pio`.
 `docker-compose.yml` defaults to those images; `docker compose build` builds them from your
 checkout instead, and `COCKPIT_IMAGE` / `COCKPIT_PIO_IMAGE` point it at any other registry.
