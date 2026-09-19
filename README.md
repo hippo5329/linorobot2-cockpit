@@ -235,11 +235,11 @@ the ESP32's data RAM by about 14 KB, unchanged across every transport MTU tried.
 distro is the one thing that cannot be a run-time setting — the micro-ROS library is linked
 in — so each board ships twice where it fits.
 
-The lyrical half of the matrix **has not been run on a robot**. It builds, and the images are
-published, but every hardware run on record is jazzy, and the lyrical container installs Nav2
-best-effort because the distro has no `nav2-bringup` binary yet — bringup and SLAM work there,
-`nav2.launch.py` does not. Treat lyrical as a build target, not a supported robot, until that
-changes.
+The lyrical half of the matrix **has not been run on a robot**. It builds and the images are
+published, but every hardware run on record is jazzy. Nav2 itself is no longer the gap: lyrical
+publishes the `nav2_*` components but neither the `navigation2` metapackage nor `nav2_bringup`,
+so the image installs every published component and builds those two from source. Treat lyrical
+as a build target rather than a supported robot until someone drives one.
 
 ---
 
