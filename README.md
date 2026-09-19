@@ -262,15 +262,6 @@ Some boards need a word of their own:
 - **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
   divider. It builds and has **not yet been run on hardware**.
 
-**Where lyrical stands.** All four boards build and publish for it, the classic ESP32
-included — its image had overrun the chip's data RAM by 14 KB until the micro-ROS entity pools
-were sized to what the firmware actually creates, and it now links at 116 308 bytes of a
-124 580-byte segment. It has been run on hardware: a GenDrv on a lyrical agent holds
-`/odom/unfiltered` at 50.0 Hz and `/imu/data_raw` at 49.8 Hz. Until this release the lyrical
-prebuilt images were built for the jazzy `/cmd_vel` contract, so a lyrical board enumerated
-and published normally and never responded to Nav2 — fixed here, and the release will no
-longer attach an image with the wrong contract.
-
 Reference robots for all of these ship in `config/reference/` and are copied into your config
 directory on first start — see [Your robot's configuration](#your-robots-configuration). They
 are starting points for a config, not separate firmware.
