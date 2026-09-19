@@ -867,6 +867,27 @@ def main():
             print("  ✅ micro-ROS connected (/odom/unfiltered has a publisher).")
         time.sleep(2.0)
 
+        # The scan is the LAST thing to arrive, and on udp4 it is not close.
+        # /odom and /imu/data come from the micro-ROS session, which is up as
+        # soon as the board finds the agent; the LiDAR is a second UDP client
+        # that has to connect to the ldlidar server afterwards. Measured on a
+        # NodeMCU over Wi-Fi: 31.8 s from the server binding port 8889 to
+        # "ldlidar communication is normal".
+        #
+        # Lengthening the handshake gate did NOT fix this -- /odom came up in
+        # seconds, the handshake passed, and the audit still ran into a /scan
+        # that had no publisher yet, reporting "NO DATA (0 msgs received in
+        # 10.0s)" and aborting a run whose robot was entirely healthy. The scan
+        # needs its own wait, because it is not what the handshake measures.
+        if has_lidar:
+            scan_wait = 15 if transport.startswith("serial") else 90
+            print(f"  Waiting for the first /scan (up to {scan_wait} s)...")
+            if wait_for_topic("/scan", timeout_sec=scan_wait, distro=args.distro,
+                              require_message="header.frame_id"):
+                print("  ✅ /scan is publishing.")
+            else:
+                print(f"  ⚠️ no /scan within {scan_wait} s — the audit below will say what is missing.")
+
         print("  [CHECK TOPICS] Verifying ROS 2 topic payloads and publish rates...")
         verify_flag = "" if has_lidar else " --no-scan"
         if required_aux:

@@ -50,3 +50,45 @@ def test_the_transport_defaults_to_serial():
     assert 'controller_cfg.get("transport", "serial")' in block, (
         "a missing transport key must mean serial, not udp"
     )
+
+
+def _scan_block():
+    text = open(PIPELINE).read()
+    m = re.search(r"if has_lidar:\s*\n\s*scan_wait = .*?wait_for_topic\(\"/scan\".*?\)", text, re.S)
+    assert m, "the /scan gate before the topic audit is gone"
+    return m.group(0)
+
+
+def test_the_scan_gets_its_own_wait_before_the_audit():
+    """Lengthening the handshake did not help: /odom is up long before /scan.
+
+    The micro-ROS session carries /odom and /imu/data, and is live as soon as
+    the board finds the agent. The LiDAR is a SECOND UDP client that connects
+    to the ldlidar server afterwards -- 31.8 s later, measured. The handshake
+    gate passed in seconds and the audit still ran into a /scan with no
+    publisher and aborted a healthy run.
+    """
+    block = _scan_block()
+    assert 'require_message="header.frame_id"' in block, (
+        "the /scan gate must read a message; a topic that is merely listed is "
+        "what the audit already fails on"
+    )
+
+
+def test_the_scan_wait_covers_a_udp_lidar():
+    block = _scan_block()
+    m = re.search(r"scan_wait = (\d+) if transport\.startswith\(\"serial\"\) else (\d+)", block)
+    assert m, "the /scan wait is a constant again"
+    serial_s, udp_s = int(m.group(1)), int(m.group(2))
+    assert udp_s >= 60, (
+        f"udp /scan wait is {udp_s}s; the measured first scan was 31.8 s after bind, "
+        "so anything near that fails the run it is waiting for"
+    )
+    assert udp_s > serial_s
+
+
+def test_a_robot_with_no_lidar_does_not_wait():
+    block = _scan_block()
+    assert block.startswith("if has_lidar:"), (
+        "a robot with no scan source must not sit through the /scan wait"
+    )
