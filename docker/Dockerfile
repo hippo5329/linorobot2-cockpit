@@ -251,7 +251,7 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
 # named by package.dsv, so a missing one makes `source setup.bash` fail with
 # `not found: ".../local_setup.bash"` and every launch after it.
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
- && . /opt/lino_ws/setup.bash \
+ && . /opt/lino_ws/setup.sh \
  && ros2 pkg prefix linorobot2_cockpit \
  && ros2 pkg prefix ldlidar_stl_ros2 \
  && test -f "$(ros2 pkg prefix linorobot2_cockpit)/share/linorobot2_cockpit/launchers/bringup.launch.py" \
