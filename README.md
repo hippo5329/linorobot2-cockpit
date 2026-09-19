@@ -222,10 +222,10 @@ Four microcontrollers. **One firmware image per MCU per ROS 2 distro — not one
 
 | MCU | PlatformIO env | Firmware profiles | Transport |
 |---|---|---|---|
-| **RP2350** | `pico2` | `pico2-jazzy`, `pico2-lyrical` | USB serial |
-| **RP2040** | `pico` | `pico-jazzy`, `pico-lyrical` | USB serial |
-| **ESP32** | `esp32` | `esp32-jazzy`, `esp32-lyrical` | serial or `udp4` |
-| **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | native USB CDC |
+| **RP2350** | `pico2` | `pico2-jazzy`, `pico2-lyrical` | serial |
+| **RP2040** | `pico` | `pico-jazzy`, `pico-lyrical` | serial |
+| **ESP32** | `esp32` | `esp32-jazzy`, `esp32-lyrical` | serial or Wi-Fi |
+| **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | serial or Wi-Fi |
 
 A Waveshare General Driver board and a bare ESP32 DevKit run the **same** `esp32-jazzy`
 image. What differs between them — the pin matrix, the I2C bus, the LiDAR wiring, which IMU
@@ -254,6 +254,8 @@ Some boards need a word of their own:
 - **ESP32 DevKit, fake mode.** A 921 600 baud UART cannot carry a scan, so fake-mode LiDAR
   needs `udp4`. The GenDrv's real LD19 runs at 1.5 Mbaud over its own UART and is unaffected.
 - **Waveshare General Driver.** Fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19.
+- **ESP32-S3.** Its serial is native USB CDC rather than a USB-to-UART bridge, so the port
+  appears and disappears with the firmware rather than with the cable.
 - **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
   divider. It builds and has **not yet been run on hardware**.
 
