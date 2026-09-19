@@ -104,3 +104,34 @@ def test_an_env_resolves_to_the_profile_that_ships_it():
         assert fetch_prebuilt.env_for_profile(profile) == env, (
             f"profile {profile!r} maps back to "
             f"{fetch_prebuilt.env_for_profile(profile)!r}, not {env!r}")
+
+
+def test_the_prune_step_can_reach_the_repo_and_cannot_fail_silently():
+    """The stale-asset prune runs in a job with no checkout, so `gh` needs GH_REPO.
+
+    Without it every `gh release view` in that step exits 1 with "could not
+    determine what repo to use". The first version sent that to /dev/null and
+    fell through to an empty asset list, which is indistinguishable from a
+    release that has nothing stale on it: the step printed nothing, deleted
+    nothing, and four cuts of rc-20260919 kept the pre-rename pico.tar.gz,
+    pico2.tar.gz, esp32.tar.gz and esp32s3.tar.gz attached alongside the
+    renamed ones.
+
+    A prune that cannot prune is worse than none, because the release looks
+    tidy. So this pins both halves: the step can name the repo, and a listing
+    failure that is not "release not found" stops the job.
+    """
+    text = open(os.path.join(REPO_ROOT, ".github", "workflows", "release.yml")).read()
+    m = re.search(r"^      - name: Drop firmware archives.*?(?=^      - )", text, re.M | re.S)
+    assert m, "the prune step is gone from release.yml"
+    step = m.group(0)
+
+    assert "GH_REPO:" in step, (
+        "the prune step has no GH_REPO; its job does not check the repo out, so "
+        "gh cannot tell which repository to list"
+    )
+    assert "2>/dev/null > old.txt" not in step, (
+        "the prune step is swallowing the listing error again -- a failed "
+        "`gh release view` then reads as an empty release"
+    )
+    assert "exit 1" in step, "a listing failure must stop the job, not prune nothing"

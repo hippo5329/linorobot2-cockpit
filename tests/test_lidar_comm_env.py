@@ -147,3 +147,37 @@ def test_the_env_block_carries_the_mode(cfg_stem):
     want = "udp" if want in ("udp", "udp_server") else want
     assert env.get("lidar_comm") == want, (
         f"{cfg_stem}: env has lidar_comm={env.get('lidar_comm')!r}, config says {want!r}")
+
+
+def test_the_serial_lidar_driver_respawns():
+    """A LiDAR that is merely late must not cost the robot /scan for the session.
+
+    ldlidar_stl_ros2_node waits about three seconds for a valid frame on the
+    serial port, then logs "ldlidar communication is abnormal", exits 1 and
+    stays dead -- launch does not restart it unless told to. SLAM and Nav2 then
+    block on a topic that will never appear.
+
+    Late is the ordinary case: the driver and whatever produces the packets come
+    up together. The esp32-jazzy release test failed exactly this way -- /scan
+    NO DATA from a freshly flashed, still-booting ESP32 that was emitting clean
+    47-byte LD19 packets at 15.3 kB/s when asked a minute later, and against
+    which the very same driver then reported "communication is normal". A real
+    LD19 needs its motor at speed before a frame validates, so this is not a
+    bench artifact.
+    """
+    import re
+    path = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
+    text = open(path).read()
+
+    # The serial driver is the last ldlidar Node in the lidar chain: the one
+    # that is handed port_name and port_baudrate rather than a UDP server port.
+    blocks = [m.start() for m in re.finditer(r'executable="ldlidar_stl_ros2_node"', text)]
+    assert blocks, "no ldlidar node left in bringup.launch.py"
+    serial = [b for b in blocks if "port_baudrate" in text[b:b + 3000]]
+    assert serial, "no ldlidar node is configured with a serial port any more"
+    for start in serial:
+        node = text[start:start + 3000]
+        assert "respawn=True" in node, (
+            "the serial ldlidar node does not respawn; it dies ~3s after launch "
+            "if its producer has not started yet, and never comes back"
+        )

@@ -144,10 +144,30 @@ jobs:
       - name: Drop firmware archives left by a previous cut of this tag
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job never checks the repo out -- it only downloads artifacts --
+          # so `gh` has no git remote to infer the repository from and every
+          # call here failed with "could not determine what repo to use". The
+          # first version sent that error to /dev/null and fell through to an
+          # empty list, so the step printed nothing, deleted nothing, and looked
+          # exactly like a release with no stale assets. Four cuts of
+          # rc-20260919 went by with the pre-rename pico/pico2/esp32/esp32s3
+          # archives still attached.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
-          gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null > old.txt || : > old.txt
+          # A missing release is normal on the first cut of a tag; anything else
+          # is a fault and must not be read as "nothing to prune".
+          if ! gh release view "$tag" --json assets --jq '.assets[].name' > old.txt 2> err.txt; then
+            if grep -qi 'release not found' err.txt; then
+              echo "::notice::no existing release for $tag -- nothing to prune"
+              : > old.txt
+            else
+              cat err.txt
+              echo "::error::could not list the existing assets of $tag"
+              exit 1
+            fi
+          fi
           while read -r name; do
             [ -n "$name" ] || continue
             case "$name" in linorobot2-firmware-*.tar.gz) ;; *) continue ;; esac

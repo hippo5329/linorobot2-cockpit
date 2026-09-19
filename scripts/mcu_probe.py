@@ -122,6 +122,12 @@ def parse_banner(text: str) -> dict:
     return matches[-1].groupdict() if matches else {}
 
 
+# How long a board gets to come back onto the USB bus before the probe
+# calls it absent. Two seconds covers an RP2 re-enumerating after the
+# previous run let go of the port; eight leaves room for a slow hub.
+PROBE_ENUMERATE_WAIT = float(os.environ.get("LINO_PROBE_ENUMERATE_WAIT", "8"))
+
+
 def is_pico_family(env: str) -> bool:
     return "pico" in (env or "").lower() or "rp2" in (env or "").lower()
 
@@ -135,14 +141,34 @@ def usb_mode(env: str, port: str) -> str:
     not the ESP32 behind it is running, so `app` there means "a port exists",
     which is why the banner and the stamp carry the real weight.
     """
-    if is_pico_family(env):
-        try:
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            import flash_mcu
-            return flash_mcu.rp2_usb_mode()
-        except Exception:
-            pass
-    return "app" if port and os.path.exists(port) else "absent"
+    # A board that is mid-re-enumeration is not an absent board. The probe runs
+    # moments after the previous ROS stack was torn down and the port released,
+    # and on that boundary an RP2 can be off the bus for a second or two. The
+    # first version answered "absent" there, and "absent" is the one verdict
+    # that makes the pipeline write NOTHING -- not the firmware, not the env --
+    # so the run went on to test whatever image and whatever env block the board
+    # happened to be carrying.
+    #
+    # That is how a pico2 bench came to be tested with an env that never had
+    # fake_wheel=1 written to it: no pose reset at the agent session, the
+    # emulator still parked at the room wall from an earlier run (odom
+    # x=4.800, /scan min 0.20 m), Nav2 boxed in and 41 consecutive zero
+    # velocity commands. Every symptom pointed at Nav2 or the firmware; the
+    # cause was a probe that looked one second too early.
+    deadline = time.time() + PROBE_ENUMERATE_WAIT
+    while True:
+        if is_pico_family(env):
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                import flash_mcu
+                mode = flash_mcu.rp2_usb_mode()
+            except Exception:
+                mode = "app" if port and os.path.exists(port) else "absent"
+        else:
+            mode = "app" if port and os.path.exists(port) else "absent"
+        if mode != "absent" or time.time() >= deadline:
+            return mode
+        time.sleep(0.5)
 
 
 def listen_for_banner(port: str, baud: int, timeout: float, reset: bool = False) -> str:

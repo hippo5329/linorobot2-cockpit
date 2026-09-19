@@ -734,7 +734,17 @@ def main():
         for line in (board.get("_human") or "").splitlines():
             print(f"    {line}")
 
-    blank_board = bool(board and board.get("verdict") == "no_firmware")
+    # "absent" belongs here with "no_firmware". Both mean the probe cannot
+    # account for what is on the board, and the difference between them is only
+    # WHY -- no application answered, or nothing was on the bus to answer. In
+    # neither case may the run proceed as though the board were already correct:
+    # that is how a stale env block survives a release test and the emulator
+    # starts the run parked against a wall.
+    #
+    # If the board really is unplugged the flash fails and the pipeline halts
+    # with that as the reason, which is the honest outcome. Silently testing an
+    # unknown board is not.
+    blank_board = bool(board and board.get("verdict") in ("no_firmware", "absent"))
     stale_board = bool(board and board.get("verdict") in ("stale", "unknown") and not board.get("probe_failed"))
     auto_updating = bool(args.auto_update and stale_board)
     want_firmware = (args.flash or blank_board or auto_updating) and not args.skip_flash
@@ -783,7 +793,9 @@ def main():
     failures = []   # steps that must not abort the run but must not read as success either
     try:
         if want_firmware:
-            why = ("no application was running on the board" if blank_board
+            why = ("nothing answered on the bus when the board was probed"
+                   if board.get("verdict") == "absent"
+                   else "no application was running on the board" if blank_board
                    else "auto-update: the board is not running this build" if auto_updating
                    else "requested with --flash")
             print(f"\n[3/6] [FLASH] Updating the firmware on '{controller}' ({serial_port}) — {why}.")

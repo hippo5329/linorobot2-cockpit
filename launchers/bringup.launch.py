@@ -372,6 +372,29 @@ def launch_setup(context, *args, **kwargs):
                     executable="ldlidar_stl_ros2_node",
                     name="ld19",
                     output="screen",
+                    # The serial driver gives the port about three seconds to
+                    # produce a valid frame, then logs "ldlidar communication is
+                    # abnormal", exits 1 and stays dead. Nothing restarts it, so
+                    # a LiDAR that is merely LATE costs the robot /scan for the
+                    # whole session -- and everything downstream, since SLAM and
+                    # Nav2 wait on a topic that will never come.
+                    #
+                    # Late is the normal case, not the exceptional one: the
+                    # driver and its producer are launched together. On the
+                    # gendrv bench the producer is the ESP32, and a run that
+                    # flashes the board reboots it, so the firmware is still
+                    # coming up while the driver is already counting. That is
+                    # exactly how the esp32-jazzy release test failed with
+                    # /scan NO DATA on a board that was, when asked a minute
+                    # later, emitting clean 47-byte LD19 packets at 15.3 kB/s --
+                    # and the same driver against the same port then reported
+                    # "communication is normal". A real LD19 does it too: the
+                    # motor has to spin up to speed before any frame is valid.
+                    #
+                    # So: respawn. The cost of a needless restart is one log
+                    # line; the cost of not restarting is a robot with no scan.
+                    respawn=True,
+                    respawn_delay=2.0,
                     parameters=[{
                         "product_name": lidar_product,
                         "topic_name": "scan",
