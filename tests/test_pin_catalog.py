@@ -92,3 +92,49 @@ def test_mecanum_config_warnings(reference):
                "ekf": {"ekf_filter_node": {"ros__parameters": {"odom0_config": [False] * 15}}},
                "nav2": {"controller_server": {"ros__parameters": {"min_y_velocity_threshold": 0.5}}}}
     assert len([m for m in gh.config_warnings(wrapped) if m.startswith("mecanum base but")]) == 2
+
+
+def _led(reference, name):
+    pins = (reference(name).get("base_controller") or {}).get("pins") or {}
+    return pins.get("led", -1)
+
+
+def test_boards_with_an_onboard_led_default_to_driving_it(reference):
+    """The blink pattern is the only thing a board says before micro-ROS is up.
+
+    A bench board in fake mode needs it as much as a real one: a simulated
+    robot fails in the same ways, and with led: -1 it fails silently.
+    """
+    assert _led(reference, "pico") == 25
+    assert _led(reference, "rover_pico2") == 25
+    assert _led(reference, "pico2_mecanum") == 25
+    assert _led(reference, "esp32") == 2
+    assert _led(reference, "esp32_wifi") == 2
+    assert _led(reference, "esp32s3") == 48
+
+
+def test_the_gendrv_has_no_onboard_led(reference):
+    """The Waveshare General Driver board does not have one to drive."""
+    assert _led(reference, "gendrv") == -1
+    assert _led(reference, "gendrv_real") == -1
+
+
+def test_the_wireless_picos_leave_the_led_to_the_cyw43(reference):
+    """On picow/pico2w the LED hangs off the wireless chip, not a GPIO.
+
+    check_config warns about GPIO 23/24/25/29 on those boards for this reason,
+    so giving them 25 would be wrong as well as useless.
+    """
+    assert _led(reference, "picow") == -1
+    assert _led(reference, "pico2w") == -1
+
+
+def test_the_esp32_led_is_flagged_as_a_strapping_pin(reference):
+    """GPIO 2 is both the DevKit's LED and a strapping pin.
+
+    The warning is correct and must keep firing -- it is safe here only
+    because an LED to ground pulls the pin the way the bootloader wants, and a
+    reader deserves to be told that rather than have the warning suppressed.
+    """
+    warnings = [m for l, m in pc.check_config(reference("esp32")) if l == "warn"]
+    assert any("strapping" in m and "led" in m for m in warnings), warnings

@@ -73,6 +73,15 @@ base_controller:
     i2c:
       sda: 21
       scl: 22
+    # GPIO 2 is the DevKit's onboard LED (the non-W boards drive it
+    # directly; on a picow/pico2w it hangs off the CYW43 instead, which is why
+    # those keep led: -1). Wired even for a bench board in fake mode: the blink
+    # patterns are the only thing a board says before micro-ROS is up, and a
+    # simulated robot fails in exactly the same ways a real one does.
+    # The pin checker warns that GPIO 2 is a strapping pin. That is expected
+    # here and safe: it only matters if something HOLDS the pin during boot,
+    # and an LED to ground pulls it the way the bootloader already wants.
+    led: 2
 kinematics:
   base_type: 2wd
   stamped_cmd_vel: auto

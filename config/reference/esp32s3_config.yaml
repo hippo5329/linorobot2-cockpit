@@ -51,6 +51,12 @@ base_controller:
     i2c:
       sda: 8
       scl: 9
+    # GPIO 48 is the S3 DevKit's onboard RGB LED (the non-W boards drive it
+    # directly; on a picow/pico2w it hangs off the CYW43 instead, which is why
+    # those keep led: -1). Wired even for a bench board in fake mode: the blink
+    # patterns are the only thing a board says before micro-ROS is up, and a
+    # simulated robot fails in exactly the same ways a real one does.
+    led: 48
 kinematics:
   base_type: 2wd
   stamped_cmd_vel: auto
