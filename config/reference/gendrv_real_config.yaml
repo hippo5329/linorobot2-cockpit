@@ -70,6 +70,12 @@ base_controller:
     i2c:
       sda: 32
       scl: 33
+    # GPIO 2 is the ESP32 DevKit's onboard LED, and on the Waveshare General
+    # Driver the pin is not connected -- so the same default is harmless here
+    # and every ESP32 board shares one LED pin. The pin checker warns that 2 is
+    # a strapping pin; that only bites if something HOLDS it during boot, which
+    # neither an LED to ground nor an unconnected pin does.
+    led: 2
 kinematics:
   base_type: 2wd
   stamped_cmd_vel: auto

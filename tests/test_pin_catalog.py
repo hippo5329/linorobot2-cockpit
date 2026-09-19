@@ -113,10 +113,15 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
     assert _led(reference, "esp32s3") == 48
 
 
-def test_the_gendrv_has_no_onboard_led(reference):
-    """The Waveshare General Driver board does not have one to drive."""
-    assert _led(reference, "gendrv") == -1
-    assert _led(reference, "gendrv_real") == -1
+def test_every_esp32_board_shares_one_led_pin(reference):
+    """GPIO 2 on the GenDrv is not connected, so the DevKit default is safe there.
+
+    One LED pin across every ESP32 board beats a per-board exception: driving
+    an unconnected pin costs nothing, and a config that differs only where it
+    has to is easier to keep right.
+    """
+    for name in ("esp32", "esp32_wifi", "gendrv", "gendrv_real"):
+        assert _led(reference, name) == 2, name
 
 
 def test_the_wireless_picos_leave_the_led_to_the_cyw43(reference):
