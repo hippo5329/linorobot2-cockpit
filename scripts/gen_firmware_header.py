@@ -587,16 +587,25 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         #                     on the gendrv bench feeds a USB-serial bridge
         # Zeroing it for every UDP mode, as this once did, silently disabled the
         # real esp32-wifi wiring.
-        comm_mode = lidar.get("comm_mode")
-        if comm_mode == "topic" or (comm_mode in ("udp", "udp_server") and mcu_fake_ld19):
-            rx_pin = -1
-        else:
-            rx_pin = lidar.get("rx_pin", -1)
+        # rx_pin is emitted as configured, whatever comm_mode says. It used to be
+        # zeroed for the topic and udp modes, which made the transport a property
+        # of the BUILD: the released esp32 image is built `udp`, so flashing it
+        # onto a robot wired for a serial LD19 gave a board that could not be
+        # told to use the UART no matter what its env said. The pin is wiring;
+        # which sink the scan leaves by is now LIDAR_COMM_DEFAULT below, and the
+        # env key `lidar_comm` overrides that at boot.
+        comm_mode = lidar.get("comm_mode") or "serial"
+        rx_pin = lidar.get("rx_pin", -1)
         lines.extend([
             "// --- LiDAR Hardware Configuration ---",
             f"#define LIDAR_RXD {rx_pin}",
             f"#define LIDAR_BAUDRATE {lidar.get('baudrate', 230400)}",
             f"#define LIDAR_SERIAL 1",
+            "// Which sink the synthetic scan leaves by, when the env does not say.",
+            "// serial = LD19 frames out LIDAR_RXD; udp = LD19 frames in datagrams to",
+            "// LIDAR_SERVER; topic = raw_scan over micro-ROS. The env key is",
+            "// `lidar_comm` and it wins, so one image serves all three.",
+            f'#define LIDAR_COMM_DEFAULT "{"udp" if comm_mode in ("udp", "udp_server") else comm_mode}"',
             "",
         ])
 
@@ -743,8 +752,14 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         ])
 
 
-    # LiDAR UDP Streaming
-    if lidar and lidar.get("comm_mode") in ("udp", "udp_server"):
+    # LiDAR UDP Streaming.
+    #
+    # Emitted whenever the robot has a lidar block, not only for a udp build. The
+    # emulator now chooses its sink at run time from the env, so a serial-default
+    # image asked for udp still has to know where to send -- and these two are
+    # env lookups with a compiled fallback, so a build that never streams pays
+    # nothing for them.
+    if lidar:
         lidar_srv_str = lidar.get("server_ip") or tgt.get("agent_ip") or secrets.get("micro_ros", {}).get("agent_ip") or "192.168.1.10"
         lidar_port = lidar.get("udp_port", 8889)
         try:
@@ -754,9 +769,14 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         except Exception:
             srv_octets = [192, 168, 1, 10]
 
+        lines.append("// --- LiDAR UDP Streaming ---")
+        # USE_LIDAR_UDP now means ONLY "forward a real LiDAR's bytes over UDP",
+        # which is lidar.cpp's path and is already gated `&& !USE_FAKE_LD19`.
+        # The emulator's UDP sink must not depend on it, or the transport goes
+        # back to being a property of the build.
+        if lidar.get("comm_mode") in ("udp", "udp_server") and not mcu_fake_ld19:
+            lines.append("#define USE_LIDAR_UDP")
         lines.extend([
-            "// --- LiDAR UDP Streaming ---",
-            "#define USE_LIDAR_UDP",
             f"#define LIDAR_SERVER_DEFAULT IPAddress({srv_octets[0]}, {srv_octets[1]}, {srv_octets[2]}, {srv_octets[3]})",
             f"#define LIDAR_PORT_DEFAULT {lidar_port}",
             '#define LIDAR_SERVER envIP("lidar_ip", LIDAR_SERVER_DEFAULT)',

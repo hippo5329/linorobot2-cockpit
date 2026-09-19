@@ -1,0 +1,149 @@
+"""Which sink the synthetic scan leaves by is a run-time choice, not a build one.
+
+`comm_mode` used to be compiled in three ways at once: it zeroed LIDAR_RXD for
+the topic and udp modes, it defined USE_LIDAR_UDP, and main.cpp derived
+USE_FAKE_LD19_RAW_SCAN from both. So the transport was a property of the IMAGE.
+
+The released `esp32` image is built from esp32_wifi_config.yaml, which is `udp`.
+Flashing it onto the gendrv bench -- wired for a serial LD19 into a USB-serial
+bridge -- gave a board that could not be told to use the UART however its env
+was keyed. It emitted at roughly the right average byte rate through the
+`lidar_rx` override and ldlidar_stl_ros2 still rejected it, because the UDP
+build's per-step budget is a whole revolution rather than eight packets. The env
+key made it look configurable right up to the point where it did not work.
+
+Now every image compiles all three sinks and picks at boot from `lidar_comm`,
+falling back to LIDAR_COMM_DEFAULT -- the build's own comm_mode -- so a board
+whose env lacks the key behaves exactly as it did before.
+"""
+import os
+import re
+import sys
+
+import pytest
+import yaml
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+REF = os.path.join(REPO_ROOT, "config", "reference")
+FW = os.path.join(REPO_ROOT, "firmware")
+
+
+def _header(cfg_stem, tmp_path, distro="jazzy"):
+    import subprocess
+    env = dict(os.environ)
+    env["COCKPIT_CONFIG_DIR"] = str(tmp_path / "cfg")
+    env.pop("ROS_DISTRO", None)
+    hdr = os.path.join(FW, "include", "custom", "lino_base_config.h")
+    saved = open(hdr).read() if os.path.exists(hdr) else None
+    try:
+        subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+                        "--params", os.path.join(REF, f"{cfg_stem}_config.yaml"),
+                        "--distro", distro, "--no-embed-secrets"],
+                       check=True, capture_output=True, env=env)
+        return open(hdr).read()
+    finally:
+        if saved is not None:
+            open(hdr, "w").write(saved)
+
+
+def _comm_mode(cfg_stem):
+    d = yaml.safe_load(open(os.path.join(REF, f"{cfg_stem}_config.yaml")))
+    lidar = ((d.get("hardware") or {}).get("lidar")
+             or (d.get("controller") or {}).get("lidar") or {})
+    if not lidar:
+        for v in d.values():
+            if isinstance(v, dict) and "lidar" in v:
+                lidar = v["lidar"] or {}
+                break
+    return (lidar or {}).get("comm_mode")
+
+
+@pytest.mark.parametrize("cfg_stem", ["esp32_wifi", "gendrv"])
+def test_the_header_names_the_build_default_mode(cfg_stem, tmp_path):
+    text = _header(cfg_stem, tmp_path)
+    m = re.search(r'#define LIDAR_COMM_DEFAULT\s+"(\w+)"', text)
+    assert m, f"{cfg_stem}: no LIDAR_COMM_DEFAULT; the firmware has no fallback to resolve"
+    want = _comm_mode(cfg_stem)
+    want = "udp" if want in ("udp", "udp_server") else (want or "serial")
+    assert m.group(1) == want, f"{cfg_stem}: default is {m.group(1)}, config says {want}"
+
+
+def test_the_configured_rx_pin_survives_a_non_serial_build(tmp_path):
+    """The pin is wiring; the mode is transport. Zeroing LIDAR_RXD because the
+    build's comm_mode is udp is precisely what welded the transport into the image.
+
+    No reference config combines a udp comm_mode with an rx_pin -- gendrv has the
+    pin and is serial, esp32_wifi is udp with no pin -- so this builds that
+    combination rather than asserting against one that cannot fail.
+    """
+    import subprocess
+    src = yaml.safe_load(open(os.path.join(REF, "gendrv_config.yaml")))
+
+    def find_lidar(node):
+        if isinstance(node, dict):
+            if "lidar" in node and isinstance(node["lidar"], dict):
+                return node["lidar"]
+            for v in node.values():
+                got = find_lidar(v)
+                if got is not None:
+                    return got
+        return None
+
+    lidar = find_lidar(src)
+    assert lidar and lidar.get("rx_pin") == 4, "gendrv_config no longer wires rx_pin 4"
+    lidar["comm_mode"] = "udp"
+    cfg = tmp_path / "udp_with_pin_config.yaml"
+    cfg.write_text(yaml.safe_dump(src))
+
+    hdr = os.path.join(FW, "include", "custom", "lino_base_config.h")
+    saved = open(hdr).read() if os.path.exists(hdr) else None
+    env = dict(os.environ)
+    env["COCKPIT_CONFIG_DIR"] = str(tmp_path / "cfg")
+    env.pop("ROS_DISTRO", None)
+    try:
+        subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+                        "--params", str(cfg), "--distro", "jazzy", "--no-embed-secrets"],
+                       check=True, capture_output=True, env=env)
+        text = open(hdr).read()
+    finally:
+        if saved is not None:
+            open(hdr, "w").write(saved)
+    assert re.search(r"#define LIDAR_RXD 4\b", text), (
+        "a udp-mode build zeroed the configured rx_pin, so that image can never be "
+        "told to drive a serial LD19 however its env is keyed.")
+    assert re.search(r'#define LIDAR_COMM_DEFAULT\s+"udp"', text)
+
+
+def test_the_udp_destination_exists_even_in_a_serial_build(tmp_path):
+    """A serial-default image told `lidar_comm=udp` still has to know where to send.
+    Both are env lookups with a compiled fallback, so an image that never streams
+    pays nothing for them."""
+    text = _header("gendrv", tmp_path)
+    assert "#define LIDAR_SERVER " in text and "#define LIDAR_PORT " in text
+
+
+def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
+    """lidar.cpp's path is gated `USE_LIDAR_UDP && !USE_FAKE_LD19` -- forwarding a
+    PHYSICAL LiDAR's bytes over UDP. A fake-mode udp robot must not define it, or
+    the emulator's sink goes back to being chosen by the build."""
+    text = _header("esp32_wifi", tmp_path)
+    assert "#define USE_FAKE_LD19" in text, "esp32_wifi is a fake-mode reference"
+    assert "#define USE_LIDAR_UDP" not in text, (
+        "a fake-mode udp build still defines USE_LIDAR_UDP; that macro now means "
+        "'forward a real LiDAR over UDP' and nothing else.")
+
+
+@pytest.mark.parametrize("cfg_stem", ["esp32_wifi", "gendrv"])
+def test_the_env_block_carries_the_mode(cfg_stem):
+    """Without this key the firmware falls back to the image's own default, which is
+    exactly the behaviour being fixed -- so mcu_env.py has to write it."""
+    import mcu_env
+    params = yaml.safe_load(open(os.path.join(REF, f"{cfg_stem}_config.yaml")))
+    env = mcu_env.hardware_env(params)
+    want = _comm_mode(cfg_stem)
+    if want is None:
+        pytest.skip(f"{cfg_stem} has no comm_mode")
+    want = "udp" if want in ("udp", "udp_server") else want
+    assert env.get("lidar_comm") == want, (
+        f"{cfg_stem}: env has lidar_comm={env.get('lidar_comm')!r}, config says {want!r}")

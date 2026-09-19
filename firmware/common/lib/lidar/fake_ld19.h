@@ -20,8 +20,20 @@
 #endif
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>   // malloc, for the sink buffers
+#include <string.h>   // strcmp, for parseCommMode
 
-#ifdef USE_LIDAR_UDP
+// Which SINKS are compiled in is a property of the BOARD; which one is used is
+// a property of the robot's env. They used to be the same thing -- USE_LIDAR_UDP
+// came from the build config's comm_mode -- so the released esp32 image, built
+// `udp`, physically could not drive a serial LD19 bridge however its env was
+// keyed. The UDP sink needs a UDP stack: every ESP32 core has one, and on RP2
+// only the W boards do, where it arrives with USE_WIFI.
+#if defined(ESP32) || defined(USE_WIFI)
+#define FAKE_LD19_UDP_SINK 1
+#endif
+
+#ifdef FAKE_LD19_UDP_SINK
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <errno.h>
@@ -104,6 +116,26 @@
 
 class FakeLD19
 {
+public:
+    // Where the synthetic scan goes. One image compiles all three sinks; the env
+    // key `lidar_comm` picks between them, falling back to LIDAR_COMM_DEFAULT --
+    // the build's own comm_mode -- so a board with no such key behaves exactly
+    // as it did before. Declared first because comm_mode_ below is of this type.
+    enum CommMode { COMM_SERIAL, COMM_UDP, COMM_TOPIC };
+
+    static CommMode parseCommMode(const char *s, CommMode fallback)
+    {
+        if (!s || !*s) return fallback;
+        if (!strcmp(s, "serial")) return COMM_SERIAL;
+        if (!strcmp(s, "udp") || !strcmp(s, "udp_server")) return COMM_UDP;
+        if (!strcmp(s, "topic")) return COMM_TOPIC;
+        return fallback;
+    }
+
+    // Call before begin(); begin() acts on whatever is set here.
+    void setCommMode(CommMode m) { comm_mode_ = m; }
+    CommMode commMode() const { return comm_mode_; }
+
 private:
     struct Segment {
         float x1, y1, x2, y2;
@@ -140,7 +172,7 @@ private:
     // packet per step is not thereby behind.
     static const uint32_t RESYNC_LAG_US = PACK_PERIOD_US * 38;
 
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
     // The UDP path has no UART to protect, and the budget that protects one is
     // the wrong bound here. Measured on the GenDrv bench against the UDP server:
     // the board delivered ~126 LD19 packets/s with the agent connected and
@@ -176,9 +208,10 @@ private:
     Stream *out_stream_ = nullptr;
     int tx_pin_ = -1;
     bool enabled_ = false;
+    CommMode comm_mode_ = COMM_SERIAL;
     float offset_x_ = (float)FAKE_LIDAR_OFFSET_X;   // where the LiDAR sits, forward of base_link
 
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
     WiFiUDP udp_;
     bool udp_enabled_ = false;
     // Heap, not .bss. This is 1410 bytes held by a global object for the whole
@@ -210,7 +243,7 @@ private:
     // saw no scan could not tell them apart.
     uint32_t uart_bytes_ = 0;
     uint32_t uart_short_ = 0;
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
 #endif
 
     // CalCRC8 lookup table (poly 0x4D), LDROBOT LD19 standard
@@ -270,7 +303,7 @@ public:
     // datagrams left, how many sends failed and the last errno.
     void statsLine(char *buf, size_t n) const
     {
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
         snprintf(buf, n, "steps=%lu packs=%lu resync=%lu uart_bytes=%lu uart_short=%lu "
                  "udp_dg=%lu udp_bytes=%lu udp_fail=%lu udp_noradio=%lu errno=%d",
                  (unsigned long)steps_, (unsigned long)packs_, (unsigned long)resyncs_,
@@ -286,6 +319,12 @@ public:
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
     {
+        // Only the serial sink opens a UART. A pin may well be configured on a
+        // board running udp or topic -- rx_pin is wiring, not transport -- and
+        // opening it there would put a second copy of the scan on a pin nobody
+        // is reading, at 78% of the wire.
+        if (comm_mode_ != COMM_SERIAL)
+            tx_pin = -1;
         tx_pin_ = tx_pin;
         if (tx_pin >= 0)
         {
@@ -318,7 +357,9 @@ public:
 #endif
         }
 
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
+    if (comm_mode_ == COMM_UDP)
+    {
         // A failed allocation here is not fatal and must not be silent: the
         // board keeps running and simply has no UDP scan, which on a robot whose
         // only scan source is this looks exactly like a LiDAR fault.
@@ -333,7 +374,13 @@ public:
         {
             Serial.println("[lidar] no heap for the UDP scan buffer — UDP sink off");
         }
+    }
 #endif
+        // topic mode has no sink of its own here: main.cpp takes the packets
+        // through setPacketCallback() and publishes them as raw_scan. The
+        // emulator still has to run for that callback to fire.
+        if (comm_mode_ == COMM_TOPIC)
+            enabled_ = true;
         next_pack_us_ = micros() + PACK_PERIOD_US;
     }
 
@@ -515,11 +562,20 @@ public:
         if (!enabled_) return;
         steps_++;
 
-#ifdef USE_LIDAR_UDP
-        uint8_t max_packs = out_stream_ ? MAX_PACKS_PER_STEP : UDP_MAX_PACKS_PER_STEP;
-#else
-        uint8_t max_packs = out_stream_ ? MAX_PACKS_PER_STEP : 10;
+        // The budget is a property of the SINK, and getting it from the build
+        // was the second half of the same bug: a udp-built image driving a UART
+        // through an env override emitted whole revolutions per step instead of
+        // eight packets, so the bytes arrived at roughly the right average rate
+        // and ldlidar_stl_ros2 still called it "communication abnormal".
+        uint8_t max_packs;
+        if (out_stream_)
+            max_packs = MAX_PACKS_PER_STEP;          // a UART, paced for a UART
+#ifdef FAKE_LD19_UDP_SINK
+        else if (comm_mode_ == COMM_UDP)
+            max_packs = UDP_MAX_PACKS_PER_STEP;      // a whole revolution is one flush
 #endif
+        else
+            max_packs = 10;                          // raw_scan over micro-ROS
         for (uint8_t budget = 0; budget < max_packs; budget++)
         {
             uint32_t now = micros();
@@ -548,7 +604,7 @@ public:
     }
 
 private:
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
     void flushUdp()
     {
         if (!udp_enabled_ || !udp_buf_ || udp_buf_len_ == 0) return;
@@ -627,7 +683,7 @@ private:
             pkt_cb_(pkt, 47);
         }
 
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
         if (udp_enabled_ && udp_buf_)
         {
             if (udp_buf_len_ + 47 > UDP_DATAGRAM_LIMIT)
@@ -643,7 +699,7 @@ private:
         if (point_idx_ >= POINTS_PER_REV)
         {
             point_idx_ -= POINTS_PER_REV;
-#ifdef USE_LIDAR_UDP
+#ifdef FAKE_LD19_UDP_SINK
             // A revolution is 38 packets -- 1786 bytes, more than one datagram
             // holds -- so a scan leaves as one full 1410-byte datagram and one
             // shorter remainder, and nothing is ever held across the boundary.

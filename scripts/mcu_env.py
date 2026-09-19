@@ -351,6 +351,13 @@ def hardware_env(params: dict) -> dict:
 
     # LiDAR wiring: which pin the scan leaves on and how fast. -1 means no UART.
     lidar_cfg = tgt.get("lidar", {}) or {}
+    # Which sink the synthetic scan leaves by. The firmware reads this as
+    # `lidar_comm` and falls back to LIDAR_COMM_DEFAULT, the comm_mode the image
+    # was built from -- so this key is what lets ONE esp32 image serve a robot
+    # wired for a serial LD19 and one streaming over UDP.
+    if lidar_cfg.get("comm_mode"):
+        mode = str(lidar_cfg["comm_mode"]).strip().lower()
+        env["lidar_comm"] = "udp" if mode in ("udp", "udp_server") else mode
     if lidar_cfg.get("rx_pin") is not None:
         env["lidar_rx"] = int(lidar_cfg["rx_pin"])
     if lidar_cfg.get("baudrate") is not None:

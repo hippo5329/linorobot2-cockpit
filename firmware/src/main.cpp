@@ -61,15 +61,18 @@
 #include "fake_ld19.h"
 #endif
 // The synthetic scan can reach the host three ways, and running two at once
-// wastes a link that has no headroom to spare. When LIDAR_RXD is a real pin the
-// scan goes out that UART as LD19-framed bytes -- on the gendrv bench into a
-// USB-serial bridge the host reads with the real ldlidar driver (comm_mode:
-// serial) -- so raw_scan over micro-ROS would be a duplicate of a stream nobody
-// subscribes to. Only when no pin is wired (comm_mode: topic zeroes rx_pin in
-// the generated header) does the scan need to travel as raw_scan.
-// USE_LIDAR_UDP is the third path and owns the stream outright.
-#if defined(USE_FAKE_LD19) && !defined(USE_LIDAR_UDP) \
-    && (!defined(LIDAR_RXD) || (LIDAR_RXD < 0))
+// wastes a link that has no headroom to spare -- so exactly one is chosen, at
+// BOOT rather than at build time. The publisher below is compiled into every
+// image that has the emulator; whether it is created and fed is decided by
+// `lidar_comm` in the env, defaulting to LIDAR_COMM_DEFAULT (the build's own
+// comm_mode).
+//
+// This used to be a compile-time gate keyed on LIDAR_RXD and USE_LIDAR_UDP,
+// which made the transport a property of the image: the released esp32 image
+// is built `udp`, so flashing it onto the gendrv bench -- wired for a serial
+// LD19 into a USB-serial bridge -- gave a board that could not be told to use
+// the UART, whatever its env said.
+#ifdef USE_FAKE_LD19
 #define USE_FAKE_LD19_RAW_SCAN
 #endif
 #include "battery.h"
@@ -259,6 +262,9 @@ FakeLD19 fake_ld19;
 // that flashes it would otherwise raycast a room and stream it (env key
 // fake_ld19; the compiled-in default is on, so a blank env keeps the bench).
 static bool fake_lidar_on = false;
+#ifdef USE_FAKE_LD19
+static FakeLD19::CommMode fake_lidar_comm = FakeLD19::COMM_SERIAL;
+#endif
 #ifdef USE_FAKE_LD19_RAW_SCAN
 rcl_publisher_t raw_scan_publisher;
 std_msgs__msg__UInt8MultiArray raw_scan_msg;
@@ -830,9 +836,22 @@ void setup()
     fake_lidar_on = envFlagMain("fake_ld19", true);
     if (fake_lidar_on)
     {
+        // The mode, before begin(): it decides whether a UART is opened, which
+        // sink is armed and how many packets a step() may emit.
+        fake_lidar_comm = FakeLD19::parseCommMode(envGet("lidar_comm", NULL),
+                                                  FakeLD19::parseCommMode(LIDAR_COMM_DEFAULT,
+                                                                          FakeLD19::COMM_SERIAL));
+        fake_ld19.setCommMode(fake_lidar_comm);
+        Serial.printf("[lidar] comm=%s (default %s)\n",
+                      fake_lidar_comm == FakeLD19::COMM_SERIAL ? "serial"
+                      : fake_lidar_comm == FakeLD19::COMM_UDP ? "udp" : "topic",
+                      LIDAR_COMM_DEFAULT);
 #ifdef USE_FAKE_LD19_RAW_SCAN
-        initRawScan();
-        fake_ld19.setPacketCallback(onRawScanPacket);
+        if (fake_lidar_comm == FakeLD19::COMM_TOPIC)
+        {
+            initRawScan();
+            fake_ld19.setPacketCallback(onRawScanPacket);
+        }
 #endif
         // Where on the robot the scan is taken from: geometry.laser.x, the
         // same number the URDF puts the laser frame at.
@@ -1144,8 +1163,11 @@ bool createEntities()
                 TOPIC_PREFIX "humidity"));
     }
 #ifdef USE_FAKE_LD19_RAW_SCAN
-    // create raw_scan publisher for fake LiDAR
-    if (fake_lidar_on)
+    // create raw_scan publisher for fake LiDAR -- only in topic mode. The
+    // publisher is compiled into every image now, so `fake_lidar_on` alone
+    // would put an unread raw_scan on the wire for every serial and udp robot,
+    // and spend one of RMW_UXRCE_MAX_PUBLISHERS doing it.
+    if (fake_lidar_on && fake_lidar_comm == FakeLD19::COMM_TOPIC)
     {
         RCCHECK(rclc_publisher_init_default(
             &raw_scan_publisher,
