@@ -6,9 +6,48 @@
 # bytes. nav_msgs/Odometry with its two 6x6 covariances is ~720 bytes, so a
 # best-effort /odom/unfiltered failed on every cycle (fail=50/s on the UART1
 # diagnostic) while the ~300-byte Imu went through. 1024 fits it with room;
-# the cost is a few KB of stream buffers (MTU x history per stream).
+# the cost is a few KB of stream buffers (MTU x history per stream).#
+# rmw_microxrcedds entity pools: sized to what this firmware actually creates,
+# not to micro_ros_platformio's defaults. The pools are STATIC -- every slot is
+# .bss whether or not anything uses it -- and the defaults
+# (metas/colcon.meta: 5 subscriptions, 1 service, 1 client, history 4) were
+# headroom for experiments that this tree no longer needs. Against those:
+#
+#   MAX_PUBLISHERS   10  UNCHANGED, and do not "optimise" it. The worst case
+#                        really is ten -- odom, imu, mag, battery, safety_stop,
+#                        range, pressure, temperature, humidity, raw_scan --
+#                        and nine are conditional, so some config somewhere
+#                        turns them all on. Running out of slots fails at
+#                        RUNTIME inside RCCHECK: a board that reboots in a
+#                        loop, not a build error anyone would catch.
+#   MAX_SUBSCRIPTIONS 2  main.cpp creates two (twist + twist_stamped) under
+#                        USE_STAMPED_CMD_VEL, one otherwise.
+#   MAX_SERVICES      0  no rclc_service_init anywhere in the firmware.
+#   MAX_CLIENTS       0  no rclc_client_init, and no parameter server.
+#   MAX_HISTORY       1  the stream buffers are MTU x history PER STREAM, so
+#                        this is where the bytes are; upstream ships exactly
+#                        this change as metas/colcon_lowmem.meta. One message
+#                        in flight per stream instead of four: on a best-effort
+#                        stream that is already the case, on a reliable one it
+#                        costs pipelining, not correctness. If a reliable topic
+#                        starts stalling under load, suspect this line.
+#
+# Motivated by esp32_lyrical, which does not fit at all (.dram0.bss over
+# dram0_0_seg by 14504 bytes), but applied everywhere: the smaller boards have
+# no use for the slack either.
 {
     "names": {
+        "rmw_microxrcedds": {
+            "cmake-args": [
+                "-DRMW_UXRCE_MAX_NODES=1",
+                "-DRMW_UXRCE_MAX_PUBLISHERS=10",
+                "-DRMW_UXRCE_MAX_SUBSCRIPTIONS=2",
+                "-DRMW_UXRCE_MAX_SERVICES=0",
+                "-DRMW_UXRCE_MAX_CLIENTS=0",
+                "-DRMW_UXRCE_MAX_HISTORY=1",
+                "-DRMW_UXRCE_TRANSPORT=custom"
+            ]
+        },
         "microxrcedds_client": {
             "cmake-args": [
                 "-DUCLIENT_CUSTOM_TRANSPORT_MTU=1024"
