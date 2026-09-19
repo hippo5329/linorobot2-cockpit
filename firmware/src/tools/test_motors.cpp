@@ -105,7 +105,9 @@ PID motor2_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID motor3_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID motor4_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 
-Odometry odometry;
+// No `Odometry odometry;` here: declared, never referenced, 728 bytes of
+// .bss out of a 124580-byte static segment. A motor test has no use for an
+// odometry estimate.
 IMU imu;
 MAG mag;
 unsigned total_motors = 4;

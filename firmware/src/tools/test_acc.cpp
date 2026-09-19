@@ -97,7 +97,10 @@ Kinematics kinematics(
     LR_WHEELS_DISTANCE
 );
 
-Odometry odometry;
+// No `Odometry odometry;` here: it was declared and never referenced, 728
+// bytes of .bss out of a 124580-byte static segment, on every board and
+// every app. This tool measures wheel velocity through Kinematics; it never
+// built an odometry estimate.
 
 // Pointers, built in setup_() from what is on the bus -- not the macro types the
 // config header chose. This tool runs on a real robot with real motors, and its

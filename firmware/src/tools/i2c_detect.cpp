@@ -27,10 +27,14 @@
 
 namespace i2c_detect {
 
-I2CDevice found[I2C_PROBE_MAX];
-int num_found = 0;
-
+// found[] and num_found are locals of scanAndIdentify() now. Every use was
+// already inside it, so file scope bought nothing and cost 388 bytes of .bss
+// in a 124580-byte static segment -- paid for by every app in the image, since
+// the tools are dispatched at runtime from one binary. This function runs on
+// the tool's own loop task, which it owns outright, so the stack is free.
 void scanAndIdentify() {
+    I2CDevice found[I2C_PROBE_MAX];
+    int num_found = 0;
     Serial.println("\n=======================================================");
     Serial.println("  Linorobot2 I2C Sensor Detection                       ");
     Serial.println("=======================================================");
