@@ -15,6 +15,7 @@ import argparse
 import math
 import os
 import sys
+import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -897,6 +898,40 @@ def bare_mcu_params(mcu: str) -> dict:
     }
 
 
+def write_text_atomic(path: str, text: str) -> None:
+    """Write a new file beside the target and rename it over the top.
+
+    Opening the target for writing needs permission on the EXISTING FILE. The
+    cockpit's backend runs as the container user while the one-click pipeline
+    runs as container-root, so whichever wrote the header last leaves it
+    unwritable by the other -- and the failure surfaced in the web UI as a bare
+    Python traceback out of this module, on every box in the rig:
+
+        Failed to generate firmware header: Traceback (most recent call last):
+          File "/ws/scripts/gen_firmware_header.py", line 957, in main
+
+    Writing a temp file and renaming needs permission on the DIRECTORY, which
+    both users have, so it works whichever of them wrote last. It is atomic as
+    well, so a build never reads a half-written header.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory,
+                               prefix="." + os.path.basename(path) + ".",
+                               suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate Linorobot2 C++ base configuration header")
     parser.add_argument("--params", default=DEFAULT_PARAMS, help="Path to <config dir>/<robot>_config.yaml")
@@ -953,9 +988,7 @@ def main():
 
     header_content = generate_header(params, secrets, controller_name, args.no_embed_secrets, args.distro)
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w") as f:
-        f.write(header_content)
+    write_text_atomic(args.out, header_content)
 
     print(f"✅ Generated firmware header for base controller [{controller_name}]: {args.out}")
 
