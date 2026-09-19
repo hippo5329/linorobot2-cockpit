@@ -126,8 +126,20 @@ def sysfs_device_link(port_path: str) -> str:
 
     st_rdev is the identity the kernel itself uses, and /sys/dev/char/<maj>:<min>
     is indexed by it, so it survives any renaming. The name-based path stays as
-    the fallback for a node with no /sys/dev/char entry.
+    the fallback for a node that exists but has no /sys/dev/char entry.
+
+    A port that is NOT THERE must not reach that fallback. /sys is the host's
+    inside a container, so `/sys/class/tty/ttyACM0` resolves whether or not this
+    box has a ttyACM0 -- and on a bench with more than one board it resolves to
+    somebody else's. A board in BOOTSEL has no tty at all, which is exactly when
+    an image is about to be written: a pico box whose own RP2040 sat in BOOTSEL
+    asked about its absent /dev/ttyACM0, was told "Raspberry Pi Pico 2 (RP2350)"
+    decisively -- the OTHER box's board, on the other side of the machine -- and
+    the run was refused with an MCU mismatch against a board that was correct and
+    ready. Absent is not evidence about anything, so say nothing.
     """
+    if not port_path or not os.path.exists(port_path):
+        return ""
     try:
         rdev = os.stat(port_path).st_rdev
         by_number = f"/sys/dev/char/{os.major(rdev)}:{os.minor(rdev)}/device"
