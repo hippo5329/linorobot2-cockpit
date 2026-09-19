@@ -78,8 +78,6 @@ MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
 // Only imu_msg is used here. The other five came along from main.cpp when this
 // tool was split out and were never referenced -- 1056 bytes of .bss in an
 // image whose static segment is 124580 bytes total, carried on every board.
-// Nothing collects them: they have external linkage and the ESP32 build sets
-// no -fdata-sections/--gc-sections, so unused globals survive to the link.
 sensor_msgs__msg__Imu imu_msg;
 
 
@@ -172,7 +170,14 @@ const unsigned ticks = 20;
 const float dt = ticks * 0.001f;
 const unsigned run_time = 1000; // 1s
 const unsigned buf_size = run_time / ticks * 4;
-Kinematics::velocities buf[buf_size];
+// The 2400-byte velocity trace is a LOCAL in loop_(), passed to the two
+// functions that touch it -- see loop_(). It used to be a file-scope array,
+// which put it in .bss, where it was charged against a static segment of just
+// 124580 bytes (memory.ld: 0x2c200 - 0xdb5c) and paid for by every app in the
+// image, since the tools are dispatched at runtime from one binary. A tool
+// owns the whole 8 KB loop-task stack while it runs -- it never enters the
+// base micro-ROS loop -- so 2400 bytes of it costs nothing that is otherwise
+// in use.
 // No batt[] here any more: it was written once per sample and never read, so
 // it was 800 bytes of static RAM recording something nobody looked at. If a
 // battery trace is wanted alongside the velocity trace, add it back WITH the
@@ -180,7 +185,7 @@ Kinematics::velocities buf[buf_size];
 float imu_max_acc_x, imu_min_acc_x;
 unsigned idx = 0;
 
-void record(unsigned n) {
+void record(unsigned n, Kinematics::velocities *buf) {
     for (unsigned i = 0; i < n; i++, idx++) {
         float rpm1 = motor1_encoder->getRPM();
         float rpm2 = motor2_encoder->getRPM();
@@ -200,7 +205,7 @@ void record(unsigned n) {
     }
 }
 
-void dump_record(void) {
+void dump_record(const Kinematics::velocities *buf) {
     float max_vel_x = 0, min_vel_x = 0, max_acc_x = 0, min_acc_x = 0;
     float max_vel_y = 0, min_vel_y = 0, max_acc_y = 0, min_acc_y = 0;
     float max_vel_z = 0, min_vel_z = 0, max_acc_z = 0, min_acc_z = 0;
@@ -256,6 +261,11 @@ void dump_record(void) {
 }
 
 void loop_() {
+    // The velocity trace lives here, on the stack, for exactly as long as the
+    // test runs. 2400 bytes of the loop task's 8192, and this tool is the only
+    // thing on that task: selecting an app replaces the base loop, it does not
+    // run alongside it.
+    Kinematics::velocities buf[buf_size] = {};
     const int pwm_max = (1 << PWM_BITS) - 1;
     float current_pwm_max = pwm_max;
     float current_pwm_min = -current_pwm_max;
@@ -272,7 +282,7 @@ void loop_() {
         motor2_controller->spin(current_pwm_max);
         motor3_controller->spin((runs & 1) ? current_pwm_max : current_pwm_min);
         motor4_controller->spin(current_pwm_max);
-        record(run_time / ticks);
+        record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, LOW);
@@ -281,7 +291,7 @@ void loop_() {
         motor2_controller->spin(0);
         motor3_controller->spin(0);
         motor4_controller->spin(0);
-        record(run_time / ticks);
+        record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, HIGH);
@@ -290,7 +300,7 @@ void loop_() {
         motor2_controller->spin(current_pwm_min);
         motor3_controller->spin((runs & 1) ? current_pwm_min : current_pwm_max);
         motor4_controller->spin(current_pwm_min);
-        record(run_time / ticks);
+        record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, LOW);
@@ -299,11 +309,11 @@ void loop_() {
         motor2_controller->spin(0);
         motor3_controller->spin(0);
         motor4_controller->spin(0);
-        record(run_time / ticks);
+        record(run_time / ticks, buf);
 
         Serial.printf("MAX PWM %6.1f %6.1f\n", current_pwm_max, current_pwm_min);
         syslog(LOG_INFO, "MAX PWM %6.1f %6.1f", current_pwm_max, current_pwm_min);
-        dump_record();
+        dump_record(buf);
         if ((runs & 3) == 0) {
             current_pwm_max /= 2;
             current_pwm_min /= 2;

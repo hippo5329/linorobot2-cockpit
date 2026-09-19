@@ -66,9 +66,8 @@ MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
                  *motor3_controller = NULL, *motor4_controller = NULL;
 
 // All six of these came from main.cpp when this tool was split out and not one
-// of them is referenced here -- 1376 bytes of .bss, on every board, for
-// nothing. They survive to the link because they have external linkage and the
-// ESP32 build sets no -fdata-sections/--gc-sections.
+// of them was referenced here -- 1376 bytes of .bss, on every board, for
+// nothing.
 
 #if defined(LED_PIN) && (LED_PIN) >= 0
 #define LED_ACTIVE
