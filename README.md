@@ -255,7 +255,10 @@ Some boards need a word of their own:
   needs `udp4`. The GenDrv's real LD19 runs at 1.5 Mbaud over its own UART and is unaffected.
 - **Waveshare General Driver.** Fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19.
 - **ESP32-S3.** Its serial is native USB CDC rather than a USB-to-UART bridge, so the port
-  appears and disappears with the firmware rather than with the cable.
+  appears and disappears with the firmware rather than with the cable. Both its images build
+  and are published every release, and both are **still to be run on hardware** — a board is
+  expected on the bench in early October 2026. Treat it as built-and-shipped but unproven
+  until then.
 - **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
   divider. It builds and has **not yet been run on hardware**.
 
