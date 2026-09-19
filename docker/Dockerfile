@@ -116,15 +116,72 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsof usbutils udev curl ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# Nav2 separately and best-effort: it is not published for every distro yet --
-# there is no ros-lyrical-navigation2 at the time of writing -- and bringup and
-# topic verification do not touch it. Failing the whole image over a package
-# only nav2.launch.py needs would block the lyrical half of the test matrix for
-# no reason. The absence is announced rather than silent.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Nav2. Jazzy publishes ros-jazzy-navigation2 and ros-jazzy-nav2-bringup as
+# binaries and this is a one-line apt install. Lyrical publishes the nav2
+# *components* but neither the `navigation2` metapackage nor `nav2_bringup`, so
+# the best-effort apt line this replaces left the lyrical image with no
+# navigation at all -- announced in the build log and then forgotten. Recipe
+# from the console project, which solved this first:
+#
+#   1. apt-install every published ros-<distro>-(nav2|opennav)-* package. A
+#      pattern, not a hand-kept list that drifts with each nav2 release.
+#      opennav_* is not optional: nav2_bringup launches opennav_docking, and a
+#      ^ros-<distro>-nav2- pattern alone leaves the launch failing on
+#      "package 'opennav_docking' not found".
+#   2. If nav2_bringup is still absent, build it and the `navigation2`
+#      metapackage from source into /opt/nav2_ws. nav2_bringup's CMakeLists
+#      find_package()s navigation2, so building it alone stops at "Could not
+#      find a package configuration file provided by navigation2".
+#      COLCON_IGNORE hides the ~40 sibling packages in the monorepo, which
+#      colcon would otherwise insist on rebuilding from source instead of
+#      taking from /opt/ros. rosdep must skip `navigation2` (no binary -- that
+#      is the whole reason we are here) and `nav2_smac_planner` (not published
+#      for lyrical; the cockpit configures nav2_navfn_planner::NavfnPlanner, so
+#      nothing we launch needs smac).
+#
+# This step is fatal on failure, unlike the line it replaces. rc-20260919 is
+# the argument: an image that is quietly missing a package ships, gets
+# released, and fails on the user's bench instead of in CI.
+RUN apt-get update \
+ && NAV2_PKGS=$(apt-cache --names-only search "^ros-${ROS_DISTRO}-(nav2|opennav)-" \
+        | awk '{print $1}' | grep -v -- '-dbgsym$' | tr '\n' ' ') \
+ && if [ -n "$NAV2_PKGS" ]; then \
+        echo "[build] nav2 components from apt: $NAV2_PKGS"; \
+        apt-get install -y --no-install-recommends $NAV2_PKGS; \
+    else \
+        echo "[build] no ros-${ROS_DISTRO}-nav2-* packages in apt"; \
+    fi \
+ && (apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-navigation2 ros-${ROS_DISTRO}-nav2-bringup \
-    || echo "[build] Nav2 is not in the ${ROS_DISTRO} archive — bringup and SLAM work, nav2.launch.py will not" \
-    ; rm -rf /var/lib/apt/lists/*
+     || echo "[build] no navigation2/nav2_bringup binary for ${ROS_DISTRO}; building from source next") \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && if [ -d "/opt/ros/${ROS_DISTRO}/share/nav2_bringup" ]; then \
+        echo "[build] nav2_bringup came from apt; no source build needed"; \
+    else \
+        apt-get update \
+     && mkdir -p /opt/nav2_ws/src \
+     && cd /opt/nav2_ws/src \
+     && (git clone --depth 1 -b ${ROS_DISTRO} https://github.com/ros-navigation/navigation2.git navigation2 \
+         || git clone --depth 1 -b main https://github.com/ros-navigation/navigation2.git navigation2) \
+     && KEEP='/(nav2_bringup|navigation2)$' \
+     && find /opt/nav2_ws/src/navigation2 -name package.xml -printf '%h\n' \
+            | grep -vE "$KEEP" | xargs -r -I@ touch @/COLCON_IGNORE \
+     && cd /opt/nav2_ws \
+     && (rosdep update --rosdistro ${ROS_DISTRO} 2>/dev/null || true) \
+     && (rosdep install --from-paths $(find /opt/nav2_ws/src/navigation2 -name package.xml \
+                -printf '%h\n' | grep -E "$KEEP" | tr '\n' ' ') \
+             --ignore-src -y --rosdistro ${ROS_DISTRO} \
+             --skip-keys 'navigation2 nav2_smac_planner microxrcedds_agent' || true) \
+     && if ! colcon build --merge-install --packages-select nav2_bringup navigation2 \
+                > /tmp/nav2.log 2>&1; then \
+            echo "[build] Nav2 source build FAILED:"; tail -40 /tmp/nav2.log; exit 1; \
+        fi \
+     && tail -5 /tmp/nav2.log \
+     && test -f /opt/nav2_ws/install/share/nav2_bringup/local_setup.bash \
+     && rm -rf /opt/nav2_ws/build /opt/nav2_ws/log /tmp/nav2.log /var/lib/apt/lists/*; \
+    fi
 
 # esptool from pip rather than the archive: the packaged version lags behind
 # current ESP32-S3 silicon revisions.

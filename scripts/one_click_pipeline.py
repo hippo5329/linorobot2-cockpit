@@ -114,6 +114,13 @@ def get_ros_env(distro: str = "auto") -> str:
         "elif [ -f /opt/uros_ws/install/setup.bash ]; then source /opt/uros_ws/install/setup.bash; "
         "elif [ -f $HOME/uros_ws/install/setup.bash ]; then source $HOME/uros_ws/install/setup.bash; fi"
     )
+    # Nav2 built from source, on the distros where it has no binary package
+    # (lyrical has the nav2_* components but no nav2_bringup). Sourced before
+    # the cockpit overlay so the overlay still wins on any shared name.
+    nav2_setup = (
+        "if [ -f /opt/nav2_ws/install/setup.bash ]; then "
+        "source /opt/nav2_ws/install/setup.bash; fi"
+    )
     ws_setup = (
         "if [ -f /opt/lino_ws/setup.bash ]; then source /opt/lino_ws/setup.bash; "
         f"elif [ -f {REPO_ROOT}/install/setup.bash ]; then source {REPO_ROOT}/install/setup.bash; "
@@ -121,7 +128,8 @@ def get_ros_env(distro: str = "auto") -> str:
         "elif [ -f $HOME/cockpit_ws/install/setup.bash ]; then source $HOME/cockpit_ws/install/setup.bash; "
         "elif [ -f $HOME/linorobot2_ws/install/setup.bash ]; then source $HOME/linorobot2_ws/install/setup.bash; fi"
     )
-    return f"{path_export} && {qos_export} && {ros_setup} && {uros_setup} && {ws_setup}"
+    return (f"{path_export} && {qos_export} && {ros_setup} && {uros_setup}"
+            f" && {nav2_setup} && {ws_setup}")
 
 
 def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bool:

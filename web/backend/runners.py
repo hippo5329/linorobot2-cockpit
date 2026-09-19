@@ -51,11 +51,15 @@ def ros_setup_shell(distro: str = "auto") -> str:
     uros = ("if [ -f /uros_ws/install/setup.bash ]; then source /uros_ws/install/setup.bash; "
             "elif [ -f /opt/uros_ws/install/setup.bash ]; then source /opt/uros_ws/install/setup.bash; "
             "elif [ -f $HOME/uros_ws/install/setup.bash ]; then source $HOME/uros_ws/install/setup.bash; fi")
+    # See one_click_pipeline._ros_env: Nav2 from source on distros with no
+    # nav2_bringup binary.
+    nav2 = ("if [ -f /opt/nav2_ws/install/setup.bash ]; then "
+            "source /opt/nav2_ws/install/setup.bash; fi")
     ws = (f"if [ -f /opt/lino_ws/setup.bash ]; then source /opt/lino_ws/setup.bash; "
           f"elif [ -f {repo_root}/install/setup.bash ]; then source {repo_root}/install/setup.bash; "
           f"elif [ -f {repo_root}/../../install/setup.bash ]; then source {repo_root}/../../install/setup.bash; "
           "elif [ -f $HOME/cockpit_ws/install/setup.bash ]; then source $HOME/cockpit_ws/install/setup.bash; fi")
-    return f"{ros}; {uros}; {ws}; true"
+    return f"{ros}; {uros}; {nav2}; {ws}; true"
 
 
 class ProcessRunner:
