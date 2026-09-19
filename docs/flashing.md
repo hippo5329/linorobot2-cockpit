@@ -55,11 +55,24 @@ Three consequences, all load-bearing:
   `scripts/flash_mcu.py:rp2_usb_mode()` reads the interface classes after a failed touch and says so by
   name rather than repeating "not in BOOTSEL".
 
-Per AGENTS.md the durable fix belongs upstream, and it is forked:
+**We do not depend on that fix.** This firmware arms its own watchdog, so the core's `while (1)` is
+already bounded on every board we ship; the upstream change only helps sketches that never call
+`rp2040.wdt_begin()`. Treat it as a contribution, not a dependency, and never as a build prerequisite.
+
+Per AGENTS.md the durable fix belongs upstream all the same, and it is forked:
 **`github.com/hippo5329/arduino-pico`, branch `fix/rp2350-bootsel-touch-hang`** (based on upstream
 `master` c82d1d55) — arms the watchdog immediately before `reset_usb_boot()` so the `while (1)` is
-bounded for every sketch, not just ones that called `rp2040.wdt_begin()`. PR to
-`earlephilhower/arduino-pico` not yet opened.
+bounded for every sketch. Opened as
+[earlephilhower/arduino-pico#3532](https://github.com/earlephilhower/arduino-pico/pull/3532);
+**changes requested**, the maintainer asking for an MCVE and observing that "Pico2 uploads should fail
+99% of the time because most sketches don't ever use the WDT".
+
+That objection has an answer the PR has not yet made: the `while (1)` is reached **only when the reboot
+does not take**. `rom_reboot()` is `noreturn` on success, so the overwhelming majority of uploads never
+execute that line at all — which is why uploads are not failing 99% of the time, and equally why an MCVE
+is awkward: the path is intermittent by construction. What the patch changes is the cost of the rare
+failure, from a board that is mute at every baud until someone presses RESET to one that reboots in
+8 s.
 
 ### WebSerial Is a Monitor, Never a Flasher
 The browser's Web Serial API is reserved for the raw serial debug terminal. Only the native path can stop
