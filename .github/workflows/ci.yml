@@ -77,13 +77,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # esp32_lyrical is withdrawn while it does not fit the classic
-        # ESP32's DRAM (overflowed by 14504 bytes, unchanged at transport MTU
-        # 1024/768/512). Leaving it here would mean a permanently red main and
-        # no release, which teaches everyone to ignore the light. See the
-        # release workflow's matrix for the same note.
+        # esp32_lyrical is back: it links at 116308 of the classic ESP32's
+        # 124580-byte dram0_0_seg (93.4%) rather than overflowing it by 14504.
+        # This env is the tightest in the matrix by a wide margin, so it is
+        # also the one that will go red first if anyone adds a publisher or a
+        # global -- which is the point of having it here. See the release
+        # workflow's matrix for what closed the gap.
         env: [esp32, esp32s3, pico, pico2, picow, pico2w,
-              esp32s3_lyrical, pico_lyrical, pico2_lyrical]
+              esp32_lyrical, esp32s3_lyrical, pico_lyrical, pico2_lyrical]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
