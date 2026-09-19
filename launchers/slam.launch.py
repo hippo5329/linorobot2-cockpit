@@ -161,21 +161,29 @@ def launch_setup(context, *args, **kwargs):
 # first keeps this a no-op on every healthy run -- and makes the recovery
 # visible in the log rather than papering over a race that would otherwise be
 # diagnosed again from scratch.
+#
+# `--no-daemon` is not a detail. The ros2 CLI daemon caches the graph, and in
+# this container it answered "Node not found" for the full 36 s of the loop
+# against a slam_toolbox that was already active -- so the guard would have
+# printed its "it did not configure" line on every HEALTHY run, which is worse
+# than no guard at all. `--no-daemon` answered "active [3]" immediately from
+# the same shell. Twelve short-lived participants over 36 s is a price worth
+# paying for an answer about the graph that comes from the graph.
 def activation_guard():
     script = """
 for i in $(seq 1 12); do
-  s=$(ros2 lifecycle get /slam_toolbox 2>/dev/null)
+  s=$(ros2 lifecycle get --no-daemon /slam_toolbox 2>/dev/null)
   case "$s" in
     *inactive*)
       echo "[Linorobot2 Cockpit] slam_toolbox is still inactive -- its launch file missed the transition event. Activating it."
-      ros2 lifecycle set /slam_toolbox activate
+      ros2 lifecycle set --no-daemon /slam_toolbox activate
       exit 0 ;;
     *active*)
       exit 0 ;;
   esac
   sleep 3
 done
-echo "[Linorobot2 Cockpit] slam_toolbox never reached 'inactive' -- it did not configure. Check the params file."
+echo "[Linorobot2 Cockpit] slam_toolbox never reported a lifecycle state (last answer: '${s:-nothing}'). It did not configure -- check the params file."
 """
     return TimerAction(period=15.0, actions=[
         ExecuteProcess(cmd=["bash", "-c", script], output="screen"),

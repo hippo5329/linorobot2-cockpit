@@ -887,8 +887,14 @@ def main():
                 #
                 # The transition is idempotent and cheap, so ask for it directly
                 # rather than give up on a race in somebody's event handler.
+                #
+                # --no-daemon: the ros2 CLI daemon caches the graph, and it was
+                # measured answering "Node not found" for 36 s straight about a
+                # slam_toolbox that was active at the time, in the same
+                # container where --no-daemon answered "active [3]" at once. A
+                # recovery that asks the cache can be told the node is not there.
                 print("  ⚠️ no map in 40 s — asking slam_toolbox to activate directly...")
-                run_ros("ros2 lifecycle set /slam_toolbox activate", timeout=20,
+                run_ros("ros2 lifecycle set --no-daemon /slam_toolbox activate", timeout=20,
                         distro=args.distro)
                 if wait_for_topic("/map", timeout_sec=30, distro=args.distro,
                                   require_message="info.width"):

@@ -69,11 +69,11 @@ def test_the_launcher_itself_recovers_a_missed_activation():
     recover it. The guard belongs in the launcher, where both paths get it.
     """
     text = open(os.path.join(REPO_ROOT, "launchers", "slam.launch.py")).read()
-    assert "ros2 lifecycle set /slam_toolbox activate" in text, (
+    assert "ros2 lifecycle set --no-daemon /slam_toolbox activate" in text, (
         "slam.launch.py no longer activates a slam_toolbox that its own launch "
         "file left in 'inactive'"
     )
-    assert "ros2 lifecycle get /slam_toolbox" in text, (
+    assert "ros2 lifecycle get --no-daemon /slam_toolbox" in text, (
         "the guard must read the state first -- an unconditional activate hides "
         "whether the race happened at all"
     )
@@ -86,3 +86,21 @@ def test_the_guard_is_off_when_autostart_is():
     assert 'autostart.lower() in ("true", "1", "yes")' in text, (
         "the activation guard must be conditional on autostart"
     )
+
+
+def test_neither_recovery_asks_the_ros2_daemon():
+    """The CLI daemon caches the graph and can be wrong for a long time.
+
+    `ros2 lifecycle get /slam_toolbox` answered "Node not found" for 36 s
+    straight, inside a container where slam_toolbox was already active and
+    `--no-daemon` answered "active [3]" immediately. A guard that believes the
+    cache reports a healthy run as broken, and a recovery that believes it
+    gives up on a node that is sitting right there.
+    """
+    for rel in ("launchers/slam.launch.py", "scripts/one_click_pipeline.py"):
+        text = open(os.path.join(REPO_ROOT, rel)).read()
+        for line in text.splitlines():
+            if "ros2 lifecycle" in line and "slam_toolbox" in line:
+                assert "--no-daemon" in line, (
+                    f"{rel}: `{line.strip()}` goes through the ros2 daemon"
+                )
