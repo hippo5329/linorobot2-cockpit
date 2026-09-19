@@ -167,12 +167,26 @@ COPY . /ws
 # root -- and colcon stops descending as soon as it identifies one, so the
 # vendor package nested inside it is never seen. Naming the directory
 # explicitly is what makes them build.
+# The build must NOT be piped into tail: a pipeline exits with the status of its
+# last command, so `colcon ... | tail` reported success for a failed build, and
+# the old `test -f /opt/lino_ws/setup.bash` guard passed anyway because colcon
+# writes that file even when every package fails. rc-20260919 shipped that way
+# on both distros -- no local_setup.bash for this package and no
+# ldlidar_stl_ros2 at all -- so bringup could not start on any released image.
+# Redirect instead, show the tail only on failure, and assert the two artefacts
+# that actually prove the overlay is usable.
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
  && bases="/ws"; [ -d /ws/docker/vendor ] && bases="$bases /ws/docker/vendor"; \
-    colcon build --base-paths $bases --merge-install \
-        --install-base /opt/lino_ws --build-base /tmp/colcon_build 2>&1 | tail -25 \
- && rm -rf /tmp/colcon_build /ws/log \
- && test -f /opt/lino_ws/setup.bash
+    if ! colcon build --base-paths $bases --merge-install \
+            --install-base /opt/lino_ws --build-base /tmp/colcon_build \
+            > /tmp/colcon.log 2>&1; then \
+        echo "[build] colcon build FAILED:"; tail -40 /tmp/colcon.log; exit 1; \
+    fi; \
+    tail -8 /tmp/colcon.log \
+ && rm -rf /tmp/colcon_build /ws/log /tmp/colcon.log \
+ && test -f /opt/lino_ws/setup.bash \
+ && test -f /opt/lino_ws/share/linorobot2_cockpit/local_setup.bash \
+ && test -x /opt/lino_ws/lib/ldlidar_stl_ros2/ldlidar_stl_ros2_node
 
 # Prove the agent starts on BOTH transports, not just one. The prebuilt binary
 # this replaced passed a udp4 probe and then died with "*** stack smashing
