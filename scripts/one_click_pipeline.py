@@ -847,9 +847,22 @@ def main():
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
                        f"distro:={args.distro} robot:={robot_name} config_file:={params_path}")
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
-        print("  Waiting for the micro-ROS agent handshake and /odom/unfiltered...")
-        if not wait_for_topic("/odom/unfiltered", timeout_sec=30, require_publisher=True, distro=args.distro):
-            print("  ⚠️ /odom/unfiltered publisher not detected within 30 s, auditing topics...")
+        # A serial board is already enumerated when the agent starts, so 30 s is
+        # generous. A udp4 board has not even joined the network yet: it boots,
+        # associates, takes a DHCP lease and only then finds the agent, and the
+        # LiDAR UDP client connects later still. Measured on a NodeMCU over
+        # Wi-Fi, from the ldlidar server binding 8889 to "ldlidar communication
+        # is normal": 31.8 s -- so the audit ran, found /scan with no messages
+        # and aborted the run, while /odom and /imu/data were already at 48 Hz
+        # and the scan arrived seconds after everything was torn down. Nothing
+        # was wrong with the robot; the gate was tuned for a cable.
+        transport = str(controller_cfg.get("transport", "serial") or "serial").lower()
+        handshake_wait = 30 if transport.startswith("serial") else 120
+        print(f"  Waiting for the micro-ROS agent handshake and /odom/unfiltered"
+              f" (transport={transport}, up to {handshake_wait} s)...")
+        if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
+                              require_publisher=True, distro=args.distro):
+            print(f"  ⚠️ /odom/unfiltered publisher not detected within {handshake_wait} s, auditing topics...")
         else:
             print("  ✅ micro-ROS connected (/odom/unfiltered has a publisher).")
         time.sleep(2.0)
