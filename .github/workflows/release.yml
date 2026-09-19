@@ -131,6 +131,31 @@ jobs:
           # An empty release is worse than none: it looks published and gives a
           # user nothing to fetch.
           test "$found" -gt 0 || { echo "::error::no firmware archives were produced"; exit 1; }
+      # A candidate tag gets re-cut in place -- rc-20260919 was force-moved four
+      # times in one day -- and action-gh-release only ADDS files. Anything the
+      # previous cut published under a name this cut does not produce would sit
+      # in the release forever, indistinguishable from a current artifact.
+      #
+      # That is not a tidiness concern. The cut that renamed the profiles from
+      # `pico2` to `pico2-jazzy` would otherwise have left the OLD
+      # linorobot2-firmware-pico2-lyrical.tar.gz in place: the image built
+      # without --distro, which enumerates and never moves. The fix for a defect
+      # would have shipped alongside the defect.
+      - name: Drop firmware archives left by a previous cut of this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null > old.txt || : > old.txt
+          while read -r name; do
+            [ -n "$name" ] || continue
+            case "$name" in linorobot2-firmware-*.tar.gz) ;; *) continue ;; esac
+            if [ ! -f "dist/$name" ]; then
+              echo "deleting stale asset $name"
+              gh release delete-asset "$tag" "$name" --yes
+            fi
+          done < old.txt
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*.tar.gz
