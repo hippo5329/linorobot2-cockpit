@@ -91,6 +91,22 @@ ENV PYTHONUNBUFFERED=1 \
 ARG APT_PROXY=""
 RUN if [ -n "$APT_PROXY" ]; then echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy; fi
 
+# Bring the base image's ROS packages up to the CURRENT snapshot before adding
+# any. This is not hygiene, it is a correctness fix. On a rolling-snapshot
+# distro the `ros:<distro>-ros-base` image lags the archive by weeks, and every
+# package installed below comes from today's snapshot -- so the two disagree
+# about the rosidl ABI. rc-20260919's lyrical image shipped std_msgs from
+# 2026-08-11, whose typesupport library defines no `has_buffer_fields_*`
+# symbols at all, under geographic_msgs / rosbridge_msgs / robot_localization
+# from 2026-09-15, which need them. The result was three nodes dying at
+# startup with `undefined symbol: has_buffer_fields_std_msgs__msg__Header`:
+# ekf_node (so no /odom), and rosbridge_websocket + rosapi (so the browser
+# canvas on :9090 had nothing to talk to) -- on an image that otherwise looked
+# perfect, because nothing fails until a node is actually launched.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 # Everything the launch trees name. The set is not guesswork: it is what
 # `FindPackageShare` / `package=` resolve to across launchers/ (the robot
 # description is generated as plain URDF by scripts/gen_robot_description.py,
@@ -260,6 +276,22 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
  && ros2 pkg prefix ldlidar_stl_ros2 \
  && test -f "$(ros2 pkg prefix linorobot2_cockpit)/share/linorobot2_cockpit/launchers/bringup.launch.py" \
  && echo "[build] ROS overlay OK"
+
+# The overlay check above proves the packages are THERE. It does not prove they
+# can be loaded together, and on a rolling-snapshot distro that is a different
+# question: every rosidl typesupport library is dlopened lazily, the first time
+# something publishes that type, so an ABI mismatch is invisible until a node
+# runs. rc-20260919's lyrical image passed every structural check and then lost
+# ekf_node, rosbridge_websocket and rosapi at startup to
+# `undefined symbol: has_buffer_fields_std_msgs__msg__Header`.
+#
+# Creating one publisher per message package is what forces the dlopen. These
+# are the packages whose absence or breakage takes the stack down: the three
+# that actually broke, plus the types bringup itself publishes.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && . /opt/lino_ws/setup.sh \
+ && python3 /ws/scripts/check_ros_abi.py \
+ && echo "[build] ROS ABI OK"
 
 # Prove the agent starts on BOTH transports, not just one. The prebuilt binary
 # this replaced passed a udp4 probe and then died with "*** stack smashing
