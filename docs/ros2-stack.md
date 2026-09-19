@@ -158,10 +158,33 @@ window, and the reply is **dropped, not delayed**: `lifecycle_manager` then wait
 every run. `load_node` is a service too, so composition fails the same way.
 
 `config/fastdds_service_qos.xml` raises it to 10 s for endpoints matching the profile named `service`
-and leaves ordinary topics alone; `one_click_pipeline.py:get_ros_env()` exports
-`FASTDDS_DEFAULT_PROFILES_FILE` for **every** step of the run. It is a ceiling, not a delay — a
-healthy machine pays nothing. Diagnosed upstream on console (`eae75c8`, `0c6c779`) after a campaign of
-timeout raises that could not have helped; do not raise a nav2 timeout to chase this symptom again.
+and leaves ordinary topics alone. It is a ceiling, not a delay — a healthy machine pays nothing.
+Diagnosed upstream on console (`eae75c8`, `0c6c779`) after a campaign of timeout raises that could
+not have helped; do not raise a nav2 timeout to chase this symptom again.
+
+The file reaches every process the same way: the robot image exports `FASTDDS_DEFAULT_PROFILES_FILE`
+container-wide (`docker-compose.yml`, `docker/Dockerfile`), and `runners.py` / `one_click_pipeline.py`
+export it for native runs. Until 2026-09-19 only the CLI pipeline did, so anything started from the
+browser ran without these profiles.
+
+### Fast DDS 3.x can leave one endpoint unmatched forever, and nav2 never activates
+On lyrical (Fast DDS 3.6) `bt_navigator` failed its *activate* transition on 8 of 13 runs with
+`"compute_path_to_pose" action server not available after waiting for 30.00s` — or `spin`, or
+`is_path_valid`; the endpoint changed, the failure did not — while a bystander participant listed
+both the server and the client in the graph the whole time. Fast DDS 3.x can gate an endpoint match
+on a TypeLookup exchange: rmw registers a type when the *local* endpoint is created, nav2's servers
+announce themselves before `bt_navigator` has built the clients that need them, so a 33-node bringup
+performs those lookups routinely, and `TypeLookupManager` has no retry and no timeout. One lost reply
+and that endpoint never matches; `rmw_fastrtps` then reports the server unavailable (its check wants
+the client's request-writer and response-reader match counts equal and non-zero) for as long as
+anyone waits. Fast DDS 2.14 on jazzy matches by type name and never showed it.
+
+The same XML sets `fastdds.type_propagation` to `registration_only` on the default participant
+profile: types are still registered locally, the announcement carries no type information, matching
+falls back to the name, and the lookup path is never entered. 8 of 8 with it, on both bench machines.
+It is not shared memory (fails with `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` and on a freshly cleaned
+`/dev/shm`), not CPU (fails on a tuned, idle machine), not config (both robot configs fail), and not
+a nav2 bug (`1.5.1..1.5.2` changes nothing here).
 
 ### Never add the ROS 2 apt source twice
 The `ros2-apt-source` .deb writes `/etc/apt/sources.list.d/ros2-apt-source.**sources**` with the key

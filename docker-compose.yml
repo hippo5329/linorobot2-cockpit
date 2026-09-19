@@ -134,6 +134,11 @@ services:
       - SERIAL_GID=${SERIAL_GID:-20}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # Container-wide, not per launch: the supervisor, rosbridge, rosapi and
+      # everything the web UI starts must see the same Fast DDS profiles as the
+      # CLI pipeline. Until 2026-09-19 only one_click_pipeline.py exported this,
+      # so the browser path ran nav2 without them. See the file's own comment.
+      - FASTDDS_DEFAULT_PROFILES_FILE=/ws/config/fastdds_service_qos.xml
     restart: unless-stopped
 
   # Optional firmware build environment. Not started by `docker compose up`;

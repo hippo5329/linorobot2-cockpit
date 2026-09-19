@@ -1,32 +1,63 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Fast DDS QoS for ROS 2 service replies.
+  Fast DDS profiles for the cockpit's ROS 2 stack. Two fixes live here, for two
+  different ways nav2 fails to come up with no error of its own. Every process
+  that runs ROS in the robot image gets this file through
+  FASTDDS_DEFAULT_PROFILES_FILE (docker-compose.yml, docker/Dockerfile, and
+  runners.py / one_click_pipeline.py for native runs).
 
-  rmw_fastrtps will not send a service response until the server's response
-  writer has matched the client's response reader, and it waits at most
-  max_blocking_time for that match (see the "workaround for the race on the
-  discovery of services" block in rmw_fastrtps_shared_cpp/src/rmw_response.cpp).
-  Fast DDS defaults that to 100 ms (QosPolicies.hpp, max_blocking_time{0,
-  100000000}).
+  1. The participant profile: match endpoints by type NAME, as Fast DDS 2.x did.
 
-  Bringing nav2 up starts a crowd of participants at once and that match
-  routinely takes longer than 100 ms. The reply is then dropped with
-  "failed to send response to /NODE/change_state (timeout): client will not
-  receive response", and nav2's lifecycle_manager waits forever for a reply
-  that never arrives; it hangs mid-transition reporting no error of its own.
+     Fast DDS 3.x (lyrical) can gate an endpoint match on a TypeLookup exchange:
+     an announcement carries the remote type's identifier, and if the local
+     participant has not registered that type yet it asks the remote for it.
+     rmw_fastrtps registers a type when the LOCAL endpoint is created, and
+     nav2's servers announce themselves before bt_navigator has built the
+     clients that need them, so during a 33-node bringup those lookups are
+     routine. TypeLookupManager has no retry and no timeout: one lost reply and
+     that endpoint never matches. rmw then reports the server unavailable —
+     __rmw_service_server_is_available demands the client's request-writer
+     and response-reader match counts be equal and non-zero — for as long as
+     anyone waits, while a bystander lists both sides in the graph. That was
+     bt_navigator's "compute_path_to_pose / spin / is_path_valid action server
+     not available after waiting for 30.00s", on 8 of 13 lyrical runs on
+     2026-09-19, the endpoint varying run to run. registration_only strips the
+     type information from the announcement (EDP.cpp, TYPEPROPAGATION_
+     REGISTRATION_ONLY): types are still registered locally, matching falls
+     back to the name, and the lookup path is never entered. 8 of 8 with it.
+     Fast DDS 2.14 (jazzy) has no such gate and ignores the property.
 
-  rmw_fastrtps looks up a datawriter profile by topic name and, failing that,
-  one named exactly "service" (rmw_fastrtps_cpp/src/rmw_service.cpp), so this
-  applies to service endpoints only and leaves ordinary topics alone.
+  2. The "service" data_writer / data_reader profiles: a 10 s ceiling on the
+     reply-writer match.
 
-  This is a ceiling, not a delay: the write proceeds as soon as the match
-  happens, so a healthy machine pays nothing for it.
-
-  Diagnosed on linorobot2's console branch (eae75c8, 0c6c779) on Lyrical boxes
-  ly6-ly12 and carried here unchanged; the cockpit hit the same rmw_fastrtps.
+     rmw_fastrtps will not send a service response until the server's response
+     writer has matched the client's response reader, and it waits at most
+     max_blocking_time for that match (the "workaround for the race on the
+     discovery of services" in rmw_fastrtps_shared_cpp/src/rmw_response.cpp).
+     Fast DDS defaults that to 100 ms. Bringing nav2 up starts a crowd of
+     participants at once and the match routinely takes longer; the reply is
+     then dropped with "failed to send response to /NODE/change_state
+     (timeout)", and lifecycle_manager waits forever. rmw looks up a datawriter
+     profile by topic name and, failing that, one named exactly "service"
+     (rmw_fastrtps_cpp/src/rmw_service.cpp), so this applies to service
+     endpoints only and leaves ordinary topics alone. It is a ceiling, not a
+     delay: the write proceeds the moment the match happens. Diagnosed on
+     linorobot2's console branch (eae75c8, 0c6c779); rmw 9.x still honours it.
 -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
+    <participant profile_name="cockpit_participant" is_default_profile="true">
+      <rtps>
+        <propertiesPolicy>
+          <properties>
+            <property>
+              <name>fastdds.type_propagation</name>
+              <value>registration_only</value>
+            </property>
+          </properties>
+        </propertiesPolicy>
+      </rtps>
+    </participant>
     <data_writer profile_name="service">
       <qos>
         <reliability>

@@ -59,7 +59,14 @@ def ros_setup_shell(distro: str = "auto") -> str:
           f"elif [ -f {repo_root}/install/setup.bash ]; then source {repo_root}/install/setup.bash; "
           f"elif [ -f {repo_root}/../../install/setup.bash ]; then source {repo_root}/../../install/setup.bash; "
           "elif [ -f $HOME/cockpit_ws/install/setup.bash ]; then source $HOME/cockpit_ws/install/setup.bash; fi")
-    return f"{ros}; {uros}; {nav2}; {ws}; true"
+    # The Fast DDS profiles (config/fastdds_service_qos.xml: type matching by
+    # name, and the 10 s service-reply ceiling). The robot image sets this for
+    # the whole container; this is for the supervisor running natively, and it
+    # never overrides a value the environment already carries.
+    qos = os.path.join(repo_root, "config", "fastdds_service_qos.xml")
+    qos_export = (f'if [ -z "$FASTDDS_DEFAULT_PROFILES_FILE" ] && [ -f "{qos}" ]; '
+                  f'then export FASTDDS_DEFAULT_PROFILES_FILE="{qos}"; fi')
+    return f"{ros}; {uros}; {nav2}; {ws}; {qos_export}; true"
 
 
 class ProcessRunner:

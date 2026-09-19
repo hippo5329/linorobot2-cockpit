@@ -85,7 +85,8 @@ FROM ros:${ROS_DISTRO}-ros-base
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_BREAK_SYSTEM_PACKAGES=1
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    FASTDDS_DEFAULT_PROFILES_FILE=/ws/config/fastdds_service_qos.xml
 
 # Optional apt cache for sites that run one: --build-arg APT_PROXY=http://cache:3142
 ARG APT_PROXY=""
