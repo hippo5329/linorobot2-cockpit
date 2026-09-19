@@ -46,6 +46,31 @@ jobs:
             python3 scripts/mcu_env.py build --params "$cfg" --out /tmp/env.bin
           done
 
+  image:
+    name: Robot image (jazzy) and its ROS workspace
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage the sibling ROS package (LD19 driver)
+        run: bash scripts/prepare_docker_vendor.sh
+      - uses: docker/setup-buildx-action@v3
+      # Build only -- no push, no registry credentials. The point is that the
+      # image is built at all on a CLEAN checkout: rc-20260919 shipped a
+      # half-built ROS workspace on both distros because CMakeLists.txt
+      # installed the gitignored maps/, which exists in a developer tree and
+      # not here, and nothing between that error and the release ever looked
+      # at the image. The Dockerfile now asserts the overlay itself; this job
+      # is what makes those assertions run before a tag rather than during it.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          build-args: |
+            ROS_DISTRO=jazzy
+          cache-from: type=gha,scope=robot-jazzy
+          cache-to: type=gha,mode=max,scope=robot-ci-jazzy
+
   firmware:
     name: Firmware ${{ matrix.env }}
     runs-on: ubuntu-24.04

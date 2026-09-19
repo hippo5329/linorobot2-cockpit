@@ -245,6 +245,18 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
  && test -f /opt/lino_ws/share/linorobot2_cockpit/local_setup.bash \
  && test -x /opt/lino_ws/lib/ldlidar_stl_ros2/ldlidar_stl_ros2_node
 
+# ...and prove the overlay is usable, not merely present: ros2 must RESOLVE
+# both packages and the bringup launch file must be where a launch resolves it.
+# Sourcing is the part that actually broke -- share/<pkg>/local_setup.bash is
+# named by package.dsv, so a missing one makes `source setup.bash` fail with
+# `not found: ".../local_setup.bash"` and every launch after it.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && . /opt/lino_ws/setup.bash \
+ && ros2 pkg prefix linorobot2_cockpit \
+ && ros2 pkg prefix ldlidar_stl_ros2 \
+ && test -f "$(ros2 pkg prefix linorobot2_cockpit)/share/linorobot2_cockpit/launchers/bringup.launch.py" \
+ && echo "[build] ROS overlay OK"
+
 # Prove the agent starts on BOTH transports, not just one. The prebuilt binary
 # this replaced passed a udp4 probe and then died with "*** stack smashing
 # detected ***" the moment it opened a tty, so probing one transport proves
