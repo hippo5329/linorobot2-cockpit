@@ -451,11 +451,29 @@ def wait_for_nav2_activation(timeout_sec: int = 90) -> tuple:
 
 
 def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bool = False,
-                   distro: str = "jazzy") -> bool:
+                   distro: str = "jazzy", require_message: str = None) -> bool:
+    """Wait for a topic to exist, to have a publisher, or to actually carry data.
+
+    `require_message` is a field path to echo, and it is the only one of the
+    three that proves anything about a LIFECYCLE node. slam_toolbox creates its
+    publishers in on_configure(), so /map is listed and has a publisher the
+    moment the node configures -- whether or not it ever activates. A pico2
+    release test passed this gate with "✅ /map is active" against a
+    slam_toolbox that had logged "Configuring", chosen its solver and then
+    stopped; the map frame never existed, and Nav2 failed thirty seconds later
+    with planner_server unable to transform base_link to map. The gate named
+    the wrong step, which is worse than no gate.
+    """
     start = time.time()
     while time.time() - start < timeout_sec:
         try:
-            if require_publisher:
+            if require_message:
+                res = run_ros(f"timeout 5 ros2 topic echo {topic_name} --once "
+                              f"--field {require_message} 2>/dev/null",
+                              timeout=10, distro=distro)
+                if res.returncode == 0 and res.stdout.strip():
+                    return True
+            elif require_publisher:
                 res = run_ros(f"ros2 topic info {topic_name} 2>/dev/null", timeout=5, distro=distro)
                 if res.returncode == 0:
                     for line in res.stdout.splitlines():
@@ -857,11 +875,29 @@ def main():
             bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
                                           log_tag="slam", distro=args.distro))
             print("  Waiting for /map...")
-            if not wait_for_topic("/map", timeout_sec=25, distro=args.distro):
-                print("  ⚠️ /map not detected in 25 s (continuing)...")
-                failures.append("SLAM: /map topic never appeared")
+            if not wait_for_topic("/map", timeout_sec=40, distro=args.distro,
+                                  require_message="info.width"):
+                # slam_toolbox is a lifecycle node and its own launch file drives
+                # the transitions from a launch event handler. When the configure
+                # result event is missed the node sits in `inactive` forever: it
+                # logs "Configuring", picks its solver, and then nothing. No map
+                # is published, the map frame never exists, and Nav2 fails half a
+                # minute later with planner_server unable to transform base_link
+                # to map -- which reads as a Nav2 fault.
+                #
+                # The transition is idempotent and cheap, so ask for it directly
+                # rather than give up on a race in somebody's event handler.
+                print("  ⚠️ no map in 40 s — asking slam_toolbox to activate directly...")
+                run_ros("ros2 lifecycle set /slam_toolbox activate", timeout=20,
+                        distro=args.distro)
+                if wait_for_topic("/map", timeout_sec=30, distro=args.distro,
+                                  require_message="info.width"):
+                    print("  ✅ /map is publishing (slam_toolbox needed a manual activate).")
+                else:
+                    print("  ⚠️ still no map — check logs/slam.log for 'Activating'.")
+                    failures.append("SLAM: no map was published")
             else:
-                print("  ✅ /map is active.")
+                print("  ✅ /map is publishing.")
         else:
             print(f"\n[5/6] [SLAM] Skipped — {controller} has no scan source (teleop-only robot).")
 
