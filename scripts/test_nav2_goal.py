@@ -79,6 +79,10 @@ class Nav2GoalTester(Node):
         self.latest_odom: Optional[Odometry] = None
         self.odom_max_dist: float = 0.0
         self.odom_max_yaw: float = 0.0
+        self.cmd_peak_lin: float = 0.0
+        self.cmd_peak_ang: float = 0.0
+        self.odom_peak_lin: float = 0.0
+        self.odom_peak_ang: float = 0.0
         self.goal_accepted: bool = False
         self.goal_completed: bool = False
 
@@ -154,12 +158,18 @@ class Nav2GoalTester(Node):
             self.path_avoids_wall = True
             self.get_logger().info(f"✅ Verified global path ({len(msg.poses)} waypoints) routes around obstacle wall!")
 
+    def _note_command(self, tw):
+        self.cmd_peak_lin = max(self.cmd_peak_lin, abs(tw.linear.x))
+        self.cmd_peak_ang = max(self.cmd_peak_ang, abs(tw.angular.z))
+
     def _cmd_vel_cb(self, msg: Twist):
         self.cmd_vel_count += 1
+        self._note_command(msg)
 
     def _cmd_vel_stamped_cb(self, msg: TwistStamped):
         self.cmd_vel_count += 1
         self.cmd_vel_stamped_count += 1
+        self._note_command(msg.twist)
 
     def _odom_cb(self, msg: Odometry):
         if self.initial_odom is None:
@@ -174,6 +184,10 @@ class Nav2GoalTester(Node):
         self.odom_max_dist = max(self.odom_max_dist, math.hypot(p1.x - p0.x, p1.y - p0.y))
         dyaw = abs(_yaw(msg.pose.pose.orientation) - _yaw(self.initial_odom.pose.pose.orientation))
         self.odom_max_yaw = max(self.odom_max_yaw, min(dyaw, 2 * math.pi - dyaw))
+        # The reported twist, not the integrated pose, is what decides whether the
+        # base responded -- see the note on `responded()` in run_test().
+        self.odom_peak_lin = max(self.odom_peak_lin, abs(msg.twist.twist.linear.x))
+        self.odom_peak_ang = max(self.odom_peak_ang, abs(msg.twist.twist.angular.z))
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -220,22 +234,42 @@ class Nav2GoalTester(Node):
 
 
 def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, min_cmds: int = 5,
-             cmd_vel_type: str = "auto", min_motion_m: float = 0.02,
-             min_motion_rad: float = 0.05, require_motion: bool = True) -> bool:
+             cmd_vel_type: str = "auto", noise_lin: float = 0.03,
+             noise_ang: float = 0.10, require_motion: bool = True) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
 
     def moved() -> bool:
-        return (node.odom_max_dist >= min_motion_m) or (node.odom_max_yaw >= min_motion_rad)
+        """Did the base respond to what it was told?
+
+        The reported TWIST, not the integrated pose. A fake-mode board at rest
+        still reports a little of both -- one bench run sampled vel_lin=0.006 m/s
+        and vel_ang=0.036 rad/s while standing still -- and integrating that over
+        a 25-second window accumulates 0.15 m of "travel", which sails past any
+        displacement threshold small enough to be worth setting. Velocity does not
+        accumulate, so the noise floor stays a floor.
+
+        A floor, and deliberately nothing more. An earlier version also required
+        the response to reach a fraction of the commanded peak, which sounds
+        stricter and is simply a different question: it fails a base that hears
+        the command and tracks it badly -- geared down, loaded, or PID-detuned --
+        and that is a performance judgement with no place in a release gate. What
+        this exists to catch is a base that never heard the command at all, and
+        the floor catches exactly that.
+        """
+        return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
 
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one
         branch -- which is how the old version passed. It computed this same odom
         delta, formatted it into the success message, and never compared it to
         anything."""
-        detail = (f"{node.cmd_vel_count} cmd_vel msgs ({node.cmd_vel_stamped_count} stamped), "
-                  f"odom moved {node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad")
+        detail = (f"{node.cmd_vel_count} cmd_vel msgs ({node.cmd_vel_stamped_count} stamped) "
+                  f"peaking at {node.cmd_peak_lin:.3f} m/s / {node.cmd_peak_ang:.3f} rad/s; "
+                  f"odom reported up to {node.odom_peak_lin:.3f} m/s / "
+                  f"{node.odom_peak_ang:.3f} rad/s and moved "
+                  f"{node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad")
         if not require_motion or moved():
             print(f"✅ {headline}: {detail}")
             return True
@@ -277,7 +311,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
 
         print(f"⚠️ Nav2 test timeout after {timeout}s: goal_accepted={node.goal_accepted}, "
               f"path_avoids_wall={node.path_avoids_wall}, cmd_vel_count={node.cmd_vel_count}, "
-              f"odom_max_dist={node.odom_max_dist:.3f}m, odom_max_yaw={node.odom_max_yaw:.3f}rad")
+              f"odom_peak={node.odom_peak_lin:.3f}m/s,{node.odom_peak_ang:.3f}rad/s, "
+              f"odom_moved={node.odom_max_dist:.3f}m,{node.odom_max_yaw:.3f}rad")
         if node.goal_completed:
             return verdict("NAV2 GOAL COMPLETED (after the window)")
         if node.goal_accepted and node.path_avoids_wall:
@@ -297,11 +332,11 @@ def main():
     parser.add_argument("--min-cmds", type=int, default=5, help="Minimum cmd_vel commands to confirm driving")
     parser.add_argument("--cmd-vel-type", choices=["auto", "twist", "twist_stamped"], default="auto",
                         help="Type published on /cmd_vel; 'auto' reads it off the graph")
-    parser.add_argument("--min-motion-m", type=float, default=0.02,
-                        help="Metres of /odom travel that count as the base having responded")
-    parser.add_argument("--min-motion-rad", type=float, default=0.05,
-                        help="Radians of /odom rotation that count as the base having responded "
-                             "(a robot that turns in place translates almost nothing)")
+    parser.add_argument("--noise-lin", type=float, default=0.03,
+                        help="Linear speed (m/s) at or below which /odom is considered at rest")
+    parser.add_argument("--noise-ang", type=float, default=0.10,
+                        help="Angular speed (rad/s) at or below which /odom is considered at rest; "
+                             "a fake-mode board at rest has been seen reporting 0.036")
     parser.add_argument("--no-require-motion", action="store_true",
                         help="Pass on planning alone, without the base responding. For bringing "
                              "a host-side stack up with no board attached; never for a release "
@@ -311,7 +346,7 @@ def main():
 
     success = run_test(goal_x=args.goal_x, goal_y=args.goal_y, timeout=args.timeout,
                        min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type,
-                       min_motion_m=args.min_motion_m, min_motion_rad=args.min_motion_rad,
+                       noise_lin=args.noise_lin, noise_ang=args.noise_ang,
                        require_motion=not args.no_require_motion)
     sys.exit(0 if success else 1)
 
