@@ -255,10 +255,10 @@ Some boards need a word of their own:
   needs `udp4`. The GenDrv's real LD19 runs at 1.5 Mbaud over its own UART and is unaffected.
 - **Waveshare General Driver.** Fixed pinout, QMI8658 + AK09918 + INA219 + BMP280, UART LD19.
 - **ESP32-S3.** Its serial is native USB CDC rather than a USB-to-UART bridge, so the port
-  appears and disappears with the firmware rather than with the cable. Both its images build
-  and are published every release, and both are **still to be run on hardware** — a board is
-  expected on the bench in early October 2026. Treat it as built-and-shipped but unproven
-  until then.
+  appears and disappears with the firmware rather than with the cable. The board is proven
+  upstream — [linorobot2_hardware](https://github.com/linorobot/linorobot2_hardware) runs it —
+  and both its images build and are published here every release; what has not yet happened is
+  a run of *these* release images on an S3, which is expected in early October 2026.
 - **Mecanum RP2350.** Four two-PWM bridges, four encoders, MPU6050, battery ADC through a
   divider. It builds and has **not yet been run on hardware**.
 
