@@ -70,8 +70,25 @@ import mcu_identity  # noqa: E402  (the by-id resolver and the family table)
 # precedes the run that needs to read it, and the rig would reflash every time
 # for a reason that has nothing to do with the board. It belongs to the MACHINE
 # that did the flashing, which is what ~/.cache is for.
-STAMP_DIR = os.environ.get("LINO_STAMP_DIR") or os.path.expanduser(
-    "~/.cache/linorobot2/flashed")
+def _default_stamp_dir() -> str:
+    """Where flash stamps live, for BOTH the pipeline and the cockpit backend.
+
+    Keyed on the config directory, not on $HOME. The pipeline runs as
+    container-root and the backend as the container user, so ~/.cache resolved
+    to /root/.cache for one and /home/ubuntu/.cache for the other: a board
+    flashed by one path still probed as "this host has no record of flashing
+    it" from the other, and the verdict fell back to `unknown` for the whole
+    2026-09-19 release matrix.
+    """
+    try:
+        return os.path.join(cockpit_paths.state_dir(), "flashed")
+    except Exception:
+        # No config directory to hang it off (a bare checkout, a unit test):
+        # the old per-user path is still better than failing to import.
+        return os.path.expanduser("~/.cache/linorobot2/flashed")
+
+
+STAMP_DIR = os.environ.get("LINO_STAMP_DIR") or _default_stamp_dir()
 
 # The one place this line is parsed. firmware/src/main.cpp:printBanner() is the
 # one place it is written; keep the two together.

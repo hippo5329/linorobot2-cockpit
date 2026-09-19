@@ -63,6 +63,23 @@ def generated_dir(directory: str = None) -> str:
     return d
 
 
+def state_dir(directory: str = None) -> str:
+    """<config dir>/state: things the cockpit records ABOUT a robot, not its config.
+
+    Shared on purpose. The one-click pipeline runs as container-root and the
+    cockpit's backend as the container user, so anything keyed on $HOME is
+    written to two different places and neither side sees the other. The flash
+    stamp did exactly that -- the pipeline recorded
+    /root/.cache/linorobot2/flashed/... and the UI looked in
+    /home/ubuntu/.cache/..., so a board flashed seconds earlier still probed as
+    "this host has no record of flashing it". The config directory is mounted
+    for both of them, which is what makes it the right home for shared state.
+    """
+    d = os.path.join(directory or config_dir(), "state")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def secrets_path() -> str:
     return os.path.join(config_dir(), "secrets.yaml")
 

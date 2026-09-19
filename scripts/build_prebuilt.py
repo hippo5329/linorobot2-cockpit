@@ -211,7 +211,20 @@ def build(profile, keep_going=False):
 
     build_dir = os.path.join(BASE_DIR, ".pio", "build", env)
     if os.path.isdir(out_dir):
-        shutil.rmtree(out_dir)
+        # Rename aside rather than delete in place: the one-click pipeline runs
+        # as container-root and the cockpit's backend as the container user, so
+        # this directory is routinely owned by the other of the two, and
+        # removing entries inside it needs write permission on IT, not on the
+        # parent. fetch_prebuilt hit the same wall and showed the user a
+        # traceback. Renaming needs the parent only, which both can write.
+        stale = f"{out_dir}.stale.{os.getpid()}"
+        shutil.rmtree(stale, ignore_errors=True)
+        try:
+            os.rename(out_dir, stale)
+        except OSError:
+            shutil.rmtree(out_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(stale, ignore_errors=True)
     os.makedirs(out_dir, exist_ok=True)
     files = collect(profile, env, build_dir, out_dir)
 

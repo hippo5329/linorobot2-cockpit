@@ -224,8 +224,34 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
     # verify() so a half-extracted archive never looks like a good cache.
     with open(os.path.join(tmp_dir, RELEASE_STAMP), "w") as fh:
         fh.write(tried[-1] + "\n")
-    shutil.rmtree(profile_dir, ignore_errors=True)
+    # Swapping the directory in must not depend on being the user who wrote the
+    # last one. The one-click pipeline runs as container-root and the cockpit's
+    # backend as the container user, so a cached profile is routinely owned by
+    # the other of the two -- and deleting entries inside it needs write
+    # permission on THAT directory, which the other user does not have.
+    # rmtree(ignore_errors=True) then does nothing at all, quietly, and the
+    # rename below dies on a non-empty destination:
+    #
+    #     File "/ws/scripts/fetch_prebuilt.py", line 228, in fetch
+    #     ❌ Pipeline halted: Execution failed (exit code 1)
+    #
+    # which is what the web UI showed the user, as a traceback, at step 2/6.
+    # Renaming the old directory ASIDE needs write permission on the PARENT,
+    # which both users have; clearing it afterwards is best effort.
+    stale = None
+    if os.path.exists(profile_dir):
+        candidate = f"{profile_dir}.stale.{os.getpid()}"
+        shutil.rmtree(candidate, ignore_errors=True)
+        try:
+            os.rename(profile_dir, candidate)
+            stale = candidate
+        except OSError:
+            # Same-user case, or a parent we cannot write: fall back to the
+            # straightforward removal and let a real failure surface below.
+            shutil.rmtree(profile_dir, ignore_errors=True)
     os.rename(tmp_dir, profile_dir)
+    if stale:
+        shutil.rmtree(stale, ignore_errors=True)
     if not quiet:
         print(f"[fetch_prebuilt] {profile}: {manifest.get('description', '')} "
               f"(built {manifest.get('built')}, commit {manifest.get('commit')}) -> {profile_dir}")
