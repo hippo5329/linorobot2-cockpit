@@ -7,8 +7,8 @@
 // "key=value" entries. What differs per MCU is only where that block lives and
 // how it is reached, so the loader is per-MCU and everything below it is shared.
 //
-//   ESP32/S3   the `env` partition (firmware/common/partitions_lino.csv), read
-//              through esp_partition_read into RAM.
+//   ESP32/S3   the `env` partition (firmware/common/partitions_lino.csv),
+//              mmap'd into the DROM window and parsed in place.
 //   RP2040/2350 the 4 KB EEPROM sector arduino-pico reserves at the very top of
 //              flash. It is memory-mapped, so it is parsed in place.
 // ---------------------------------------------------------------------------
@@ -17,8 +17,8 @@
 #define ENV_CRC_LEN   4
 #define ENV_DATA_LEN  (ENV_SIZE - ENV_CRC_LEN)
 
-// Points at the entry block once a loader has validated it: a static buffer on
-// ESP32, XIP-mapped flash on RP2. NULL until then.
+// Points at the entry block once a loader has validated it: XIP-mapped flash on
+// both backends now. NULL until then.
 static const char *env_data = NULL;
 static bool env_loaded = false;
 static bool env_valid = false;
@@ -50,7 +50,34 @@ static uint32_t crc32_iso(const uint8_t *data, size_t len)
 #define ENV_PART_NAME    "env"
 #define ENV_PART_SUBTYPE ((esp_partition_subtype_t)0x99)
 
-static char env_buf[ENV_DATA_LEN];
+// Mapped, not copied -- the same trick the RP2 path below has always used.
+//
+// This used to be `static char env_buf[ENV_DATA_LEN]`: 4 KB of .bss holding a
+// permanent copy of a partition that never changes while the board runs. The
+// ESP32's entire static segment is 124580 bytes (memory.ld: 0x2c200 - 0xdb5c),
+// and the lyrical Wi-Fi image sits at 98% of it, so 4 KB was the difference
+// between a comfortable margin and a board that stops building the next time
+// anyone adds a publisher.
+//
+// esp_partition_mmap() puts the partition in the DROM address space instead,
+// so entries are parsed straight out of XIP flash and the copy costs NOTHING
+// -- not DRAM, not heap. Reads go through the flash cache, which is ample for
+// a handful of envGet() lookups at boot. The mapping is never unmapped: it
+// must outlive every caller holding the pointer, which is the whole run.
+//
+// The handle type and the mmap enum were renamed between IDF 4 and 5, and
+// `platform = espressif32` is unpinned in platformio_base.ini and resolves to
+// either -- so both spellings are kept. Getting this wrong is a compile error,
+// not a silent fault, but only on whichever core the next `pio pkg update`
+// happens to pull.
+#if ESP_IDF_VERSION_MAJOR >= 5
+typedef esp_partition_mmap_handle_t env_mmap_handle_t;
+#define ENV_MMAP_DATA ESP_PARTITION_MMAP_DATA
+#else
+typedef spi_flash_mmap_handle_t env_mmap_handle_t;
+#define ENV_MMAP_DATA SPI_FLASH_MMAP_DATA
+#endif
+static env_mmap_handle_t env_map_handle;
 
 static void loadEnv(void)
 {
@@ -66,21 +93,28 @@ static void loadEnv(void)
         return;
     }
 
-    uint32_t stored = 0;
-    if (esp_partition_read(part, 0, &stored, ENV_CRC_LEN) != ESP_OK ||
-        esp_partition_read(part, ENV_CRC_LEN, env_buf, ENV_DATA_LEN) != ESP_OK) {
-        Serial.println("[env] could not read the 'env' partition");
+    const void *mapped = NULL;
+    esp_err_t err = esp_partition_mmap(part, 0, ENV_SIZE, ENV_MMAP_DATA,
+                                       &mapped, &env_map_handle);
+    if (err != ESP_OK || !mapped) {
+        Serial.printf("[env] could not map the 'env' partition (%d) — "
+                      "using built-in defaults\n", (int)err);
         return;
     }
 
-    uint32_t actual = crc32_iso((const uint8_t *)env_buf, ENV_DATA_LEN);
+    // The CRC covers the data only; the stored value is the first word.
+    uint32_t stored = 0;
+    memcpy(&stored, mapped, ENV_CRC_LEN);
+    const char *data = (const char *)mapped + ENV_CRC_LEN;
+
+    uint32_t actual = crc32_iso((const uint8_t *)data, ENV_DATA_LEN);
     if (stored != actual) {
         Serial.printf("[env] CRC32 mismatch (flash %08x, computed %08x) — "
                       "the env partition is blank or corrupt\n",
                       (unsigned)stored, (unsigned)actual);
         return;
     }
-    env_data = env_buf;
+    env_data = data;
     env_valid = true;
 }
 
