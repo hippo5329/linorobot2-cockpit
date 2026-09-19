@@ -241,19 +241,89 @@ def pulse_1200_baud(port: str) -> bool:
             return False
 
 
+# USB interface classes, as sysfs spells them (hex, zero padded).
+_IFCLASS_MASS_STORAGE = "08"
+_IFCLASS_CDC = ("02", "0a")
+
+
+def _rp2_mode_from_sysfs(root: str = "/sys/bus/usb/devices") -> Optional[str]:
+    """The same answer as lsusb, read straight out of sysfs.
+
+    sysfs is the source lsusb itself reads, minus the binary, the dynamic
+    loader and the permissions. It cannot fail to start, which lsusb can and
+    does -- see rp2_usb_mode below. Returns None when there is no sysfs to
+    read, which is the one case that genuinely needs the fallback.
+    """
+    if not os.path.isdir(root):
+        return None
+    classes, found = [], False
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return None
+    for name in names:
+        dev = os.path.join(root, name)
+        try:
+            with open(os.path.join(dev, "idVendor")) as fh:
+                if fh.read().strip().lower() != "2e8a":
+                    continue
+        except OSError:
+            continue
+        found = True
+        try:
+            ifaces = os.listdir(dev)
+        except OSError:
+            continue
+        for iface in ifaces:
+            path = os.path.join(dev, iface, "bInterfaceClass")
+            try:
+                with open(path) as fh:
+                    classes.append(fh.read().strip().lower())
+            except OSError:
+                continue
+    if not found:
+        return "absent"
+    if _IFCLASS_MASS_STORAGE in classes:
+        return "bootsel"
+    if any(c in classes for c in _IFCLASS_CDC):
+        return "app"
+    return "unknown"
+
+
 def rp2_usb_mode() -> str:
     """Which mode an RP-series board is in, read from its interface classes.
 
     The PID is 2e8a:000f in both application mode and BOOTSEL, so it proves
     nothing; the interface classes do. Returns "bootsel", "app", "absent", or
-    "unknown" when lsusb is unavailable.
+    "unknown" when neither source can answer.
+
+    sysfs first, and lsusb only as a fallback, because lsusb is a binary that
+    can fail to start. On an Ubuntu 26.04 bench it did, every time:
+
+        lsusb: error while loading shared libraries: libc.so.6: cannot apply
+        additional memory protection after relocation: Permission denied
+
+    -- exit 127, no output. The old code read any non-zero exit as "absent",
+    so every probe on that host returned a confident "nothing is on that port"
+    about a board that was sitting there running micro-ROS. That verdict
+    writes neither firmware nor env block while printing "Nothing to write",
+    and it suppressed report_failed_bootsel_request(), which only fires on
+    "app" -- so the one message explaining a failed flash never printed. "I
+    could not look" is not "there is nothing there", and it must never again
+    be reported as though it were.
     """
+    mode = _rp2_mode_from_sysfs()
+    if mode is not None:
+        return mode
     try:
         res = subprocess.run(["lsusb", "-d", "2e8a:", "-v"],
                              capture_output=True, text=True, timeout=10)
     except Exception:
         return "unknown"
-    if res.returncode != 0 or not res.stdout.strip():
+    if res.returncode != 0:
+        # Could not ask. Say so.
+        return "unknown"
+    if not res.stdout.strip():
         return "absent"
     classes = [ln.split("bInterfaceClass")[1].strip()
                for ln in res.stdout.splitlines() if "bInterfaceClass" in ln]
