@@ -474,11 +474,19 @@ static AppMode app_mode = APP_BASE;
 // happen the board stays in that while(1) with USB torn down and its IRQ off:
 // still enumerated from the host's side, mute at every baud, and answering no
 // control transfer -- which is why the host sees ETIMEDOUT (Errno 110) on the
-// DTR ioctl and why only the RESET button recovered it.
+// DTR ioctl.
 //
 // The core's comment assumes a watchdog is running. Nothing in this image armed
 // one, so there was nothing to fire. Arming it is what makes that comment true:
 // a failed BOOTSEL request costs a reboot instead of a walk to the bench.
+//
+// What the watchdog does NOT do is reach BOOTSEL. It converts the hang into a
+// reboot back into THIS application, so the board comes back healthy -- it
+// enumerates, it answers a micro-ROS agent -- and still refuses the next touch.
+// A 2026-09-19 release matrix hit that on four boards, two RP2040 and two
+// RP2350, none of them mute. The recovery is a USB device reset
+// (USBDEVFS_RESET, `usbreset.py --vid 2e8a`), after which the very next touch
+// succeeds; a RESET button press is the fallback, not the only way back.
 #if defined(ARDUINO_ARCH_RP2040)
 // Long enough that no normal blocking stretch reaches it -- entity creation
 // over a live serial link is well under a second, and SerialUSB::write() gives
