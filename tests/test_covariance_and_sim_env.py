@@ -137,3 +137,38 @@ def test_the_key_names_match_the_config_engines_schema():
     for key in ("robot_mass", "wheel_noise_rpm", "map_width", "map_height",
                 "wall_obstacle", "wall_x1", "wall_y1", "wall_x2", "wall_y2"):
         assert key in props, f"{key} is not what the config engine calls it"
+
+
+def _src(rel):
+    return open(os.path.join(REPO_ROOT, rel)).read()
+
+
+def test_a_global_does_not_read_the_env_in_its_constructor():
+    """`Odometry odometry;` is a GLOBAL in main.cpp, so its constructor runs
+    during static initialisation -- before the flash partition API is usable.
+    Reading the env there returns nothing silently, and the board published the
+    compiled-in 1e-4 while its env said 0.011. Caught on a Pico 2, 2026-09-21,
+    which is the only way this kind of fault is ever caught.
+
+    The same trap is documented for initSyslog(); this test is here so the next
+    person moves the call instead of rediscovering it on hardware.
+    """
+    cpp = _src("firmware/common/lib/odometry/odometry.cpp")
+    ctor = cpp[cpp.index("Odometry::Odometry()"):cpp.index("void Odometry::applyEnvCovariance")]
+    assert "envFloatVec" not in ctor and "envFloat(" not in ctor, (
+        "Odometry's constructor reads the env again -- it is a global, so this "
+        "runs before the partition is readable and silently does nothing")
+    assert "odometry.applyEnvCovariance();" in _src("firmware/src/main.cpp"), (
+        "nothing calls applyEnvCovariance(), so the env values never load")
+
+
+def test_the_simulated_imu_reads_the_same_covariance_keys():
+    """Fake mode publishes through FakeIMUFromWheels, not IMUInterface, so
+    without this the covariance a config sets reached every robot EXCEPT the
+    simulated one -- which is the default here, and the one an EKF is usually
+    tuned against first."""
+    fake = _src("firmware/common/lib/encoder/fake_wheel.h")
+    init = fake[fake.index("void initMsgs("):]
+    init = init[:init.index("void update(")]
+    for key in ("accel_cov", "gyro_cov", "ori_cov", "mag_cov"):
+        assert f'envFloatVec("{key}"' in init, f"initMsgs ignores {key}"

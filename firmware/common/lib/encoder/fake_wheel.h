@@ -323,10 +323,18 @@ public:
     void initMsgs(sensor_msgs__msg__Imu &imu_msg,
                   sensor_msgs__msg__MagneticField &mag_msg)
     {
-        const float accel_cov[3] = ACCEL_COV;
-        const float gyro_cov[3] = GYRO_COV;
-        const float ori_cov[3] = ORI_COV;
-        const float mag_cov[3] = MAG_COV;
+        // The same env keys a real IMU uses. Fake mode publishes through this
+        // class rather than IMUInterface, so without this the covariance a
+        // config sets reached every robot EXCEPT the simulated one -- which is
+        // the default here, and the one an EKF is usually tuned against first.
+        float accel_cov[3] = ACCEL_COV;
+        float gyro_cov[3] = GYRO_COV;
+        float ori_cov[3] = ORI_COV;
+        float mag_cov[3] = MAG_COV;
+        envFloatVec("accel_cov", accel_cov, 3);
+        envFloatVec("gyro_cov", gyro_cov, 3);
+        envFloatVec("ori_cov", ori_cov, 3);
+        envFloatVec("mag_cov", mag_cov, 3);
 
         imu_msg.header.frame_id =
             micro_ros_string_utilities_set(imu_msg.header.frame_id, "imu_link");

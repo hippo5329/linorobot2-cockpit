@@ -895,6 +895,9 @@ void setup()
     {
         syslog(LOG_WARNING, "%s BMP280/BME280 not found (0x76/0x77) %lu", __FUNCTION__, millis());
     }
+    // The globals read their env here, not in their constructors: static
+    // initialisation runs before the flash partition API is usable.
+    odometry.applyEnvCovariance();
     initLidar(); // after wifi connected
     fake_lidar_on = envFlag("fake_ld19", true);
     if (fake_lidar_on)

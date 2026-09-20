@@ -21,6 +21,15 @@ Odometry::Odometry():
 {
     odom_msg_.header.frame_id = micro_ros_string_utilities_set(odom_msg_.header.frame_id, "odom");
     odom_msg_.child_frame_id = micro_ros_string_utilities_set(odom_msg_.child_frame_id, "base_footprint");
+}
+
+// NOT the constructor. `Odometry odometry;` is a global in main.cpp, so it is
+// built during static initialisation -- which runs before the flash partition
+// API is usable, exactly as initSyslog() documents. Reading the env there
+// silently returned nothing, and the board published the compiled-in 1e-4
+// while its env said 0.011. Caught on a Pico 2, 2026-09-21.
+void Odometry::applyEnvCovariance()
+{
     // Wheel odometry's uncertainty is a property of THIS robot's encoders,
     // wheels and floor, so it belongs in the env with the rest of the
     // configuration rather than baked into the image.
