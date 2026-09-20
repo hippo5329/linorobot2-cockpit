@@ -85,7 +85,6 @@ class FakeEncoder : public EncoderInterface
 {
 private:
     int counts_per_rev_ = -1;
-    bool invert_ = false;
     float duty_ = 0.0;              // commanded duty cycle, -1.0 .. 1.0
     float wheel_rpm_ = 0.0;         // simulated wheel speed
     double ticks_ = 0.0;            // simulated tick accumulator
@@ -138,8 +137,25 @@ public:
         // differential base regardless of what the encoders report.
         (void)pin1;
         (void)pin2;
+        // ...and so is `invert`, for the same reason.
+        //
+        // On a real robot the right-hand side is mirrored, so the motor driver
+        // inverts what it drives and the encoder inverts what it reads. The two
+        // cancel: the wheel turns forward and reports forward.
+        //
+        // In fake mode there is no motor. Pins are -1, so MotorInterface::spin()
+        // returns without touching anything, and NOTHING applies the motor half
+        // of that pair -- but feed() was still applying the encoder half. Wheel
+        // 2 therefore ran backwards whenever wheel 1 ran forwards, and the
+        // simulated robot spun on the spot instead of driving.
+        //
+        // Measured on a bare Pico 2, 2026-09-20: commanded (0.20, 0.00), odom
+        // reported vx down to -0.459 m/s and wz to -4.869 rad/s; commanded
+        // (0.00, 0.00) it still reported -0.6 m/s and -3.7 rad/s. Nav2 planned
+        // a path and the base could never follow it -- the zero-wiring promise,
+        // broken by a sign.
+        (void)invert;
         counts_per_rev_ = (counts_per_rev > 0) ? counts_per_rev : 1;
-        invert_ = invert;
     }
 
     // called by the control loop with the PWM just handed to the motor driver
@@ -147,7 +163,6 @@ public:
     {
         if (counts_per_rev_ < 0) return;
         integrate();
-        if (invert_) pwm *= -1;
         // PWM_MAX expands to an unparenthesized expression (`pow(2, PWM_BITS) - 1`),
         // so it has to be wrapped before dividing or the `- 1` escapes the cast and
         // lands outside the division, turning a small duty into nearly full reverse.
