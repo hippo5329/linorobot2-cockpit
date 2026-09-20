@@ -14,13 +14,17 @@
 
 #include "Arduino.h"
 #include "pid.h"
+#include <math.h>
 
 PID::PID(float min_val, float max_val, float kp, float ki, float kd):
     min_val_(min_val),
     max_val_(max_val),
     kp_(kp),
     ki_(ki),
-    kd_(kd)
+    kd_(kd),
+    integral_(0.0),
+    derivative_(0.0),
+    prev_error_(0.0)
 {
 }
 
@@ -29,12 +33,45 @@ double PID::compute(float setpoint, float measured_value)
     double error;
     double pid;
 
-    //setpoint is constrained between min and max to prevent pid from having too much error
     error = setpoint - measured_value;
     integral_ += error;
     derivative_ = error - prev_error_;
 
-    if(setpoint == 0 && error == 0)
+    // Anti-windup. `integral_` was a pure accumulator with no bound, and the
+    // only thing that ever reset it was `setpoint == 0 && error == 0` -- exact
+    // float equality, which measurement noise makes essentially unreachable.
+    //
+    // So once the loop saturated it stayed there. Caught on the bench
+    // 2026-09-20 with an instrumented build, on a board commanded to stand
+    // still:
+    //
+    //   cmd=0.00,0.00 req=0.0,0.0 rpm=-139.5,138.4 pwm=-1023,1023
+    //
+    // Both wheels pinned at opposite rails, at the 140 rpm maximum, with a
+    // zero request -- and raising the request to 31.4 rpm changed nothing,
+    // because the integral term alone was already past the rail. The robot
+    // spun on the spot and Nav2 could not drive it.
+    //
+    // Clamping the integral's CONTRIBUTION (not the raw sum) keeps the term
+    // meaningful across different ki: the loop can still hold any output the
+    // actuator can reach, and it leaves saturation on the first tick the error
+    // reverses, instead of after unwinding a debt it spent minutes building.
+    //
+    // The bound is the larger rail, so the integral alone can still drive the
+    // output all the way to either end -- and no further, which is what makes
+    // the exit immediate.
+    if (ki_ != 0.0f)
+    {
+        const double limit = fmax(fabs((double)max_val_), fabs((double)min_val_));
+        const double i_max = limit / (double)fabs(ki_);
+        if (integral_ > i_max)  integral_ = i_max;
+        if (integral_ < -i_max) integral_ = -i_max;
+    }
+
+    // A standing still request with the wheel actually stopped: forget the
+    // history rather than carry it into the next move. Compared with a
+    // tolerance now, because `== 0` on a noisy measurement never fired.
+    if (setpoint == 0.0f && fabs(error) < 0.5)
     {
         integral_ = 0;
         derivative_ = 0;
