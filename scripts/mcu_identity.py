@@ -25,7 +25,7 @@ import os
 _ENV_FAMILY = {
     "pico": "pico", "picow": "pico",
     "pico2": "pico2", "pico2w": "pico2",
-    "esp32": "esp32", "esp32_wifi": "esp32", "gendrv": "esp32", "gendrv_real": "esp32",
+    "esp32": "esp32", "esp32_wifi": "esp32", "gendrv": "esp32",
     "esp32s3": "esp32s3",
 }
 
@@ -73,6 +73,16 @@ def classify_usb(vid: str, pid: str, product: str = "") -> tuple:
     # Everything below is a serial BRIDGE. It identifies the bridge, and the
     # same bridge sits next to every kind of chip -- never decisive.
     if vid == "10c4" and pid == "ea60":
+        # A GenDrv and a bare ESP32 DevKit are indistinguishable over USB: both
+        # are an ESP32 behind a Silicon Labs bridge, same vid:pid. The ONE thing
+        # that differs is the bridge variant, and it is a usable signal because
+        # no other ESP32 module on the market ships the CP2102**N** -- the
+        # Waveshare General Driver does. So N is taken to mean GenDrv.
+        #
+        # It is a population argument, not a measurement, which is exactly why
+        # this returns False for `decisive`: it picks a better default in the UI
+        # and never refuses a flash, so a user holding the other board simply
+        # corrects the selection and nothing has been lost.
         if "cp2102n" in prod or "general driver" in prod:
             return ("gendrv", "CP2102N USB Bridge (ESP32/GenDrv)", False)
         return ("esp32", "CP2102 USB Bridge (ESP32)", False)

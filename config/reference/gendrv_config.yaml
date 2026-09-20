@@ -1,6 +1,6 @@
 # gendrv — single source of truth for this robot.
 # One robot per file, one base controller per robot.
-# Waveshare General Driver Board ESP32 (Serial micro-ROS + Wi-Fi Syslog/OTA)
+# Waveshare General Driver Board ESP32 (I2C sensors auto-detected)
 robot:
   name: gendrv
   description: Linorobot2 Differential Drive Autonomy Platform
@@ -53,10 +53,18 @@ base_controller:
     mag: AK09918
     current: INA219
     env: BMP280
-    use_fake_imu: true
+    # The four I2C chips on this board -- QMI8658, AK09918, INA219, BMP280 --
+    # are every one of them compiled in unconditionally and found by probing the
+    # bus, so these names are only the fallback for a board that cannot be read.
+    # There is no second "gendrv_real" config: naming a chip and detecting it
+    # were never two designs, they were one design and a stale copy.
+    use_fake_imu: false
     use_fake_mag: false
-    use_fake_wheel: true
-    use_fake_ld19: true
+    use_fake_wheel: false
+    # false: the LD19 is wired to the MCU (rx_pin below), not simulated. A board
+    # WITHOUT that wire must set this true or /scan never publishes -- see the
+    # lidar block.
+    use_fake_ld19: false
     use_fake_env: false
   pins:
     # The board's fixed pinout (linorobot2_hardware wiki, "waveshare general

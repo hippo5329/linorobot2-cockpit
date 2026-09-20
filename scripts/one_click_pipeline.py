@@ -624,7 +624,7 @@ def main():
                          "Run scripts/migrate_config_schema.py to convert it.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
-    is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv_real")
+    is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")
     has_lidar = bool(controller_cfg.get("lidar", {}).get("model")) or \
         controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
 
@@ -669,7 +669,7 @@ def main():
     # --controller that differs must not inherit them.
     #
     # It used to inherit them unconditionally, and the result contradicted
-    # itself in the log: running `--controller pico` against rover_pico2
+    # itself in the log: running `--controller pico` against pico2_mecanum
     # (whose block says `mcu: pico2`) produced
     #
     #   [2/6] [FIRMWARE] Image source for pico2: prebuilt release image .../pico2

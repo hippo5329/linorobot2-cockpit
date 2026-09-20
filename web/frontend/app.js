@@ -7058,7 +7058,7 @@ function initReferenceDesigns() {
   //
   // Mirror them. Only adopt a value the other select actually offers (the two
   // lists are not identical -- cockpit-target-select carries esp32_wifi and
-  // gendrv_real, cfg-mcu does not); assigning an unknown value blanks the
+  // gendrv, cfg-mcu does not); assigning an unknown value blanks the
   // element, which is worse than leaving it alone.
   const syncControllerSelects = (value, fromId) => {
     for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) {

@@ -37,8 +37,8 @@ base_controller:
     use_fake_wheel: false
     use_fake_ld19: false
     use_fake_env: false
-    current: NONE
-    env: NONE
+    current: INA219
+    env: BMP280
   pins:
     # Two-PWM (bts7960) drivers: in_a / in_b carry the complementary PWM, pwm
     # is the driver's enable. One GPIO (GP22) enables all four bridges -- the
@@ -95,9 +95,14 @@ base_controller:
       pin: 26
       r1: 30000
       r2: 7500
+    # GP27/GP28: the only header pins this design leaves unclaimed besides the
+    # two debug UARTs, and the pair the bench Pico 2 is physically wired to.
+    # An HC-SR04+ was the one peripheral no reference config had ever enabled,
+    # so TRIG_PIN/ECHO_PIN were compiled out of every released image and the
+    # interrupt-driven driver in lib/range had never run on RP2 silicon.
     sonar:
-      trigger: -1
-      echo: -1
+      trigger: 27
+      echo: 28
 kinematics:
   base_type: mecanum
   stamped_cmd_vel: auto

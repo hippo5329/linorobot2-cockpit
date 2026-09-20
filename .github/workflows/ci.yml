@@ -276,10 +276,12 @@ jobs:
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
           case "${{ matrix.env }}" in
             esp32*)  cfg=config/reference/esp32_wifi_config.yaml ;;
-            pico2w*) cfg=config/reference/pico2w_config.yaml ;;
-            picow*)  cfg=config/reference/picow_config.yaml ;;
-            pico2*)  cfg=config/reference/rover_pico2_config.yaml ;;
-            pico*)   cfg=config/reference/pico_config.yaml ;;
+            # Every RP2 env -- pico, picow, pico2, pico2w and their _lyrical
+            # twins -- builds from the one mecanum reference. The header is
+            # identical across the family; the env name picks the board. The
+            # W-specific facts (LED on the CYW43, GP23/24/25/29 owned by the
+            # radio) live in scripts/pin_catalog.py, keyed on the mcu name.
+            pico*)   cfg=config/reference/pico2_mecanum_config.yaml ;;
           esac
           distro=jazzy; case "${{ matrix.env }}" in *_lyrical) distro=lyrical ;; esac
           python3 scripts/gen_firmware_header.py --params "$cfg" --distro "$distro" --no-embed-secrets

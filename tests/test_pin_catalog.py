@@ -10,13 +10,13 @@ def _levels(findings):
 
 
 def test_shipped_references_have_no_pin_errors(reference):
-    for name in ("gendrv_real", "gendrv", "pico2_mecanum", "rover_pico2", "esp32", "esp32s3", "pico", "picow", "pico2w"):
+    for name in ("gendrv", "pico2_mecanum", "esp32", "esp32_wifi", "esp32s3"):
         errors = [m for l, m in pc.check_config(reference(name)) if l == "error"]
         assert not errors, (name, errors)
 
 
 def test_esp32_flash_bus_and_missing_gpio_are_errors(reference):
-    params = copy.deepcopy(reference("gendrv_real"))
+    params = copy.deepcopy(reference("gendrv"))
     pins = params["base_controller"]["pins"]
     pins["motor1"]["in_a"] = 6      # SPI flash
     pins["motor2"]["in_a"] = 20     # does not exist on the WROOM
@@ -26,7 +26,7 @@ def test_esp32_flash_bus_and_missing_gpio_are_errors(reference):
 
 
 def test_esp32_input_only_pin_cannot_drive_a_motor(reference):
-    params = copy.deepcopy(reference("gendrv_real"))
+    params = copy.deepcopy(reference("gendrv"))
     params["base_controller"]["pins"]["motor1"]["in_b"] = 34
     assert any("input-only" in m for l, m in pc.check_config(params) if l == "error")
 
@@ -63,9 +63,20 @@ def test_duplicate_pins_are_errors_but_a_shared_bts7960_enable_is_not(reference)
 
 
 def test_wireless_pico_led_on_gp25_warns(reference):
-    params = copy.deepcopy(reference("picow"))
-    params["base_controller"]["pins"]["led"] = 25
-    assert any("CYW43" in m for l, m in pc.check_config(params))
+    """The W boards lost their reference configs; the rule did not.
+
+    picow/pico2w_config.yaml were removed when the reference designs were
+    consolidated onto the two mecanum files. The fact they encoded -- GP23/24/
+    25/29 belong to the CYW43, so the LED is not on a GPIO -- lives in
+    pin_catalog's wireless_rp2 branch, keyed on the mcu name. Build the config
+    here rather than load one, so a user who writes `mcu: pico2w` by hand is
+    still warned.
+    """
+    for mcu in ("picow", "pico2w"):
+        params = copy.deepcopy(reference("pico2_mecanum"))
+        params["base_controller"]["mcu"] = mcu
+        params["base_controller"]["pins"]["led"] = 25
+        assert any("CYW43" in m for l, m in pc.check_config(params)), mcu
 
 
 def test_unknown_mcu_is_a_single_warning():
@@ -81,12 +92,12 @@ def test_counts_per_rev_from_parts():
 def test_mecanum_config_warnings(reference):
     assert gh.config_warnings(reference("pico2_mecanum")) == []
     params = copy.deepcopy(reference("pico2_mecanum"))
-    # rover_pico2-derived configs mix the shapes: a flat ekf, a wrapped nav2.
+    # mecanum-derived configs mix the shapes: a flat ekf, a wrapped nav2.
     params["ekf"]["odom0_config"][7] = False
     params["nav2"]["controller_server"]["ros__parameters"]["min_y_velocity_threshold"] = 0.5
     w = gh.config_warnings(params)
     assert any("vy" in m for m in w) and any("min_y_velocity_threshold" in m for m in w)
-    assert gh.config_warnings(reference("rover_pico2")) == []
+    assert gh.config_warnings(reference("pico2_mecanum")) == []
     # ...and the wrapped shape is read too.
     wrapped = {"kinematics": {"base_type": "mecanum"},
                "ekf": {"ekf_filter_node": {"ros__parameters": {"odom0_config": [False] * 15}}},
@@ -105,8 +116,6 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
     A bench board in fake mode needs it as much as a real one: a simulated
     robot fails in the same ways, and with led: -1 it fails silently.
     """
-    assert _led(reference, "pico") == 25
-    assert _led(reference, "rover_pico2") == 25
     assert _led(reference, "pico2_mecanum") == 25
     assert _led(reference, "esp32") == 2
     assert _led(reference, "esp32_wifi") == 2
@@ -120,18 +129,14 @@ def test_every_esp32_board_shares_one_led_pin(reference):
     an unconnected pin costs nothing, and a config that differs only where it
     has to is easier to keep right.
     """
-    for name in ("esp32", "esp32_wifi", "gendrv", "gendrv_real"):
+    for name in ("esp32", "esp32_wifi", "gendrv"):
         assert _led(reference, name) == 2, name
 
 
-def test_the_wireless_picos_leave_the_led_to_the_cyw43(reference):
-    """On picow/pico2w the LED hangs off the wireless chip, not a GPIO.
-
-    check_config warns about GPIO 23/24/25/29 on those boards for this reason,
-    so giving them 25 would be wrong as well as useless.
-    """
-    assert _led(reference, "picow") == -1
-    assert _led(reference, "pico2w") == -1
+# The W boards' `led: -1` used to be asserted from picow/pico2w_config.yaml.
+# Those files are gone (consolidated onto the mecanum references); the rule they
+# encoded is covered by test_wireless_pico_led_on_gp25_warns above, which builds
+# a pico2w config in memory and checks the catalogue still objects.
 
 
 def test_the_esp32_led_is_flagged_as_a_strapping_pin(reference):

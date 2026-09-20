@@ -17,7 +17,7 @@ def _joint(root, name):
 
 
 def test_2wd_wheels_from_kinematics(reference):
-    p = reference("gendrv_real")
+    p = reference("gendrv")
     root = _tree(p)
     kine = p["kinematics"]
     radius = float(root.find("./link[@name='left_wheel_link']/visual/geometry/cylinder").get("radius"))
@@ -57,7 +57,7 @@ def test_sensor_frames_and_poses(reference):
 
 
 def test_footprint_sits_on_the_floor(reference):
-    p = reference("rover_pico2")
+    p = reference("pico2_mecanum")
     p["geometry"]["wheel"]["z"] = -0.02
     root = _tree(p)
     _, xyz = _joint(root, "base_to_footprint")

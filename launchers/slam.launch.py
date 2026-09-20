@@ -49,7 +49,7 @@ def resolve_params_path(context):
     `controller:=` only ever relabelled what DEFAULT_PARAMS already held, so a
     launch for one robot ran with another robot's file: bringup for esp32_wifi
     (transport udp4, /dev/ttyUSB0) came up as transport='serial' on
-    /dev/ttyACM0 because rover_pico2_config.yaml is the default. The name has to
+    /dev/ttyACM0 because pico2_mecanum_config.yaml is the default. The name has to
     select the file, not decorate it -- §3, one robot per file.
 
     Order: an explicit config_file, then robot:=, then controller:= by filename,

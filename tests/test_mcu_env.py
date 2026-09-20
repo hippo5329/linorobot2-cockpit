@@ -2,7 +2,12 @@
 import os
 import zlib
 
+import copy
+
 import mcu_env
+import yaml
+
+from gen_bare_config import bare_config
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REF = os.path.join(REPO_ROOT, "config", "reference")
@@ -38,40 +43,90 @@ def _env(name):
     return mcu_env.env_from_config(os.path.join(REF, f"{name}_config.yaml"), SECRETS_EXAMPLE, "192.0.2.1")
 
 
-def test_gendrv_real_carries_the_boards_facts():
-    env = _env("gendrv_real")
-    assert env["baud"] == 1500000
+def reference_params(name):
+    with open(os.path.join(REF, f"{name}_config.yaml")) as fh:
+        return yaml.safe_load(fh)
+
+
+def _with(params, **sections):
+    """A copy of `params` with one or more sub-dicts of base_controller merged."""
+    out = copy.deepcopy(params)
+    for key, patch in sections.items():
+        out["base_controller"].setdefault(key, {}).update(patch)
+    return out
+
+
+def _env_from_params(params):
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix="_config.yaml")
+    with os.fdopen(fd, "w") as fh:
+        yaml.safe_dump(params, fh, sort_keys=False)
+    try:
+        return mcu_env.env_from_config(path, SECRETS_EXAMPLE, "192.0.2.1")
+    finally:
+        os.unlink(path)
+
+
+def _bare_env(mcu, tmp_path):
+    """The generated bare config, through the same path as a shipped one.
+
+    There is no bare *file* any more -- scripts/gen_bare_config.py is the rule
+    -- so write the generated config out and read it back exactly as
+    env_from_config would read a reference, rather than testing a dict.
+    """
+    path = tmp_path / f"bare_{mcu}_config.yaml"
+    path.write_text(yaml.safe_dump(bare_config(mcu), sort_keys=False))
+    return mcu_env.env_from_config(str(path), SECRETS_EXAMPLE, "192.0.2.1")
+
+
+def test_gendrv_carries_the_boards_facts():
+    env = _env("gendrv")
+    assert env["baud"] == 921600
     assert env["transport"] == "serial"
     assert env["motor_driver"] == "bts7960"
     assert (env["m1_pwm"], env["m1_in_a"], env["m1_in_b"]) == (25, 21, 17)
     assert (env["m2_pwm"], env["m2_in_a"], env["m2_in_b"]) == (26, 22, 23)
     assert (env["m1_enc_a"], env["m1_enc_b"], env["m2_enc_a"], env["m2_enc_b"]) == (34, 35, 16, 27)
     assert (env["i2c_sda"], env["i2c_scl"]) == (32, 33)
-    assert env["node"] == "gendrv_real_base_node"
+    assert env["node"] == "gendrv_base_node"
     assert env["lidar_rx"] == 4 and env["lidar_baud"] == 230400
     assert "gpio_out" not in env, "the BTS7960 driver drives its own enable pins now"
 
 
 def test_dual_core_key_follows_the_config():
     # Booleans reach the env as "1"/"0" strings; pins and rates as ints.
-    assert str(_env("gendrv_real")["dual_core"]) == "1"
-    assert str(_env("esp32_wifi")["dual_core"]) == "0"
-    assert "dual_core" not in _env("pico")
+    assert str(_env("esp32")["dual_core"]) == "1"          # use_dual_core: true
+    assert str(_env("esp32_wifi")["dual_core"]) == "0"     # use_dual_core: false
+    # RP2 has no dual-core port, so the key never reaches the env at all.
+    assert "dual_core" not in _env("pico2_mecanum")
 
 
 def test_sensor_three_state_mapping():
-    # gendrv_real declares every chip: publish flags are explicit 1s.
-    env = _env("gendrv_real")
+    # gendrv declares every chip on the Waveshare board: publish flags are 1s.
+    env = _env("gendrv")
     assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 1, 1)
-    # rover_pico2 says NONE for mag/current/env: explicit 0s.
-    env = _env("rover_pico2")
-    assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (0, 0, 0)
+    # pico2_mecanum declares no mag but does declare a battery divider and a
+    # BMP280, so only pub_mag is off.
+    env = _env("pico2_mecanum")
+    assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (0, 1, 1)
 
 
-def test_fake_reference_has_no_real_pins():
-    env = _env("rover_pico2")
-    assert str(env["fake_wheel"]) == "1"
-    assert all(env[f"m{i}_pwm"] == -1 for i in range(1, 5))
+def test_bare_config_has_no_real_pins(tmp_path):
+    """Generated, not stored -- and the rule holds on every board.
+
+    This used to read rover_pico2_config.yaml. The bare designs are generated
+    now (one rule, four boards), so assert the rule on all of them: nothing
+    driven, nothing on the bus, every sensor simulated.
+    """
+    for mcu in ("pico", "pico2", "esp32", "esp32s3"):
+        env = _bare_env(mcu, tmp_path)
+        assert str(env["fake_wheel"]) == "1", mcu
+        # There is no fake_imu key: the IMU is chosen by name at runtime
+        # (sensor_factory), and "fake" is the name of the simulated driver.
+        assert str(env["imu"]).lower() == "fake", mcu
+        assert str(env["fake_ld19"]) == "1", mcu
+        assert all(env[f"m{i}_pwm"] == -1 for i in range(1, 5)), mcu
+        assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (0, 0, 0), mcu
 
 
 def test_mecanum_reference_has_four_motors():
@@ -93,7 +148,11 @@ def test_battery_fake_lidar_and_geometry_reach_the_env():
     assert (env["battery_pin"], env["bat_r1"], env["bat_r2"]) == (26, 30000, 7500)
     assert env["fake_ld19"] == "0"          # a real LD19 on the robot computer
     assert "lidar_x" in env
-    fake = _env("gendrv")
+    # gendrv drives a real LD19 now (the merge with gendrv_real), so flip the
+    # flag on a copy: what is under test is that the emulator raycasts from the
+    # config's LiDAR pose, not which board happens to ship with it on.
+    fake = _env_from_params(_with(reference_params("gendrv"),
+                                  sensors={"use_fake_ld19": True}))
     assert fake["fake_ld19"] == "1"
     assert float(fake["lidar_x"]) == 0.12   # the emulator raycasts from the config's LiDAR pose
     assert "pwm_min" not in fake and "pwm_max" not in fake   # derived from pwm_bits on the board

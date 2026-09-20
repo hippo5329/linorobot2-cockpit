@@ -30,7 +30,7 @@ def robot_configs():
     ]
 
 
-CONFIG_FILE = (robot_configs() or [os.path.join(CONFIG_DIR, "rover_pico2_config.yaml")])[0]
+CONFIG_FILE = (robot_configs() or [os.path.join(CONFIG_DIR, "pico2_mecanum_config.yaml")])[0]
 
 
 class DummyContext:

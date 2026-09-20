@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mcu_env   # resolve_syslog_port: one copy of the 514 -> 5140 rule
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_ROBOT = "rover_pico2"
+DEFAULT_ROBOT = "pico2_mecanum"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402
 import pin_catalog  # noqa: E402
@@ -242,6 +242,22 @@ def config_warnings(params: dict) -> list:
         mv = vs.get("max_velocity")
         if isinstance(mv, list) and len(mv) > 1 and float(mv[1]) == 0:
             out.append("mecanum base but nav2 velocity_smoother.max_velocity[1] (vy) is 0")
+    # A simulated LiDAR still has to leave the chip. fake_ld19 in `serial` mode
+    # does not publish a topic -- it synthesises LD19 frames and clocks them OUT
+    # of LIDAR_RXD, so the pin has to be wired to something that reads them (a
+    # USB-serial bridge, or the host UART). Unwired, /scan is silent and nothing
+    # in the logs says why: the firmware is transmitting perfectly into an
+    # unconnected pin. On the Waveshare GenDrv that pin is GPIO 4.
+    tgt = params.get("base_controller") or {}
+    lidar = tgt.get("lidar") or {}
+    sensors = tgt.get("sensors") or {}
+    if sensors.get("use_fake_ld19") and str(lidar.get("comm_mode", "")).lower() == "serial":
+        rx = lidar.get("rx_pin", -1)
+        where = f"GPIO {rx}" if isinstance(rx, int) and rx >= 0 else "the LIDAR_RXD pin (unset)"
+        out.append(
+            f"use_fake_ld19 with lidar.comm_mode 'serial' transmits synthetic LD19 frames "
+            f"out of {where}: wire it to a serial bridge or the host UART, or /scan stays "
+            f"silent. Use comm_mode 'topic' to publish the scan over micro-ROS instead.")
     out.extend(gen_robot_description.geometry_warnings(params))
     return out
 
@@ -642,7 +658,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # binary could then never be switched to udp4 by writing to the env.
     mcu = str(tgt.get("mcu") or tgt.get("pio_env") or controller_name or "").lower()
     wifi_capable = mcu.startswith("esp32") or mcu in ("picow", "pico2w") or \
-        controller_name in ("gendrv", "gendrv_real", "esp32", "esp32_wifi", "esp32s3")
+        controller_name in ("gendrv", "esp32", "esp32_wifi", "esp32s3")
     if has_wifi or wifi_capable:
         # Load credentials exclusively from gitignored secrets.yaml (or secrets.yaml.example template)
         wifi_secrets = secrets.get("wifi", {})
@@ -799,7 +815,15 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # is wanted (wifi=1 or transport=udp4) and says so at boot. So the default
     # is the serial robot's best setting, and `use_dual_core: false` is the way
     # to refuse it. Boards without a second core never see the macro.
-    if tgt.get("mcu", "").lower() in ("esp32", "esp32s3") and tgt.get("use_dual_core", True):
+    #
+    # 2026-09-20: the default is now OFF. Splitting the loop across two cores
+    # was worth its spinlock when the 50 Hz topics were still reliable-QoS on
+    # an ESP32 serial link; best effort is the default for those topics now
+    # (5c7dc53), which removed the stall it was compensating for. A config that
+    # still wants it says `use_dual_core: true`. Only esp32/esp32s3 can: the
+    # implementation is FreeRTOS `xTaskCreatePinnedToCore` under
+    # `#if defined(ESP32)`, so RP2040/RP2350 have no port and never did.
+    if tgt.get("mcu", "").lower() in ("esp32", "esp32s3") and tgt.get("use_dual_core", False):
         lines.extend([
             "// --- FreeRTOS Dual-Core Architecture ---",
             "#define USE_DUAL_CORE  // moveBase() on core 0; ignored at boot when the radio is on",

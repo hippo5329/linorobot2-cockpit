@@ -6,7 +6,7 @@ The cockpit repo is code and reference material; the user's robots are DATA
 and live outside it, in their own git repository:
 
     ~/linorobot2-config/            (override: COCKPIT_CONFIG_DIR)
-        rover_pico2_config.yaml     one robot per file
+        pico2_mecanum_config.yaml     one robot per file
         secrets.yaml                Wi-Fi / addresses, gitignored there too
         .gitignore
 
@@ -31,7 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REFERENCE_CONFIG_DIR = os.path.join(REPO_ROOT, "config", "reference")
 SECRETS_EXAMPLE_PATH = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 FASTDDS_PROFILE = os.path.join(REPO_ROOT, "config", "fastdds_service_qos.xml")
-DEFAULT_ROBOT = "rover_pico2"
+DEFAULT_ROBOT = "pico2_mecanum"
 
 _CONFIG_GITIGNORE = """# Credentials never leave this machine.
 secrets.yaml

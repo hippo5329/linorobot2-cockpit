@@ -61,8 +61,14 @@ BASE_DIR = os.path.join(REPO_ROOT, "firmware")
 
 # board -> (robot config stem, base pio env, description)
 BOARDS = {
-    "pico2":   ("rover_pico2", "pico2",   "RP2350, micro-ROS over USB serial"),
-    "pico":    ("pico",        "pico",    "RP2040, micro-ROS over USB serial"),
+    # Both RP2 profiles build from the SAME config: an RP2040 and an RP2350
+    # differ in core, clock and RAM, not in what the Pico header brings out, and
+    # gen_firmware_header.py emits a byte-identical header for `mcu: pico` and
+    # `mcu: pico2`. The PlatformIO env picks the board and the toolchain, and
+    # mcu_env.env_offset() keys the env partition on that env name (2 MB vs
+    # 4 MB), so nothing about the board is lost by sharing one reference design.
+    "pico2":   ("pico2_mecanum", "pico2", "RP2350, micro-ROS over USB serial"),
+    "pico":    ("pico2_mecanum", "pico",  "RP2040, micro-ROS over USB serial"),
     "esp32":   ("esp32_wifi",  "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
     "esp32s3": ("esp32s3",     "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
 }

@@ -11,7 +11,7 @@
 #
 # New shape (single controller, flat):
 #     robot:
-#       name: rover_pico2
+#       name: pico2_mecanum
 #     base_controller:
 #       name: pico2          # firmware variant == PlatformIO env
 #       mcu: pico2
