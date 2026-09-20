@@ -365,6 +365,49 @@ def wait_for_bootsel(timeout_s: float = BOOTSEL_WAIT_S) -> bool:
     return False
 
 
+# USBDEVFS_RESET, the ioctl behind the `usbreset` one-liner: _IO('U', 20).
+_USBDEVFS_RESET = ord("U") << 8 | 20
+
+
+def usb_reset_target(port: str, settle_s: float = 6.0) -> bool:
+    """Reset the target board's USB device, then wait for its tty to return.
+
+    A board whose port was only just released does not reliably answer the
+    1200-baud touch: it stays in the application, and the flash then reports a
+    BOOTSEL failure about a board that never heard the request. A USB-level
+    reset makes it answer every time.
+
+    The bench wrapper had been doing this by hand since 2026-09-19 -- which is
+    why the six-cell hardware pass succeeded and the six-cell Nav2 pass, which
+    calls the flasher through the pipeline instead, failed every RP2 board with
+    `no board in BOOTSEL after 15s`. Knowledge that only lives in a test wrapper
+    is knowledge the product does not have.
+    """
+    sel = picotool_target()
+    if len(sel) != 4:
+        return False
+    bus, addr = int(sel[1]), int(sel[3])
+    node = "/dev/bus/usb/%03d/%03d" % (bus, addr)
+    try:
+        import fcntl
+        fd = os.open(node, os.O_WRONLY)
+        try:
+            fcntl.ioctl(fd, _USBDEVFS_RESET, 0)
+        finally:
+            os.close(fd)
+    except Exception as exc:
+        log(f"(usb reset of {node} not possible: {exc})")
+        return False
+    log(f"usb reset {node}")
+    deadline = time.time() + settle_s
+    while time.time() < deadline:
+        if port and os.path.exists(port):
+            time.sleep(0.5)
+            return True
+        time.sleep(0.2)
+    return True
+
+
 def pulse_1200_baud(port: str) -> bool:
     """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot.
 
@@ -372,6 +415,7 @@ def pulse_1200_baud(port: str) -> bool:
     """
     if not port or not os.path.exists(port):
         return False
+    usb_reset_target(port)
     log(f"Attempting 1200-baud CDC pulse on {port} to trigger BOOTSEL mode...")
     touched = False
     try:
@@ -708,6 +752,14 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
     # Pico and a Pico 2 both in BOOTSEL, picotool still has a choice to make and
     # refuses to make it. See remember_usb_path().
     target = picotool_target()
+    # `-f` (force a RUNNING board to reset) is picotool's OWN way of choosing a
+    # device, and it refuses to combine with an explicit one:
+    #     ERROR: unexpected option: --bus
+    # So the forced variants are only tried when we have nothing better. No
+    # loss: forcing never worked on this firmware anyway -- it exposes no
+    # picotool reset interface (AGENTS.md §6) -- and a board we can name is a
+    # board we have already identified through its tty.
+    forced = [] if target else ["-f"]
 
     for pt in pts:
         log(f"Attempting direct picotool upload with: {pt} ({' '.join(family_flag + target)})...")
@@ -729,22 +781,26 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
                 time.sleep(3.0)
                 return True
 
-        # Force load with family constraint
-        cmd_f = [pt, "load", "-f", "-x"] + family_flag + [uf2_path] + target
-        res_f = run_tool(cmd_f, timeout=20)
-        if res_f.returncode == 0:
-            log(f"✅ Firmware flashed successfully via {pt} (-f {' '.join(family_flag)})!")
-            time.sleep(3.0)
-            return True
-
-        out_f_combined = ((res_f.stderr or "") + (res_f.stdout or "")).lower()
-        if "permission" in out_f_combined or "sudo" in out_f_combined:
-            sudo_cmd_f = ["sudo", "-n", pt, "load", "-f", "-x"] + family_flag + [uf2_path] + target
-            sudo_res_f = run_tool(sudo_cmd_f, timeout=20)
-            if sudo_res_f.returncode == 0:
-                log(f"✅ Firmware flashed successfully via sudo {pt} (-f {' '.join(family_flag)})!")
+        # Force load, when forcing is still on the table at all.
+        res_f = res
+        out_f_combined = out_combined
+        if forced:
+            cmd_f = [pt, "load", "-f", "-x"] + family_flag + [uf2_path]
+            res_f = run_tool(cmd_f, timeout=20)
+            if res_f.returncode == 0:
+                log(f"✅ Firmware flashed successfully via {pt} (-f {' '.join(family_flag)})!")
                 time.sleep(3.0)
                 return True
+
+            out_f_combined = ((res_f.stderr or "") + (res_f.stdout or "")).lower()
+            if "permission" in out_f_combined or "sudo" in out_f_combined:
+                sudo_cmd_f = ["sudo", "-n", pt, "load", "-f", "-x"] + family_flag + [uf2_path]
+                sudo_res_f = run_tool(sudo_cmd_f, timeout=20)
+                if sudo_res_f.returncode == 0:
+                    log(f"✅ Firmware flashed successfully via sudo {pt} "
+                        f"(-f {' '.join(family_flag)})!")
+                    time.sleep(3.0)
+                    return True
 
         # Fallback without family constraint if older picotool didn't support --family
         if "unknown option" in out_combined or "unknown option" in out_f_combined:
@@ -812,9 +868,15 @@ def flash_env_via_picotool(env_bin: str, env: str = "pico2") -> bool:
         # whole flash still reported success while the board kept whatever env it
         # already had. Found on a 2026-09-16 rig run: a board flashed on a
         # fresh box had no env block at all and fell back to the header.
+        target = picotool_target()
         base = ([pt, "load"] + family_flag + ["-v", env_bin, "-t", "bin",
-                "-o", hex(offset)] + picotool_target())
-        for cmd in (base, ["sudo", "-n"] + base, base[:2] + ["-f"] + base[2:]):
+                "-o", hex(offset)] + target)
+        forms = [base, ["sudo", "-n"] + base]
+        # -f only without an explicit device: picotool treats the two as rival
+        # ways of saying which board, and rejects the pair outright.
+        if not target:
+            forms.append(base[:2] + ["-f"] + base[2:])
+        for cmd in forms:
             # (base[:2] is [picotool, load], so -f still precedes the filename.)
             res = run_tool(cmd, timeout=20)
             if res.returncode == 0:
@@ -984,9 +1046,10 @@ def rp2_reboot_into_app(env: str) -> bool:
     # form succeeded. The family filter belongs to `load`, where it stops an
     # image built for one RP2 landing on the other.
     target = picotool_target()
+    forced = [] if target else ["-f"]
     for pt in find_picotool_binaries():
-        for cmd in ([pt, "reboot", "-f"] + target,
-                    ["sudo", "-n", pt, "reboot", "-f"] + target):
+        for cmd in ([pt, "reboot"] + forced + target,
+                    ["sudo", "-n", pt, "reboot"] + forced + target):
             if run_tool(cmd, timeout=15).returncode == 0:
                 log("✅ board rebooted into the application")
                 return True

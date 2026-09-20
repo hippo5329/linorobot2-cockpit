@@ -168,3 +168,59 @@ def test_the_bootsel_wait_asks_about_our_board(monkeypatch):
                         lambda cmd, **kw: (seen.append(cmd), _Res())[1])
     assert flash_mcu.wait_for_bootsel(timeout_s=2.0) is True
     assert seen and seen[0][-4:] == ["--bus", "7", "--address", "57"]
+
+
+def test_force_is_never_combined_with_an_explicit_device(tmp_path, monkeypatch):
+    """picotool treats `-f` as its own way of choosing a board and rejects the
+    pair outright:
+
+        ERROR: unexpected option: --bus
+
+    Every command form must pick one. Nothing is lost by dropping -f: it forces
+    a RUNNING board to reset, which this firmware does not support anyway (it
+    exposes no picotool reset interface), and a board we can name is one we
+    already identified through its tty."""
+    uf2 = tmp_path / "firmware.uf2"
+    uf2.write_bytes(b"\x00")
+    env_bin = tmp_path / "env.bin"
+    env_bin.write_bytes(b"\x00" * 4096)
+    cmds = []
+
+    class _Res:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
+    monkeypatch.setattr(flash_mcu, "picotool_target",
+                        lambda: ["--bus", "7", "--address", "57"])
+    monkeypatch.setattr(flash_mcu, "run_tool",
+                        lambda cmd, **kw: (cmds.append(cmd), _Res())[1])
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
+
+    flash_mcu.flash_via_picotool(str(uf2), "pico2w", env_bin=str(env_bin))
+    flash_mcu.flash_env_via_picotool(str(env_bin), "pico2w")
+    assert cmds
+    for cmd in cmds:
+        assert not ("-f" in cmd and "--bus" in cmd), cmd
+
+
+def test_force_is_still_used_when_there_is_no_target(tmp_path, monkeypatch):
+    """One board, no sysfs, an older container: the recovery ladder is intact."""
+    uf2 = tmp_path / "firmware.uf2"
+    uf2.write_bytes(b"\x00")
+    cmds = []
+
+    class _Res:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
+    monkeypatch.setattr(flash_mcu, "picotool_target", lambda: [])
+    monkeypatch.setattr(flash_mcu, "run_tool",
+                        lambda cmd, **kw: (cmds.append(cmd), _Res())[1])
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
+
+    flash_mcu.flash_via_picotool(str(uf2), "pico2w")
+    assert any("-f" in cmd for cmd in cmds), "the forced retry disappeared"
