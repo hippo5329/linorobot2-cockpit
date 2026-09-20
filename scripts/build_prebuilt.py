@@ -69,7 +69,7 @@ BOARDS = {
     # 4 MB), so nothing about the board is lost by sharing one reference design.
     "pico2":   ("pico2_mecanum", "pico2", "RP2350, micro-ROS over USB serial"),
     "pico":    ("pico2_mecanum", "pico",  "RP2040, micro-ROS over USB serial"),
-    "esp32":   ("esp32_wifi",  "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
+    "esp32":   ("gendrv",      "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
     "esp32s3": ("esp32s3",     "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
 }
 

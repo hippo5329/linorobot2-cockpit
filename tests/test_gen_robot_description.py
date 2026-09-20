@@ -99,7 +99,7 @@ def test_geometry_warnings_catch_what_ros_will_not():
 
 
 def test_write_urdf_lands_in_generated_dir(tmp_path, reference):
-    p = reference("esp32")
+    p = reference("gendrv")
     out = grd.write_urdf(p, grd.default_out_path(p, None, str(tmp_path)))
     assert out == str(tmp_path / "generated" / "esp32_bare_config.urdf") or out.endswith(".urdf")
     assert ET.parse(out).getroot().tag == "robot"

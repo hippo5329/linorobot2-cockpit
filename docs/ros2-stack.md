@@ -44,7 +44,7 @@ Two UI-side corollaries, both of which produced the same silent mismatch:
   `#cockpit-target-select`, not from the robot dropdown, and `selectRobot()` synced distro, install
   mode, agent engine and registry but not that one. Switching robots and pressing Start therefore ran
   the *previous* robot's controller against the previous robot's port, with nothing in the UI saying so.
-- **Every robot config declares `serial_port`.** `esp32_wifi_config.yaml` was the only one that did not,
+- **Every robot config declares `serial_port`.** `esp32_wifi_config.yaml` (since deleted) was the only one that did not,
   and the pipeline's fallback is `/dev/ttyACM0` — so a Wi-Fi-transport ESP32 would have had esptool
   pointed at whatever RP2 board was on the bench. Wi-Fi is the ROS 2 transport; USB is still the
   flashing bus.

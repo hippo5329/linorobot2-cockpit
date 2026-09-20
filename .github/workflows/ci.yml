@@ -208,7 +208,12 @@ jobs:
         # also the one that will go red first if anyone adds a publisher or a
         # global -- which is the point of having it here. See the release
         # workflow's matrix for what closed the gap.
-        env: [esp32, esp32s3, pico, pico2, picow, pico2w,
+        # No picow/pico2w. A Pico W is an RP2040 and a Pico 2 W is an RP2350:
+        # the pico/pico2 image runs on them as-is, and the only difference that
+        # matters -- the LED living on the CYW43 rather than on GP25 -- is the
+        # `led` env key, not a build. Proper W support (the radio, syslog, OTA)
+        # comes much later; until then there is nothing separate to compile.
+        env: [esp32, esp32s3, pico, pico2,
               esp32_lyrical, esp32s3_lyrical, pico_lyrical, pico2_lyrical]
     steps:
       - uses: actions/checkout@v4
@@ -275,7 +280,12 @@ jobs:
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
           case "${{ matrix.env }}" in
-            esp32*)  cfg=config/reference/esp32_wifi_config.yaml ;;
+            # Both ESP32 envs build from the GenDrv reference. The DevKit
+            # pair (esp32_config / esp32_wifi_config) was deleted on
+            # 2026-09-20: they described the same silicon as gendrv and
+            # differed only in keys the env partition decides at boot --
+            # transport, lidar_comm, wifi, the fake flags.
+            esp32*)  cfg=config/reference/gendrv_config.yaml ;;
             # Every RP2 env -- pico, picow, pico2, pico2w and their _lyrical
             # twins -- builds from the one mecanum reference. The header is
             # identical across the family; the env name picks the board. The
@@ -297,8 +307,8 @@ jobs:
         if: matrix.env == 'esp32'
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
-          sed 's/use_fake_ld19: *true/use_fake_ld19: false/' \
-            config/reference/esp32_wifi_config.yaml > "$RUNNER_TEMP/udp_real.yaml"
+          sed 's/comm_mode: *serial/comm_mode: udp/' \
+            config/reference/gendrv_config.yaml > "$RUNNER_TEMP/udp_real.yaml"
           python3 scripts/gen_firmware_header.py --params "$RUNNER_TEMP/udp_real.yaml" \
             --distro jazzy --no-embed-secrets
           grep -q 'define USE_LIDAR_UDP' firmware/include/custom/lino_base_config.h

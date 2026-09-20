@@ -1,5 +1,7 @@
 """The per-MCU pin catalogue and the config warnings that ride with it."""
 import copy
+import glob
+import os
 
 import gen_firmware_header as gh
 import pin_catalog as pc
@@ -10,7 +12,15 @@ def _levels(findings):
 
 
 def test_shipped_references_have_no_pin_errors(reference):
-    for name in ("gendrv", "pico2_mecanum", "esp32", "esp32_wifi", "esp32s3"):
+    """Whatever is in config/reference, not a list that goes stale when one is
+    added or removed -- this one still named the DevKit pair a day after they
+    were deleted."""
+    ref_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "config", "reference")
+    names = sorted(os.path.basename(p)[: -len("_config.yaml")]
+                   for p in glob.glob(os.path.join(ref_dir, "*_config.yaml")))
+    assert names, "no reference configs found at all"
+    for name in names:
         errors = [m for l, m in pc.check_config(reference(name)) if l == "error"]
         assert not errors, (name, errors)
 
@@ -32,7 +42,7 @@ def test_esp32_input_only_pin_cannot_drive_a_motor(reference):
 
 
 def test_esp32_adc2_battery_warns_only_with_the_radio(reference):
-    params = copy.deepcopy(reference("esp32"))
+    params = copy.deepcopy(reference("gendrv"))
     params["base_controller"]["pins"].setdefault("battery", {})["pin"] = 25
     params["base_controller"]["wifi"] = {"enabled": False}
     assert not [m for l, m in pc.check_config(params) if "ADC2" in m]
@@ -117,8 +127,7 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
     robot fails in the same ways, and with led: -1 it fails silently.
     """
     assert _led(reference, "pico2_mecanum") == 25
-    assert _led(reference, "esp32") == 2
-    assert _led(reference, "esp32_wifi") == 2
+    assert _led(reference, "gendrv") == 2
     assert _led(reference, "esp32s3") == 48
 
 
@@ -127,10 +136,11 @@ def test_every_esp32_board_shares_one_led_pin(reference):
 
     One LED pin across every ESP32 board beats a per-board exception: driving
     an unconnected pin costs nothing, and a config that differs only where it
-    has to is easier to keep right.
+    has to is easier to keep right. The DevKit pair (esp32/esp32_wifi) that
+    used to be checked here was deleted on 2026-09-20 -- same silicon as
+    gendrv, differing only in env keys -- so gendrv carries the rule now.
     """
-    for name in ("esp32", "esp32_wifi", "gendrv"):
-        assert _led(reference, name) == 2, name
+    assert _led(reference, "gendrv") == 2
 
 
 # The W boards' `led: -1` used to be asserted from picow/pico2w_config.yaml.
@@ -146,5 +156,5 @@ def test_the_esp32_led_is_flagged_as_a_strapping_pin(reference):
     because an LED to ground pulls the pin the way the bootloader wants, and a
     reader deserves to be told that rather than have the warning suppressed.
     """
-    warnings = [m for l, m in pc.check_config(reference("esp32")) if l == "warn"]
+    warnings = [m for l, m in pc.check_config(reference("gendrv")) if l == "warn"]
     assert any("strapping" in m and "led" in m for m in warnings), warnings

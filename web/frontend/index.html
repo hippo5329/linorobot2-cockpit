@@ -286,7 +286,7 @@
               <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
               <option value="pico">Raspberry Pi Pico (RP2040)</option>
               <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
-              <option value="esp32">ESP32 DevKit DOIT V1 (Wi-Fi UDP / Serial)</option>
+              <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
               <option value="gendrv">Waveshare General Driver Board ESP32 (921.6k Baud)</option>
               <option value="esp32s3">ESP32-S3 DevKitC-1</option>
             </select>
@@ -602,21 +602,60 @@
 
       <div class="form-section">
         <h3 class="section-title">Inertial Measurement Unit (IMU) &amp; Magnetometer</h3>
-        <!-- The IMU and magnetometer dropdowns were removed on purpose. The
-             firmware probes the I2C bus during setup() and enables the driver for
-             whatever answers, so a dropdown here could only ever disagree with the
-             hardware -- and when it did, the board went into the fatal "IMU init
-             failed" blink loop and never reached micro-ROS. Forcing the simulated
-             sensors is still available, under Fake Mode below. -->
-        <div class="p-3" style="background:rgba(0,0,0,0.25); border-radius:8px; border:1px solid var(--border-soft);">
+        <!-- These two were removed once, because a dropdown that disagreed with
+             the hardware sent the board into the fatal "IMU init failed" blink
+             loop. That hazard is gone: i2cProbeSelect() reads the bus in setup()
+             and DETECTION WINS over the configured name, printing the override.
+             So the selection is a fallback -- what the board uses when the bus
+             cannot be read -- and is safe to expose again. Every name here is a
+             row in sensor_factory.cpp's dispatch table; the drivers are all
+             compiled in, so switching one needs no rebuild. -->
+        <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group">
+            <label for="cfg-imu" class="form-label">IMU <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
+            <select id="cfg-imu" class="form-select font-mono">
+              <option value="NONE">None</option>
+              <option value="FAKE">FAKE — simulated 6-DOF</option>
+              <option value="MPU6050">MPU6050 — 6-axis (0x68/0x69)</option>
+              <option value="MPU9150">MPU9150 — 9-axis (MPU6050 silicon)</option>
+              <option value="MPU9250">MPU9250 — 9-axis (0x68/0x69)</option>
+              <option value="GY85">GY85 — ITG3200 + ADXL345 + HMC5883L</option>
+              <option value="QMI8658">QMI8658 — 6-axis (0x6A/0x6B)</option>
+              <option value="LSM6DSOX">LSM6DSOX — 6-axis (0x6A/0x6B)</option>
+              <option value="ICM20948">ICM20948 — 9-axis (0x68/0x69)</option>
+              <option value="BNO085">BNO085 — sensor-fusion IMU</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-mag" class="form-label">Magnetometer <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
+            <select id="cfg-mag" class="form-select font-mono">
+              <option value="NONE">None</option>
+              <option value="FAKE">FAKE — simulated field</option>
+              <option value="HMC5883L">HMC5883L (0x1E)</option>
+              <option value="QMC5883L">QMC5883L (0x0D)</option>
+              <option value="AK8963">AK8963 — inside an MPU9250</option>
+              <option value="AK8975">AK8975 — inside an MPU9150</option>
+              <option value="AK09918">AK09918 (0x0C)</option>
+              <option value="ICM20948">ICM20948 — AK09916 on the IMU's aux bus</option>
+            </select>
+          </div>
+        </div>
+        <div class="p-3 mt-2" style="background:rgba(0,0,0,0.25); border-radius:8px; border:1px solid var(--border-soft);">
           <p class="hint" style="margin:0;">
-            <strong>Detected at boot, not selected here.</strong> The firmware scans the
-            I2C bus during startup, prints what it found over serial
+            <strong>The bus overrules this.</strong> The firmware scans I2C during
+            startup, prints what it found over serial
             (<code>[i2c] IMU: the bus says MPU6050 at 0x68 …</code>) and enables that
-            driver. Swapping an IMU needs no rebuild and no configuration change —
-            plug it in and reboot the board. Use the bus probe above to see the
-            current answer, and <em>Fake Mode</em> below to force the simulated
-            sensors on a board with nothing wired.
+            driver even when the selection above says otherwise — so a wrong choice
+            costs a log line, not a boot loop. These values are what the board falls
+            back to when nothing answers. Swapping an IMU needs no rebuild: every
+            driver is compiled into the image. Use <em>Fake Mode</em> below to force
+            the simulated sensors on a board with nothing wired.
+          </p>
+          <p class="hint" style="margin:6px 0 0;">
+            <strong>ICM20948 is one chip with two entries.</strong> Its AK09916
+            magnetometer sits on the IMU's internal auxiliary bus and never answers
+            the main bus on its own, so set <em>both</em> selects to
+            <code>ICM20948</code> to publish <code>/imu/mag</code>.
           </p>
         </div>
 
@@ -955,7 +994,6 @@
             <option value="pico">pico</option>
             <option value="picow">picow</option>
             <option value="esp32">esp32</option>
-            <option value="esp32_wifi">esp32_wifi</option>
             <option value="esp32s3">esp32s3</option>
           </select>
         </div>
@@ -1867,8 +1905,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <option value="pico2" selected>Raspberry Pi Pico 2 (Default - Recommended for Beginners)</option>
             <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
             <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
-            <option value="esp32">ESP32 DevKit (Default ESP32 controller - Wi-Fi UDP + Fake LiDAR UDP)</option>
-            <option value="esp32_wifi">ESP32 DevKit (Wi-Fi UDP Transport via secrets.yaml)</option>
+            <option value="esp32">ESP32 DevKit (serial or Wi-Fi UDP - the env partition picks)</option>
 
             <option value="gendrv">Waveshare ESP32 GenDrv (Extensive test controller - Pin 4 LiDAR @ 1.5M)</option>
             <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>

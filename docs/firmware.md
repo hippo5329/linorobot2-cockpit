@@ -274,8 +274,10 @@ fallback alone is not enough — it is discovered on hardware, one build and one
 A robot config carries `pio_env:`; build the env it names and no other. This used to be sharp —
 `esp32_wifi` and `esp32` were separate envs and crossing them failed on
 `micro_ros_agent_locator has incomplete type`. There is now **one ESP32 env**: the transport is installed
-at boot by `initUrosTransport()` from the env partition's `transport` key, so `config/esp32_wifi_config.yaml`
-and `config/gendrv_config.yaml` both build `-e esp32`.
+at boot by `initUrosTransport()` from the env partition's `transport` key. That is also why there is now
+one ESP32 *config* — `config/reference/gendrv_config.yaml`. The serial and udp4 DevKit references that
+used to sit beside it described the same silicon and differed only in keys the env decides at boot, so
+they were deleted; `-e esp32` builds gendrv, and `transport=` in the env picks the rest.
 
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
