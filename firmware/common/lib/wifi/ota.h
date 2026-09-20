@@ -14,7 +14,7 @@
 #ifndef OTA_H
 #define OTA_H
 
-#ifdef USE_ARDUINO_OTA
+#if defined(USE_ARDUINO_OTA) && defined(USE_WIFI)
 void initOta(void);
 void runOta(void);
 #else

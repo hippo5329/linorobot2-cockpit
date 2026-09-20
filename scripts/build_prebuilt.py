@@ -67,8 +67,8 @@ BOARDS = {
     # `mcu: pico2`. The PlatformIO env picks the board and the toolchain, and
     # mcu_env.env_offset() keys the env partition on that env name (2 MB vs
     # 4 MB), so nothing about the board is lost by sharing one reference design.
-    "pico2":   ("pico2_mecanum", "pico2", "RP2350, micro-ROS over USB serial"),
-    "pico":    ("pico2_mecanum", "pico",  "RP2040, micro-ROS over USB serial"),
+    "pico2":   ("pico2_mecanum", "pico2w", "RP2350, micro-ROS over USB serial (runs on Pico 2 and Pico 2 W)"),
+    "pico":    ("pico2_mecanum", "picow", "RP2040, micro-ROS over USB serial (runs on Pico and Pico W)"),
     "esp32":   ("gendrv",      "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
     "esp32s3": ("esp32s3",     "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
 }
@@ -101,7 +101,7 @@ def _profiles():
 PROFILES = _profiles()
 
 # Must match firmware/common/partitions_lino.csv and scripts/mcu_env.py.
-ENV_OFFSET = "0x290000"
+ENV_OFFSET = "0x3FF000"
 
 
 def sh(cmd, **kwargs):

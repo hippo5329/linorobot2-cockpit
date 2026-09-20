@@ -656,7 +656,17 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # config used to compile a binary with no radio support at all -- and that
     # binary could then never be switched to udp4 by writing to the env.
     mcu = str(tgt.get("mcu") or tgt.get("pio_env") or controller_name or "").lower()
-    wifi_capable = mcu.startswith("esp32") or mcu in ("picow", "pico2w") or \
+    # Which SILICON could carry a radio. The RP2 family is in here now because
+    # the RP2 images are built from the W envs (picow, pico2w) while the design
+    # still assumes non-W hardware: the credentials and the syslog/OTA settings
+    # belong in every RP2 header so that entering an AP list is all it takes to
+    # turn Wi-Fi on, with no rebuild.
+    #
+    # What stops a non-W build from trying to compile WiFi.h is NOT this flag.
+    # It is `USE_WIFI`, which the W PlatformIO envs define and the plain ones do
+    # not -- see wifis.h / syslog.h / ota.cpp. The header supplies the
+    # credentials; the build flag says whether this image has a radio at all.
+    wifi_capable = mcu.startswith("esp32") or mcu.startswith("pico") or \
         controller_name in ("gendrv", "esp32", "esp32_wifi", "esp32s3")
     if has_wifi or wifi_capable:
         # Load credentials exclusively from gitignored secrets.yaml (or secrets.yaml.example template)
@@ -685,12 +695,15 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             '#include "mcu_env.h"',
             "// No USE_MCU_ENV gate: an image that cannot read its env partition",
             "// cannot be configured, and configuration is what the partition is.",
-            "#ifndef USE_WIFI",
-            "#define USE_WIFI",
-            "#endif",
             "#ifndef USE_STAY_CONNECTED",
             "#define USE_STAY_CONNECTED",
             "#endif",
+            # On ESP32 the header is the only thing that can say "this board has
+            # a radio"; on RP2 the W envs say it with a build flag, and emitting
+            # it here would switch the Wi-Fi code on for a plain pico/pico2
+            # build that has no WiFi.h to compile against.
+            *(["#ifndef USE_WIFI", "#define USE_WIFI", "#endif"]
+              if mcu.startswith("esp32") else []),
             ("#define WIFI_AP_LIST {{NULL, NULL}}"
              if no_embed_secrets else
              f'#define WIFI_AP_LIST {{{{"{ssid}", "{password}"}}, {{NULL, NULL}}}}'),

@@ -208,13 +208,14 @@ jobs:
         # also the one that will go red first if anyone adds a publisher or a
         # global -- which is the point of having it here. See the release
         # workflow's matrix for what closed the gap.
-        # No picow/pico2w. A Pico W is an RP2040 and a Pico 2 W is an RP2350:
-        # the pico/pico2 image runs on them as-is, and the only difference that
-        # matters -- the LED living on the CYW43 rather than on GP25 -- is the
-        # `led` env key, not a build. Proper W support (the radio, syslog, OTA)
-        # comes much later; until then there is nothing separate to compile.
-        env: [esp32, esp32s3, pico, pico2,
-              esp32_lyrical, esp32s3_lyrical, pico_lyrical, pico2_lyrical]
+        # The RP2 half is the W envs now, and they are what the releases ship.
+        # A Pico W is an RP2040 and a Pico 2 W is an RP2350, so a W image runs
+        # on a non-W board -- verified on a plain Pico 2 on 2026-09-20: the
+        # radio is compiled in but nothing touches the CYW43 unless Wi-Fi is
+        # wanted AND an AP list exists. The non-W envs stay in the matrix so
+        # they keep compiling, but nothing is built from them.
+        env: [esp32, esp32s3, pico, pico2, picow, pico2w,
+              esp32_lyrical, esp32s3_lyrical, picow_lyrical, pico2w_lyrical]
     steps:
       - uses: actions/checkout@v4
       # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on

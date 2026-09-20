@@ -4,7 +4,9 @@
 #include <Syslog.h>
 #include "config.h"
 
-#ifdef USE_SYSLOG
+// Needs the radio: syslog is UDP. USE_SYSLOG says the config wants
+// remote logging; USE_WIFI says this image has something to send it over.
+#if defined(USE_SYSLOG) && defined(USE_WIFI)
 void syslog(uint16_t priority, const char *fmt, ...);
 // Points syslogv at the server named in the env partition. Separate from the
 // constructor on purpose: syslogv is a global, so it is built during static

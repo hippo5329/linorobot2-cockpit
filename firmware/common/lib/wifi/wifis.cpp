@@ -18,7 +18,7 @@
 #include "mcu_env.h"
 #include <string.h>
 
-#ifdef WIFI_AP_LIST
+#if defined(WIFI_AP_LIST) && defined(USE_WIFI)
 #include <WiFi.h>
 #include <WiFiMulti.h>
 // How long setup() waits for the AP before carrying on without it, and how
@@ -39,16 +39,38 @@
 const char *wifi_ap_list[][2] = WIFI_AP_LIST;
 WiFiMulti wifiMulti;
 
+// Is there anything to connect TO -- from the env, or compiled in?
+static bool haveApList(void)
+{
+    const char *env_ssid = envGet("wifi_ssid", NULL);
+    if (env_ssid && *env_ssid)
+        return true;
+    return wifi_ap_list[0][0] != NULL;
+}
+
 bool wifiWanted(void)
 {
     initMcuEnv();
     // udp4 cannot work without the radio, so the transport setting overrides
     // everything else -- a robot configured for Wi-Fi transport and wifi=0
-    // would otherwise sit with no link and no explanation.
+    // would otherwise sit with no link and no explanation. That includes the
+    // case below: a udp4 robot with no credentials is broken either way, and
+    // the connect timeout is the only thing that will say so.
     const char *mode = envGet("transport", TRANSPORT_DEFAULT);
     if (strcasecmp(mode, "udp4") == 0 || strcasecmp(mode, "udp") == 0
         || strcasecmp(mode, "wifi") == 0)
         return true;
+
+    // No AP list, no radio -- and this is the gate the whole firmware asks, so
+    // saying no here means the CYW43 is never touched at all: not by
+    // initWifis(), not by runWifis(), not by syslog()'s WiFi.status(), not by
+    // initOta(). That matters on the RP2 releases, which are built from the W
+    // envs (WIFI_DEFAULT_ENABLED 1, radio compiled in) and run unchanged on
+    // non-W boards where the chip is physically absent. Entering an AP list is
+    // what turns Wi-Fi on; until then the capability costs nothing but flash.
+    if (!haveApList())
+        return false;
+
 #ifdef WIFI_DEFAULT_ENABLED
     return envU16("wifi", WIFI_DEFAULT_ENABLED) != 0;
 #else
@@ -70,20 +92,36 @@ void initWifis(void)
     // empty WIFI_AP_LIST by design -- the credentials were never in it -- so on
     // those builds this is the only source there is.
     initMcuEnv();
+    int aps = 0;
     const char *env_ssid = envGet("wifi_ssid", NULL);
     if (env_ssid && *env_ssid) {
         wifiMulti.addAP(env_ssid, envGet("wifi_psk", ""));
         Serial.printf("[wifi] using SSID '%s' from the env partition\n", env_ssid);
-    } else if (wifi_ap_list[0][0] == NULL) {
-        // Nothing here and nothing compiled in: say so instead of spinning
-        // silently in the connect loop below, which is what a user who has not
-        // yet flashed an env block would otherwise see.
-        Serial.println("[wifi] no wifi_ssid in the env partition and none compiled in.");
-        Serial.println("[wifi] Flash one:  python3 scripts/mcu_env.py build --out env.bin");
-        Serial.println("[wifi]             esptool write_flash 0x290000 env.bin");
+        aps++;
     }
     for (int i = 0; wifi_ap_list[i][0] != NULL; i++) {
         wifiMulti.addAP(wifi_ap_list[i][0], wifi_ap_list[i][1]);
+        aps++;
+    }
+
+    // Nothing to connect TO is not the same as failing to connect. With no
+    // SSID in the env and none compiled in, wifiMulti has an empty list and
+    // the loop below can only run out its 20 s and report a failure that was
+    // never possible -- on every boot, of every board.
+    //
+    // This matters because the radio-capable RP2 images (picow, pico2w) are
+    // built with WIFI_DEFAULT_ENABLED 1: Wi-Fi is compiled in and wanted by
+    // default, and entering the AP list is what turns it on. A user who has
+    // not entered one should pay nothing for the capability being present.
+    if (aps == 0) {
+        // Only reachable for a udp4 robot: wifiWanted() already returns false
+        // for a serial one with no credentials, before anything touches the
+        // radio. Here the transport needs an AP and there is none, so say so
+        // rather than run the timeout out against an empty list.
+        Serial.println("[wifi] transport needs Wi-Fi but no AP list is set.");
+        Serial.println("[wifi] Add one in the Cockpit's Secrets tab, or:");
+        Serial.println("[wifi]   python3 scripts/mcu_env.py build --out env.bin");
+        return;
     }
     // Bounded, and it says which way it went. This loop used to be
     // `while (run() != WL_CONNECTED) delay(500);` with no way out: an AP that

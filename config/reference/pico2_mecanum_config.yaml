@@ -89,6 +89,12 @@ base_controller:
     i2c:
       sda: 20
       scl: 21
+    # GP25, the real LED on a non-W board -- which is what the design assumes.
+    # The RP2 images are BUILT from the W envs so the radio is available to
+    # anyone who enters an AP list, but the hardware assumption stays non-W:
+    # the blink is the only thing a board says before micro-ROS is up, and a
+    # bench board in fake mode needs it as much as a wired one. On an actual
+    # W board GP25 belongs to the CYW43 bus, so those set `led` in the env.
     led: 25
     # ADC0. 30k / 7.5k divider: 5:1, so a 3S pack (12.6 V) reads 2.52 V.
     battery:

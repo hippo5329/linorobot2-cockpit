@@ -21,7 +21,15 @@
 #define LOW_RSSI -75 // when wifi signal is too low, disconnect current ap and scan for strongest signal
 #endif
 
-#ifdef WIFI_AP_LIST
+// Credentials alone are not a radio.
+//
+// The header now carries WIFI_AP_LIST / USE_SYSLOG / USE_ARDUINO_OTA for every
+// board that COULD have one, so that entering an AP list turns Wi-Fi on with no
+// rebuild. Whether this particular image has a radio to turn on is `USE_WIFI`,
+// which the W PlatformIO envs (picow, pico2w) define and the plain ones do not,
+// and which the generator emits for the ESP32 family. Without it there is no
+// WiFi.h to compile against, so these must stay stubs.
+#if defined(WIFI_AP_LIST) && defined(USE_WIFI)
 void initWifis(void);
 void runWifis(void);
 // Whether this boot should bring the radio up at all. The Wi-Fi stack is

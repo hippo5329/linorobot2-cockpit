@@ -1,11 +1,24 @@
 #include <Arduino.h>
 #include "config.h"
 
-#ifdef USE_SYSLOG
+// Needs the radio: syslog is UDP. USE_SYSLOG says the config wants
+// remote logging; USE_WIFI says this image has something to send it over.
+#if defined(USE_SYSLOG) && defined(USE_WIFI)
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <Syslog.h>
 #include "mcu_env.h"
+
+// Declared, not #included. syslog.h is included BY wifis.cpp, so including
+// wifis.h here makes the `wifi` and `syslog` libraries mutually dependent, and
+// PlatformIO's LDF (chain mode on the ESP32 bases) then fails to put the
+// third-party Syslog library on the wifi library's include path:
+//
+//   common/lib/wifi/ota.cpp:16 -> common/lib/syslog/syslog.h:4
+//   fatal error: Syslog.h: No such file or directory
+//
+// One declaration costs nothing and keeps the two libraries a DAG.
+bool wifiWanted(void);
 #ifndef DEVICE_HOSTNAME
 #define DEVICE_HOSTNAME "linorobot2"
 #endif
@@ -30,7 +43,12 @@ void syslog(uint16_t priority, const char *fmt, ...) {
   // detected" log, three lines after the I2C table it just printed, and the
   // only symptom upstream of the serial console is a micro-ROS session that
   // never appears.
-  if (WiFi.status() != WL_CONNECTED)
+  // wifiWanted() first: WiFi.status() is itself a call into the CYW43 driver,
+  // and syslog() runs throughout setup(). On a W image running on a non-W
+  // board with no AP list, asking the radio its status is exactly the thing
+  // that must not happen. wifiWanted() is false there and this returns without
+  // touching it. (It is cheap: one env lookup, and the env is cached.)
+  if (!wifiWanted() || WiFi.status() != WL_CONNECTED)
     return;
   va_list args;
   va_start(args, fmt);

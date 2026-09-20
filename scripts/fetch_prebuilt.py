@@ -51,6 +51,13 @@ def profile_for_env(pio_env: str) -> str:
     flashed with the wrong one enumerates and then does nothing useful.
     """
     env = (pio_env or "").strip()
+    # The RP2 releases are built from the W envs (picow, pico2w) but ship under
+    # the board names users ask for: one image runs on both, so `pico2` and
+    # `pico2w` must land on the same asset rather than 404 on one that was
+    # never uploaded.
+    env = {"picow": "pico", "pico2w": "pico2",
+           "picow_lyrical": "pico_lyrical",
+           "pico2w_lyrical": "pico2_lyrical"}.get(env, env)
     if "_" in env:
         board, distro = env.split("_", 1)
         return f"{board}-{distro}"
@@ -58,6 +65,21 @@ def profile_for_env(pio_env: str) -> str:
 
 
 def env_for_profile(profile: str) -> str:
+    """Release profile -> the PlatformIO env its image was built from.
+
+    Asks the profile table rather than un-munging the name, because the two
+    stopped matching when the RP2 releases moved to the W envs: `pico2-jazzy`
+    is the asset users ask for, and `pico2w` is what builds it. Falls back to
+    the name split when build_prebuilt cannot be imported (it pulls in
+    PlatformIO paths, and this module is used on robots that have none).
+    """
+    try:
+        import build_prebuilt
+        entry = build_prebuilt.PROFILES.get(profile)
+        if entry:
+            return entry[1]
+    except Exception:
+        pass
     if "-" in profile:
         board, distro = profile.split("-", 1)
         return board if distro == DEFAULT_DISTRO else f"{board}_{distro}"
