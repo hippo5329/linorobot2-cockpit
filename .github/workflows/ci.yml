@@ -194,6 +194,15 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Ten of these at once is what stalls them. Each env's first build clones
+      # the arduino-pico framework and its ~40 submodules from GitHub, and ten
+      # simultaneous clone storms get throttled into connections that never
+      # return: `pio run` blocked in read() at 0% CPU, both socket queues empty,
+      # until timeout-minutes. One env that got through on its own went green.
+      # Four waves of builds still finish well inside the ceiling, and once each
+      # env's actions/cache entry is warm there is nothing left to clone.
+      # A hosted runner never sees this -- it gets one job's worth of bandwidth.
+      max-parallel: 4
       matrix:
         # esp32_lyrical is back: it links at 116308 of the classic ESP32's
         # 124580-byte dram0_0_seg (93.4%) rather than overflowing it by 14504.
