@@ -135,3 +135,26 @@ def test_the_prune_step_can_reach_the_repo_and_cannot_fail_silently():
         "`gh release view` then reads as an empty release"
     )
     assert "exit 1" in step, "a listing failure must stop the job, not prune nothing"
+
+
+def test_each_profile_records_its_own_env_address():
+    """The manifest tells a flasher where the env block goes, per board.
+
+    `env_partition` was keyed off `#define USE_MCU_ENV` in the header. That
+    macro was removed when the env reader stopped being optional, so the key
+    silently vanished from all eight manifests -- and flash_mcu.py checks for
+    it before writing one. Making it unconditional then introduced the opposite
+    bug: every profile got the ESP32 constant, including the RP2 ones, whose
+    env lives in the last page of their own flash.
+    """
+    import build_prebuilt
+    import mcu_env
+    for profile, (_stem, env, _distro, _desc) in build_prebuilt.PROFILES.items():
+        got = build_prebuilt.env_offset_for(env)
+        want = f"0x{mcu_env.env_offset(env):X}"
+        assert got == want, f"{profile}: manifest would say {got}, board uses {want}"
+        if env.startswith("pico"):
+            assert got.startswith("0x10"), (
+                f"{profile}: {got} is not an RP2 flash address -- that is the ESP32 constant")
+        else:
+            assert got == "0x3FF000", f"{profile}: {got}"

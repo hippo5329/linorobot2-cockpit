@@ -101,7 +101,17 @@ def _profiles():
 PROFILES = _profiles()
 
 # Must match firmware/common/partitions_lino.csv and scripts/mcu_env.py.
+# The ESP32 family's env address. RP2 boards keep theirs in the last page of
+# their own flash (0x101FF000 on a 2 MB part, 0x103FF000 on 4 MB), so the
+# manifest must be told PER PROFILE -- mcu_env.env_offset() is the one place
+# that knows, and writing the ESP32 constant into a pico manifest would send
+# a flasher at an address that is not on the chip.
 ENV_OFFSET = "0x3FF000"
+
+
+def env_offset_for(pio_env: str) -> str:
+    import mcu_env
+    return f"0x{mcu_env.env_offset(pio_env):X}"
 
 
 def sh(cmd, **kwargs):
@@ -273,10 +283,10 @@ def build(profile, keep_going=False):
     }
     if uses_env:
         manifest["env_partition"] = {
-            "offset": ENV_OFFSET,
+            "offset": env_offset_for(env),
             "note": "Wi-Fi keys and the agent / syslog / lidar_udp addresses are NOT in "
                     "this image. Build the env block with scripts/mcu_env.py and write "
-                    f"it at {ENV_OFFSET}; reflashing the application never disturbs it.",
+                    f"it at {env_offset_for(env)}; reflashing the application never disturbs it.",
         }
     with open(os.path.join(out_dir, "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
