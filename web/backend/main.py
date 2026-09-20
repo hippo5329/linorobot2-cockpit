@@ -229,7 +229,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402
 import access  # noqa: E402  (web/backend/access.py: token + path policy)
 import fetch_prebuilt  # noqa: E402
-import mcu_identity  # noqa: E402
+import mcu_identity
+import robot_stack  # noqa: E402
 import one_click_pipeline  # noqa: E402
 import mcu_identity  # noqa: E402
 import pin_catalog  # noqa: E402
@@ -1984,8 +1985,42 @@ async def api_bringup_exec(request: Request):
 
 @app.post("/api/bringup/kill")
 def api_bringup_kill():
+    # Two ways a robot can be running. The bringup RUNNER is this backend's own
+    # child, started from the Bringup tab. A 1-Click run is not: the pipeline
+    # exits and leaves bringup, SLAM and Nav2 alive on purpose, so Stop has to
+    # reach those too or the button lies. scripts/robot_stack.py is the record.
     killed = bringup_runner.kill()
-    return {"status": "ok", "killed": killed}
+    stopped = []
+    try:
+        stopped = robot_stack.stop()
+    except Exception as exc:
+        print(f"[api_bringup_kill] robot_stack notice: {exc}")
+    return {"status": "ok", "killed": killed, "stack_stopped": stopped}
+
+
+@app.get("/api/stack")
+def api_stack():
+    """What a 1-Click run left running, for the Stop buttons and the header."""
+    try:
+        entries = robot_stack.load()
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc), "running": []}
+    return {"status": "ok", "running": entries,
+            "summary": robot_stack.describe()}
+
+
+@app.post("/api/stack/stop")
+async def api_stack_stop(request: Request):
+    """Stop the whole kept-running stack, or one part of it."""
+    data = await json_body(request)
+    tag = (data.get("tag") or "").strip() or None
+    if tag and tag not in ("bringup", "slam", "nav2"):
+        raise HTTPException(status_code=400, detail=f"Unknown stack part: {tag}")
+    try:
+        stopped = robot_stack.stop(tag)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"status": "ok", "stopped": stopped}
 
 
 @app.get("/api/bringup/stream")

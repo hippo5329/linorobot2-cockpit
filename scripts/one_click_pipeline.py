@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
 import mcu_identity  # noqa: E402
+import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
@@ -627,6 +628,19 @@ def main():
                         help="Flash even when the USB bus says the board is different silicon "
                              "than the config builds for")
     parser.add_argument("--explore-sec", type=int, default=15, help="Seconds to simulate mapping movement")
+    # The stack STAYS UP. Pressing Start 1-Click is how a person gets a running
+    # robot; tearing bringup, SLAM and Nav2 down the instant the pipeline
+    # finished handed them one that had just been switched off, with no way to
+    # drive it and nothing on /scan. The pipeline exits, its children keep
+    # running, and scripts/robot_stack.py remembers them so the cockpit's Stop
+    # buttons still have something to signal.
+    #
+    # --shutdown-when-done is for automation: a bench run that leaves a stack
+    # behind floods the DDS domain for whatever runs next.
+    parser.add_argument("--shutdown-when-done", dest="keep_running",
+                        action="store_false", default=True,
+                        help="Stop bringup, SLAM and Nav2 when the pipeline finishes "
+                             "(default: leave them running until they are stopped)")
     parser.add_argument("--build-timeout", type=int, default=900,
                         help="Seconds allowed for the PlatformIO build (a first build downloads the toolchain)")
     parser.add_argument("--flash-timeout", type=int, default=600,
@@ -831,6 +845,9 @@ def main():
         print("\n[2/6] [BUILD] Not building: the board's firmware is not being updated.")
 
     bg_processes = []
+    # The three that make a running robot. Tracked apart from the short-lived
+    # drive step, which is always stopped where it is started.
+    stack_processes = []
     failures = []   # steps that must not abort the run but must not read as success either
     try:
         if want_firmware:
@@ -870,6 +887,7 @@ def main():
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
                        f"distro:={args.distro} robot:={robot_name} config_file:={params_path}")
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
+        stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is
         # generous. A udp4 board has not even joined the network yet: it boots,
         # associates, takes a DHCP lease and only then finds the agent, and the
@@ -931,6 +949,7 @@ def main():
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
             bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
                                           log_tag="slam", distro=args.distro))
+            stack_processes.append(("slam", bg_processes[-1]))
             print("  Waiting for /map...")
             if not wait_for_topic("/map", timeout_sec=40, distro=args.distro,
                                   require_message="info.width"):
@@ -977,6 +996,7 @@ def main():
             bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
                                           f"distro:={args.distro} config_file:={params_path}",
                                           log_tag="nav2", distro=args.distro))
+            stack_processes.append(("nav2", bg_processes[-1]))
             print("  Waiting for Nav2 lifecycle activation...")
             nav2_ok, nav2_detail = wait_for_nav2_activation()
             if nav2_ok:
@@ -1033,8 +1053,25 @@ def main():
         print("==================================================================")
         return 0
     finally:
-        print("\nCleaning up background ROS 2 launch processes...")
+        keep = getattr(args, "keep_running", False)
+        kept = {id(p) for _, p in stack_processes} if keep else set()
+        if keep and stack_processes:
+            for tag, proc in stack_processes:
+                try:
+                    robot_stack.record(tag, proc.pid)
+                except Exception as exc:
+                    print(f"  (could not record {tag} for the Stop buttons: {exc})")
+            print("\nLeaving the robot running:")
+            for tag, proc in stack_processes:
+                print(f"   {tag:<8} pid {proc.pid}   logs/{tag}.log")
+            print("   Stop it from the cockpit (Bringup / SLAM / Nav2 Stop), or:")
+            print("   python3 scripts/robot_stack.py --stop")
+            print("   Re-run with --shutdown-when-done to tear it down here instead.")
+        else:
+            print("\nCleaning up background ROS 2 launch processes...")
         for p in bg_processes:
+            if id(p) in kept:
+                continue
             stop_bg(p)
         for f in open_log_files:
             try:

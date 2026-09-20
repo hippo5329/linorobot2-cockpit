@@ -383,7 +383,7 @@ function killSlot(slot) {
 }
 
 // pairs up a Start/Stop button with a command builder for long-running actions
-function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgent, needsBringup }) {
+function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgent, needsBringup, stackTag }) {
   startBtn.addEventListener("click", async () => {
     startBtn.disabled = true;
     try {
@@ -409,8 +409,22 @@ function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgen
       stopBtn.disabled = true;
     }
   });
-  stopBtn.addEventListener("click", () => {
+  stopBtn.addEventListener("click", async () => {
     killSlot(slot);
+    // A 1-Click run leaves bringup, SLAM and Nav2 running on purpose, and they
+    // are not this backend's children -- the pipeline started them and exited.
+    // Stop has to reach those too, or the button only appears to work.
+    if (stackTag) {
+      try {
+        await fetch("/api/stack/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag: stackTag }),
+        });
+      } catch (err) {
+        console.warn(`stack stop (${stackTag}):`, err);
+      }
+    }
   });
 }
 
@@ -2308,6 +2322,7 @@ if (btnBringupLogs) {
 wireStartStop({
   startBtn: document.getElementById("btn-bringup-start"),
   stopBtn: document.getElementById("btn-bringup-stop"),
+  stackTag: "bringup",
   slot: "bringup",
   title: "Bringup",
   buildCommand: async () => {
@@ -2414,6 +2429,7 @@ wireStartStop({
 wireStartStop({
   startBtn: document.getElementById("btn-slam-start"),
   stopBtn: document.getElementById("btn-slam-stop"),
+  stackTag: "slam",
   slot: "main",
   title: "SLAM",
   needsBringup: true,
@@ -2479,6 +2495,7 @@ refreshMaps();
 wireStartStop({
   startBtn: document.getElementById("btn-nav-start"),
   stopBtn: document.getElementById("btn-nav-stop"),
+  stackTag: "nav2",
   slot: "main",
   title: "Navigation",
   needsBringup: true,

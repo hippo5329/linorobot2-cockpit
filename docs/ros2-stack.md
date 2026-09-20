@@ -13,6 +13,36 @@
 
 ---
 
+### 1-Click leaves the robot running, and something has to remember it
+
+The pipeline used to stop bringup, SLAM and Nav2 in its `finally` block the moment it finished. That
+is right for an automated run and wrong for a person: pressing **Start 1-Click** is how you *get* a
+robot, and it handed back one that had just been switched off — nothing on `/scan`, nothing to drive,
+the map saved from a stack that no longer existed.
+
+The stack now stays up until it is stopped. `--shutdown-when-done` restores the old behaviour and is
+what automation should pass: a bench run that leaves a stack behind floods the DDS domain for whatever
+runs next.
+
+The consequence is that **the pipeline exits while its children keep running**, so the Stop buttons
+would have nothing to signal. `scripts/robot_stack.py` is the record — tag, pid and process group per
+part — kept in the shared state directory, because the pipeline runs as container-root and the backend
+as the container user and anything under `$HOME` is two different files (see
+`cockpit_paths.state_dir`). Signals go to the process GROUP, never a name match: every launch starts
+with `os.setsid()`, so one signal reaches `ros2 launch` and everything it spawned, and a pgid cannot
+hit the wrong process the way `pkill ros2` can.
+
+    python3 scripts/robot_stack.py            # what is still running
+    python3 scripts/robot_stack.py --stop     # all of it
+    python3 scripts/robot_stack.py --stop nav2
+
+In the cockpit, the Bringup / SLAM / Nav2 **Stop** buttons reach it through `/api/stack/stop`, and
+stopping *bringup* stops the whole stack — SLAM and Nav2 on top of a dead robot are not worth keeping.
+An entry whose group has gone is dropped on read rather than reported as running, so the UI never
+claims a robot that is not there and never signals a pgid that now belongs to somebody else.
+
+---
+
 ### The installed ROS wins over the configured distro, for the same reason the bus wins over the config
 `ros_distro` is **not a property of the robot**. It belongs to whichever machine runs the stack, so a
 robot config that pins it is making a claim about a computer — and `/opt/ros` *is* that computer, exactly
