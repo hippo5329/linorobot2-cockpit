@@ -116,6 +116,8 @@
             <option value="podman">Podman (Container)</option>
             <option value="native">Native (ROS 2 / ~/uros_ws)</option>
           </select>
+          <button type="button" class="btn-mini" id="btn-rootless-guide"
+                  title="Rootless Docker / Podman setup guide" style="margin-left:2px;">❔</button>
         </div>
         <div class="hdr-field hdr-wf-field" title="Container Registry for Docker Images">
           <label for="hdr-container-registry">📦 Registry:</label>
@@ -1609,8 +1611,14 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <details id="tune-raw-editors-details" style="border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; background: rgba(15, 23, 42, 0.4);">
         <summary style="cursor: pointer; font-weight: 600; color: #e2e8f0; outline: none;">📝 Direct YAML Editors (Nav2, EKF & SLAM)</summary>
         <div style="margin-top: 10px;">
-          <!-- Nav2 Sub-Editor -->
+          <!-- Nav2 Sub-Editor. The box is collapsed and the toggle is what
+               loads it: loadNav2Config() fetches a distro's whole parameter
+               set, and doing that on every page load to fill a textarea
+               nobody opened is waste. app.js has toggled this since it was
+               ported; only the two elements were missing. -->
           <h4 style="margin: 6px 0; color: var(--accent);">Nav2 Parameters</h4>
+          <button type="button" id="btn-nav2-toggle-editor" class="btn btn-sm" style="margin-bottom:8px;">Edit Nav2 Parameters (YAML)</button>
+          <div id="nav2-editor-box" style="display:none;">
           <div class="row" style="margin-bottom: 6px;">
             <label>Distro:
               <select id="nav2-editor-distro">
@@ -1627,6 +1635,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <button id="btn-nav2-save-config" class="btn btn-primary btn-sm">Save Nav2 YAML</button>
             <span id="nav2-save-status" class="hint" style="align-self: center;"></span>
           </div>
+          </div><!-- /nav2-editor-box -->
 
           <!-- EKF Sub-Editor -->
           <h4 style="margin: 6px 0; color: var(--accent);">EKF Parameters (robot_localization)</h4>
@@ -1876,6 +1885,14 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         needs the laser driver (or Bringup) publishing already. Cheap enough for a small SBC --
         for the full map / costmap / TF view use the RViz-in-browser card on the
         <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'cockpit\']')?.click(); return false;">Operations</a> tab.</p>
+      <div class="row" style="align-items:center; gap:8px; margin-bottom:8px;">
+        <label for="laser-driver-topic" class="form-label" style="margin:0;">Scan topic</label>
+        <input type="text" id="laser-driver-topic" class="form-input font-mono"
+               value="/scan" placeholder="/scan" style="max-width:220px;">
+        <span class="input-hint">The viewer read <code>/scan</code> and only
+          <code>/scan</code>; a robot publishing under a namespace, or a second
+          laser on <code>/scan_raw</code>, could not be plotted at all.</span>
+      </div>
       <button id="btn-lidar-start" class="btn btn-primary">Start</button>
       <button id="btn-lidar-stop" class="btn btn-danger" disabled>Stop</button>
       <p id="lidar-viewer-status" class="hint lidar-status"></p>
@@ -1979,7 +1996,10 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <h2 style="margin:0;">🔍 ROS 2 Topic Echo &amp; Publishing Rate (Hz) Gate</h2>
-        <button type="button" id="btn-cockpit-verify-topics" class="btn">⚡ Run Rate &amp; Echo Audit</button>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span id="cockpit-verify-status" class="hint"></span>
+          <button type="button" id="btn-cockpit-verify-topics" class="btn">⚡ Run Rate &amp; Echo Audit</button>
+        </div>
       </div>
       <p class="hint">Audits live topic rates (Hz) and validates payload frame IDs (<code>odom</code>, <code>base_footprint</code>, <code>laser</code>) before SLAM/Nav2 gating per <code>scripts/verify_topics.py</code>.</p>
       
@@ -2254,6 +2274,17 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <input type="text" id="cfg-agent-device" style="display:none;">
       <input type="text" id="cfg-agent-port" style="display:none;">
       <input type="text" id="cfg-agent-baud" style="display:none;">
+      <!-- The agent's own controls. Every handler for these already existed in
+           app.js -- refreshStatus() even keeps btn-agent-stop's disabled state
+           from s.agent_busy_console -- but the markup did not, so the only way
+           to start or stop the micro-ROS agent was to have some other action
+           do it implicitly. -->
+      <div class="row" style="margin-top:12px; align-items:center; gap:8px;">
+        <button id="btn-agent-ensure" class="btn btn-primary" title="Start the micro-ROS agent if it is not already running">▶ Start Agent</button>
+        <button id="btn-agent-stop" class="btn btn-danger" title="Stop the agent this cockpit started" disabled>■ Stop Agent</button>
+        <button id="btn-agent-port-check" class="btn" title="Is the agent's serial port or UDP port already taken?">🔍 Check Port</button>
+        <span id="agent-port-status-pill" class="pill pill-unknown" style="display:none;"></span>
+      </div>
       <div class="row" style="margin-top:12px;">
         <button id="btn-save-agent" class="btn">Save Engine Preferences</button>
       </div>

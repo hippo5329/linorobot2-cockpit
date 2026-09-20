@@ -600,10 +600,9 @@ async function refreshStatus() {
       wsPill.textContent = s.workspace_built ? "built" : "unbuilt";
       wsPill.className = "pill " + (s.workspace_built ? "pill-ok" : "pill-unknown");
     }
-    const wsElem = document.getElementById("hdr-workspace");
-    if (wsElem) {
-      wsElem.innerHTML = `Workspace: <b>${s.workspace_built ? "built" : "not built"}</b>`;
-    }
+    // `hdr-workspace-pill` above already says built/unbuilt, and it is the
+    // element the header actually has. A second readout of the same flag can
+    // only ever agree with it or be a bug.
 
     // Both pills carry `pill-unknown` in the markup until the first poll lands;
     // setting only textContent left them grey forever, which read as "the
@@ -1199,17 +1198,13 @@ function populateSensorSelects() {
     }
   }
 
-  // Robot Environment tab selects
-  const envLaser = document.getElementById("env-laser-sensor");
-  if (envLaser) {
-    Object.values(SENSORS.laser).forEach((e) =>
-      (e.models || []).forEach((m) => addOpt(envLaser, m.code, `${m.code} — ${m.label}`)));
-  }
-  const envDepth = document.getElementById("env-depth-sensor");
-  if (envDepth) {
-    Object.values(SENSORS.depth).forEach((e) =>
-      (e.models || []).forEach((m) => addOpt(envDepth, m.code, `${m.code} — ${m.label}`)));
-  }
+  // There is no second pair of sensor selects, and there must not be. This
+  // used to fill `env-laser-sensor` / `env-depth-sensor` for a "Robot
+  // Environment" tab that does not exist in the cockpit -- the working
+  // controls are `cfg-laser-sensor` and `cfg-depth-sensor` above, which are
+  // the ones the config is read from and written to. Two dropdowns for one
+  // setting is the failure this file already carries a comment about: they
+  // disagree, and the one the user changed is not the one that is saved.
   applyLaserConfigToPanel();
   if (typeof updateBringupSummary === "function") updateBringupSummary();
 }
@@ -5042,6 +5037,11 @@ function initCockpitDashboard() {
     setTopicBadge("/imu/data", "topic-badge-imu", "topic-echo-imu");
     setTopicBadge("/scan", "topic-badge-scan", "topic-echo-scan");
 
+    if (verifyStatus) {
+      verifyStatus.textContent = "auditing…";
+      verifyStatus.className = "hint";
+    }
+
     try {
       const res = await fetch("/api/topics/verify");
       const json = await res.json();
@@ -5066,8 +5066,29 @@ function initCockpitDashboard() {
         updateUI("/imu/data", "topic-badge-imu", "topic-echo-imu");
         updateUI("/scan", "topic-badge-scan", "topic-echo-scan");
       }
+      // The verdict, beside the button. It was only ever written to the
+      // terminal, where an audit run before a long bringup scrolls out of
+      // sight -- and `verifyStatus` was declared here and then never assigned,
+      // so the element had no writer at all.
+      if (verifyStatus) {
+        const topics = (json.data && json.data.topics) || {};
+        const names = Object.keys(topics);
+        const passed = names.filter((n) => topics[n].passed);
+        if (!names.length) {
+          verifyStatus.textContent = "no topics — is the stack running?";
+          verifyStatus.className = "hint pill-off";
+        } else {
+          verifyStatus.textContent = `${passed.length}/${names.length} topics passed`;
+          verifyStatus.className = passed.length === names.length
+            ? "hint pill-ok" : "hint pill-warn";
+        }
+      }
     } catch (e) {
       logLine("[audit error] " + e.message);
+      if (verifyStatus) {
+        verifyStatus.textContent = "audit failed: " + e.message;
+        verifyStatus.className = "hint pill-off";
+      }
     } finally {
       btnVerifyTopics.disabled = false;
       btnVerifyTopics.textContent = "⚡ Run Rate & Echo Audit";
