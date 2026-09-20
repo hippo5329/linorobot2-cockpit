@@ -3,10 +3,8 @@ name: CI
 on:
   push:
     branches: [main, dev, 'rc-*']
-    paths-ignore: ['docs/**', '*.md']
   pull_request:
     branches: [main, dev, 'rc-*']
-    paths-ignore: ['docs/**', '*.md']
   workflow_dispatch:
 
 concurrency:
