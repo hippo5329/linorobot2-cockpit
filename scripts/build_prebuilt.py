@@ -283,6 +283,42 @@ def build(profile, keep_going=False):
         entry["size"] = os.path.getsize(path)
         entry["sha256"] = sha256(path)
 
+    # The /cmd_vel contract, checked on the ARTIFACT before it is published.
+    #
+    # A jazzy image that subscribes TwistStamped enumerates, publishes odometry
+    # and never moves: nav2 on jazzy publishes plain Twist and nothing is
+    # delivered. It is silent on both sides. This happened -- a pico2-jazzy
+    # image went onto the bench stamped, and the Nav2 goal test reported "494
+    # cmd_vel msgs, base moved 0.002 m" with no other symptom.
+    #
+    # release.yml has a version of this check, but it only fires one way: it
+    # catches a lyrical image MISSING TwistStamped, not a jazzy image that has
+    # it. Both directions are failures and both are checked here, in the script
+    # that writes the artifact, so a locally cut release is checked too.
+    img = next((os.path.join(out_dir, n) for n in ("firmware.uf2", "firmware.bin")
+                if os.path.isfile(os.path.join(out_dir, n))), None)
+    if img:
+        try:
+            found = subprocess.run(["strings", "-a", img], capture_output=True,
+                                   text=True, timeout=120).stdout.count("TwistStamped")
+        except Exception:
+            found = None
+        if found is not None:
+            wants_stamped = distro not in ("humble", "iron", "jazzy")
+            if wants_stamped and found == 0:
+                raise SystemExit(
+                    f"{profile}: built for {distro}, which publishes /cmd_vel as "
+                    f"TwistStamped, but the image contains none. It would enumerate "
+                    f"and never move.")
+            if not wants_stamped and found:
+                raise SystemExit(
+                    f"{profile}: built for {distro}, which publishes /cmd_vel as "
+                    f"plain Twist, but the image contains {found} TwistStamped "
+                    f"references. nav2 would publish Twist, the board would "
+                    f"subscribe TwistStamped, and nothing would be delivered.")
+            print(f"  /cmd_vel contract ok ({distro}: "
+                  f"{'TwistStamped' if wants_stamped else 'Twist'})", flush=True)
+
     manifest = {
         "profile": profile,
         "description": description,
