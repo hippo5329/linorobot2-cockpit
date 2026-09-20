@@ -5278,7 +5278,13 @@ async function loadHardwareConfig() {
     const elHwEnv = document.getElementById("hw-flash-env");
     if (elHwEnv) elHwEnv.value = data.controller || "pico2";
 
-    const elKine = document.getElementById("cfg-kinematics");
+    const elSonar = document.getElementById("cfg-sonar");
+  if (elSonar) {
+    elSonar.addEventListener("change", syncSonarFields);
+    syncSonarFields();
+  }
+
+  const elKine = document.getElementById("cfg-kinematics");
     if (elKine) elKine.value = kine.base_type || "2wd";
 
     const elBaud = document.getElementById("cfg-baudrate");
@@ -5384,6 +5390,21 @@ async function loadHardwareConfig() {
     if (elBatMax && bat.max_v !== undefined) elBatMax.value = bat.max_v;
     const elBatCap = document.getElementById("cfg-bat-cap");
     if (elBatCap && bat.capacity_ah !== undefined) elBatCap.value = bat.capacity_ah;
+    // Nominal pack voltage and the ADC filter capacitor: shown for years,
+    // saved by nothing, so they reverted on every reload.
+    const elBatNom = document.getElementById("cfg-bat-nom");
+    if (elBatNom && bat.nominal_v !== undefined) elBatNom.value = bat.nominal_v;
+    const elBatCapVal = document.getElementById("cfg-bat-cap-val");
+    if (elBatCapVal && bat.filter_cap_pf !== undefined) elBatCapVal.value = bat.filter_cap_pf;
+
+    // Hard-iron offsets. The firmware subtracts them when MAG_BIAS is defined
+    // (firmware/src/main.cpp), and scripts/gen_firmware_header.py emits it from
+    // exactly these three keys.
+    const magBias = Array.isArray(sensors.mag_bias) ? sensors.mag_bias : [];
+    [["cfg-mag-bias-x", 0], ["cfg-mag-bias-y", 1], ["cfg-mag-bias-z", 2]].forEach(([id, i]) => {
+      const el = document.getElementById(id);
+      if (el && magBias[i] !== undefined && magBias[i] !== null) el.value = magBias[i];
+    });
 
     const elEnv = document.getElementById("cfg-env");
     if (elEnv) elEnv.value = sensors.env || "NONE";
@@ -5446,6 +5467,16 @@ async function loadHardwareConfig() {
     const sonar = pins.sonar || {};
     if (document.getElementById("pin-sonar-trig")) document.getElementById("pin-sonar-trig").value = sonar.trigger !== undefined ? sonar.trigger : -1;
     if (document.getElementById("pin-sonar-echo")) document.getElementById("pin-sonar-echo").value = sonar.echo !== undefined ? sonar.echo : -1;
+    // The enable select is the truth the user sees; wired pins are what it
+    // means. Derived rather than stored, so the two can never disagree.
+    const elSonarEn = document.getElementById("cfg-sonar");
+    if (elSonarEn) {
+      const on = Number(sonar.trigger) >= 0 && Number(sonar.echo) >= 0;
+      elSonarEn.value = on ? "true" : "false";
+    }
+
+    const elDacPin = document.getElementById("cfg-dac-pin");
+    if (elDacPin && pins.dac !== undefined && pins.dac !== null) elDacPin.value = String(pins.dac);
 
     const lidar = tgt.lidar || {};
     if (document.getElementById("cfg-lidar-rxd")) document.getElementById("cfg-lidar-rxd").value = lidar.rx_pin !== undefined ? lidar.rx_pin : -1;
@@ -5909,6 +5940,32 @@ function validateHardwareSafety() {
   }
 }
 
+// The sonar enable select. "Disabled (Bare Module Default)" has to mean the
+// pins go to -1, because a bare module that claims a sonar publishes /sonar
+// from a pin nothing is wired to.
+function sonarEnabled() {
+  const el = document.getElementById("cfg-sonar");
+  if (!el) {
+    // No select on the page: fall back to the pins themselves.
+    const t = parseInt(document.getElementById("pin-sonar-trig")?.value ?? -1, 10);
+    const e = parseInt(document.getElementById("pin-sonar-echo")?.value ?? -1, 10);
+    return t >= 0 && e >= 0;
+  }
+  return el.value === "true";
+}
+
+// Greys the pin fields out when the sensor is off, so the page cannot show a
+// pin pair that will not be written.
+function syncSonarFields() {
+  const on = sonarEnabled();
+  ["pin-sonar-trig", "pin-sonar-echo"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = !on;
+    el.style.opacity = on ? "" : "0.45";
+  });
+}
+
 async function saveCurrentHardwareConfig() {
   const activeController = document.getElementById("cfg-mcu")?.value || "pico2";
   const kineType = document.getElementById("cfg-kinematics")?.value || "2wd";
@@ -6052,13 +6109,28 @@ async function saveCurrentHardwareConfig() {
         min_v: parseFloat(document.getElementById("cfg-bat-min")?.value || 0),
         max_v: parseFloat(document.getElementById("cfg-bat-max")?.value || 0),
         capacity_ah: parseFloat(document.getElementById("cfg-bat-cap")?.value || 0),
+        nominal_v: parseFloat(document.getElementById("cfg-bat-nom")?.value || 0),
+        filter_cap_pf: parseFloat(document.getElementById("cfg-bat-cap-val")?.value || 0),
       },
-      sonar: {
-        trigger: parsePin("pin-sonar-trig", -1),
-        echo: parsePin("pin-sonar-echo", -1),
-      }
+      // "Disabled" means disabled: a bare module must not come up claiming a
+      // sonar, so the select forces both pins to -1 rather than leaving
+      // whatever the pin fields happen to hold.
+      sonar: sonarEnabled()
+        ? { trigger: parsePin("pin-sonar-trig", -1), echo: parsePin("pin-sonar-echo", -1) }
+        : { trigger: -1, echo: -1 },
+      // The DAC pin adc_calibrate sweeps; the firmware reads it from the env
+      // (envU16("dac_pin", DAC_PIN) in firmware/src/tools/adc_calibrate.cpp).
+      dac: parseInt(document.getElementById("cfg-dac-pin")?.value ?? -1, 10),
     }
   };
+
+  const magBias = ["cfg-mag-bias-x", "cfg-mag-bias-y", "cfg-mag-bias-z"]
+    .map((id) => (document.getElementById(id)?.value ?? "").trim());
+  if (magBias.some((v) => v !== "")) {
+    payload.sensors = Object.assign({}, payload.sensors, {
+      mag_bias: magBias.map((v) => (v === "" ? 0 : parseFloat(v))),
+    });
+  }
 
   logLine(`[config-engine] Saving hardware configuration for [${activeController}]...`);
   try {
@@ -6247,7 +6319,12 @@ async function executeHardwareAction(action, customFirmware = null) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ port: port, mode: "serial" })
       });
-      await fetch("/api/agent/stop", { method: "POST" });
+      // /api/agent/stop has never existed; the endpoint is /api/agent/kill
+      // (web/backend/main.py). The 404 landed in the catch below as a
+      // console.warn, so the agent was left holding the port on every upload
+      // and monitor from this panel -- which is exactly the state the "Safe
+      // Port Protocol" line above claims to have cleared.
+      await fetch("/api/agent/kill", { method: "POST" });
     } catch (err) {
       console.warn("Pre-action port release warning:", err);
     }
@@ -6277,12 +6354,21 @@ async function executeHardwareAction(action, customFirmware = null) {
     const cmd = data.command;
     await runCommand(cmd, {
       slot: "main",
-      title: `${action === "upload" ? "Flashing" : "Building"} ${firmwareName} (${mcuEnv})`,
+      title: `${action === "upload" ? "Flashing" : action === "monitor" ? "Monitoring" : "Building"} ${firmwareName} (${mcuEnv})`,
       onDone: (exitCode) => {
         if (btnStop) btnStop.style.display = "none";
         if (exitCode === 0) {
           logLine(`✅ [Hardware Test] ${firmwareName} completed successfully.`);
           showToast(`✅ ${firmwareName} flashed successfully!`, 4000);
+          // A diagnostic application exists to be READ. Flashing one and then
+          // showing nothing is what made these tools look broken: they print
+          // to serial, and until now nothing opened the port afterwards. The
+          // base controller is the exception -- its serial belongs to
+          // micro-ROS, and the agent needs it.
+          if (action === "upload" && firmwareName !== "base") {
+            logLine(`📡 [Hardware Test] streaming ${firmwareName} output — press Stop when done.`);
+            executeHardwareAction("monitor", firmwareName);
+          }
         } else {
           logLine(`❌ [Hardware Test] ${firmwareName} finished with exit code ${exitCode}. Check terminal above for troubleshooting & recovery steps.`);
           showToast(`❌ Flashing ${firmwareName} failed. Check terminal for recovery steps!`, 7000);
@@ -6426,6 +6512,48 @@ function initBaseControllerConfigModule() {
   if (btnAdcCal) {
     btnAdcCal.addEventListener("click", () => {
       executeHardwareAction("upload", "adc_calibrate");
+    });
+  }
+
+  // The LUT the calibration prints is meant to be pasted into a config; the
+  // Copy button beside it had no handler at all, so the only way to take it
+  // was to select 4096 entries by hand.
+  const btnCopyLut = document.getElementById("btn-copy-lut-code");
+  if (btnCopyLut) {
+    btnCopyLut.addEventListener("click", async () => {
+      const box = document.getElementById("adc-lut-code-display");
+      const text = (box ? box.innerText : "").trim();
+      if (!text) { showToast("No LUT to copy yet — run the calibration first."); return; }
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("📋 ADC LUT copied to the clipboard.");
+      } catch {
+        // Clipboard access needs a secure context; over plain http on a LAN
+        // address it is refused, so fall back rather than fail silently.
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); showToast("📋 ADC LUT copied."); }
+        catch { showToast("Could not copy — select the block and copy manually."); }
+        ta.remove();
+      }
+    });
+  }
+
+  // "Run Magnetometer Calibration" was pure markup: no handler, and no backend
+  // endpoint either. The firmware carries the application (bno085_cal), so the
+  // button now does what every other tool button does -- flash it and stream
+  // its output, which is where the hard-iron offsets are printed.
+  const btnMagCalHw = document.getElementById("btn-mag-cal-hw");
+  if (btnMagCalHw) {
+    btnMagCalHw.addEventListener("click", () => {
+      const result = document.getElementById("mag-cal-hw-result");
+      if (result) {
+        result.textContent = "Flashing bno085_cal and streaming its output — "
+          + "spin the robot slowly in place; the offsets appear in the terminal below.";
+      }
+      executeHardwareAction("upload", "bno085_cal");
     });
   }
 

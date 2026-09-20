@@ -423,6 +423,18 @@ def hardware_env(params: dict) -> dict:
     sonar = pins.get("sonar") if isinstance(pins.get("sonar"), dict) else {}
     env["sonar_trig"] = int(sonar.get("trigger", -1))
     env["sonar_echo"] = int(sonar.get("echo", -1))
+    # The pin adc_calibrate sweeps its DAC out of, jumpered to the battery ADC
+    # input. firmware/src/tools/adc_calibrate.cpp has always read it --
+    # envU16("dac_pin", DAC_PIN) -- and nothing has ever written it, so the
+    # selector on the ADC Calibration panel could not change anything and the
+    # tool always used its compiled-in default.
+    if pins.get("dac") is not None:
+        try:
+            dac = int(pins["dac"])
+        except (TypeError, ValueError):
+            dac = -1
+        if dac >= 0:
+            env["dac_pin"] = dac
     telemetry = tgt.get("telemetry", {}) or {}
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])

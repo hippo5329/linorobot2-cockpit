@@ -491,6 +491,27 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             lines.append(f"#define ECHO_PIN {echo}")
     lines.append("")
 
+    # Hard-iron offsets, subtracted from every /imu/mag sample.
+    # firmware/src/main.cpp has carried `#ifdef MAG_BIAS` for a long time and
+    # nothing ever defined it, so the three bias fields on the Sensors panel
+    # were collected by no one and the correction compiled out. Emitted only
+    # when the config actually carries them: the #ifdef is what keeps a robot
+    # that has not been calibrated free of a bogus correction.
+    #
+    # NOTE this is compile-time, so it reaches a board through a LOCAL build.
+    # The published prebuilt images are built from the generated bare config,
+    # which has no bias, so a user on a release image calibrates by rebuilding.
+    mag_bias = sensors.get("mag_bias") if isinstance(sensors, dict) else None
+    if isinstance(mag_bias, (list, tuple)) and len(mag_bias) == 3:
+        try:
+            bx, by, bz = (float(v) for v in mag_bias)
+        except (TypeError, ValueError):
+            bx = by = bz = 0.0
+        if any(v != 0.0 for v in (bx, by, bz)):
+            lines.append("// Magnetometer hard-iron bias (uT), subtracted in main.cpp")
+            lines.append(f"#define MAG_BIAS {{{bx}f, {by}f, {bz}f}}")
+            lines.append("")
+
     # Sensors & Bare MCU Fallback
     lines.append("// --- Sensor Definitions & Fallback Directives ---")
     # The agent address, resolved for every config. A serial robot still gets

@@ -1371,12 +1371,20 @@ async def api_hardware_test(request: Request):
             f"--baud {baud}"
         )
     elif action == "monitor":
+        # NOT miniterm. It builds a Console() in its constructor, which calls
+        # termios.tcgetattr() on stdin, and every command here runs on a PIPE --
+        # so Monitor failed with `termios.error: (25, 'Inappropriate ioctl for
+        # device')` every single time, and the diagnostic applications had no
+        # way to show their output at all. scripts/serial_monitor.py reads the
+        # port and writes lines to stdout, which is what the SSE runner
+        # forwards.
         cmd = (
-            f"echo '=== [1/2] Stopping micro_ros_agent & releasing serial port {port} ===' && "
+            f"echo '=== [1/2] Releasing serial port {port} ===' && "
             f"lsof -ti {port} 2>/dev/null | xargs -r kill -9 2>/dev/null || true; "
             f"sleep 0.5; "
-            f"echo '=== [2/2] Opening Serial Terminal on {port} @ {baud} baud ===' && "
-            f"python3 -m serial.tools.miniterm {port} {baud} --exit-char 3"
+            f"echo '=== [2/2] Streaming {port} @ {baud} ===' && "
+            f"python3 -u {os.path.join(REPO_ROOT, 'scripts', 'serial_monitor.py')} "
+            f"{shlex.quote(port)} {baud}"
         )
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
@@ -2942,9 +2950,24 @@ def get_map_file(filename: str):
     return FileResponse(file_path, media_type=media_type)
 
 
-# Mount static frontend
+# Mount static frontend.
+#
+# No-store on the app's own files. StaticFiles serves them with an ETag and a
+# Last-Modified, which lets a browser keep a stale app.js across a cockpit
+# update: the backend restarts with new behaviour, the page keeps the old
+# script, and the two disagree in ways that look like the feature never
+# landed. Measured here on 2026-09-20 -- a fixed Monitor worked through curl
+# and did nothing in the browser until a hard reload. These files are a few
+# hundred KB served over a LAN; re-fetching them costs nothing next to that.
+class _NoStoreStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
+
+
 if os.path.isdir(FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/", _NoStoreStatic(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
 if __name__ == "__main__":
