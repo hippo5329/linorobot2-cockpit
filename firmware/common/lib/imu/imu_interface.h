@@ -15,6 +15,8 @@
 #ifndef IMU_INTERFACE
 #define IMU_INTERFACE
 
+#include <Arduino.h>
+#include <math.h>
 #include <sensor_msgs/msg/imu.h>
 
 #ifndef ACCEL_COV
@@ -25,6 +27,19 @@
 #endif
 #ifndef ORI_COV
 #define ORI_COV { 0.00001, 0.00001, 0.00001 }
+#endif
+
+// How much the gyro may wander during the startup average before the result is
+// called untrustworthy, in rad/s of standard deviation per axis.
+//
+// The wiki tells the operator the robot must stand still for calibration, and
+// that is the right instruction -- but nothing checked it, so a robot that was
+// being carried, or whose wheels were driven, calibrated against its own motion
+// and then subtracted that motion from every reading for the rest of the run.
+// A part at rest sits around 0.005-0.01 rad/s; 0.05 (about 2.9 deg/s) is well
+// clear of noise and well under any real handling.
+#ifndef GYRO_CAL_MAX_STDDEV
+#define GYRO_CAL_MAX_STDDEV 0.05f
 #endif
 
 class IMUInterface
@@ -47,11 +62,30 @@ class IMUInterface
         const float ori_cov[3] = ORI_COV;
         const int sample_size_ = 40;
 
-        geometry_msgs__msg__Vector3 gyro_cal_;
+        // Value-initialised, for the same reason imu_msg_ above is: every
+        // concrete IMU declares its own default constructor, so `new T()` is
+        // value-initialisation of a class WITH a user-provided constructor --
+        // which does NOT zero the members it does not mention. calibrateGyro()
+        // then accumulated onto whatever the heap held, and on a warm reset
+        // that is the previous run's bytes, not zeros.
+        geometry_msgs__msg__Vector3 gyro_cal_{};
+
+        // True when the board was moving during the last calibrateGyro().
+        bool gyro_cal_suspect_ = false;
 
         void calibrateGyro()
         {
             geometry_msgs__msg__Vector3 gyro;
+
+            gyro_cal_.x = 0.0;
+            gyro_cal_.y = 0.0;
+            gyro_cal_.z = 0.0;
+
+            // Sum and sum-of-squares in one pass, so the spread of the samples
+            // is known as well as their mean. The mean alone cannot tell a
+            // stationary board from one being carried: both average to *a*
+            // number, and only one of them is a bias.
+            double sq[3] = { 0.0, 0.0, 0.0 };
 
             for(int i=0; i<sample_size_; i++)
             {
@@ -59,13 +93,46 @@ class IMUInterface
                 gyro_cal_.x += gyro.x;
                 gyro_cal_.y += gyro.y;
                 gyro_cal_.z += gyro.z;
+                sq[0] += (double)gyro.x * gyro.x;
+                sq[1] += (double)gyro.y * gyro.y;
+                sq[2] += (double)gyro.z * gyro.z;
 
                 delay(50);
             }
 
-            gyro_cal_.x = gyro_cal_.x / (float)sample_size_;
-            gyro_cal_.y = gyro_cal_.y / (float)sample_size_;
-            gyro_cal_.z = gyro_cal_.z / (float)sample_size_;
+            const float n = (float)sample_size_;
+            gyro_cal_.x = gyro_cal_.x / n;
+            gyro_cal_.y = gyro_cal_.y / n;
+            gyro_cal_.z = gyro_cal_.z / n;
+
+            const double mean[3] = { gyro_cal_.x, gyro_cal_.y, gyro_cal_.z };
+            gyro_cal_suspect_ = false;
+            float worst = 0.0f;
+            for (int a = 0; a < 3; a++)
+            {
+                // var = E[x^2] - E[x]^2, clamped: rounding can push a
+                // genuinely-zero variance a hair below zero.
+                double var = sq[a] / n - mean[a] * mean[a];
+                const float sd = (var > 0.0) ? (float)sqrt(var) : 0.0f;
+                if (sd > worst)
+                    worst = sd;
+                if (sd > (float)GYRO_CAL_MAX_STDDEV)
+                    gyro_cal_suspect_ = true;
+            }
+
+            if (gyro_cal_suspect_)
+            {
+                Serial.printf("[imu] gyro calibration is SUSPECT: samples varied by "
+                              "%.4f rad/s (limit %.4f) -- the robot moved while "
+                              "calibrating, so this bias is its motion, not its offset. "
+                              "Stand it still and reset.\n",
+                              worst, (float)GYRO_CAL_MAX_STDDEV);
+            }
+            else
+            {
+                Serial.printf("[imu] gyro bias %.4f %.4f %.4f rad/s (spread %.4f, still)\n",
+                              gyro_cal_.x, gyro_cal_.y, gyro_cal_.z, worst);
+            }
         }
 
     public:
@@ -87,14 +154,28 @@ class IMUInterface
             return sensor_ok;
         }
 
+        // Whether the startup average was taken on a board that was moving.
+        // The reading is still published -- refusing to publish would be worse
+        // than publishing a known-doubtful bias -- but the caller can say so.
+        bool gyroCalSuspect() const { return gyro_cal_suspect_; }
+
         sensor_msgs__msg__Imu getData()
         {
             imu_msg_.angular_velocity = readGyroscope();
-#ifndef USE_MPU6050_IMU // mpu6050 already calibrated in driver
+            // Gyro bias is removed HERE, for every driver, and nowhere else.
+            //
+            // This used to be skipped under `#ifndef USE_MPU6050_IMU`, because
+            // that one driver also asked its chip to self-calibrate. Two
+            // problems: the macro is emitted by nothing since the sensor
+            // factory replaced compile-time driver selection, so the guard was
+            // dead and the subtraction happened anyway; and it was a BUILD-time
+            // answer to a question that is now decided at boot, by the I2C
+            // probe, so it could not have been right on a board whose IMU is
+            // detected rather than declared. One place, one rule: init() runs
+            // calibrateGyro() after startSensor(), and this subtracts it.
             imu_msg_.angular_velocity.x -= gyro_cal_.x;
             imu_msg_.angular_velocity.y -= gyro_cal_.y;
             imu_msg_.angular_velocity.z -= gyro_cal_.z;
-#endif
 
             if(imu_msg_.angular_velocity.x > -0.01 && imu_msg_.angular_velocity.x < 0.01 )
                 imu_msg_.angular_velocity.x = 0;

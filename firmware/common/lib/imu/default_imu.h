@@ -127,8 +127,12 @@ class MPU6050IMU: public IMUInterface
             if(!ret)
                 return false;
 
+            // Accelerometer only. The gyro's bias is removed once, in
+            // IMUInterface::calibrateGyro() -- calling the library's
+            // CalibrateGyro() here as well made this the one driver that
+            // corrected the same error twice, and it is the slow half of the
+            // two (15 sampling loops against the chip).
             accelgyro_.CalibrateAccel();
-            accelgyro_.CalibrateGyro();
             return true;
         }
 
