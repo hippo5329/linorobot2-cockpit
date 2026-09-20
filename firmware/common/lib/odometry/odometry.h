@@ -20,6 +20,7 @@
 #include <micro_ros_utilities/string_utilities.h>
 #include <nav_msgs/msg/odometry.h>
 #include "config.h"
+#include "mcu_env.h"
 
 #ifndef POSE_COV
 #define POSE_COV { 0.0001, 0.0001, 0, 0, 0, 0.0001 }
@@ -54,6 +55,11 @@ class Odometry
         float x_pos_;
         float y_pos_;
         float heading_;
+        // Read once from the env in the constructor, not per update(): this
+        // runs at the control rate and the values never change while the board
+        // is up. The macros are the fallback for a blank env.
+        float pose_cov_[6] = POSE_COV;
+        float twist_cov_[6] = TWIST_COV;
 };
 
 #endif

@@ -39,7 +39,20 @@ MAXIMAL_CONFIG = {
                  "gpio_out": [{"pin": 5, "level": 1}], "gpio_out_late": "6=1",
                  "battery": {"pin": 7, "r1": 1000, "r2": 100, "min_v": 9, "max_v": 12.6, "capacity_ah": 2},
                  "motor1": {"pwm": 8, "in_a": 9, "in_b": 10, "invert": False},
-                 "encoder1": {"pin_a": 11, "pin_b": 12, "invert": True}},
+                 "encoder1": {"pin_a": 11, "pin_b": 12, "invert": True},
+                 "dac": 25,
+                 "sonar": {"trigger": 13, "echo": 14}},
+        # Optional blocks exist so that every key the firmware reads has a
+        # writer SOMEWHERE. A key only a hand-edited YAML can produce is a key
+        # nobody will ever set.
+        "bmp280_addr": "0x76",
+        "imu_tuning": {"accel_cov": 0.5, "gyro_cov": 0.5, "ori_cov": 0.5,
+                       "mag_cov": 0.5, "env_cov": [3, 0.25, 9e-4],
+                       "pose_cov": [1, 2, 3, 4, 5, 6], "twist_cov": 0.001,
+                       "mag_bias": [1.5, -2.25, 0.75]},
+        "simulation": {"map_width": 10.0, "map_height": 6.0, "wall_obstacle": True,
+                       "wall_x1": 2.0, "wall_y1": -1.5, "wall_x2": 2.0,
+                       "wall_y2": 1.5, "robot_mass": 3.5, "wheel_noise_rpm": 1.0},
     },
 }
 
@@ -72,7 +85,9 @@ def _written_keys():
 
 def _read_keys(src):
     # envGet("key"), envU16("key", ..), envFlag("key", ..), envPin(i, "suffix", ..)
-    keys = set(re.findall(r'\benv(?:Get|U16|U32|IP|Float|FloatBat|Flag|FlagMain|Int)\(\s*"([a-z0-9_]+)"', src))
+    # FloatVec reads a diagonal covariance; it is a read like any other, and
+    # leaving it out of this pattern made four covariance keys look dead.
+    keys = set(re.findall(r'\benv(?:Get|U16|U32|IP|FloatVec|Float|Flag|FlagMain|Int)\(\s*"([a-z0-9_]+)"', src))
     keys |= {"mN_" + s for s in re.findall(r'\benvPin\(\s*\w+,\s*"([a-z_]+)"', src)}
     keys |= {_norm(k) for k in re.findall(r'"(m%d_[a-z_]+)"', src)}
     keys |= {_norm(k) for k in re.findall(r'"(m%u_[a-z_]+)"', src)}

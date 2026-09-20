@@ -17,6 +17,7 @@
 
 #ifdef ARDUINO
 #include <Arduino.h>
+#include "mcu_env.h"
 #endif
 #include <math.h>
 #include <stdint.h>
@@ -222,6 +223,18 @@ private:
     static const uint16_t UDP_DATAGRAM_LIMIT = UDP_PACKS_PER_DATAGRAM * 47;  // 1410
 #endif
 
+    // The room, from the env. Fake mode is the DEFAULT here, so the world the
+    // emulator raycasts is configuration like everything else: a Nav2 test
+    // wants the obstacle wall somewhere else without rebuilding, and a bigger
+    // robot wants a bigger room. The macros stay as the fallback.
+    float map_w_ = (float)FAKE_MAP_WIDTH;
+    float map_h_ = (float)FAKE_MAP_HEIGHT;
+    bool  wall_on_ = (bool)(FAKE_WALL_OBSTACLE);
+    float wall_x1_ = (float)FAKE_WALL_X1;
+    float wall_y1_ = (float)FAKE_WALL_Y1;
+    float wall_x2_ = (float)FAKE_WALL_X2;
+    float wall_y2_ = (float)FAKE_WALL_Y2;
+
     // Current robot pose in global world frame
     float pose_x_ = 0.0f;
     float pose_y_ = 0.0f;
@@ -343,8 +356,24 @@ public:
 #endif
     }
 
+    // The room, read once at startup. Separate from the constructor because
+    // this is a global: it is built during static initialisation, before the
+    // flash partition API is usable, so reading the env there returns nothing.
+    // Same reason initSyslog() is separate from its constructor.
+    void applyEnvRoom()
+    {
+        map_w_ = envFloat("fake_map_w", map_w_);
+        map_h_ = envFloat("fake_map_h", map_h_);
+        wall_on_ = envFlag("fake_wall", wall_on_);
+        wall_x1_ = envFloat("fake_wall_x1", wall_x1_);
+        wall_y1_ = envFloat("fake_wall_y1", wall_y1_);
+        wall_x2_ = envFloat("fake_wall_x2", wall_x2_);
+        wall_y2_ = envFloat("fake_wall_y2", wall_y2_);
+    }
+
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
     {
+        applyEnvRoom();
         // Only the serial sink opens a UART. A pin may well be configured on a
         // board running udp or topic -- rx_pin is wiring, not transport -- and
         // opening it there would put a second copy of the scan on a pin nobody
@@ -431,24 +460,23 @@ public:
     // Returns true when the pose had to be moved.
     bool clampToRoom(float &x, float &y) const
     {
-        const float lim_x = (float)FAKE_MAP_WIDTH * 0.5f - (float)FAKE_ROBOT_RADIUS;
-        const float lim_y = (float)FAKE_MAP_HEIGHT * 0.5f - (float)FAKE_ROBOT_RADIUS;
+        const float lim_x = map_w_ * 0.5f - (float)FAKE_ROBOT_RADIUS;
+        const float lim_y = map_h_ * 0.5f - (float)FAKE_ROBOT_RADIUS;
         const float in_x = x, in_y = y;
         if (x > lim_x) x = lim_x;
         if (x < -lim_x) x = -lim_x;
         if (y > lim_y) y = lim_y;
         if (y < -lim_y) y = -lim_y;
 
-#if FAKE_WALL_OBSTACLE
-        // The obstacle wall is solid too. Raycasting it but not colliding with
-        // it lets the robot drive straight through the one thing in the room,
-        // and the scan then shows that wall *behind* it -- which quietly makes
-        // any obstacle-avoidance test meaningless, because nothing stops a plan
-        // that goes through it.
-        pushOffSegment(x, y,
-                       (float)FAKE_WALL_X1, (float)FAKE_WALL_Y1,
-                       (float)FAKE_WALL_X2, (float)FAKE_WALL_Y2);
-#endif
+        if (wall_on_)
+        {
+            // The obstacle wall is solid too. Raycasting it but not colliding
+            // with it lets the robot drive straight through the one thing in
+            // the room, and the scan then shows that wall *behind* it -- which
+            // quietly makes any obstacle-avoidance test meaningless, because
+            // nothing stops a plan that goes through it.
+            pushOffSegment(x, y, wall_x1_, wall_y1_, wall_x2_, wall_y2_);
+        }
         return (x != in_x) || (y != in_y);
     }
 
@@ -536,18 +564,18 @@ public:
         const float oy = pose_y_ + sinf(pose_theta_) * offset_x_;
 
         // Define room perimeter boundaries centered at (0,0)
-        const float half_w = (float)FAKE_MAP_WIDTH * 0.5f;
-        const float half_h = (float)FAKE_MAP_HEIGHT * 0.5f;
+        const float half_w = map_w_ * 0.5f;
+        const float half_h = map_h_ * 0.5f;
 
         Segment segs[5] = {
             {-half_w, -half_h,  half_w, -half_h}, // South wall
             { half_w, -half_h,  half_w,  half_h}, // East wall
             { half_w,  half_h, -half_w,  half_h}, // North wall
             {-half_w,  half_h, -half_w, -half_h}, // West wall
-            {(float)FAKE_WALL_X1, (float)FAKE_WALL_Y1, (float)FAKE_WALL_X2, (float)FAKE_WALL_Y2} // Short obstacle wall
+            {wall_x1_, wall_y1_, wall_x2_, wall_y2_} // Short obstacle wall
         };
 
-        int count = FAKE_WALL_OBSTACLE ? 5 : 4;
+        int count = wall_on_ ? 5 : 4;
         float min_dist = (float)FAKE_LD19_MAX_RANGE_M; // nothing seen yet
 
         for (int i = 0; i < count; i++)

@@ -869,12 +869,26 @@ void setup()
         pressure_msg.header.frame_id = micro_ros_string_utilities_set(pressure_msg.header.frame_id, "base_link");
         temperature_msg.header.frame_id = micro_ros_string_utilities_set(temperature_msg.header.frame_id, "base_link");
         humidity_msg.header.frame_id = micro_ros_string_utilities_set(humidity_msg.header.frame_id, "base_link");
+        // { pressure Pa^2, temperature C^2, humidity (0..1)^2 }. The env wins;
+        // the macro, where a build defines one, is the fallback.
+        {
+            float env_cov[3] = {0.0f, 0.0f, 0.0f};
+            bool have_cov = false;
 #ifdef ENV_COV
-        const double env_cov[3] = ENV_COV;   // { pressure Pa^2, temperature C^2, humidity (0..1)^2 }
-        pressure_msg.variance = env_cov[0];
-        temperature_msg.variance = env_cov[1];
-        humidity_msg.variance = env_cov[2];
+            const float compiled[3] = ENV_COV;
+            env_cov[0] = compiled[0];
+            env_cov[1] = compiled[1];
+            env_cov[2] = compiled[2];
+            have_cov = true;
 #endif
+            have_cov = envFloatVec("env_cov", env_cov, 3) || have_cov;
+            if (have_cov)
+            {
+                pressure_msg.variance = env_cov[0];
+                temperature_msg.variance = env_cov[1];
+                humidity_msg.variance = env_cov[2];
+            }
+        }
         syslog(LOG_INFO, "%s %s ready @ 1Hz %lu", __FUNCTION__, envHasHumidity() ? "BME280" : "BMP280", millis());
     }
     else
@@ -1559,12 +1573,34 @@ void publishData()
             imu_msg.angular_velocity.z = odom_msg.twist.twist.angular.z;
         mag_msg = mag->getData();
     }
+    // Hard-iron offsets, from the env like everything else about this robot.
+    // Read once -- this runs at the publish rate -- and applied only when the
+    // robot has actually been calibrated, because subtracting a bias nobody
+    // measured is worse than subtracting none.
+    {
+        static bool mag_bias_read = false;
+        static bool mag_bias_set = false;
+        static float mag_bias[3] = {0.0f, 0.0f, 0.0f};
+        if (!mag_bias_read)
+        {
+            mag_bias_read = true;
 #ifdef MAG_BIAS
-    const float mag_bias[3] = MAG_BIAS;
-    mag_msg.magnetic_field.x -= mag_bias[0];
-    mag_msg.magnetic_field.y -= mag_bias[1];
-    mag_msg.magnetic_field.z -= mag_bias[2];
+            const float compiled[3] = MAG_BIAS;
+            mag_bias[0] = compiled[0];
+            mag_bias[1] = compiled[1];
+            mag_bias[2] = compiled[2];
 #endif
+            envFloatVec("mag_bias", mag_bias, 3);
+            mag_bias_set = (mag_bias[0] != 0.0f || mag_bias[1] != 0.0f
+                            || mag_bias[2] != 0.0f);
+        }
+        if (mag_bias_set)
+        {
+            mag_msg.magnetic_field.x -= mag_bias[0];
+            mag_msg.magnetic_field.y -= mag_bias[1];
+            mag_msg.magnetic_field.z -= mag_bias[2];
+        }
+    }
 
     diagTime(DIAGT_SENSORS, micros() - sens_t0);
     const uint32_t pub_t0 = micros();

@@ -275,6 +275,23 @@ def _bool(value) -> str:
     return "1" if value else "0"
 
 
+def _num(value) -> str:
+    """Compact, round-trippable text for a number in the env.
+
+    repr() round-trips and the firmware's strtod reads everything it produces,
+    including 2.3e-14 -- but it renders a whole number as "3.0", and the
+    partition is 4 KB with covariance vectors of up to six values in it, so
+    the two bytes matter more than the decimal point does.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number == int(number) and abs(number) < 1e16:
+        return str(int(number))
+    return repr(number)
+
+
 def hardware_env(params: dict) -> dict:
     """The pin matrix, drivetrain and kinematics a robot config implies.
 
@@ -496,6 +513,113 @@ def hardware_env(params: dict) -> dict:
     # env.cpp fell back to the image's compiled default forever, so a bench
     # board flashed with a fake-mode image reported a synthetic 25 C / 1013 hPa
     # as a "BMP280" no matter what its config said.
+    # --- covariance, and the simulated world -------------------------------
+    #
+    # Ported from linorobot2_hardware's robot_config_engine, which carries all
+    # of this in an `imu_tuning` block and emits it as compile-time macros.
+    # Here it goes in the env, because in this project a robot is a
+    # configuration and not a build: the same released image has to serve a
+    # board with an MPU6050 and a board with a BNO085, whose accelerometer
+    # variances differ by a factor of seven.
+    #
+    # The firmware keeps its #ifndef defaults as the fallback, so a blank env
+    # still boots with sane values; envFloatVec() leaves them alone when a key
+    # is absent. A scalar expands to every axis -- most people have one number,
+    # and the ones who measured per-axis values must not have to average them.
+    tuning = tgt.get("imu_tuning") or {}
+    if not isinstance(tuning, dict):
+        tuning = {}
+
+    # Datasheet-derived variances, from the config engine: roughly
+    # (noise_density * sqrt(100 Hz))^2. Without these a config that names its
+    # IMU still ships the firmware's 1e-5 placeholder, which tells the EKF the
+    # sensor is nearly perfect and lets it trust a cheap MPU6050 as much as a
+    # BNO085.
+    _imu_cov = {
+        "BNO085": {"accel_cov": 2.2e-4, "gyro_cov": 1.5e-6, "ori_cov": 4e-3},
+        "LSM6DSOX": {"accel_cov": 4.7e-5, "gyro_cov": 4.4e-7},
+        "ICM20948": {"accel_cov": 5.1e-4, "gyro_cov": 6.9e-6},
+        "QMI8658": {"accel_cov": 8e-5, "gyro_cov": 2e-6},
+        "MPU9250": {"accel_cov": 9e-4, "gyro_cov": 3e-6},
+        "MPU9150": {"accel_cov": 1.5e-3, "gyro_cov": 3e-6},
+        "MPU6050": {"accel_cov": 1.5e-3, "gyro_cov": 3e-6},
+        "GY85": {"accel_cov": 1.8e-3, "gyro_cov": 4.4e-5},
+    }
+    _mag_cov = {"AK09918": 2.3e-14, "ICM20948": 2.3e-14, "QMC5883L": 4e-14,
+                "HMC5883L": 4e-14, "AK8963": 9e-14, "AK8975": 9e-14}
+    # pressure Pa^2 (sigma ~1.7 Pa), temperature C^2 (+/-0.5 C), humidity (0..1)^2 (+/-3 %RH)
+    _env_cov = {"BMP280": [3, 0.25, 0], "BME280": [3, 0.25, 9e-4]}
+
+    def _clean(name):
+        return str(name or "").upper().replace("USE_", "").replace("_IMU", "").replace("_MAG", "")
+
+    defaults = dict(_imu_cov.get(_clean(sensors.get("imu")), {}))
+    mcov = _mag_cov.get(_clean(sensors.get("mag")))
+    if mcov is not None:
+        defaults["mag_cov"] = mcov
+    ecov = _env_cov.get(_clean(sensors.get("env")))
+    if ecov is not None:
+        defaults["env_cov"] = ecov
+
+    def _cov(key, length):
+        value = tuning.get(key)
+        if value is None or value == "":
+            value = defaults.get(key)
+        if value is None or value == "":
+            return
+        values = list(value) if isinstance(value, (list, tuple)) else [value]
+        if len(values) not in (1, length):
+            return
+        env[key] = ",".join(_num(v) for v in values)
+
+    for _key, _len in (("accel_cov", 3), ("gyro_cov", 3), ("ori_cov", 3),
+                       ("mag_cov", 3), ("pose_cov", 6), ("twist_cov", 6),
+                       ("env_cov", 3)):
+        _cov(_key, _len)
+
+    # Hard-iron offsets. Three axes or nothing: an all-zero bias is not a
+    # calibration, and a partial one would silently zero the axes it omits.
+    bias = tuning.get("mag_bias")
+    if isinstance(bias, (list, tuple)) and len(bias) == 3:
+        try:
+            values = [float(v) for v in bias]
+        except (TypeError, ValueError):
+            values = []
+        if values and any(v != 0.0 for v in values):
+            env["mag_bias"] = ",".join(_num(v) for v in values)
+
+    # The barometer's address. 0x77 on the Waveshare General Driver board,
+    # 0x76 on most breakouts -- env.cpp probes the compiled-in one only.
+    if tgt.get("bmp280_addr") is not None:
+        try:
+            env["bmp280_addr"] = int(str(tgt["bmp280_addr"]), 0)
+        except (TypeError, ValueError):
+            pass
+
+    # The simulated world. Fake mode is this project's DEFAULT, so the room the
+    # emulator raycasts and the mass it accelerates are configuration, not
+    # constants -- a Nav2 test wants to move the obstacle wall without
+    # rebuilding, and a 20 kg robot does not accelerate like a 3.5 kg one.
+    sim = tgt.get("simulation") or {}
+    if isinstance(sim, dict):
+        for key, cast in (("fake_map_w", float), ("fake_map_h", float),
+                          ("fake_wall", int), ("fake_wall_x1", float),
+                          ("fake_wall_y1", float), ("fake_wall_x2", float),
+                          ("fake_wall_y2", float), ("fake_mass", float),
+                          ("fake_noise_rpm", float)):
+            src = {"fake_map_w": "map_width", "fake_map_h": "map_height",
+                   "fake_wall": "wall_obstacle", "fake_wall_x1": "wall_x1",
+                   "fake_wall_y1": "wall_y1", "fake_wall_x2": "wall_x2",
+                   "fake_wall_y2": "wall_y2", "fake_mass": "robot_mass",
+                   "fake_noise_rpm": "wheel_noise_rpm"}[key]
+            if sim.get(src) is None:
+                continue
+            try:
+                value = cast(sim[src])
+            except (TypeError, ValueError):
+                continue
+            env[key] = int(value) if cast is int else _num(value)
+
     env["fake_env"] = _bool(sensors.get("use_fake_env", False))
     # The simulated ultrasonic cone. Only ever used when the LiDAR emulator is
     # running (it raycasts from the same room) and no real sonar is wired, so

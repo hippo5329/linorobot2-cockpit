@@ -157,9 +157,13 @@ bool initEnv()
         return true;
     }
 
-    if (!probe(BMP280_ADDR))
+    // 0x77 on the Waveshare General Driver board, 0x76 on most breakouts. The
+    // env names which one to try FIRST; the other is still tried after it, so
+    // a wrong guess costs one extra probe rather than a missing barometer.
+    const uint8_t primary = (uint8_t)envU16("bmp280_addr", BMP280_ADDR);
+    if (!probe(primary))
     {
-        uint8_t alt = (BMP280_ADDR == 0x76) ? 0x77 : 0x76;
+        uint8_t alt = (primary == 0x76) ? 0x77 : 0x76;
         if (!probe(alt))
             return false;
     }

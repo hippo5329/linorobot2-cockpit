@@ -38,6 +38,10 @@ int         envInt(const char *key, int fallback);   // pins: -1 means not wired
 bool        envFlag(const char *key, bool fallback); // "0"/"false"/"no" are false
 uint16_t    envU16(const char *key, uint16_t fallback);
 uint32_t    envU32(const char *key, uint32_t fallback);
+float       envFloat(const char *key, float fallback);
+// Diagonal covariances: one value expands to every axis, or give the whole
+// list. False when the key is absent, so the caller keeps its own default.
+bool        envFloatVec(const char *key, float *out, int n);
 IPAddress   envIP(const char *key, IPAddress fallback);
 
 #endif // MCU_ENV_H

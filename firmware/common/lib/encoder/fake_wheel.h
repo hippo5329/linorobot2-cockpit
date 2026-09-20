@@ -16,6 +16,7 @@
 #define FAKE_WHEEL_H
 
 #include <Arduino.h>
+#include "mcu_env.h"
 #include <micro_ros_utilities/string_utilities.h>
 #include "encoder_interface.h"
 // Self-contained rather than relying on main.cpp to have included these first.
@@ -71,9 +72,30 @@
 #define FAKE_WHEEL_STALL_DUTY 0.04  // duty below which the motor cannot break static friction
 #endif
 
+// Mass and encoder noise are properties of THIS robot, not of the image, so
+// they come from the env with the macros as the fallback. Function-local
+// statics rather than globals: these are read inside a class used before
+// setup() finishes, and a global would be initialised before the flash
+// partition API is usable.
+static inline float fakeRobotMass()
+{
+    static float mass = -1.0f;
+    if (mass < 0.0f)
+        mass = envFloat("fake_mass", (float)FAKE_ROBOT_MASS);
+    return mass;
+}
+
 #ifndef FAKE_WHEEL_NOISE_RPM
 #define FAKE_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
 #endif
+
+static inline float fakeWheelNoiseRpm()
+{
+    static float noise = -1.0f;
+    if (noise < 0.0f)
+        noise = envFloat("fake_noise_rpm", (float)FAKE_WHEEL_NOISE_RPM);
+    return noise;
+}
 
 // +/- peak white noise, scaled by amplitude
 static inline float fakeWheelNoise(float amplitude)
@@ -102,7 +124,7 @@ private:
 
         // heavier robot, more inertia per wheel, slower response
         float tau = (FAKE_WHEEL_TAU_MS / 1000.0) *
-                    ((float)FAKE_ROBOT_MASS / (float)FAKE_WHEEL_REF_MASS);
+                    (fakeRobotMass() / (float)FAKE_WHEEL_REF_MASS);
         if (tau < 0.001) tau = 0.001;
 
         float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM;
@@ -176,7 +198,7 @@ public:
     {
         if (counts_per_rev_ < 0) return 0.0;
         integrate();
-        return wheel_rpm_ + fakeWheelNoise((float)FAKE_WHEEL_NOISE_RPM);
+        return wheel_rpm_ + fakeWheelNoise(fakeWheelNoiseRpm());
     }
 
     inline int32_t read()

@@ -18,6 +18,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include <sensor_msgs/msg/imu.h>
+#include "mcu_env.h"
 
 #ifndef ACCEL_COV
 #define ACCEL_COV { 0.00001, 0.00001, 0.00001 }
@@ -57,9 +58,13 @@ class IMUInterface
         const float mgauss_to_utesla_ = 0.1;
         const float utesla_to_tesla_ = 0.000001;
 
-        const float accel_cov[3] = ACCEL_COV;
-        const float gyro_cov[3] = GYRO_COV;
-        const float ori_cov[3] = ORI_COV;
+        // Covariance is a property of the SENSOR, and which sensor is fitted is
+        // an env key -- so the values are too. The macros stay as the fallback
+        // for a board with a blank env; envFloatVec leaves them alone when the
+        // key is absent. A scalar in the env expands to all three axes.
+        float accel_cov[3] = ACCEL_COV;
+        float gyro_cov[3] = GYRO_COV;
+        float ori_cov[3] = ORI_COV;
         const int sample_size_ = 40;
 
         // Value-initialised, for the same reason imu_msg_ above is: every
@@ -139,6 +144,19 @@ class IMUInterface
         IMUInterface()
         {
             imu_msg_.header.frame_id = micro_ros_string_utilities_set(imu_msg_.header.frame_id, "imu_link");
+            applyEnvCovariance();
+        }
+
+        // The env's values, if it carries any. Called from the constructor
+        // rather than left to each concrete IMU: every one of them inherits
+        // this, and a sensor that forgot the call would publish the firmware's
+        // 1e-5 placeholder while the config said otherwise -- which the EKF
+        // reads as "this IMU is almost perfect".
+        void applyEnvCovariance()
+        {
+            envFloatVec("accel_cov", accel_cov, 3);
+            envFloatVec("gyro_cov", gyro_cov, 3);
+            envFloatVec("ori_cov", ori_cov, 3);
         }
 
         virtual geometry_msgs__msg__Vector3 readAccelerometer() = 0;

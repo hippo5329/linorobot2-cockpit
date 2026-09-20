@@ -263,6 +263,68 @@ uint32_t envU32(const char *key, uint32_t fallback)
     return (uint32_t)parsed;
 }
 
+// Covariances. They are floats, they span nine orders of magnitude (1.5e-3 for
+// an MPU6050's accelerometer against 2.3e-14 for an AK09918's magnetometer),
+// and the sensible way to write one in a config is scientific notation -- so
+// strtod, not the integer parsers above.
+float envFloat(const char *key, float fallback)
+{
+    const char *value = envGet(key, NULL);
+    if (!value || !*value)
+        return fallback;
+    char *end = NULL;
+    double parsed = strtod(value, &end);
+    if (end == value)
+        return fallback;
+    return (float)parsed;
+}
+
+// A diagonal, written either as one number or as the whole list.
+//
+// "a scalar expands, a list is used as-is" is the config engine's rule and it
+// is worth keeping: most people want one number for all three axes, and the
+// ones who have measured per-axis values must not be forced to average them.
+// Returns false and leaves `out` untouched when the key is absent, so the
+// caller's compiled-in default stands.
+bool envFloatVec(const char *key, float *out, int n)
+{
+    const char *value = envGet(key, NULL);
+    if (!value || !*value || !out || n <= 0)
+        return false;
+    float parsed[8];
+    if (n > (int)(sizeof(parsed) / sizeof(parsed[0])))
+        return false;
+    int count = 0;
+    const char *p = value;
+    while (*p && count < n)
+    {
+        char *end = NULL;
+        double v = strtod(p, &end);
+        if (end == p)
+            break;
+        parsed[count++] = (float)v;
+        p = end;
+        while (*p == ',' || *p == ' ' || *p == '\t')
+            p++;
+    }
+    if (count == 0)
+        return false;
+    // One value means "the same on every axis"; anything short of the full
+    // list is a typo, and silently zero-filling a covariance would tell the
+    // EKF the robot is perfectly certain about that axis.
+    if (count == 1)
+    {
+        for (int i = 0; i < n; i++)
+            out[i] = parsed[0];
+        return true;
+    }
+    if (count != n)
+        return false;
+    for (int i = 0; i < n; i++)
+        out[i] = parsed[i];
+    return true;
+}
+
 IPAddress envIP(const char *key, IPAddress fallback)
 {
     const char *value = envGet(key, NULL);

@@ -28,12 +28,6 @@ static int   bat_pin = -1;
 static float bat_r1 = 0.0f, bat_r2 = 1.0f;
 static float bat_min = 0.0f, bat_max = 0.0f, bat_cap = 0.0f;
 
-static float envFloatBat(const char *key, float fallback)
-{
-    const char *v = envGet(key, NULL);
-    return (v && *v) ? (float)atof(v) : fallback;
-}
-
 #define INA219_ADDRESS 0x42
 INA219_WE ina219 = INA219_WE(INA219_ADDRESS);
 
@@ -56,19 +50,19 @@ void initBattery(){
   initMcuEnv();
   const char *pin_env = envGet("battery_pin", NULL);
   bat_pin = (pin_env && *pin_env) ? (int)strtol(pin_env, NULL, 10) : (int)BATTERY_PIN;
-  bat_r1 = envFloatBat("bat_r1", BATTERY_R1);
-  bat_r2 = envFloatBat("bat_r2", BATTERY_R2);
+  bat_r1 = envFloat("bat_r1", BATTERY_R1);
+  bat_r2 = envFloat("bat_r2", BATTERY_R2);
 #if defined(BATTERY_MIN) && defined(BATTERY_MAX)
-  bat_min = envFloatBat("bat_min", BATTERY_MIN);
-  bat_max = envFloatBat("bat_max", BATTERY_MAX);
+  bat_min = envFloat("bat_min", BATTERY_MIN);
+  bat_max = envFloat("bat_max", BATTERY_MAX);
 #else
-  bat_min = envFloatBat("bat_min", 0.0f);
-  bat_max = envFloatBat("bat_max", 0.0f);
+  bat_min = envFloat("bat_min", 0.0f);
+  bat_max = envFloat("bat_max", 0.0f);
 #endif
 #ifdef BATTERY_CAP
-  bat_cap = envFloatBat("bat_cap", BATTERY_CAP);
+  bat_cap = envFloat("bat_cap", BATTERY_CAP);
 #else
-  bat_cap = envFloatBat("bat_cap", 0.0f);
+  bat_cap = envFloat("bat_cap", 0.0f);
 #endif
   if (bat_pin >= 0) {
     pinMode(bat_pin, INPUT);

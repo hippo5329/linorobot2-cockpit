@@ -17,6 +17,7 @@
 #define MAG_INTERFACE
 
 #include <sensor_msgs/msg/magnetic_field.h>
+#include "mcu_env.h"
 
 #ifndef MAG_COV
 #define MAG_COV { 0.00001, 0.00001, 0.00001 }
@@ -27,12 +28,14 @@ class MAGInterface
     protected:
         // Value-initialised; see imu_interface.h for why.
         sensor_msgs__msg__MagneticField mag_msg_{};
-        const float mag_cov[3] = MAG_COV;
+        // See imu_interface.h: the env wins, the macro is the fallback.
+        float mag_cov[3] = MAG_COV;
 
     public:
         MAGInterface()
         {
             mag_msg_.header.frame_id = micro_ros_string_utilities_set(mag_msg_.header.frame_id, "imu_link");
+            envFloatVec("mag_cov", mag_cov, 3);
         }
 
         virtual geometry_msgs__msg__Vector3 readMagnetometer() = 0;

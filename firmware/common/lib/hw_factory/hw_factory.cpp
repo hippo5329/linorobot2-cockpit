@@ -23,13 +23,7 @@ static int envPin(int index, const char *suffix, int fallback)
 }
 
 
-static float envFloat(const char *key, float fallback)
-{
-    const char *value = envGet(key, NULL);
-    if (!value || !*value)
-        return fallback;
-    return strtof(value, NULL);
-}
+// envFloat() is mcu_env's now -- this file used to keep its own copy.
 
 // The compile-time matrix, indexed so the factory can loop. These are the
 // values the config was generated for and they remain the fallback for every

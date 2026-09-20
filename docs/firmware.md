@@ -568,3 +568,56 @@ first, and until now a board only reached that state briefly between dropouts. I
 it for its whole life, so the disconnected branch runs once every `WIFI_RETRY_INTERVAL_MS` (5 s)
 instead of once per `loop()` — which is the same stall that once gave one `loop()` per 7 s and
 `/imu/data_raw` at 0.14 Hz.
+
+### Covariance and the simulated world are env keys, not build constants
+
+Ported from linorobot2_hardware's `robot_config_engine`, which carries these in
+its spec and emits compile-time macros. Here they go in the env block, for the
+reason everything else does: one released image has to serve a board with an
+MPU6050 and a board with a BNO085, and their accelerometer variances differ by
+a factor of seven. The firmware keeps its `#ifndef` defaults as the fallback —
+`envFloatVec()` leaves them alone when a key is absent — so a blank env still
+boots with sane values.
+
+```yaml
+base_controller:
+  bmp280_addr: "0x76"        # 0x77 on the Waveshare board, 0x76 on breakouts
+  imu_tuning:
+    accel_cov: 0.0015        # a scalar expands to all three axes
+    gyro_cov:  3e-06
+    pose_cov:  [1, 2, 3, 4, 5, 6]   # ...or give the whole diagonal
+    twist_cov: 0.001
+    mag_bias:  [1.5, -2.25, 0.75]   # hard-iron offsets, three axes or nothing
+  simulation:                # key names are the config engine's schema.json
+    map_width: 10.0
+    map_height: 6.0
+    wall_obstacle: true
+    wall_x1: 2.0
+    wall_y1: -1.5
+    robot_mass: 3.5
+    wheel_noise_rpm: 1.0
+```
+
+Two rules are worth stating because both protect the EKF from a config mistake:
+
+- **A scalar expands, a full list is used as-is, and anything in between is
+  refused.** Silently zero-filling the axes a user forgot would tell the EKF
+  the robot is perfectly certain about them.
+- **An all-zero `mag_bias` is not a calibration**, so it is not written and the
+  firmware subtracts nothing. Subtracting a bias nobody measured is worse than
+  subtracting none.
+
+When the config names a sensor but gives no covariance, mcu_env fills in a
+datasheet-derived variance (roughly `(noise_density·√100 Hz)²`) from the same
+table the config engine uses. Without it a config that names its IMU still
+ships the firmware's `1e-5` placeholder, which reads as "this sensor is
+nearly perfect".
+
+The simulated room is configuration because **fake mode is the default here**:
+a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
+12 kg robot does not accelerate like a 3.5 kg one.
+
+Still compile-time: `TOPIC_PREFIX`. The firmware pastes it onto every topic
+name at compile time (`TOPIC_PREFIX "odom/unfiltered"`), so moving it to the
+env means building those strings at run time. Worth doing for multi-robot, and
+not done here.
