@@ -45,16 +45,19 @@ jobs:
                   pico2-lyrical, pico-lyrical, esp32-lyrical, esp32s3-lyrical]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
+      # GitHub's runner and in the act image alike, and on a self-hosted runner
+      # with no tool cache setup-python DOWNLOADS the interpreter from GitHub --
+      # measured at 11m30s, per job, on every job. The firmware matrix is eight
+      # jobs. --break-system-packages is what PEP 668 needs to pip into the
+      # system interpreter, which is fine in a throwaway CI container.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.platformio/.cache
             ~/.platformio/packages
           key: pio-release-${{ matrix.profile }}-${{ hashFiles('firmware/common/platformio_base.ini', 'firmware/platformio.ini') }}
-      - run: pip install --upgrade platformio pyyaml
+      - run: pip install --break-system-packages --upgrade platformio pyyaml
       - name: Build the image
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"

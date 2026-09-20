@@ -10,8 +10,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # PEP 668 marks the distro interpreter externally managed, and the jobs here
+  # no longer run actions/setup-python (it downloaded the interpreter on every
+  # job). Our own pip calls pass --break-system-packages, but
+  # micro_ros_platformio shells out to `/usr/bin/python3 -m pip install
+  # catkin-pkg` from inside the PlatformIO build, where no flag of ours
+  # reaches it -- that is what failed the pico2w firmware job. pip reads this
+  # env var for the same effect. Safe: every one of these runs is a
+  # throwaway container.
+  PIP_BREAK_SYSTEM_PACKAGES: "1"
 
 jobs:
   checks:
@@ -19,10 +30,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install pyyaml pytest
+      # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
+      # GitHub's runner and in the act image alike, and on a self-hosted runner
+      # with no tool cache setup-python DOWNLOADS the interpreter from GitHub --
+      # measured at 11m30s, per job, on every job. The firmware matrix is eight
+      # jobs. --break-system-packages is what PEP 668 needs to pip into the
+      # system interpreter, which is fine in a throwaway CI container.
+      - run: pip install --break-system-packages pyyaml pytest
       - name: Syntax
         run: python3 -m py_compile scripts/*.py launchers/*.py web/backend/*.py
       - name: Unit tests (env block, header generator, access policy, yaml merge)
@@ -51,10 +65,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install pyyaml pytest fastapi uvicorn
+      # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
+      # GitHub's runner and in the act image alike, and on a self-hosted runner
+      # with no tool cache setup-python DOWNLOADS the interpreter from GitHub --
+      # measured at 11m30s, per job, on every job. The firmware matrix is eight
+      # jobs. --break-system-packages is what PEP 668 needs to pip into the
+      # system interpreter, which is fine in a throwaway CI container.
+      # pyserial too: main.py imports it, and its apt fallback installs
+      # python3-serial into the SYSTEM interpreter, which setup-python's
+      # tool-cache Python cannot see. That mismatch is what sent the first
+      # run of this job into the dependency loop.
+      - run: pip install --break-system-packages pyyaml pytest fastapi uvicorn pyserial
       # The web UI is a different code path from the pipeline, and it is the
       # one users touch. Every defect the 2026-09-19 UI pass found was
       # server-side -- the header generator, the prebuilt cache swap, the flash
@@ -101,11 +122,49 @@ jobs:
   image:
     name: Robot image (jazzy) and its ROS workspace
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Stage the sibling ROS package (LD19 driver)
         run: bash scripts/prepare_docker_vendor.sh
+      # buildkit runs in its own container, so neither the host's
+      # registries.conf nor the job container's environment reaches it: this
+      # job was the one place in CI that still went to Docker Hub directly,
+      # and under a full matrix its DNS lookup for registry-1.docker.io timed
+      # out and failed the build. A self-hosted runner can name a
+      # pull-through cache in REGISTRY_MIRROR; where it is unset (GitHub) the
+      # config is empty and setup-buildx-action skips it, so the job is
+      # unchanged there.
+      - name: Point buildkit at the registry cache, where there is one
+        id: buildkitd
+        run: |
+          if [ -z "${REGISTRY_MIRROR:-}" ]; then
+            echo "config=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          host=${REGISTRY_MIRROR#*://}
+          {
+            echo "config<<BUILDKITD_EOF"
+            echo "[registry.\"docker.io\"]"
+            echo "  mirrors = [\"$host\"]"
+            echo "[registry.\"$host\"]"
+            echo "  http = true"
+            echo "BUILDKITD_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "buildkit will pull docker.io through $host"
       - uses: docker/setup-buildx-action@v3
+        with:
+          # buildkit gets the host's network stack instead of a NAT'd bridge
+          # of its own. This is the only step in CI that lands a container on
+          # a nested bridge, so it is the only one that fails when that
+          # bridge has no egress -- which, on a rootless container runtime,
+          # depends on which interface the network namespace happened to be
+          # built around. It surfaced first as a DNS timeout and then, once a
+          # mirror was configured, as "connect: network is unreachable". Host
+          # networking removes the dependency, and is one NAT hop less on a
+          # hosted runner too.
+          driver-opts: network=host
+          buildkitd-config-inline: ${{ steps.buildkitd.outputs.config }}
       # Build only -- no push, no registry credentials. The point is that the
       # image is built at all on a CLEAN checkout: rc-20260919 shipped a
       # half-built ROS workspace on both distros because CMakeLists.txt
@@ -126,6 +185,13 @@ jobs:
   firmware:
     name: Firmware ${{ matrix.env }}
     runs-on: ubuntu-24.04
+    # A wedged download, not a slow build. `pio run` sat for 19 minutes at 0%
+    # CPU, blocked in read() on an ESTABLISHED socket to 185.199.109.133 with
+    # both queues empty -- a dead connection to GitHub's asset CDN that
+    # PlatformIO gives no read timeout. Ten of these held runner slots until
+    # act_runner's 3h ceiling. A job that has stopped making progress should
+    # go red and free the slot; a real build of the slowest env is ~6 min.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -139,9 +205,12 @@ jobs:
               esp32_lyrical, esp32s3_lyrical, pico_lyrical, pico2_lyrical]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
+      # GitHub's runner and in the act image alike, and on a self-hosted runner
+      # with no tool cache setup-python DOWNLOADS the interpreter from GitHub --
+      # measured at 11m30s, per job, on every job. The firmware matrix is eight
+      # jobs. --break-system-packages is what PEP 668 needs to pip into the
+      # system interpreter, which is fine in a throwaway CI container.
       - uses: actions/cache@v4
         with:
           path: |
@@ -150,7 +219,27 @@ jobs:
             ~/.platformio/packages
           key: pio-${{ matrix.env }}-${{ hashFiles('firmware/common/platformio_base.ini', 'firmware/platformio.ini') }}
           restore-keys: pio-${{ matrix.env }}-
-      - run: pip install --upgrade platformio pyyaml
+      # micro_ros_platformio builds the micro-ROS library with colcon, which
+      # needs cmake. GitHub's ubuntu-24.04 image ships it; a bare container
+      # image need not, and `pio run` then dies four minutes in with
+      # "RuntimeError: Could not find 'cmake' executable" -- inside the
+      # PlatformIO build, where it reads as a firmware fault rather than a
+      # missing tool. Installed only when absent, so this is a no-op on
+      # GitHub. git is told to give up on a stalled clone rather than hang:
+      # the arduino-pico framework pulls some forty submodules, and a dead
+      # connection with no timeout held whole jobs at 0% CPU until the
+      # runner's ceiling.
+      - name: Tools the hosted image has and a container image may not
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            [ -n "${APT_PROXY:-}" ] && echo "Acquire::http::Proxy \"$APT_PROXY\";" | sudo tee /etc/apt/apt.conf.d/01proxy >/dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends cmake
+          fi
+          cmake --version | head -1
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
+      - run: pip install --break-system-packages --upgrade platformio pyyaml
       - name: Generate the header for the reference robot of this env
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
@@ -188,6 +277,19 @@ jobs:
     runs-on: ubuntu-24.04
     container: ros:jazzy-ros-base
     steps:
+      # actions/checkout is a JavaScript action, so it needs node INSIDE the job
+      # container. GitHub's hosted runner injects one; act_runner does not, and
+      # ros:jazzy-ros-base has none -- the job died on
+      #   crun: executable file `node` not found in $PATH ... exit code 127
+      # before it had checked anything out. A shell step runs without node, so
+      # this goes first; on GitHub node is already there and it is a no-op.
+      - name: node for actions/checkout
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            [ -n "${APT_PROXY:-}" ] && echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs
+          fi
+          node --version
       - uses: actions/checkout@v4
       - name: Dependencies
         run: |
