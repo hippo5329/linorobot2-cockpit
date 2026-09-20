@@ -219,6 +219,107 @@ def ensure_port_permissions(serial_port: str):
             pass
 
 
+# The USB port the board we are flashing is plugged into, as sysfs names it
+# ("3-2", "7-1.1"). Remembered rather than re-derived, because the tty vanishes
+# the moment the board enters BOOTSEL and there is nothing left to derive it
+# from afterwards.
+_TARGET_USB_PATH: Optional[str] = None
+
+
+def usb_path_for_tty(port: str) -> Optional[str]:
+    """sysfs port path of the USB device behind a tty, or None.
+
+    Resolved through the device NUMBERS, not the name. Inside a container the
+    tty is usually a bind mount -- the bench passes the host's /dev/ttyACM1 in
+    as /dev/ttyACM0 -- so /sys/class/tty/<basename> is a different board. The
+    major:minor pair survives the bind, and identifies exactly one.
+    """
+    try:
+        st = os.stat(port)
+    except OSError:
+        return None
+    want = "%d:%d" % (os.major(st.st_rdev), os.minor(st.st_rdev))
+    for dev_file in glob.glob("/sys/class/tty/*/dev"):
+        try:
+            with open(dev_file) as fh:
+                if fh.read().strip() != want:
+                    continue
+        except OSError:
+            continue
+        node = os.path.realpath(os.path.join(os.path.dirname(dev_file), "device"))
+        # Climb from the CDC interface to the USB device that owns it: the one
+        # directory on the way up that has a busnum.
+        for _ in range(8):
+            if os.path.isfile(os.path.join(node, "busnum")):
+                return os.path.basename(node)
+            parent = os.path.dirname(node)
+            if parent == node or not parent.startswith("/sys"):
+                break
+            node = parent
+    return None
+
+
+def remember_usb_path(port: str, stamp_path: Optional[str] = None) -> Optional[str]:
+    """Pin the flash to ONE board, before anything can make the tty disappear.
+
+    Two RP-series boards on one host is not an exotic setup -- this bench has a
+    Pico and a Pico 2 on every test machine -- and picotool refuses to guess:
+
+        ERROR: Command requires a single RP-series device to be targeted.
+
+    It only refuses once BOTH are in BOOTSEL, so serial runs never saw it and
+    the first parallel run failed all four RP2 cells at once: each cell touched
+    its own board, and then every picotool call in either cell saw two.
+
+    The port path is the right key. Bus and device numbers change when the board
+    re-enumerates into BOOTSEL; the physical port it is plugged into does not.
+    The USB serial is no good either -- an RP2040 bootrom reports a different
+    one from the running application (E0C9125B0D9B vs D665C007DA2A1336 on this
+    bench), so --ser would work on RP2350 and silently target nothing on RP2040.
+    """
+    global _TARGET_USB_PATH
+    path = usb_path_for_tty(port) if port else None
+    if path is None and stamp_path:
+        # The board was already in BOOTSEL when we arrived, so there is no tty
+        # to ask. The last flash through this port wrote down where it was.
+        path = stamp_path
+        log(f"board on {port} is not enumerated as a tty; targeting USB port "
+            f"{path} from the last flash's stamp")
+    _TARGET_USB_PATH = path
+    if path:
+        log(f"target board: USB port {path}")
+    return path
+
+
+def stamped_usb_path(env: str, port: str) -> Optional[str]:
+    """Where the last flash through this port found the board, if it said."""
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import mcu_probe
+        return (mcu_probe.read_stamp(env, port) or {}).get("usb_path")
+    except Exception:
+        return None
+
+
+def picotool_target(root: str = "/sys/bus/usb/devices") -> List[str]:
+    """`--bus`/`--address` for the remembered port, or nothing.
+
+    Read fresh on every call: BOOTSEL is a re-enumeration, so the address
+    changes underneath us between the touch and the load.
+    """
+    if not _TARGET_USB_PATH:
+        return []
+    dev = os.path.join(root, _TARGET_USB_PATH)
+    try:
+        with open(os.path.join(dev, "busnum")) as fh:
+            bus = fh.read().strip()
+        with open(os.path.join(dev, "devnum")) as fh:
+            addr = fh.read().strip()
+    except OSError:
+        return []
+    return ["--bus", bus, "--address", addr]
+
+
 # How long to keep looking for the bootloader after the touch. The board itself
 # re-enumerates in well under a second; what takes longer is anything between
 # this process and the USB device -- on the bench that is Incus hot-plugging the
@@ -247,7 +348,8 @@ def wait_for_bootsel(timeout_s: float = BOOTSEL_WAIT_S) -> bool:
     while time.time() < deadline:
         for pt in binaries:
             try:
-                res = subprocess.run([pt, "info"], capture_output=True, timeout=10)
+                res = subprocess.run([pt, "info"] + picotool_target(),
+                                     capture_output=True, timeout=10)
             except Exception:
                 continue
             if res.returncode == 0:
@@ -314,6 +416,12 @@ def _rp2_mode_from_sysfs(root: str = "/sys/bus/usb/devices") -> Optional[str]:
         names = os.listdir(root)
     except OSError:
         return None
+    # With the board identified, answer about THAT board. Otherwise a Pico in
+    # BOOTSEL next to a Pico 2 running the application reports "bootsel" for
+    # both, and report_failed_bootsel_request() -- which only fires on "app" --
+    # stays silent about the one that actually refused.
+    if _TARGET_USB_PATH and _TARGET_USB_PATH in names:
+        names = [_TARGET_USB_PATH]
     for name in names:
         dev = os.path.join(root, name)
         try:
@@ -596,11 +704,15 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
 
     is_rp2350 = "2350" in env.lower() or "pico2" in env.lower()
     family_flag = ["--family", "rp2350-arm-s"] if is_rp2350 else ["--family", "rp2040"]
+    # Which board. The family only says which CHIP; with two RP2350s, or with a
+    # Pico and a Pico 2 both in BOOTSEL, picotool still has a choice to make and
+    # refuses to make it. See remember_usb_path().
+    target = picotool_target()
 
     for pt in pts:
-        log(f"Attempting direct picotool upload with: {pt} ({' '.join(family_flag)})...")
+        log(f"Attempting direct picotool upload with: {pt} ({' '.join(family_flag + target)})...")
         # Standard load with family constraint
-        cmd = [pt, "load", "-x"] + family_flag + [uf2_path]
+        cmd = [pt, "load", "-x"] + family_flag + [uf2_path] + target
         res = run_tool(cmd, timeout=20)
         if res.returncode == 0:
             log(f"✅ Firmware flashed successfully via {pt} ({' '.join(family_flag)})!")
@@ -610,7 +722,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
         # If permission denied, try with sudo -n
         out_combined = ((res.stderr or "") + (res.stdout or "")).lower()
         if "permission" in out_combined or "sudo" in out_combined:
-            sudo_cmd = ["sudo", "-n", pt, "load", "-x"] + family_flag + [uf2_path]
+            sudo_cmd = ["sudo", "-n", pt, "load", "-x"] + family_flag + [uf2_path] + target
             sudo_res = run_tool(sudo_cmd, timeout=20)
             if sudo_res.returncode == 0:
                 log(f"✅ Firmware flashed successfully via sudo {pt} ({' '.join(family_flag)})!")
@@ -618,7 +730,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
                 return True
 
         # Force load with family constraint
-        cmd_f = [pt, "load", "-f", "-x"] + family_flag + [uf2_path]
+        cmd_f = [pt, "load", "-f", "-x"] + family_flag + [uf2_path] + target
         res_f = run_tool(cmd_f, timeout=20)
         if res_f.returncode == 0:
             log(f"✅ Firmware flashed successfully via {pt} (-f {' '.join(family_flag)})!")
@@ -627,7 +739,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
 
         out_f_combined = ((res_f.stderr or "") + (res_f.stdout or "")).lower()
         if "permission" in out_f_combined or "sudo" in out_f_combined:
-            sudo_cmd_f = ["sudo", "-n", pt, "load", "-f", "-x"] + family_flag + [uf2_path]
+            sudo_cmd_f = ["sudo", "-n", pt, "load", "-f", "-x"] + family_flag + [uf2_path] + target
             sudo_res_f = run_tool(sudo_cmd_f, timeout=20)
             if sudo_res_f.returncode == 0:
                 log(f"✅ Firmware flashed successfully via sudo {pt} (-f {' '.join(family_flag)})!")
@@ -636,12 +748,20 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
 
         # Fallback without family constraint if older picotool didn't support --family
         if "unknown option" in out_combined or "unknown option" in out_f_combined:
-            plain_res = run_tool([pt, "load", "-x", uf2_path], timeout=20)
+            plain_res = run_tool([pt, "load", "-x", uf2_path] + target, timeout=20)
             if plain_res.returncode == 0:
                 log(f"✅ Firmware flashed successfully via {pt} (plain)!")
                 time.sleep(3.0)
                 return True
 
+        if "single rp-series device" in (out_combined + out_f_combined) and not target:
+            # Naming the real problem. The generic message that follows this
+            # ("not in BOOTSEL") is wrong here and sends the user to hold down
+            # a button that is not the issue.
+            log("⚠️  more than one RP-series board is in BOOTSEL and this run "
+                "could not tell which one to write. Plug the board in while it "
+                "is RUNNING (so the tty exists and identifies it), or leave "
+                "only one board in BOOTSEL.")
         log(f"picotool attempt ({pt}) failed: {res_f.stderr or res.stderr or res_f.stdout}")
 
     return False
@@ -692,7 +812,8 @@ def flash_env_via_picotool(env_bin: str, env: str = "pico2") -> bool:
         # whole flash still reported success while the board kept whatever env it
         # already had. Found on a 2026-09-16 rig run: a board flashed on a
         # fresh box had no env block at all and fell back to the header.
-        base = [pt, "load"] + family_flag + ["-v", env_bin, "-t", "bin", "-o", hex(offset)]
+        base = ([pt, "load"] + family_flag + ["-v", env_bin, "-t", "bin",
+                "-o", hex(offset)] + picotool_target())
         for cmd in (base, ["sudo", "-n"] + base, base[:2] + ["-f"] + base[2:]):
             # (base[:2] is [picotool, load], so -f still precedes the filename.)
             res = run_tool(cmd, timeout=20)
@@ -862,8 +983,10 @@ def rp2_reboot_into_app(env: str) -> bool:
     # write ended with two `ERROR: unexpected option` blocks before the plain
     # form succeeded. The family filter belongs to `load`, where it stops an
     # image built for one RP2 landing on the other.
+    target = picotool_target()
     for pt in find_picotool_binaries():
-        for cmd in ([pt, "reboot", "-f"], ["sudo", "-n", pt, "reboot", "-f"]):
+        for cmd in ([pt, "reboot", "-f"] + target,
+                    ["sudo", "-n", pt, "reboot", "-f"] + target):
             if run_tool(cmd, timeout=15).returncode == 0:
                 log("✅ board rebooted into the application")
                 return True
@@ -1027,6 +1150,10 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     stamp["app"] = app or stamp.get("app") or "base"
     stamp["env"] = env
     stamp["port"] = port
+    # Where this board physically is, so a later run can still name it when the
+    # board is sitting in BOOTSEL and has no tty to be resolved through.
+    if _TARGET_USB_PATH:
+        stamp["usb_path"] = _TARGET_USB_PATH
     if env_bin and os.path.isfile(env_bin):
         stamp["env_sha256"] = hashlib.sha256(open(env_bin, "rb").read()).hexdigest()
     elif params:
@@ -1169,6 +1296,11 @@ def main() -> int:
     if _real_port != args.port:
         log(f"port {args.port} -> {_real_port}")
         args.port = _real_port
+
+    # Pin the flash to one physical board while the tty still exists to say
+    # which one it is. Must happen before anything touches the port.
+    if is_pico_family(args.env):
+        remember_usb_path(args.port, stamp_path=stamped_usb_path(args.env, args.port))
 
 
     firmware_dir = os.path.abspath(os.path.join(REPO_ROOT, args.firmware_dir) if not os.path.isabs(args.firmware_dir) else args.firmware_dir)
