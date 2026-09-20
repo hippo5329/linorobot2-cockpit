@@ -113,3 +113,28 @@ def test_the_ui_pipeline_does_not_ask_for_shutdown():
     window = src[i:i + 2000]
     assert "--shutdown-when-done" not in window, (
         "the 1-Click button must leave the robot running")
+
+
+def test_a_zombie_launch_is_not_a_running_robot(state):
+    """The pipeline exits on purpose, so its `ros2 launch` children are
+    reparented and sit as <defunct> until init collects them -- and their
+    process GROUP still exists, so killpg(pgid, 0) succeeds and the corpse
+    reads as alive. Measured on the bench: all three launches were
+    `[ros2] <defunct>` after being stopped."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    pgid = os.getpgid(proc.pid)
+    # Do NOT wait(): leaving it uncollected is exactly the case under test.
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        with open(f"/proc/{proc.pid}/stat") as fh:
+            data = fh.read()
+        if data[data.rindex(")") + 1:].split()[0] == "Z":
+            break
+        time.sleep(0.05)
+    else:
+        pytest.skip("could not produce a zombie on this system")
+
+    robot_stack.record("bringup", proc.pid, pgid=pgid, state_dir=state)
+    assert robot_stack.load(state_dir=state) == [], (
+        "a defunct launch was reported as a running robot")
+    proc.wait(timeout=5)

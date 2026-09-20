@@ -66,9 +66,30 @@ def _write(entries: list, state_dir: str = None) -> None:
         pass
 
 
+def _is_zombie(pid: int) -> bool:
+    """A reaped-but-not-collected `ros2 launch` is not a running robot.
+
+    Its parent is the pipeline, which exited on purpose, so nothing collects
+    it until init does -- and meanwhile its process GROUP still exists, so
+    killpg(pgid, 0) succeeds and the corpse reads as alive. Measured here: all
+    three launches sat as `[ros2] <defunct>` after being stopped.
+    """
+    try:
+        with open(f"/proc/{int(pid)}/stat") as fh:
+            # ... ) S ... -- the state follows the comm field, which may itself
+            # contain spaces or brackets, so split after the last ')'.
+            data = fh.read()
+        return data[data.rindex(")") + 1:].split()[0] == "Z"
+    except (OSError, ValueError, IndexError):
+        return False
+
+
 def is_alive(entry: dict) -> bool:
     pgid = entry.get("pgid")
     if not pgid:
+        return False
+    pid = entry.get("pid")
+    if pid and _is_zombie(pid):
         return False
     try:
         os.killpg(int(pgid), 0)
