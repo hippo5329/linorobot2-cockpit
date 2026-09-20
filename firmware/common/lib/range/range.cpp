@@ -118,11 +118,22 @@ sensor_msgs__msg__Range getRange()
     return range_msg_;
 }
 
-void initRange()
+void initRange(bool allow_hardware)
 {
     initMcuEnv();
     trig_pin = envInt("sonar_trig", TRIG_PIN);
     echo_pin = envInt("sonar_echo", ECHO_PIN);
+
+    // Fake mode masks a real sonar. A simulated robot must not drive real pins:
+    // its range has to come from the same simulated room its scan does, or
+    // /sonar and /scan describe two different worlds. The caller decides --
+    // main.cpp knows whether the wheels and the LiDAR are simulated -- and here
+    // it simply means the pins are dropped before anything is configured.
+    if (!allow_hardware)
+    {
+        trig_pin = -1;
+        echo_pin = -1;
+    }
 
     range_msg_.header.frame_id = micro_ros_string_utilities_set(range_msg_.header.frame_id, "sonar_link");
     range_msg_.field_of_view = FOV;

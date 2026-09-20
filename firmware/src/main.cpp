@@ -846,7 +846,11 @@ void setup()
         }
     }
     initBattery();
-    initRange();
+    // Fake mode masks the sonar. `fake_ld19` is read directly rather than
+    // waiting for fake_lidar_on below, because initRange() has to happen before
+    // the LiDAR block and the answer is the same either way.
+    const bool sonar_faked = fake_wheels || envFlag("fake_ld19", FAKE_LD19_DEFAULT);
+    initRange(!sonar_faked);
     env_present = initEnv();
     // Three states, carried by one optional env key:
     //
@@ -922,7 +926,11 @@ void setup()
     // conjure one without the emulator.
     safety_stop_on = envFlag("safety_stop", false);
     safety_stop_range = (float)atof(envGet("safety_stop_m", "0.25"));
-    range_fake = !rangePresent() && fake_lidar_on && envFlag("fake_sonar", true);
+    // The simulated cone when anything is simulated, the real sensor only on a
+    // robot that is entirely real. rangePresent() is already false in fake mode
+    // -- initRange() dropped the pins -- so this cannot drive hardware either
+    // way; it decides what, if anything, /sonar carries.
+    range_fake = fake_lidar_on && envFlag("fake_sonar", true);
     publish_range = rangePresent() || range_fake;
     Serial.printf("[range] /sonar %s\n",
                   !publish_range ? "off (no sonar pins, no emulator)"
