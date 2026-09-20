@@ -182,11 +182,29 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
               f"it may not be the current release")
         return profile_dir
 
+    def use_local() -> str:
+        """The image this machine built, when the repo has published none.
+
+        Not a fallback for a network problem -- there is nothing to download.
+        build_prebuilt.py writes into exactly this directory, and the "no
+        release yet" error tells the user to run it, so ignoring what they
+        then built is self-contradictory. It cost the whole bench a Nav2 pass:
+        every release had been deleted before cutting a new candidate, six
+        cells had verified local images staged, and all six refused to start.
+        """
+        manifest = verify(profile_dir)
+        print(f"[fetch_prebuilt] {repo} has published no release; using the locally "
+              f"built {profile} (built {manifest.get('built')}, "
+              f"commit {manifest.get('commit')})")
+        return profile_dir
+
     version = version or repo_version()
     if is_floating(version):
         try:
             resolved = newest_release_tag(repo)
         except SystemExit:
+            if have_cache:
+                return use_local()
             raise
         except Exception as exc:
             return fall_back(str(exc))

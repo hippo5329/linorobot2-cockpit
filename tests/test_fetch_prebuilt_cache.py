@@ -101,6 +101,36 @@ def test_offline_falls_back_to_the_cache_and_says_so(prebuilt_dir, monkeypatch, 
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "bb92e60"
 
 
+def test_a_locally_built_image_is_used_when_no_release_is_published(prebuilt_dir,
+                                                                    monkeypatch, capsys):
+    """`build_prebuilt.py` writes into this very directory, and the "no release
+    yet" error tells the user to run it. Ignoring what they then built cost the
+    bench a whole Nav2 pass on 2026-09-20: every release had been deleted
+    before cutting a new candidate, six cells had verified local images staged,
+    and all six pipelines stopped at the firmware step."""
+    _plant_stale(prebuilt_dir, commit="9dfe703", release=None)
+
+    def no_releases(repo):
+        raise SystemExit("fetch_prebuilt: %s has published no release yet." % repo)
+
+    monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", no_releases)
+    out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
+    assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "9dfe703"
+    msg = capsys.readouterr().out
+    assert "published no release" in msg and "locally built" in msg
+
+
+def test_no_release_and_no_local_image_is_still_an_error(prebuilt_dir, monkeypatch):
+    """There is genuinely nothing to flash; say so rather than invent one."""
+    def no_releases(repo):
+        raise SystemExit("fetch_prebuilt: repo has published no release yet.")
+
+    monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", no_releases)
+    with pytest.raises(SystemExit) as exc:
+        fetch_prebuilt.fetch("esp32-jazzy", version="dev")
+    assert "no release yet" in str(exc.value)
+
+
 def test_offline_without_a_cache_is_an_error(prebuilt_dir, monkeypatch):
     def boom(repo):
         raise OSError("no route to host")
