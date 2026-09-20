@@ -182,8 +182,34 @@ private:
     // loop() is exactly that third at the 12-25 Hz loop() actually runs at.
     //
     // A whole revolution, then: one step() may catch up 38 packets, so a slow
-    // loop costs latency rather than scan rate.
-    static const uint8_t  UDP_MAX_PACKS_PER_STEP = PACKS_PER_REV;
+    // loop costs latency rather than scan rate. TWO revolutions, in fact --
+    // see UDP_RESYNC_LAG_US below for the measurement that says why one is not
+    // enough.
+    static const uint8_t  UDP_MAX_PACKS_PER_STEP = PACKS_PER_REV * 2;
+    // ...and the backlog it is allowed to catch up has to be bigger than the
+    // loop period, or the catch-up never happens. RESYNC_LAG_US is one
+    // revolution, 100 ms. loop() on an ESP32 with the radio on and a micro-ROS
+    // session connected runs at 8 Hz -- 125 ms, because rclc_executor_spin_some
+    // is given 100 ms of it -- so the emitter was over the threshold on nearly
+    // every call, threw the backlog away, emitted the one packet that was due
+    // at the resynced time, and started over.
+    //
+    // Measured on the GenDrv, 2026-09-20, from the emulator's own counters:
+    //
+    //     steps=92777 packs=44848 resync=154
+    //     steps=92820 packs=45035 resync=159   (5.5 s later)
+    //
+    // 43 steps and 5 resyncs in 5.5 s: 8 loop()/s, 34 packets/s against the
+    // 380 a 10 Hz scan needs -- 0.9 revolutions per second. ldlidar_stl_ros2
+    // never completed one, so /scan had no publisher's worth of data and the
+    // whole Wi-Fi robot came up without a scan. With the radio off the same
+    // build managed 317 packets/s, which is what made it look like a Wi-Fi
+    // bandwidth problem rather than a scheduling one.
+    //
+    // Ten revolutions is a second of slack: far more than any loop() this
+    // firmware has ever been measured at, and still small enough that a board
+    // genuinely stalled resyncs instead of spewing a minute of backlog.
+    static const uint32_t UDP_RESYNC_LAG_US = PACK_PERIOD_US * PACKS_PER_REV * 10;
     // ...and it goes out in as few datagrams as possible. 47 bytes flushed
     // three at a time was 141-byte datagrams, ~42 of them a second, each one a
     // Wi-Fi frame contending with the micro-ROS session on the same radio. At
@@ -580,11 +606,18 @@ public:
         // eight packets, so the bytes arrived at roughly the right average rate
         // and ldlidar_stl_ros2 still called it "communication abnormal".
         uint8_t max_packs;
+        // The lag that means "resynchronise rather than catch up" belongs to
+        // the sink as much as the budget does: what counts as hopelessly
+        // behind depends on how often this sink's step() is reached.
+        uint32_t resync_lag = RESYNC_LAG_US;
         if (out_stream_)
             max_packs = MAX_PACKS_PER_STEP;          // a UART, paced for a UART
 #ifdef FAKE_LD19_UDP_SINK
         else if (comm_mode_ == COMM_UDP)
+        {
             max_packs = UDP_MAX_PACKS_PER_STEP;      // a whole revolution is one flush
+            resync_lag = UDP_RESYNC_LAG_US;
+        }
 #endif
         else
             max_packs = 10;                          // raw_scan over micro-ROS
@@ -597,7 +630,7 @@ public:
             // it, which on a slow loop() is a scan the host never sees.
             if ((int32_t)(now - next_pack_us_) < 0) break;
             // if we fell far behind, resync rather than burst through a backlog
-            if ((int32_t)(now - next_pack_us_) > (int32_t)RESYNC_LAG_US)
+            if ((int32_t)(now - next_pack_us_) > (int32_t)resync_lag)
             {
                 next_pack_us_ = now;
                 resyncs_++;
