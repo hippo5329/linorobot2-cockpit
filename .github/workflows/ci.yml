@@ -46,6 +46,58 @@ jobs:
             python3 scripts/mcu_env.py build --params "$cfg" --out /tmp/env.bin
           done
 
+  cockpit-api:
+    name: The cockpit's HTTP API, headless
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml pytest fastapi uvicorn
+      # The web UI is a different code path from the pipeline, and it is the
+      # one users touch. Every defect the 2026-09-19 UI pass found was
+      # server-side -- the header generator, the prebuilt cache swap, the flash
+      # stamp -- and none of them could be reached by calling
+      # one_click_pipeline.py, because the pipeline is the writer that wins.
+      #
+      # The backend needs no ROS and no board: it imports with fastapi,
+      # uvicorn and pyyaml alone, and seeds a config directory from
+      # config/reference on first run. So the whole API is testable here, in
+      # seconds, with no hardware and no browser.
+      - name: Start the cockpit on a scratch config directory
+        run: |
+          set -euo pipefail
+          export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cockpit-cfg"
+          export COCKPIT_PORT=18099
+          python3 web/backend/main.py > "$RUNNER_TEMP/cockpit.log" 2>&1 &
+          # Its own pid, kept for the stop step. Never hunt for it with a
+          # pattern: `pgrep -f web/backend/main.py` also matches the cockpits
+          # running inside the rig's containers.
+          echo $! > "$RUNNER_TEMP/cockpit.pid"
+          for i in $(seq 1 30); do
+            curl -sf -m 2 -o /dev/null http://127.0.0.1:18099/ && break
+            sleep 1
+          done
+          curl -sf -m 5 -o /dev/null http://127.0.0.1:18099/
+      - name: API suite
+        run: |
+          export COCKPIT_URL=http://127.0.0.1:18099
+          export COCKPIT_TOKEN="$(cat "$RUNNER_TEMP/cockpit-cfg/.cockpit_token")"
+          python3 -m pytest tests/api -v
+      - name: The cockpit log must carry no traceback
+        if: always()
+        run: |
+          if grep -q "Traceback (most recent call last)" "$RUNNER_TEMP/cockpit.log"; then
+            echo "::error::the backend logged a traceback while serving the API suite"
+            cat "$RUNNER_TEMP/cockpit.log"
+            exit 1
+          fi
+          tail -20 "$RUNNER_TEMP/cockpit.log" || true
+      - name: Stop the cockpit
+        if: always()
+        run: kill "$(cat "$RUNNER_TEMP/cockpit.pid")" 2>/dev/null || true
+
   image:
     name: Robot image (jazzy) and its ROS workspace
     runs-on: ubuntu-24.04
