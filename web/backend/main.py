@@ -406,7 +406,7 @@ def text_field(data: Dict[str, Any], *keys: str, default: str = "") -> str:
 # ------------------------------------------------------------------------------
 # Single Source of Truth Helpers (Per-Robot Configuration)
 # ------------------------------------------------------------------------------
-DEFAULT_ROBOT_NAME = "rover_pico2"
+DEFAULT_ROBOT_NAME = "pico2_mecanum"
 ACTIVE_PARAMS_PATH = os.path.join(CONFIG_DIR, f"{DEFAULT_ROBOT_NAME}_config.yaml")
 ACTIVE_ROBOT_NAME = DEFAULT_ROBOT_NAME
 # The selection outlives the process. It used to live only in these globals, so
@@ -560,6 +560,21 @@ def regenerate_firmware_headers(controller: Optional[str] = None, params_path: O
     if controller:
         cmd.extend(["--controller", controller])
     return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def require_header(res) -> None:
+    """Stop if the firmware header could not be regenerated.
+
+    gen_firmware_header.py exits non-zero on a pin error and writes the reason
+    to stderr. Every caller here used to discard that, so a rejected config
+    left the previous config.h in place and the next `pio run` built from it:
+    the board came back reporting success and running firmware for a config
+    nobody had asked for. A flash is the one place that must fail loudly.
+    """
+    if res is None or res.returncode == 0:
+        return
+    detail = (res.stderr or res.stdout or "").strip() or "firmware header generation failed"
+    raise HTTPException(status_code=400, detail=detail)
 
 
 def regenerate_robot_description(params: Dict[str, Any], params_path: Optional[str] = None) -> Dict[str, Any]:
@@ -1316,7 +1331,7 @@ async def api_hardware_test(request: Request):
     # to point at: `firmware` is always the project, and which application boots
     # is the `app` key in the env partition.
     firmware_dir = "firmware"
-    regenerate_firmware_headers(mcu_env)
+    require_header(regenerate_firmware_headers(mcu_env))
     params_path = get_active_params_path()
 
     if action == "build":
@@ -1382,6 +1397,8 @@ async def update_params_raw(request: Request):
             "success": True,
             "message": f"Parameters saved to {os.path.basename(active_path)} and firmware header generated.",
             "generator_stdout": res.stdout if res else "",
+            "header_ok": bool(res and res.returncode == 0),
+            "generator_stderr": (res.stderr if res else "") or "",
             "active_path": display_path(active_path),
         }
     except Exception as e:
@@ -1447,7 +1464,10 @@ async def save_robot_config(request: Request):
             f.write(raw_yaml)
         res = regenerate_firmware_headers(params_path=active_path)
         rel_path = display_path(active_path)
-        return {"success": True, "status": "saved", "path": rel_path, "message": f"Saved {rel_path}", "generator_stdout": res.stdout if res else ""}
+        return {"success": True, "status": "saved", "path": rel_path, "message": f"Saved {rel_path}",
+                "generator_stdout": res.stdout if res else "",
+                "header_ok": bool(res and res.returncode == 0),
+                "generator_stderr": (res.stderr if res else "") or ""}
     raise HTTPException(status_code=400, detail="Empty YAML")
 
 
@@ -1562,7 +1582,7 @@ async def select_robot(request: Request):
     config_dir = CONFIG_DIR
     target_yaml = None
 
-    # 1. Match by exact config filename e.g. rover_pico2_config.yaml or rover_pico2.yaml
+    # 1. Match by exact config filename e.g. pico2_mecanum_config.yaml or rover_pico2.yaml
     for candidate in [f"{name}_config.yaml", f"{name}.yaml", f"{name}_config.yml", f"{name}.yml"]:
         p = os.path.join(config_dir, candidate)
         if os.path.isfile(p):
@@ -1639,7 +1659,9 @@ async def import_config(request: Request):
                 params[k] = parsed[k]
         save_params(params)
         res = regenerate_firmware_headers()
-        return {"status": "ok", "type": "yaml", "message": "Imported configuration YAML", "generator_stdout": res.stdout}
+        return {"status": "ok", "type": "yaml", "message": "Imported configuration YAML",
+                "generator_stdout": res.stdout, "header_ok": res.returncode == 0,
+                "generator_stderr": res.stderr or ""}
 
     return {"status": "ok", "message": "Imported config successfully"}
 
