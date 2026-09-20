@@ -34,7 +34,7 @@ the identical errno. The discriminator is what is on the bus a second later (tab
 is BOOTSEL and the touch worked; still `Communications`/`CDC` **and mute at every baud** is the hang
 described next. **There is no `firmware/blink` any more** — see docs/firmware.md.
 
-### The 1200-baud touch can hang an RP2350 outright, and only RESET recovers it
+### The 1200-baud touch can leave an RP2 unable to reach BOOTSEL — `usbreset` gets it back
 The touch is handled in the core, not in our firmware: arduino-pico's
 `SerialUSB::checkSerialReset()` (`cores/rp2040/SerialUSB.cpp`) disables `USBCTRL_IRQ`, resets the USB
 block, calls `reset_usb_boot(0, 0)` and then executes `while (1); // WDT will fire here`. On RP2350
@@ -51,9 +51,12 @@ Three consequences, all load-bearing:
   RP2 (`rp2040.wdt_begin(8000)`, fed at the end of `loop()`), so a failed BOOTSEL request costs a reboot
   instead of a trip to the bench. `rclErrorLoop()` deliberately does **not** feed it: on ESP32 that loop
   is an OTA recovery path and keeps feeding, on RP2 it now reboots and retries.
-- **A board flashed before that change still needs the RESET button** — not a BOOTSEL replug, just RESET.
-  `scripts/flash_mcu.py:rp2_usb_mode()` reads the interface classes after a failed touch and says so by
-  name rather than repeating "not in BOOTSEL".
+- **A board that has already refused a touch is recovered in software, by a USB device reset.**
+  `USBDEVFS_RESET` on its usbfs node — `ioctl(fd, _IO('U', 20))` — and the very next touch succeeds.
+  Measured on four boards, two RP2040 and two RP2350; three were brought back this way with nobody at
+  the bench. Reach for the RESET button only if that fails.
+  `scripts/flash_mcu.py:rp2_usb_mode()` reads the interface classes after a failed touch and says which
+  state the board is in by name, rather than repeating "not in BOOTSEL".
 
 **We do not depend on that fix.** This firmware arms its own watchdog, so the core's `while (1)` is
 already bounded on every board we ship; the upstream change only helps sketches that never call
@@ -73,6 +76,19 @@ execute that line at all — which is why uploads are not failing 99% of the tim
 is awkward: the path is intermittent by construction. What the patch changes is the cost of the rare
 failure, from a board that is mute at every baud until someone presses RESET to one that reboots in
 8 s.
+
+Measured since, on a rig that flashes on **every** run:
+
+- It is **cumulative, and the count can be one**. Both boards on one host refused the touch after a
+  single successful flash each. A person who flashes occasionally, power-cycling in between, would read
+  one failure as a bad cable and replug — which fixes it, and hides it.
+- It reproduces on **RP2040** as well as RP2350, which this page and the PR both treat as survivable.
+- A board whose firmware arms a watchdog is **not mute** afterwards: it reboots back into the
+  application, answers a micro-ROS agent, and still refuses the next touch. That is the shape to look
+  for. "Mute at every baud" is the unwatchdogged case.
+- A minimal sketch on the stock core, **no watchdog armed** — the configuration the objection is about —
+  took 40 touches without a single failure. So the bare sketch is not the reproducer; something the real
+  firmware does is needed, and finding what is the open question.
 
 ### WebSerial Is a Monitor, Never a Flasher
 The browser's Web Serial API is reserved for the raw serial debug terminal. Only the native path can stop

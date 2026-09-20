@@ -79,8 +79,11 @@ a one-line file the box seeders write. That fallback is not optional: every box 
 ### A stale board is updated by default; `--no-auto-update` is what protects a robot in the field
 `scripts/mcu_probe.py` asks three independent questions before anything is written — the RP2 USB
 interface classes (is an application running at all?), the boot banner (which build?), and
-`~/.cache/linorobot2/flashed/<env>_<port>.json`, this machine's record of its last flash and of the
-env block that went with it. The verdict decides the cost:
+`<config dir>/state/flashed/<env>_<port>.json`, this machine's record of its last flash and of
+the env block that went with it. It lives with the config rather than in `$HOME` because the pipeline runs
+as container-root and the cockpit's web backend as the container user: keyed on `~`, the two wrote
+to different places and neither saw the other, so a board flashed seconds earlier still probed
+as "this host has no record of flashing it". `LINO_STAMP_DIR` overrides. The verdict decides the cost:
 
 | verdict | what a run does |
 |---|---|

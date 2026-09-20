@@ -244,6 +244,13 @@ rather than the cable. The Pico W boards (`picow`, `pico2w`, and `*_wifi` for mi
 Wi-Fi) need a local build — their board definition differs and they ship no prebuilt image.
 The mecanum RP2350 config builds but has not been run on hardware.
 
+The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
+ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
+before micro-ROS is up. `picow`/`pico2w` keep `led: -1`: theirs hangs off the CYW43, not a
+GPIO. GPIO 2 on an ESP32 is also a strapping pin, so the pin checker warns about it; that is
+correct and harmless here, since an LED to ground pulls the pin the way the bootloader
+already wants.
+
 Reference robots ship in `config/reference/` and are copied into your config directory on
 first start — see [Your robot's configuration](#your-robots-configuration).
 
@@ -359,20 +366,47 @@ Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on ly
 
 ```text
 config/reference/   shipped robot configs (copied to your config dir, never edited in place)
-docs/               firmware.md · flashing.md · ros2-stack.md
+docs/               firmware.md · flashing.md · ros2-stack.md · docker.md
 firmware/           one PlatformIO project: src/, common/lib/, include/, prebuilt/ (fetched)
 launchers/          bringup.launch.py · slam.launch.py · nav2.launch.py
 scripts/            one_click_pipeline.py · flash_mcu.py · mcu_probe.py · mcu_env.py
                     gen_firmware_header.py · gen_robot_description.py · pin_catalog.py
                     migrate_config_schema.py · fetch_prebuilt.py · build_prebuilt.py · …
 tests/              pytest: env block, header, URDF, access policy, pin catalogue, key contract
+tests/api/          the cockpit's HTTP API, against a running instance (see below)
 web/                backend/ (FastAPI supervisor) · frontend/ (static HTML/CSS/JS)
 docker/             Dockerfile (robot runtime) · Dockerfile.pio (build image) · entrypoint.sh
 docker-compose.yml  the robot runtime, plus the optional `pio` build service
 ```
 
 `docs/` holds the design notes and the reasons behind the rules: `firmware.md` for the
-board side, `flashing.md` for how images get written, `ros2-stack.md` for the launch trees.
+board side, `flashing.md` for how images get written and what to do when a board stops
+accepting them, `ros2-stack.md` for the launch trees, `docker.md` for the images.
+
+### Running the tests
+
+```bash
+python3 -m pytest -q tests          # no hardware, no ROS, no network
+```
+
+The API suite is separate because it needs a cockpit to talk to. It skips unless you point it
+at one, and it works against anything — a robot on your bench, or a copy started just for the
+test:
+
+```bash
+# against a running robot
+COCKPIT_URL=http://<robot>:8000 COCKPIT_TOKEN=$(cat ~/linorobot2-config/.cockpit_token) \
+  python3 -m pytest tests/api -v
+
+# or headless, with no robot at all: the backend needs only these three packages
+pip install fastapi uvicorn pyyaml
+COCKPIT_CONFIG_DIR=/tmp/cockpit-cfg COCKPIT_PORT=18099 python3 web/backend/main.py &
+COCKPIT_URL=http://127.0.0.1:18099 \
+  COCKPIT_TOKEN=$(cat /tmp/cockpit-cfg/.cockpit_token) python3 -m pytest tests/api -v
+```
+
+It is worth running on its own: the web UI and the one-click pipeline are different code paths,
+and the UI is the one most people use. Several defects have only ever shown up through it.
 
 ---
 

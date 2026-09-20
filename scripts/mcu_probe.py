@@ -24,11 +24,19 @@ Three sources, deliberately different in kind, because none of them is complete:
              it is caught only when the board happens to reboot (which it does
              right after a flash, which is when flash_mcu.py records it).
 
-  stamp      ~/.cache/linorobot2/flashed/<env>_<port>.json, written by flash_mcu.py from
-             the banner the board printed after the last flash, plus the CRC of
-             the env block that went with it. This is the host's memory of the
-             last write, and it is what makes "has the config changed since the
-             board was flashed?" answerable without touching the board at all.
+  stamp      <config dir>/state/flashed/<env>_<port>.json, written by flash_mcu.py
+             from the banner the board printed after the last flash, plus the
+             CRC of the env block that went with it. This is the host's memory
+             of the last write, and it is what makes "has the config changed
+             since the board was flashed?" answerable without touching the
+             board at all.
+
+             It hangs off the CONFIG directory, not $HOME. The one-click
+             pipeline runs as container-root and the cockpit's web backend as
+             the container user, so ~/.cache resolved to two different places
+             and neither side saw the other: a board flashed seconds earlier
+             still probed as "this host has no record of flashing it".
+             LINO_STAMP_DIR overrides.
 
 The verdict combines them:
 
