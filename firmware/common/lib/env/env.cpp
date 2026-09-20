@@ -17,7 +17,15 @@
 #include "config.h"
 #include "env.h"
 
-#if defined(USE_BMP280)
+// The BMP280/BME280 is compiled in unconditionally and detected at boot,
+// exactly like the IMU, the magnetometer and the INA219. It was the last
+// sensor still behind a macro, and that macro was a trap: a released image is
+// built for an MCU, not for a robot, so USE_BMP280 could only ever be set by
+// the reference config the image happened to be built from -- and none of the
+// released profiles named it. The barometer was therefore absent from every
+// shipped image and no runtime key could bring it back. initEnv() probes 0x76
+// and 0x77 and returns false when nothing answers, which is the only gate that
+// was ever needed; publish_env follows envFlagMain("pub_env", env_present).
 
 #ifndef BMP280_ADDR
 #define BMP280_ADDR 0x77          // Waveshare General Driver board barometer
@@ -228,11 +236,3 @@ EnvData readEnv()
 #endif
 }
 
-#else  // !USE_BMP280 — stubs so the firmware links without the sensor
-
-bool    initEnv()        { return false; }
-bool    envOk()          { return false; }
-bool    envHasHumidity() { return false; }
-EnvData readEnv()        { EnvData d = { false, 0.0f, 0.0f, 0.0f }; return d; }
-
-#endif
