@@ -52,6 +52,11 @@
 #include "tools/tools.h"
 #include "hw_factory.h"
 #include "mcu_env.h"
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include <esp_bt.h>
+static esp_err_t bt_release_err = ESP_FAIL;
+static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
+#endif
 #include "i2c_probe.h"
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS
@@ -578,6 +583,22 @@ static void printResetReason(void)
     Serial.printf("[boot] last reset: %s\n", why);
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
     Serial.printf("[boot] cpu %u MHz\n", (unsigned)getCpuFrequencyMhz());
+    // ESP_ERR_INVALID_STATE (259) is the NORMAL answer on this core: the Arduino
+    // framework already releases the controller when no BT stack is linked, so
+    // there is nothing left to hand back. Measured on the GenDrv 2026-09-20 --
+    // heap 243492 before and after. The call stays as a guard in case a future
+    // core stops doing it; it must not read as a fault when it is working.
+    if (bt_release_err == ESP_OK && bt_heap_after > bt_heap_before)
+        Serial.printf("[mem] Bluetooth controller released: %lu KB of DRAM back "
+                      "(heap %lu -> %lu)\n",
+                      (unsigned long)((bt_heap_after - bt_heap_before) / 1024),
+                      (unsigned long)bt_heap_before, (unsigned long)bt_heap_after);
+    else if (bt_release_err == ESP_ERR_INVALID_STATE)
+        Serial.printf("[mem] heap %lu bytes (Bluetooth already released by the core)\n",
+                      (unsigned long)bt_heap_after);
+    else
+        Serial.printf("[mem] heap %lu bytes (Bluetooth release returned %d)\n",
+                      (unsigned long)bt_heap_after, (int)bt_release_err);
 #endif
 #endif
 }
@@ -606,6 +627,29 @@ void rcSoftFail(int line, int code)
 void setup() 
 {
     ledInit();
+
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    // Hand back the Bluetooth controller's DRAM. Nothing in this firmware uses
+    // Bluetooth -- there is no BT stack, no BLE, no pairing, not one reference
+    // anywhere in the tree -- but the ESP32 reserves roughly 64 KB of DRAM for
+    // its controller whether or not it is ever initialised. On a chip whose
+    // DRAM is fixed at 320 KB by the linker script and the silicon, and cannot
+    // be enlarged by any build setting, that is a fifth of the budget held for
+    // a radio we never switch on.
+    //
+    // It must happen before anything else claims heap, and it is irreversible
+    // for this boot -- which is exactly right here: a board that finds it needs
+    // Bluetooth has bigger problems than this call.
+    // Measured here and PRINTED later: Serial.begin() has not run yet, so a
+    // printf at this point goes nowhere -- which is exactly what happened the
+    // first time this shipped, and the release looked like it had not worked.
+    {
+        const uint32_t before = ESP.getFreeHeap();
+        bt_release_err = esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+        bt_heap_before = before;
+        bt_heap_after = ESP.getFreeHeap();
+    }
+#endif
 
     // Which application this boot runs, read from the env partition before
     // anything is sized for it. The 4+4 KB UART rings below exist to carry
