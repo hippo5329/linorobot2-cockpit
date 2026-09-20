@@ -132,6 +132,29 @@ def get_ros_env(distro: str = "auto") -> str:
             f" && {nav2_setup} && {ws_setup}")
 
 
+# Every place a built ROS 2 workspace can be, in the order the shell chain below
+# tries them. The container image this project ships puts one at
+# /opt/lino_ws/setup.bash -- NOT at <ws>/install/setup.bash -- and the cockpit's
+# own "is the workspace built?" check only knew the source-checkout layout, so
+# on the official image the Bringup tab refused to start and ran a colcon build
+# in a directory that does not exist. One list, both readers.
+WORKSPACE_SETUPS = (
+    "/opt/lino_ws/setup.bash",
+    os.path.join(REPO_ROOT, "install", "setup.bash"),
+    os.path.join(REPO_ROOT, "..", "..", "install", "setup.bash"),
+    os.path.expanduser("~/cockpit_ws/install/setup.bash"),
+    os.path.expanduser("~/linorobot2_ws/install/setup.bash"),
+)
+
+
+def workspace_setup() -> str:
+    """The first workspace setup.bash that exists, or "" when none does."""
+    for path in WORKSPACE_SETUPS:
+        if os.path.isfile(path):
+            return os.path.abspath(path)
+    return ""
+
+
 def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bool:
     """Is /cmd_vel TwistStamped for this run?
 
@@ -155,8 +178,8 @@ def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bo
 #
 #   imu      -> /imu/data (already a hard requirement of the gate) + /imu/data_raw
 #   mag      -> /imu/mag        firmware/src/main.cpp, #ifdef PUBLISH_MAG
-#   current  -> /battery        #if defined(BATTERY_PIN) || defined(USE_INA219)
-#   env      -> /pressure, /temperature   #if defined(USE_BMP280), and only when
+#   current  -> /battery        BATTERY_PIN, or an INA219 found on the bus
+#   env      -> /pressure, /temperature   a barometer on the bus, and only when
 #                                         the chip answered at boot (env_present)
 #
 # `env` is the one that can legitimately be configured and still silent: the

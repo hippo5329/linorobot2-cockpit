@@ -25,7 +25,7 @@ import os
 _ENV_FAMILY = {
     "pico": "pico", "picow": "pico",
     "pico2": "pico2", "pico2w": "pico2",
-    "esp32": "esp32", "esp32_wifi": "esp32", "gendrv": "esp32",
+    "esp32": "esp32", "gendrv": "esp32",
     "esp32s3": "esp32s3",
 }
 
@@ -304,3 +304,38 @@ def mismatch(expected_family: str, detected_family: str, decisive: bool) -> bool
     if expected_family in _BRIDGE_AMBIGUOUS and detected_family in _BRIDGE_AMBIGUOUS:
         return False
     return True
+
+
+# PlatformIO env names, read from firmware/platformio.ini once. A name that is
+# not in here is not something `pio run -e` or a release artifact can be asked
+# for, however sensible it looks.
+def _pio_envs() -> set:
+    import re
+    ini = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "firmware", "platformio.ini")
+    try:
+        with open(ini) as fh:
+            return set(re.findall(r"^\[env:([^\]]+)\]", fh.read(), re.M))
+    except OSError:
+        return set()
+
+
+def pio_env_for(name: str, default: str = "esp32") -> str:
+    """Normalise a board/controller/detection name to a PlatformIO env.
+
+    The USB probe answers with a BOARD -- `gendrv` for a CP2102N, because that
+    is what the bridge tells you. `gendrv` is not a PlatformIO env and never was:
+    asking to flash it made the cockpit fetch
+    `linorobot2-firmware-gendrv-jazzy.tar.gz`, which is in no release and never
+    will be, so firmware upload was simply broken on the one ESP32 board the
+    project ships a reference design for. The env is a property of the silicon;
+    the board name only picks which silicon.
+    """
+    key = (name or "").strip().lower()
+    envs = _pio_envs()
+    if key in envs:
+        return key
+    family = _ENV_FAMILY.get(key)
+    if family and family in envs:
+        return family
+    return default

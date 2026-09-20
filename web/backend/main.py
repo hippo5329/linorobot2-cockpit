@@ -230,6 +230,8 @@ import cockpit_paths  # noqa: E402
 import access  # noqa: E402  (web/backend/access.py: token + path policy)
 import fetch_prebuilt  # noqa: E402
 import mcu_identity  # noqa: E402
+import one_click_pipeline  # noqa: E402
+import mcu_identity  # noqa: E402
 import pin_catalog  # noqa: E402
 import gen_robot_description  # the URDF, generated from the config (scripts/)
 
@@ -976,8 +978,16 @@ def get_status(controller: Optional[str] = None):
         ctrl_sensors.get("use_fake_ld19")
     )
 
-    ws_path = os.path.abspath(os.path.join(REPO_ROOT, "..", ".."))
-    ws_built = os.path.exists(os.path.join(ws_path, "install", "setup.bash")) or os.path.exists(os.path.join(REPO_ROOT, "install", "setup.bash"))
+    # Ask the same list the bringup command itself sources, or the two disagree:
+    # the container image ships its workspace at /opt/lino_ws/setup.bash, which
+    # this check used to miss entirely, so the Bringup tab declared the workspace
+    # unbuilt and tried to colcon build a directory that is not there.
+    ws_setup = one_click_pipeline.workspace_setup()
+    ws_built = bool(ws_setup)
+    ws_path = (os.path.dirname(os.path.dirname(ws_setup))
+               if ws_setup.endswith(os.path.join("install", "setup.bash"))
+               else os.path.dirname(ws_setup)) if ws_setup else \
+        os.path.abspath(os.path.join(REPO_ROOT, "..", ".."))
 
     liveness = probe_stack_liveness()
     agent_external = liveness["agent"]
@@ -1314,7 +1324,12 @@ async def api_hardware_test(request: Request):
     port = data.get("port", "/dev/ttyACM0")
     baud = int(data.get("baud", 921600))
     action = data.get("action", "upload")
-    mcu_env = data.get("mcu_env", "pico2")
+    # The Sensors tab fills cfg-mcu from the USB probe, which answers with a
+    # BOARD ("gendrv" for a CP2102N). Flashing needs a PlatformIO env, and
+    # asking for "gendrv" sent fetch_prebuilt after a release artifact that
+    # does not exist -- firmware upload 404ed on the one ESP32 board this
+    # project ships a reference design for.
+    mcu_env = mcu_identity.pio_env_for(data.get("mcu_env"), "pico2")
 
     if action in ("upload", "monitor"):
         try:
@@ -2696,7 +2711,7 @@ async def api_firmware_flash(request: Request):
     params = load_params()
     ctrl = get_controller(params)
     firmware_dir = data.get("firmware_dir") or "firmware"
-    env = text_field(data, "env") or get_controller_name(params, "pico2")
+    env = mcu_identity.pio_env_for(text_field(data, "env") or get_controller_name(params, "pico2"), "pico2")
     port = text_field(data, "port") or ctrl.get("serial_port", "/dev/ttyUSB0")
     baud = int(data.get("baud") or ctrl.get("upload_baudrate") or 921600)
     chip = data.get("chip") or "auto"

@@ -73,6 +73,15 @@ void identify(Sink &sink, uint8_t addr)
         if (who0 == 0xEA) {
             sink.add(addr, "imu", "ICM20948", "icm20948", "USE_ICM20948_IMU",
                      "ICM-20948 9-Axis IMU (Acc+Gyr+Mag)");
+            // One chip, two roles. The ICM-20948's AK09916 magnetometer hangs off
+            // the IMU's INTERNAL auxiliary bus, so it never ACKs a scan of the
+            // main bus -- probing alone would report a 9-axis part as 6-axis and
+            // i2cProbeSelect() would leave mag_name at whatever the config said,
+            // usually "fake". /imu/mag would then never publish and nothing would
+            // say why. Register the magnetometer here, against the same address:
+            // ICM20948MAG reaches it through the IMU exactly as this implies.
+            sink.add(addr, "mag", "AK09916", "icm20948", "USE_ICM20948_MAG",
+                     "AK09916 magnetometer (inside the ICM-20948)");
             return;
         }
         if (who0 == 0x68) {

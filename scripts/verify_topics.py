@@ -25,8 +25,8 @@
 #
 # Advertisement is still real evidence, because the firmware creates each of
 # these publishers conditionally: /imu/mag under PUBLISH_MAG, /battery under
-# USE_INA219 or BATTERY_PIN, /pressure and /temperature under USE_BMP280 AND
-# only when the barometer answered the boot-time I2C probe (`env_present`). A
+# a detected INA219 or BATTERY_PIN, /pressure and /temperature whenever the
+# barometer answered the boot-time I2C probe (`env_present`). A
 # missing publisher therefore means the driver was never compiled in or the chip
 # did not answer the bus. Readings that arrive anyway are echoed as a bonus;
 # rate is never checked for them, since a barometer publishes at a few Hz by
@@ -199,8 +199,8 @@ class TopicVerifier(Node):
         # Auxiliary topic samples (optional: pressure, temperature, battery)
         # One auxiliary topic per sensor the firmware may carry:
         #   /imu/mag      AK09918 etc.   (PUBLISH_MAG)
-        #   /battery      INA219         (USE_INA219 or BATTERY_PIN)
-        #   /pressure     BMP280/BME280  (USE_BMP280, and only if env_present)
+        #   /battery      INA219         (detected on the bus, or BATTERY_PIN)
+        #   /pressure     BMP280/BME280  (detected on the bus; pub_env may veto)
         #   /temperature  BMP280/BME280  (ditto)
         # /imu/mag was missing here, which meant the magnetometer was the one
         # fitted sensor no test ever looked at.
@@ -272,8 +272,8 @@ class TopicVerifier(Node):
 
         Advertisement is still real evidence, because the firmware creates these
         publishers conditionally: /imu/mag only under PUBLISH_MAG, /battery only
-        under USE_INA219 or BATTERY_PIN, and /pressure and /temperature only
-        under USE_BMP280 AND when the barometer actually answered at boot
+        under a detected INA219 or BATTERY_PIN, and /pressure and /temperature
+        only when the barometer actually answered at boot
         (`env_present`, set from the I2C probe). So a missing publisher means
         the driver was not compiled in or the chip did not answer -- which is
         exactly the failure worth catching. Whether the numbers are sensible is
