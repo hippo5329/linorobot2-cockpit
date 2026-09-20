@@ -1350,6 +1350,19 @@ async def api_hardware_test(request: Request):
     params_path = get_active_params_path()
 
     if action == "build":
+        # The published robot image deliberately ships no PlatformIO -- it
+        # flashes the release artifact instead -- so Build on a stock install
+        # ended in a bare `bash: line 1: pio: command not found` and exit 127,
+        # which says nothing about why or what to do. Answer the question the
+        # user is actually asking.
+        if not pio_present():
+            raise HTTPException(
+                status_code=400,
+                detail=("PlatformIO is not installed here, and this image does not ship "
+                        "it: Build compiles from source, which a robot does not need. "
+                        "Use Flash MCU — it fetches the release image for this board — "
+                        "or run the build in the pio container: "
+                        "`docker compose run --rm pio pio run -e %s`." % mcu_env))
         cmd = f"pio run -d {firmware_dir} -e {mcu_env}"
     elif action == "upload":
         # Build and flash stay separate: pio only compiles, esptool/picotool
