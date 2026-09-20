@@ -49,6 +49,7 @@ import json
 import os
 import shutil
 import subprocess
+import yaml
 import sys
 import tarfile
 from datetime import datetime, timezone
@@ -59,18 +60,28 @@ import cockpit_paths  # noqa: E402
 PREBUILT_DIR = os.path.join(REPO_ROOT, "firmware", "prebuilt")
 BASE_DIR = os.path.join(REPO_ROOT, "firmware")
 
-# board -> (robot config stem, base pio env, description)
+# board -> (bare-config mcu, base pio env, description)
+#
+# Every release image is built from the GENERATED BARE MODULE for its silicon,
+# not from a reference robot. scripts/gen_bare_config.py: every pin -1, every
+# sensor faked, fake_ld19 on.
+#
+# It used to build from pico2_mecanum and gendrv, and that leaked their wiring
+# into every board flashed with the release. Caught on the bench 2026-09-20: two
+# bare Picos came up printing
+#
+#     [range] HC-SR04 trigger=27 echo=28 (interrupt driven)
+#
+# and publishing /sonar, because the mecanum reference wires a sonar there and
+# the header's TRIG_PIN/ECHO_PIN are the fallback when a config says nothing.
+# A released image must describe NO robot: the env partition is what turns it
+# into one. The wired designs are still tested -- they are what the bench flashes
+# for the sonar and real-IMU cases -- but they are not what ships.
 BOARDS = {
-    # Both RP2 profiles build from the SAME config: an RP2040 and an RP2350
-    # differ in core, clock and RAM, not in what the Pico header brings out, and
-    # gen_firmware_header.py emits a byte-identical header for `mcu: pico` and
-    # `mcu: pico2`. The PlatformIO env picks the board and the toolchain, and
-    # mcu_env.env_offset() keys the env partition on that env name (2 MB vs
-    # 4 MB), so nothing about the board is lost by sharing one reference design.
-    "pico2":   ("pico2_mecanum", "pico2w", "RP2350, micro-ROS over USB serial (runs on Pico 2 and Pico 2 W)"),
-    "pico":    ("pico2_mecanum", "picow", "RP2040, micro-ROS over USB serial (runs on Pico and Pico W)"),
-    "esp32":   ("gendrv",      "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
-    "esp32s3": ("esp32s3",     "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
+    "pico2":   ("pico2",   "pico2w",  "RP2350, micro-ROS over USB serial (runs on Pico 2 and Pico 2 W)"),
+    "pico":    ("pico",    "picow",   "RP2040, micro-ROS over USB serial (runs on Pico and Pico W)"),
+    "esp32":   ("esp32",   "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
+    "esp32s3": ("esp32s3", "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
 }
 
 # The distro the BARE env names in firmware/platformio.ini are pinned to; the
@@ -209,11 +220,19 @@ def header_cmd(cfg, distro):
 
 
 def build(profile, keep_going=False):
-    cfg_stem, env, distro, description = PROFILES[profile]
-    cfg = os.path.join(cockpit_paths.REFERENCE_CONFIG_DIR, f"{cfg_stem}_config.yaml")
+    mcu, env, distro, description = PROFILES[profile]
     out_dir = os.path.join(PREBUILT_DIR, profile)
 
-    print(f"\n=== {profile}  ({cfg_stem}_config.yaml -> pio env {env})", flush=True)
+    # Generated, not read from config/reference. The bare module IS the release
+    # image's configuration: no pins, no sensors, nothing claimed about a robot.
+    import gen_bare_config
+    cfg_dir = os.path.join(BASE_DIR, ".pio", "bare")
+    os.makedirs(cfg_dir, exist_ok=True)
+    cfg = os.path.join(cfg_dir, f"bare_{mcu}_config.yaml")
+    with open(cfg, "w") as fh:
+        yaml.safe_dump(gen_bare_config.bare_config(mcu), fh, sort_keys=False)
+
+    print(f"\n=== {profile}  (bare {mcu} -> pio env {env})", flush=True)
 
     sh(header_cmd(cfg, distro))
 
@@ -267,7 +286,7 @@ def build(profile, keep_going=False):
     manifest = {
         "profile": profile,
         "description": description,
-        "config": f"config/reference/{cfg_stem}_config.yaml",
+        "config": f"generated bare module ({mcu})",
         "pio_env": env,
         "ros_distro": distro,
         # Read from the config, not asserted. This was a hardcoded True while

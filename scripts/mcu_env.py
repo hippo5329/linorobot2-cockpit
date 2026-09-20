@@ -414,11 +414,15 @@ def hardware_env(params: dict) -> dict:
     # had a sonar welded into it or could never have one -- and since no
     # reference config carried the pins, every shipped image was the latter.
     # range.cpp reads these now; -1 or absent means "not wired".
-    sonar = pins.get("sonar")
-    if isinstance(sonar, dict):
-        for key, src in (("sonar_trig", "trigger"), ("sonar_echo", "echo")):
-            if sonar.get(src) is not None:
-                env[key] = int(sonar[src])
+    # Always written, -1 when the robot has none. Omitting them let the firmware
+    # fall back to TRIG_PIN/ECHO_PIN from the header -- which is whatever
+    # reference the IMAGE was built from -- so a bare module flashed with the
+    # release came up driving GP27 and announcing an HC-SR04 that is not there.
+    # A pin a config does not mention must read as "not wired", not as "inherit
+    # whatever the build happened to know".
+    sonar = pins.get("sonar") if isinstance(pins.get("sonar"), dict) else {}
+    env["sonar_trig"] = int(sonar.get("trigger", -1))
+    env["sonar_echo"] = int(sonar.get("echo", -1))
     telemetry = tgt.get("telemetry", {}) or {}
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
