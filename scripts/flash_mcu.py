@@ -219,26 +219,79 @@ def ensure_port_permissions(serial_port: str):
             pass
 
 
+# How long to keep looking for the bootloader after the touch. The board itself
+# re-enumerates in well under a second; what takes longer is anything between
+# this process and the USB device -- on the bench that is Incus hot-plugging the
+# re-enumerated device into the container, measured at ~2 s.
+BOOTSEL_WAIT_S = 15.0
+
+
+def wait_for_bootsel(timeout_s: float = BOOTSEL_WAIT_S) -> bool:
+    """Poll until picotool can actually see a board in BOOTSEL, or give up.
+
+    This replaced a flat `time.sleep(2.5)`. A fixed sleep answers the wrong
+    question: it guesses how long re-enumeration takes and then tries once. On
+    this bench the board reached BOOTSEL correctly every time -- the host logged
+    `Product: RP2350 Boot` within a second -- but picotool ran before Incus had
+    attached the new device to the container, found nothing, and the flash
+    reported "No accessible RP-series devices in BOOTSEL mode were found" about
+    a board that was sitting in BOOTSEL. Wait for the condition, not the clock.
+
+    sysfs is not enough to decide this: it can show the bootloader interface
+    while /dev/bus/usb still has no entry this process may open. So ask the tool
+    that is about to do the work whether it can see the device.
+    """
+    deadline = time.time() + timeout_s
+    binaries = find_picotool_binaries()
+    started = time.time()
+    while time.time() < deadline:
+        for pt in binaries:
+            try:
+                res = subprocess.run([pt, "info"], capture_output=True, timeout=10)
+            except Exception:
+                continue
+            if res.returncode == 0:
+                log(f"bootloader visible to {os.path.basename(pt)} after "
+                    f"{time.time() - started:.1f}s")
+                return True
+        # No picotool at all: fall back to the interface classes, which at least
+        # prove the board is there even if this process cannot open it.
+        if not binaries and rp2_usb_mode() == "bootsel":
+            return True
+        time.sleep(0.5)
+    log(f"no board in BOOTSEL after {timeout_s:.0f}s")
+    return False
+
+
 def pulse_1200_baud(port: str) -> bool:
-    """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot."""
+    """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot.
+
+    Returns once the board is in BOOTSEL and reachable, not after a fixed nap.
+    """
     if not port or not os.path.exists(port):
         return False
     log(f"Attempting 1200-baud CDC pulse on {port} to trigger BOOTSEL mode...")
+    touched = False
     try:
         import serial
         s = serial.Serial(port, baudrate=1200, timeout=1)
         time.sleep(0.3)
         s.close()
-        time.sleep(2.5)  # Wait for USB re-enumeration
-        return True
+        touched = True
     except Exception as e:
         log(f"pyserial 1200 baud notice: {e}")
         try:
             subprocess.run(["stty", "-F", port, "1200"], capture_output=True, timeout=3)
-            time.sleep(2.5)
-            return True
+            touched = True
         except Exception:
             return False
+    if not touched:
+        return False
+    # True even when the wait times out: the touch was sent, and the callers
+    # have their own recoveries plus report_failed_bootsel_request() to tell a
+    # board that refused BOOTSEL from one that was merely slow to appear.
+    wait_for_bootsel()
+    return True
 
 
 # USB interface classes, as sysfs spells them (hex, zero padded).
@@ -1247,7 +1300,6 @@ def main() -> int:
             # application behind.
             ok = flash_env_via_picotool(env_bin, args.env)
             if not ok and not out_of_time("the 1200-baud BOOTSEL pulse") and pulse_1200_baud(args.port):
-                time.sleep(1.0)
                 ok = flash_env_via_picotool(env_bin, args.env)
             if not ok and rp2_usb_mode() == "app":
                 report_failed_bootsel_request(args.port)
@@ -1315,7 +1367,6 @@ def main() -> int:
         # Recovery 3: Send 1200-baud pulse to kick CDC into BOOTSEL mode
         if not out_of_time("the 1200-baud BOOTSEL pulse") and pulse_1200_baud(args.port):
             log("Checking for mounted bootloader volume after 1200-baud pulse...")
-            time.sleep(1.0)
             mounted_vol = find_mounted_uf2_volume(args.env) or find_and_mount_pico_device(args.env)
             if mounted_vol and flash_via_uf2_copy(uf2_path, mounted_vol):
                 return flashed_ok()
