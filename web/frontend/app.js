@@ -5317,6 +5317,7 @@ async function loadHardwareConfig() {
     if (elHwEnv) elHwEnv.value = data.controller || "pico2";
 
     initAdcChart();
+  initWiringTable();
 
   const elSonar = document.getElementById("cfg-sonar");
   if (elSonar) {
@@ -6634,6 +6635,94 @@ function applyDacAvailability() {
       + "sweep one into an ADC pin to measure the curve. ADC calibration and the "
       + "linearisation table are ESP32 / ESP32-S2 only.";
   }
+}
+
+// The wiring chart. Markdown from /api/wiring_table, rendered as a plain
+// table here (no Markdown library: two pipe-tables and a few headings are a
+// forty-line converter, not a dependency) and offered as a file, because the
+// place this gets read is next to the robot with a screwdriver in hand.
+let wiringMarkdown = "";
+
+function markdownTablesToHtml(md) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/_(.+?)_/g, "<i>$1</i>");
+  const out = [];
+  const lines = md.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^#\s/.test(line)) { out.push(`<h3 style="margin:8px 0 4px;">${inline(line.slice(2))}</h3>`); i++; continue; }
+    if (/^##\s/.test(line)) { out.push(`<h4 style="margin:10px 0 4px;">${inline(line.slice(3))}</h4>`); i++; continue; }
+    if (/^\|/.test(line) && i + 1 < lines.length && /^\|[-:| ]+\|$/.test(lines[i + 1])) {
+      const cells = (l) => l.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\|/.test(lines[i])) { rows.push(cells(lines[i])); i++; }
+      out.push('<table class="pin-table" style="width:100%; font-size:0.82rem;"><thead><tr>'
+        + head.map((h) => `<th style="text-align:left;">${inline(h)}</th>`).join("") + "</tr></thead><tbody>"
+        + rows.map((r) => "<tr>" + r.map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>").join("")
+        + "</tbody></table>");
+      continue;
+    }
+    if (/^- /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^- /.test(lines[i])) { items.push(`<li>${inline(lines[i].slice(2))}</li>`); i++; }
+      out.push(`<ul style="margin:4px 0 8px 18px;">${items.join("")}</ul>`);
+      continue;
+    }
+    if (line.trim()) out.push(`<p class="hint" style="margin:4px 0;">${inline(line)}</p>`);
+    i++;
+  }
+  return out.join("\n");
+}
+
+async function showWiringTable() {
+  const panel = document.getElementById("wiring-table-panel");
+  const body = document.getElementById("wiring-table-body");
+  if (!panel || !body) return;
+  panel.hidden = false;
+  body.innerHTML = '<p class="hint">Generating…</p>';
+  try {
+    const res = await fetch("/api/wiring_table");
+    const data = await res.json();
+    if (!res.ok || !data.markdown) throw new Error(data.detail || `HTTP ${res.status}`);
+    wiringMarkdown = data.markdown;
+    body.innerHTML = markdownTablesToHtml(data.markdown);
+  } catch (err) {
+    body.innerHTML = `<p class="hint">Could not generate the wiring chart: ${err.message}</p>`;
+  }
+}
+
+function initWiringTable() {
+  document.getElementById("btn-wiring-table")?.addEventListener("click", showWiringTable);
+  document.getElementById("btn-wiring-close")?.addEventListener("click", () => {
+    const panel = document.getElementById("wiring-table-panel");
+    if (panel) panel.hidden = true;
+  });
+  document.getElementById("btn-wiring-copy")?.addEventListener("click", async () => {
+    if (!wiringMarkdown) return;
+    try { await navigator.clipboard.writeText(wiringMarkdown); showToast("📋 Wiring chart copied."); }
+    catch {
+      const ta = document.createElement("textarea");
+      ta.value = wiringMarkdown; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); showToast("📋 Wiring chart copied."); }
+      catch { showToast("Could not copy — use Download instead."); }
+      ta.remove();
+    }
+  });
+  document.getElementById("btn-wiring-download")?.addEventListener("click", () => {
+    if (!wiringMarkdown) return;
+    const name = (state.robot_name || "robot") + "_wiring.md";
+    const blob = new Blob([wiringMarkdown], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
 }
 
 function initBaseControllerConfigModule() {

@@ -817,11 +817,25 @@
         <div>
           <h2 style="margin:0;">🔌 4. Microcontroller Pinout Matrix</h2>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; white-space:nowrap;">
           <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
+          <button type="button" id="btn-wiring-table" class="btn btn-sm" title="The wiring chart for this robot, generated from the saved pins">🔌 Wiring Table</button>
           <button type="button" id="btn-save-pins-config" class="btn btn-secondary btn-sm">💾 Save &amp; Regenerate Header</button>
         </div>
       <div id="pin-findings" class="pin-findings" hidden></div>
+      </div>
+      <!-- The sheet you want at the bench: function -> GPIO and GPIO -> functions,
+           from the SAVED config (press Save first if you have edited pins). -->
+      <div id="wiring-table-panel" class="mt-2" hidden>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span class="sub-title">🔌 Wiring chart <span class="input-hint">(from the saved config)</span></span>
+          <div style="display:flex; gap:6px;">
+            <button type="button" id="btn-wiring-copy" class="btn btn-xs btn-secondary">📋 Copy Markdown</button>
+            <button type="button" id="btn-wiring-download" class="btn btn-xs btn-secondary">⬇ Download .md</button>
+            <button type="button" id="btn-wiring-close" class="btn btn-xs">✕</button>
+          </div>
+        </div>
+        <div id="wiring-table-body" class="adc-lut-code-wrap" style="max-height:420px; overflow:auto;"></div>
       </div>
       <p class="hint">Allocate GPIO pins for motors, encoders, I2C bus, ADC battery, and sonar. Real-time electrical inspection prevents hardware hazards (strapping pin lockups, input-only pins, SPI flash contention).</p>
 

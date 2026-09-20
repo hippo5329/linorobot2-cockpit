@@ -2591,6 +2591,20 @@ def api_boards():
     return {"status": "ok", "boards": boards}
 
 
+@app.get("/api/wiring_table")
+def api_wiring_table():
+    """The wiring chart for the active robot, as Markdown -- the sheet you want
+    at the bench, generated from the same pins the Pin Matrix holds."""
+    try:
+        import gen_wiring_table
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"gen_wiring_table: {exc}")
+    params = load_params()
+    return {"status": "ok",
+            "robot": (params.get("robot") or {}).get("name", ""),
+            "markdown": gen_wiring_table.render(params)}
+
+
 @app.get("/api/configs")
 def api_configs():
     custom_dir = os.path.join(REPO_ROOT, "firmware", "include", "custom")

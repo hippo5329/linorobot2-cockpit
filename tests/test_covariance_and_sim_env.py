@@ -221,6 +221,8 @@ def test_the_calibration_tool_emits_the_curve_for_the_chart():
     [ADC_JSON] line with the 257 knots it measured and a sample of the
     inverse -- the same convention as i2c_detect's [I2C_JSON]."""
     src = _src("firmware/src/tools/adc_calibrate.cpp")
-    assert '[ADC_JSON]' in src and '"knots"' in src and '"lut"' in src
+    # In C source the JSON keys are written as \"knots\" -- the quotes are
+    # escaped -- so look for the tag and the key names, not quoted JSON.
+    assert '[ADC_JSON]' in src and 'knots' in src and '\\"lut\\"' in src
     js = open(os.path.join(REPO_ROOT, "web", "frontend", "app.js")).read()
     assert "adcCurveFromLine" in js and "[ADC_JSON]" in js
