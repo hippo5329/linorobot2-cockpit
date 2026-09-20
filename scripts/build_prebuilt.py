@@ -207,12 +207,27 @@ def build(profile, keep_going=False):
 
     sh(header_cmd(cfg, distro))
 
-    # Whether this profile needs an env block is a property of the header that
-    # was just generated, not a guess from the env name. USE_MCU_ENV appears
-    # exactly when the firmware will look for one.
-    header = os.path.join(BASE_DIR, "include", "custom", "lino_base_config.h")
-    with open(header) as fh:
-        uses_wifi = "#define USE_MCU_ENV" in fh.read()
+    # Every image reads the env partition -- that is the whole configuration
+    # model -- so every manifest records where it is.
+    #
+    # This used to test the header for `#define USE_MCU_ENV`, which was exactly
+    # right while that macro gated the env reader. The gate is gone (an image
+    # that cannot read its env cannot be configured, so there was nothing left
+    # to choose), and the test silently became false for every profile: the
+    # release went out with no `env_partition` in any manifest, and
+    # flash_mcu.py checks for that key before writing one.
+    uses_env = True
+
+    # What the config asks for by default, for the manifest's description.
+    try:
+        import yaml as _yaml
+        with open(cfg) as fh:
+            _sensors = ((_yaml.safe_load(fh) or {}).get("base_controller", {})
+                        or {}).get("sensors", {}) or {}
+        fake_mode = any(bool(_sensors.get(k)) for k in
+                        ("use_fake_wheel", "use_fake_imu", "use_fake_ld19"))
+    except Exception:
+        fake_mode = False
     sh(["pio", "run", "-d", BASE_DIR, "-e", env])
 
     build_dir = os.path.join(BASE_DIR, ".pio", "build", env)
@@ -245,12 +260,18 @@ def build(profile, keep_going=False):
         "config": f"config/reference/{cfg_stem}_config.yaml",
         "pio_env": env,
         "ros_distro": distro,
-        "fake_mode": True,
+        # Read from the config, not asserted. This was a hardcoded True while
+        # every release was built from a fake-mode reference; the RP2 and ESP32
+        # releases are built from real robot designs now (pico2_mecanum,
+        # gendrv), so the flag said the opposite of the truth. It is only a
+        # description anyway -- `fake_wheel`, `fake_ld19` and the rest are env
+        # keys, so any of these images can be either at run time.
+        "fake_mode": fake_mode,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "commit": git_commit(),
         "files": files,
     }
-    if uses_wifi:
+    if uses_env:
         manifest["env_partition"] = {
             "offset": ENV_OFFSET,
             "note": "Wi-Fi keys and the agent / syslog / lidar_udp addresses are NOT in "

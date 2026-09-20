@@ -222,34 +222,49 @@ Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robo
 
 | MCU | PlatformIO env | Firmware profiles | Transport |
 |---|---|---|---|
-| **RP2350** | `pico2` | `pico2-jazzy`, `pico2-lyrical` | serial |
-| **RP2040** | `pico` | `pico-jazzy`, `pico-lyrical` | serial |
+| **RP2350** | `pico2w` | `pico2-jazzy`, `pico2-lyrical` | serial |
+| **RP2040** | `picow` | `pico-jazzy`, `pico-lyrical` | serial |
 | **ESP32** | `esp32` | `esp32-jazzy`, `esp32-lyrical` | serial or Wi-Fi |
 | **ESP32-S3** | `esp32s3` | `esp32s3-jazzy`, `esp32s3-lyrical` | serial or Wi-Fi |
 
 A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
 the pin matrix, I2C bus, LiDAR pin and baud, micro-ROS transport and credentials all live in
-the `env` flash partition, not the binary. A robot is a configuration, not a build. The one
-thing the env cannot move is how the scan leaves the board — `comm_mode` is compiled in, so
-an image built for `udp` will not serve a robot wired for `serial`.
+the `env` flash partition, not the binary. A robot is a configuration, not a build — and as
+of 2026-09-20 that is true without exception. `comm_mode` used to be the one thing compiled
+in; it is an env key now, along with the sonar pins, the fake-sensor flags, the motor brake
+mode and the forward safety stop. Nothing about a robot is decided by the compiler any more.
+The only conditionals left in the firmware are about the silicon (ESP32 vs RP2) or the ROS 2
+distro's message ABI.
+
+**The RP2 images are built from the W envs and run on both.** A Pico W is an RP2040 and a
+Pico 2 W is an RP2350, so one image serves the W and non-W board alike — verified on a plain
+Pico 2. The radio is compiled in but never initialised until you enter a Wi-Fi list: with no
+SSID in the env and none compiled in, nothing touches the CYW43, so a board that has no radio
+at all is unaffected and pays only flash for the capability. Entering the list is what turns
+Wi-Fi, syslog and OTA on.
 
 **Flash the row half that matches your ROS 2 distro.** The micro-ROS library and the
 `/cmd_vel` type are both fixed at link time — lyrical takes `TwistStamped`, jazzy plain
 `Twist` — so the wrong half gives a board that enumerates, publishes odometry, and never
 moves.
 
-Notes: an ESP32 DevKit's 921 600 baud UART cannot carry a scan, so fake-mode LiDAR needs
-`udp4`. The ESP32-S3's serial is native USB CDC, so its port comes and goes with the firmware
-rather than the cable. The Pico W boards (`picow`, `pico2w`, and `*_wifi` for micro-ROS over
-Wi-Fi) need a local build — their board definition differs and they ship no prebuilt image.
-The mecanum RP2350 config builds but has not been run on hardware.
+Notes: an ESP32 at 921 600 baud cannot carry a full LiDAR scan alongside the 50 Hz control
+loop — measured, not assumed. With the scan on `lidar_comm: topic` every topic drops to
+**33 Hz** and jitter triples; with the scan off the same board holds **50.0 Hz**. At
+1.5 Mbaud, which the GenDrv's CP2102N does, the scan runs at 78 Hz and the control topics
+stay at 50 Hz. So use a faster bridge, or `udp4`, or leave the scan to the robot computer.
+
+The ESP32-S3's serial is native USB CDC, so its port comes and goes with the firmware rather
+than the cable. The mecanum RP2350 reference has now been run on hardware: real MPU6050 found
+by bus probe, real HC-SR04 on GP27/GP28, 50 Hz control topics.
 
 The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
 ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
-before micro-ROS is up. `picow`/`pico2w` keep `led: -1`: theirs hangs off the CYW43, not a
-GPIO. GPIO 2 on an ESP32 is also a strapping pin, so the pin checker warns about it; that is
-correct and harmless here, since an LED to ground pulls the pin the way the bootloader
-already wants.
+before micro-ROS is up, and a bench board in fake mode needs it as much as a wired one. The
+RP2 design assumes non-W hardware and keeps GP25; on an actual W board GP25 belongs to the
+CYW43 bus, so those set `led` in the env. GPIO 2 on an ESP32 is also a strapping pin, so the
+pin checker warns about it; that is correct and harmless here, since an LED to ground pulls
+the pin the way the bootloader already wants.
 
 Reference robots ship in `config/reference/` and are copied into your config directory on
 first start — see [Your robot's configuration](#your-robots-configuration).
@@ -264,18 +279,18 @@ your board and the cockpit's version:
 ```bash
 python3 scripts/fetch_prebuilt.py pico2-jazzy                 # -> firmware/prebuilt/pico2-jazzy/
 python3 scripts/flash_mcu.py --prebuilt pico2-jazzy --port /dev/ttyACM0 \
-        --params ~/linorobot2-config/rover_pico2_config.yaml
+        --params ~/linorobot2-config/pico2_mecanum_config.yaml
 ```
 
 Every file is checked against the manifest's sha256 before anything is written. To build
 instead — after changing the firmware, or for a board profile that is not released:
 
 ```bash
-docker compose run --rm pio pio run -d firmware -e pico2   # the PlatformIO build image
+docker compose run --rm pio pio run -d firmware -e pico2w  # the PlatformIO build image
 # or, with PlatformIO installed locally:
-python3 scripts/gen_firmware_header.py --params ~/linorobot2-config/rover_pico2_config.yaml --distro jazzy
+python3 scripts/gen_firmware_header.py --params ~/linorobot2-config/pico2_mecanum_config.yaml --distro jazzy
 pio run -d firmware -e pico2
-python3 scripts/flash_mcu.py --env pico2 --port /dev/ttyACM0 --params ~/linorobot2-config/rover_pico2_config.yaml
+python3 scripts/flash_mcu.py --env pico2w --port /dev/ttyACM0 --params ~/linorobot2-config/pico2_mecanum_config.yaml
 ```
 
 `pio run -t upload` is never used. `pio run` compiles; `flash_mcu.py` writes, with
@@ -286,7 +301,7 @@ mass-storage fallback, chip auto-detection).
 **Switching application** is an env write, not a flash:
 
 ```bash
-python3 scripts/flash_mcu.py --env pico2 --port /dev/ttyACM0 --app i2c_detect --env-only
+python3 scripts/flash_mcu.py --env pico2w --port /dev/ttyACM0 --app i2c_detect --env-only
 ```
 
 **What the board tells you.** Every boot starts with
@@ -323,6 +338,13 @@ Fake mode is what makes a bare board useful. Under `base_controller.sensors`:
 | `use_fake_env` | barometer | sea-level pressure and 25 °C |
 | `use_fake_sonar` | ultrasonic range | raycast ahead from the same room, drives the firmware's safety stop |
 
+**Every one of these is an env key, not a build switch.** The config value is only the
+default a board falls back to with a blank env: `fake_wheel`, `fake_ld19`, `fake_env`,
+`fake_sonar` and the IMU/mag names can all be changed on a flashed board without a compiler.
+The same binary is a bench simulator or a real robot depending on four bytes in the env
+partition — demonstrated on the bench by turning `/raw_scan` off on a running board with
+`fake_ld19=0` and nothing else.
+
 The Nav2 goal test sends the robot behind that interior wall, so a green run proves planning,
 not just motion.
 
@@ -338,7 +360,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` or `imu/data_raw` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/mag` only with a magnetometer (`PUBLISH_MAG`) |
 | `raw_scan` | `std_msgs/UInt8MultiArray` | fake LD19 on the MCU |
-| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
+| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`) — they were compile-time until 2026-09-20 and no reference config carried them, so the interrupt-driven driver had never run in any released image; it does now, measured at 8.3 Hz on an RP2350. `safety_stop` is off unless `safety_stop=1` is in the env, because it brakes the robot.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on lyrical
 (Nav2's own default per distro, compiled in from `kinematics.stamped_cmd_vel: auto`), plus
