@@ -35,6 +35,9 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 
+_DEPS_RETRIED_ENV = "COCKPIT_DEPS_RETRIED"
+
+
 def _ensure_dependencies():
     """Verify required third-party packages and auto-install on Debian/Ubuntu if permitted."""
     missing_apt = []
@@ -87,6 +90,30 @@ def _ensure_dependencies():
             except Exception:
                 pass
 
+    # apt can report success while the import still fails: apt installs into the
+    # SYSTEM interpreter's dist-packages, which a venv, pyenv, conda or CI's
+    # setup-python cannot see. Re-executing then finds the same packages missing
+    # and installs them again -- forever. CI caught it doing exactly that:
+    #
+    #   Missing required Python packages: • python3-serial
+    #   Automatically installing required packages via apt-get...
+    #   python3-serial is already the newest version (3.5-2).
+    #   All dependencies installed successfully! Resuming startup...
+    #   Missing required Python packages: • python3-serial      (round and round)
+    #
+    # The cockpit never starts and never says why. One retry, then explain.
+    already_retried = os.environ.get(_DEPS_RETRIED_ENV) == "1"
+    if can_auto_install and already_retried:
+        print(f"[linorobot2-cockpit] apt reported success, but "
+              f"{', '.join(missing_pip)} still cannot be imported by this "
+              f"interpreter:\n    {sys.executable}\n"
+              f"  It does not see apt's site-packages -- typical of a venv, pyenv, "
+              f"conda, or a tool-cache Python.\n"
+              f"  Install into THIS interpreter instead:\n"
+              f"    {sys.executable} -m pip install {' '.join(missing_pip)}",
+              file=sys.stderr)
+        can_auto_install = False
+
     if can_auto_install:
         print("[linorobot2-cockpit] Automatically installing required packages via apt-get...", file=sys.stderr)
         try:
@@ -107,6 +134,8 @@ def _ensure_dependencies():
             ret = subprocess.run(install_cmd, env=env)
             if ret.returncode == 0:
                 print("[linorobot2-cockpit] All dependencies installed successfully! Resuming startup...\n", file=sys.stderr)
+                # Marks the one retry we allow; os.execv keeps the environment.
+                os.environ[_DEPS_RETRIED_ENV] = "1"
                 os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
             print(f"[linorobot2-cockpit] Auto-installation failed: {e}", file=sys.stderr)
@@ -334,6 +363,44 @@ async def json_error_handler(request: Request, exc: Exception):
         content={"error": f"{type(exc).__name__}: {exc}", "detail": f"{type(exc).__name__}: {exc}",
                  "path": str(request.url.path)},
     )
+
+
+# ------------------------------------------------------------------------------
+# What a client actually sent
+# ------------------------------------------------------------------------------
+# A request body is whatever reached the socket, and every endpoint here reads
+# it with `await json_body(request)` and then treats the result as a dict of
+# strings. Neither is guaranteed. `{"robot": {...}}` is as valid JSON as
+# `{"robot": "pico"}`, and `.strip()` on the dict raised AttributeError inside
+# the handler -- a 500 with a traceback in the log, where a 400 belongs. The
+# API test found it by posting /api/config's own answer back to
+# /api/robot/select, which is not even a malicious shape: `robot` is a mapping
+# in the config, and a caller reasonably passed it along.
+#
+# These two say it once for all 36 call sites: a body that is not a JSON object
+# reads as empty, and a field that is not a string reads as absent. Each
+# endpoint's own validation then answers 400 the way it already does for a
+# missing field.
+
+
+async def json_body(request: Request) -> Dict[str, Any]:
+    """The request body as a dict; {} for malformed JSON or a non-object."""
+    try:
+        data = await request.json()
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def text_field(data: Dict[str, Any], *keys: str, default: str = "") -> str:
+    """The first key holding a non-empty string, stripped; `default` otherwise."""
+    if not isinstance(data, dict):
+        return default
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return default
 
 
 # ------------------------------------------------------------------------------
@@ -986,10 +1053,10 @@ async def api_gitinfo_branch(request: Request):
     data = {}
     if request.method == "POST":
         try:
-            data = await request.json()
+            data = await json_body(request)
         except Exception:
             pass
-    branch = (data.get("branch") or request.query_params.get("branch") or "").strip()
+    branch = text_field(data, "branch") or (request.query_params.get("branch") or "").strip()
     if not branch or not re.match(r"^[A-Za-z0-9._/-]+$", branch):
         raise HTTPException(
             status_code=400,
@@ -1088,7 +1155,7 @@ def api_config():
 
 @app.post("/api/config")
 async def api_save_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     params = load_params()
     if isinstance(data, dict):
         for k, v in data.items():
@@ -1118,7 +1185,7 @@ def api_get_hardware_config():
 
 @app.post("/api/hardware/config")
 async def api_save_hardware_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     params = load_params()
 
     ctrl = params.setdefault("base_controller", {})
@@ -1190,7 +1257,7 @@ def api_robot_urdf():
 
 @app.post("/api/hardware/fake_mode")
 async def api_toggle_fake_mode(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     enabled = bool(data.get("enabled", False))
     params = load_params()
     ctrl = params.setdefault("base_controller", {})
@@ -1227,7 +1294,7 @@ def pio_present() -> bool:
 
 @app.post("/api/hardware/test")
 async def api_hardware_test(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     firmware = data.get("firmware") or data.get("target") or "test_sensors"
     port = data.get("port", "/dev/ttyACM0")
     baud = int(data.get("baud", 921600))
@@ -1368,7 +1435,7 @@ def get_robot_config(distro: str = "jazzy"):
 async def save_robot_config(request: Request):
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
-        data = await request.json()
+        data = await json_body(request)
         raw_yaml = data.get("yaml", "")
     else:
         body = await request.body()
@@ -1456,10 +1523,10 @@ def api_config_git():
 async def api_config_commit(request: Request):
     """Commit the user's robot configs. Their repository, their history."""
     try:
-        data = await request.json()
+        data = await json_body(request)
     except Exception:
         data = {}
-    message = (data.get("message") or "").strip()
+    message = text_field(data, "message")
     if not message:
         message = f"Update {ACTIVE_ROBOT_NAME} from the Cockpit"
     res = cockpit_paths.git_commit(message, CONFIG_DIR)
@@ -1484,8 +1551,8 @@ def get_robots():
 
 @app.post("/api/robot/select")
 async def select_robot(request: Request):
-    data = await request.json()
-    name = (data.get("name") or data.get("robot") or "").strip()
+    data = await json_body(request)
+    name = text_field(data, "name", "robot")
     if not name or not re.match(r"^[a-zA-Z0-9_.-]+$", name):
         raise HTTPException(
             status_code=400,
@@ -1553,7 +1620,7 @@ async def select_robot(request: Request):
 
 @app.post("/api/import_config")
 async def import_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     raw_text = data.get("text", "")
     file_path = data.get("path", "")
     if file_path and not raw_text and os.path.isfile(file_path):
@@ -1589,7 +1656,7 @@ def api_syslog_status():
 async def api_syslog_start(request: Request):
     data = {}
     try:
-        data = await request.json()
+        data = await json_body(request)
     except Exception:
         pass
     req_port = data.get("port")
@@ -1667,7 +1734,7 @@ async def save_secrets(request: Request):
     raw_yaml = ""
     secrets_data = {}
     if "application/json" in content_type:
-        data = await request.json()
+        data = await json_body(request)
         if "raw_yaml" in data and isinstance(data["raw_yaml"], str) and data["raw_yaml"].strip():
             raw_yaml = data["raw_yaml"]
             secrets_data = yaml.safe_load(raw_yaml) or {}
@@ -1708,8 +1775,8 @@ async def save_secrets(request: Request):
 # ==============================================================================
 @app.post("/api/exec")
 async def api_exec(request: Request):
-    data = await request.json()
-    command = data.get("command", "").strip()
+    data = await json_body(request)
+    command = text_field(data, "command")
     slot = data.get("slot", "main")
     runner = RUNNERS.get(slot, main_runner)
 
@@ -1744,7 +1811,7 @@ async def api_exec(request: Request):
 
 @app.post("/api/kill")
 async def api_kill(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     slot = data.get("slot", "main")
     runner = RUNNERS.get(slot, main_runner)
     killed = runner.kill()
@@ -1754,8 +1821,8 @@ async def api_kill(request: Request):
 # micro-ROS Agent execution
 @app.post("/api/agent/exec")
 async def api_agent_exec(request: Request):
-    data = await request.json()
-    command = data.get("command", "").strip()
+    data = await json_body(request)
+    command = text_field(data, "command")
     if not command:
         params = load_params()
         ctrl = get_controller(params)
@@ -1800,7 +1867,7 @@ def api_agent_kill():
 @app.post("/api/agent/port_check")
 async def api_agent_port_check(request: Request):
     if request.method == "POST":
-        data = await request.json()
+        data = await json_body(request)
     else:
         data = dict(request.query_params)
     port = data.get("port", "/dev/ttyUSB0")
@@ -1813,7 +1880,7 @@ async def api_agent_port_check(request: Request):
 
 @app.post("/api/agent/port_release")
 async def api_agent_port_release(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     port = data.get("port", "/dev/ttyUSB0")
     mode = data.get("mode", "serial")
     udp_port = int(data.get("udp_port", 8888))
@@ -1825,8 +1892,8 @@ async def api_agent_port_release(request: Request):
 # Bringup execution
 @app.post("/api/bringup/exec")
 async def api_bringup_exec(request: Request):
-    data = await request.json()
-    command = data.get("command", "").strip()
+    data = await json_body(request)
+    command = text_field(data, "command")
     if not command:
         command = "ros2 launch linorobot2_cockpit bringup.launch.py"
 
@@ -1916,7 +1983,7 @@ def api_gamepad_start():
 
 @app.post("/api/gamepad/cmd")
 async def api_gamepad_cmd(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     lx = float(data.get("linear_x", 0.0))
     ly = float(data.get("linear_y", 0.0))
     az = float(data.get("angular_z", 0.0))
@@ -1961,7 +2028,7 @@ async def api_container_install(request: Request, engine: Optional[str] = None):
     req_engine = engine
     if request.method == "POST":
         try:
-            data = await request.json()
+            data = await json_body(request)
             if isinstance(data, dict):
                 req_engine = data.get("engine") or req_engine
         except Exception:
@@ -1983,7 +2050,7 @@ def api_autostart_status():
 async def api_autostart_enable(request: Request):
     data = {}
     try:
-        data = await request.json()
+        data = await json_body(request)
     except Exception:
         pass
     return enable_autostart(data)
@@ -2009,7 +2076,7 @@ def api_presets():
 
 @app.post("/api/presets/apply")
 async def api_presets_apply(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     preset_name = data.get("preset", "")
     if preset_name not in patcher.PRESETS:
         raise HTTPException(status_code=400, detail=f"Unknown preset '{preset_name}'")
@@ -2068,7 +2135,7 @@ def api_get_nav2_config(distro: str = "jazzy"):
 
 @app.post("/api/nav2_config")
 async def api_save_nav2_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     cfg_text = data.get("config", "")
     if not cfg_text.strip():
         raise HTTPException(status_code=400, detail="Empty configuration")
@@ -2081,7 +2148,7 @@ async def api_save_nav2_config(request: Request):
 
 @app.post("/api/nav2_config/patch")
 async def api_nav2_config_patch(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     base = data.get("base", "2wd")
     with open(get_active_params_path(), "r") as f:
         cur_text = f.read()
@@ -2093,7 +2160,7 @@ async def api_nav2_config_patch(request: Request):
 
 @app.post("/api/nav2_config/costmap_sources")
 async def api_nav2_costmap_sources(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     depth_enabled = bool(data.get("depth_enabled"))
     with open(get_active_params_path(), "r") as f:
         cur_text = f.read()
@@ -2129,7 +2196,7 @@ def api_get_ekf_config(base: str = "2wd"):
 
 @app.post("/api/ekf_config")
 async def api_save_ekf_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     cfg_text = data.get("config", "")
     if not cfg_text.strip():
         raise HTTPException(status_code=400, detail="Empty configuration")
@@ -2142,7 +2209,7 @@ async def api_save_ekf_config(request: Request):
 
 @app.post("/api/ekf_config/patch")
 async def api_ekf_config_patch(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     base = data.get("base", "2wd")
     with open(get_active_params_path(), "r") as f:
         cur_text = f.read()
@@ -2175,7 +2242,7 @@ def api_get_slam_config():
 
 @app.post("/api/slam_config")
 async def api_save_slam_config(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     cfg_text = data.get("config", "")
     if not cfg_text.strip():
         raise HTTPException(status_code=400, detail="Empty configuration")
@@ -2188,7 +2255,7 @@ async def api_save_slam_config(request: Request):
 
 @app.post("/api/slam_config/patch")
 async def api_slam_config_patch(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     with open(get_active_params_path(), "r") as f:
         cur_text = f.read()
     patched = patcher.patch_slam_text(
@@ -2219,7 +2286,7 @@ def api_slam_config_reset():
 # ==============================================================================
 @app.post("/api/ai/tune")
 async def api_ai_tune(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     prompt = data.get("prompt", "")
     base = data.get("base", "2wd")
     distro = data.get("distro", "jazzy")
@@ -2228,7 +2295,7 @@ async def api_ai_tune(request: Request):
 
 @app.post("/api/ai/apply")
 async def api_ai_apply(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     distro = data.get("distro", "jazzy")
     nav2_p = data.get("nav2_patch") or {}
     ekf_p = data.get("ekf_patch") or {}
@@ -2265,14 +2332,14 @@ async def api_ai_apply(request: Request):
 
 @app.post("/api/ai/robot_builder")
 async def api_ai_robot_builder(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     description = data.get("description", "")
     return generate_custom_robot_specs(description)
 
 
 @app.post("/api/ai/deploy_robot")
 async def api_ai_deploy_robot(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     specs = data.get("specs") or {}
     design = specs.get("design") or {}
     tuning = specs.get("tuning") or {}
@@ -2360,8 +2427,8 @@ def api_list_dir(path: str = "", only: str = "any", exts: str = ""):
 # ==============================================================================
 @app.post("/api/params/export")
 async def api_params_export(request: Request):
-    data = await request.json()
-    dest = (data.get("dest_dir") or "").strip()
+    data = await json_body(request)
+    dest = text_field(data, "dest_dir")
     if not dest:
         raise HTTPException(status_code=400, detail="dest_dir required")
     if not access.path_allowed(dest, CONFIG_DIR, REPO_ROOT):
@@ -2374,7 +2441,7 @@ async def api_params_export(request: Request):
 
 @app.post("/api/params/merge")
 async def api_params_merge(request: Request):
-    data = await request.json()
+    data = await json_body(request)
     source_text = data.get("source_text", "")
     with open(get_active_params_path(), "r") as f:
         target_text = f.read()
@@ -2563,7 +2630,7 @@ async def api_firmware_detect(request: Request):
     """
     if request.method == "POST":
         try:
-            data = await request.json()
+            data = await json_body(request)
         except Exception:
             data = {}
     else:
@@ -2571,7 +2638,7 @@ async def api_firmware_detect(request: Request):
 
     params = load_params()
     ctrl = get_controller(params)
-    port = (data.get("port") or "").strip() or None
+    port = text_field(data, "port") or None
     family = data.get("family", "auto")
     baud = int(data.get("baud") or 115200)
     force = str(data.get("force", "")).lower() in ("1", "true", "yes")
@@ -2600,15 +2667,15 @@ async def api_firmware_flash(request: Request):
     the same execution mode it was running in.
     """
     try:
-        data = await request.json()
+        data = await json_body(request)
     except Exception:
         data = {}
 
     params = load_params()
     ctrl = get_controller(params)
     firmware_dir = data.get("firmware_dir") or "firmware"
-    env = (data.get("env") or "").strip() or get_controller_name(params, "pico2")
-    port = (data.get("port") or "").strip() or ctrl.get("serial_port", "/dev/ttyUSB0")
+    env = text_field(data, "env") or get_controller_name(params, "pico2")
+    port = text_field(data, "port") or ctrl.get("serial_port", "/dev/ttyUSB0")
     baud = int(data.get("baud") or ctrl.get("upload_baudrate") or 921600)
     chip = data.get("chip") or "auto"
     erase = bool(data.get("erase"))

@@ -133,6 +133,13 @@ def test_selecting_a_robot_is_reflected_in_the_config_that_comes_back():
     status, before = call("GET", "/api/config")
     assert status == 200, before
     current = (before or {}).get("robot") or (before or {}).get("name")
+    # /api/config answers with the config, where `robot` is a mapping, not the
+    # name. Posting that mapping straight back is what turned up the 500 in
+    # /api/robot/select; the name is what this test means by `current`.
+    if isinstance(current, dict):
+        current = current.get("name")
+    if not isinstance(current, str):
+        current = None
     target = next((n for n in names if n != current), names[0])
 
     status, body = call("POST", "/api/robot/select", {"robot": target})
@@ -158,3 +165,20 @@ def test_no_endpoint_leaks_a_python_traceback():
         if "Traceback (most recent call last)" in text:
             offenders.append(path)
     assert not offenders, f"tracebacks returned by: {offenders}"
+
+
+def test_a_write_endpoint_answers_junk_with_a_refusal_not_a_crash():
+    """A body of the wrong SHAPE is a client error, not a server error.
+
+    `{"robot": {...}}` is valid JSON, and it is what a caller gets by passing
+    /api/config's `robot` along. It reached `.strip()` and raised
+    AttributeError inside the handler: 500, traceback in the log. Anything
+    a client can send must come back as a 4xx.
+    """
+    bad = []
+    for body in ({"robot": {"name": "pico"}}, {"robot": 7}, {"robot": ["pico"]},
+                 {"robot": None}, {}, {"name": {"nested": True}}):
+        status, answer = call("POST", "/api/robot/select", body)
+        if status >= 500:
+            bad.append((body, status, answer))
+    assert not bad, f"5xx for a malformed body: {bad}"
