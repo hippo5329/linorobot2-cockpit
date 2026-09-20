@@ -37,8 +37,29 @@ jobs:
       - run: pip install --break-system-packages pyyaml pytest
       - name: Syntax
         run: python3 -m py_compile scripts/*.py launchers/*.py web/backend/*.py
+      # The LD19 driver, so the two tests that COMPILE it and run it are not
+      # skipped here. They guard the patches prepare_docker_vendor.sh applies
+      # to the staged copy, and a patch that silently stops applying is exactly
+      # what they exist to catch -- a test that skips in CI guards nothing. The
+      # clone is shallow and the package is small.
+      - name: Stage the sibling ROS package (LD19 driver)
+        run: bash scripts/prepare_docker_vendor.sh
       - name: Unit tests (env block, header generator, access policy, yaml merge)
         run: python3 -m pytest -q tests
+      # ...and prove they ran. Both skip themselves when the driver is absent or
+      # will not build, which would otherwise hide a dropped patch behind a
+      # green tick.
+      - name: The vendored-driver tests must not have skipped
+        run: |
+          python3 -m pytest -q tests/test_ldlidar_scan_assembly.py \
+                              tests/test_ldlidar_network_start.py \
+                 | tee /tmp/ld19_tests.log
+          grep -qE "[0-9]+ passed" /tmp/ld19_tests.log
+          if grep -qE "[0-9]+ skipped" /tmp/ld19_tests.log; then
+            echo "::error::the vendored LD19 driver tests skipped; they guard \
+          the patches in scripts/prepare_docker_vendor.sh"
+            exit 1
+          fi
       - name: Frontend syntax
         run: node --check web/frontend/app.js && node --check web/frontend/rosviz.js && node --check web/frontend/webserial.js
       - name: Reference configs are one-robot-per-file
