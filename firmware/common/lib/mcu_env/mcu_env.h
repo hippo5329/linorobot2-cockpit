@@ -34,6 +34,8 @@ bool mcuEnvValid(void);
 // Accessors. Each returns `fallback` when the key is absent or the env is
 // invalid, so a caller never has to check mcuEnvValid() first.
 const char *envGet(const char *key, const char *fallback = "");
+int         envInt(const char *key, int fallback);   // pins: -1 means not wired
+bool        envFlag(const char *key, bool fallback); // "0"/"false"/"no" are false
 uint16_t    envU16(const char *key, uint16_t fallback);
 uint32_t    envU32(const char *key, uint32_t fallback);
 IPAddress   envIP(const char *key, IPAddress fallback);

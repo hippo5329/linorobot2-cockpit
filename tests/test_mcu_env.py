@@ -95,8 +95,12 @@ def test_gendrv_carries_the_boards_facts():
 
 def test_dual_core_key_follows_the_config():
     # Booleans reach the env as "1"/"0" strings; pins and rates as ints.
-    assert str(_env("esp32")["dual_core"]) == "1"          # use_dual_core: true
-    assert str(_env("esp32_wifi")["dual_core"]) == "0"     # use_dual_core: false
+    # gendrv is the only shipped ESP32 reference now and it has dual core off,
+    # so the "on" case is built rather than read from a file.
+    assert str(_env("gendrv")["dual_core"]) == "0"         # use_dual_core: false
+    params = reference_params("gendrv")
+    params["base_controller"]["use_dual_core"] = True
+    assert str(_env_from_params(params)["dual_core"]) == "1"
     # RP2 has no dual-core port, so the key never reaches the env at all.
     assert "dual_core" not in _env("pico2_mecanum")
 

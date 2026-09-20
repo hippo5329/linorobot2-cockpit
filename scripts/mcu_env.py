@@ -409,6 +409,16 @@ def hardware_env(params: dict) -> dict:
                 env[key] = bat[src]
     elif bat is not None:
         env["battery_pin"] = bat
+    # The HC-SR04. These were compile-time only (TRIG_PIN / ECHO_PIN in the
+    # generated header) until 2026-09-20, which meant a released image either
+    # had a sonar welded into it or could never have one -- and since no
+    # reference config carried the pins, every shipped image was the latter.
+    # range.cpp reads these now; -1 or absent means "not wired".
+    sonar = pins.get("sonar")
+    if isinstance(sonar, dict):
+        for key, src in (("sonar_trig", "trigger"), ("sonar_echo", "echo")):
+            if sonar.get(src) is not None:
+                env[key] = int(sonar[src])
     telemetry = tgt.get("telemetry", {}) or {}
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
@@ -464,6 +474,35 @@ def hardware_env(params: dict) -> dict:
         "ESC": "esc",
     }.get(driver, "generic2")
     env["fake_wheel"] = _bool(sensors.get("use_fake_wheel", False))
+    # The rest of the runtime flags that used to be compile-time macros. Each
+    # one is a firmware behaviour that a config can now ask for WITHOUT a
+    # rebuild -- but only if it reaches the partition, and `fake_env` did not:
+    # env.cpp fell back to the image's compiled default forever, so a bench
+    # board flashed with a fake-mode image reported a synthetic 25 C / 1013 hPa
+    # as a "BMP280" no matter what its config said.
+    env["fake_env"] = _bool(sensors.get("use_fake_env", False))
+    # The simulated ultrasonic cone. Only ever used when the LiDAR emulator is
+    # running (it raycasts from the same room) and no real sonar is wired, so
+    # the firmware gates it anyway; this says whether the bench wants it.
+    env["fake_sonar"] = _bool(sensors.get("use_fake_sonar", True))
+    # Short brake: both half-bridges to the same rail so the windings damp the
+    # rotor, instead of coasting. On by default -- that is what the code has
+    # always been written to do, though the macro that selected it was emitted
+    # by nothing, so every board shipped coasting.
+    env["short_brake"] = _bool(tgt.get("short_brake", True))
+    # The forward hazard stop. OFF by default: it brakes the robot, and it has
+    # never been compiled into a shipped image, so it should be asked for.
+    safety = tgt.get("safety_stop")
+    if isinstance(safety, dict):
+        env["safety_stop"] = _bool(safety.get("enabled", False))
+        env["safety_stop_m"] = safety.get("range_m", 0.25)
+    else:
+        env["safety_stop"] = _bool(safety) if safety is not None else "0"
+        env["safety_stop_m"] = 0.25
+    # The LiDAR power-gate pin, -1 when the board has none. A pin, like every
+    # other pin: the env carries it so one image serves boards that gate their
+    # LiDAR's power and boards that do not.
+    env["lidar_poweroff"] = int(lidar_cfg.get("poweroff_pin", -1)) if isinstance(lidar_cfg, dict) else -1
 
     for key, src in (("pwm_freq", "pwm_frequency"), ("pwm_bits", "pwm_bits")):
         if kin.get(src) is not None:

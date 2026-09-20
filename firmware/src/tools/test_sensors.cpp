@@ -109,17 +109,19 @@ void setup_()
 
     initBattery();
     initRange();
-#if defined(USE_BMP280)
-    bool env_ok = initEnv();
-    if (!env_ok)
+    // Unconditional, like every other sensor this tool reports on. It used to be
+    // #if defined(USE_BMP280), which meant the one application you run TO FIND
+    // OUT what is on the bus could only see a barometer the config had already
+    // named -- and the config naming it was exactly the assumption under test.
+    // initEnv() probes 0x76/0x77 and returns false when nothing answers.
+    if (!initEnv())
     {
-        Serial.println("[-] BMP280/BME280 initialization FAILED or not detected.");
+        Serial.println("[ ] No BMP280/BME280 on the bus.");
     }
     else
     {
         Serial.printf("[+] %s environmental sensor initialized successfully.\n", envHasHumidity() ? "BME280" : "BMP280");
     }
-#endif
 
     initBoardLate();
     syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
@@ -191,10 +193,15 @@ void loop_()
             );
         }
 
-#if defined(BATTERY_PIN) || defined(USE_INA219) || defined(TRIG_PIN)
+        // Unconditional: USE_INA219 was in this condition, and the INA219 is
+        // compiled in unconditionally and found by probing 0x40-0x45 -- so a
+        // board whose current monitor was detected rather than declared printed
+        // no battery line at all, in the tool you run to check the battery.
+        // BATTERY_PIN and TRIG_PIN are still genuine compile-time facts; a board
+        // without them reads 0 here, which is what a diagnostic should show.
         Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg.voltage, range_msg.range);
-#endif
-#if defined(USE_BMP280)
+        // envOk() is false when nothing answered the probe, so this prints only
+        // on a board that actually has the chip -- no macro needed.
         if (envOk())
         {
             EnvData env = readEnv();
@@ -205,7 +212,6 @@ void loop_()
                     envHasHumidity() ? " (BME280)" : " (BMP280)");
             }
         }
-#endif
 
         syslog(LOG_INFO, "ACC %5.2f %5.2f %5.2f GYR %5.2f %5.2f %5.2f MAG %5.2f %5.2f %5.2f BAT %5.2fV",
             imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z,

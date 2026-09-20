@@ -28,14 +28,6 @@
 #define BOOT_DELAY_MS 0
 #endif
 
-static int envInt(const char *key, int fallback)
-{
-    const char *value = envGet(key, NULL);
-    if (!value || !*value)
-        return fallback;
-    return (int)strtol(value, NULL, 10);
-}
-
 
 // "5=1,13=0,4=1" -- drive each pin to each level. A bare "5" means high, which
 // is what a board enable line almost always wants and saves the user spelling

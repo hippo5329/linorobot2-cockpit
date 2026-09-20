@@ -1,7 +1,9 @@
 #include <Arduino.h>
 #include <micro_ros_utilities/string_utilities.h>
 #include <sensor_msgs/msg/range.h>
+#include <stdlib.h>
 #include "config.h"
+#include "mcu_env.h"
 
 // define sound speed in m/uS
 #define SOUND_SPEED 0.00034
@@ -11,7 +13,23 @@
 #define MIN_RANGE 0.02 // 2cm
 #define MAX_RANGE (SOUND_SPEED * TIMEOUT_US / 2.0 * 0.95)
 
-#ifdef ECHO_PIN
+// The HC-SR04 is compiled in unconditionally and wired at boot, exactly like the
+// INA219 in battery.cpp and the BMP280 in env.cpp. It used to be gated on
+// `#ifdef TRIG_PIN`, which made "does this robot have a sonar" a property of the
+// IMAGE: no reference config carried the pins, so range.cpp compiled to nothing
+// in every released build and the interrupt-driven driver had never run on any
+// board. A released image is built for an MCU, not for a robot -- the pins come
+// from the env partition, and -1 means "not wired", checked at run time.
+#ifndef TRIG_PIN
+#define TRIG_PIN -1
+#endif
+#ifndef ECHO_PIN
+#define ECHO_PIN -1
+#endif
+
+static int trig_pin = -1;
+static int echo_pin = -1;
+
 enum SonarState {
     SONAR_IDLE,
     SONAR_TRIGGERED,
@@ -31,7 +49,10 @@ void echoPinISR()
 #endif
 {
     uint32_t now = micros();
-    if (digitalRead(ECHO_PIN) == HIGH) {
+    // echo_pin is read, not a constant, so the ISR is the same code on a board
+    // with the sensor on GP28 and one with it on GP15. It is only ever attached
+    // when echo_pin >= 0, so there is no guard here.
+    if (digitalRead(echo_pin) == HIGH) {
         if (sonar_state == SONAR_TRIGGERED || sonar_state == SONAR_IDLE) {
             echo_start_us = now;
             sonar_state = SONAR_WAIT_ECHO_FALL;
@@ -50,13 +71,16 @@ void echoPinISR()
         }
     }
 }
-#endif
 
 sensor_msgs__msg__Range range_msg_;
 
+bool rangePresent() { return trig_pin >= 0 && echo_pin >= 0; }
+
 sensor_msgs__msg__Range getRange()
 {
-#ifdef TRIG_PIN
+    if (!rangePresent())
+        return range_msg_;
+
     uint32_t now = micros();
 
     // 1. Check for timeout if waiting for echo from far-away object
@@ -87,25 +111,39 @@ sensor_msgs__msg__Range getRange()
         sonar_state = SONAR_TRIGGERED;
         last_trigger_us = now;
         echo_start_us = now;
-        digitalWrite(TRIG_PIN, HIGH);
+        digitalWrite(trig_pin, HIGH);
         delayMicroseconds(10);
-        digitalWrite(TRIG_PIN, LOW);
+        digitalWrite(trig_pin, LOW);
     }
-#endif
     return range_msg_;
 }
 
 void initRange()
 {
-#ifdef TRIG_PIN // ultrasonic sensor HC-SR04
+    initMcuEnv();
+    trig_pin = envInt("sonar_trig", TRIG_PIN);
+    echo_pin = envInt("sonar_echo", ECHO_PIN);
+
     range_msg_.header.frame_id = micro_ros_string_utilities_set(range_msg_.header.frame_id, "sonar_link");
-    pinMode(TRIG_PIN, OUTPUT);
-    digitalWrite(TRIG_PIN, LOW);
-#endif
-#ifdef ECHO_PIN
-    pinMode(ECHO_PIN, INPUT);
+    range_msg_.field_of_view = FOV;
+    range_msg_.min_range = MIN_RANGE;
+    range_msg_.max_range = MAX_RANGE;
+    range_msg_.range = +INFINITY;
+
+    if (!rangePresent()) {
+        // Say so once. A silent /range that is always +INF looks identical to a
+        // sensor pointing at open air, which is the failure this print exists
+        // to tell apart.
+        Serial.printf("[range] no sonar: trigger=%d echo=%d (set sonar_trig / sonar_echo)\n",
+                      trig_pin, echo_pin);
+        return;
+    }
+
+    pinMode(trig_pin, OUTPUT);
+    digitalWrite(trig_pin, LOW);
+    pinMode(echo_pin, INPUT);
     sonar_state = SONAR_IDLE;
     new_reading_available = false;
-    attachInterrupt(digitalPinToInterrupt(ECHO_PIN), echoPinISR, CHANGE);
-#endif
+    attachInterrupt(digitalPinToInterrupt(echo_pin), echoPinISR, CHANGE);
+    Serial.printf("[range] HC-SR04 trigger=%d echo=%d (interrupt driven)\n", trig_pin, echo_pin);
 }

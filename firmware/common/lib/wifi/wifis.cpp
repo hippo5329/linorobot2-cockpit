@@ -66,7 +66,6 @@ void initWifis(void)
         Serial.println("[wifi] not requested this boot (env wifi=0, transport=serial)");
         return;
     }
-#ifdef USE_MCU_ENV
     // The env partition wins over anything compiled in. A prebuilt image has an
     // empty WIFI_AP_LIST by design -- the credentials were never in it -- so on
     // those builds this is the only source there is.
@@ -83,7 +82,6 @@ void initWifis(void)
         Serial.println("[wifi] Flash one:  python3 scripts/mcu_env.py build --out env.bin");
         Serial.println("[wifi]             esptool write_flash 0x290000 env.bin");
     }
-#endif
     for (int i = 0; wifi_ap_list[i][0] != NULL; i++) {
         wifiMulti.addAP(wifi_ap_list[i][0], wifi_ap_list[i][1]);
     }

@@ -4,7 +4,8 @@
 the topic and udp modes, it defined USE_LIDAR_UDP, and main.cpp derived
 USE_FAKE_LD19_RAW_SCAN from both. So the transport was a property of the IMAGE.
 
-The released `esp32` image is built from esp32_wifi_config.yaml, which is `udp`.
+The released `esp32` image used to be built from esp32_wifi_config.yaml, whose
+comm_mode is `udp`.
 Flashing it onto the gendrv bench -- wired for a serial LD19 into a USB-serial
 bridge -- gave a board that could not be told to use the UART however its env
 was keyed. It emitted at roughly the right average byte rate through the
@@ -47,6 +48,25 @@ def _header(cfg_stem, tmp_path, distro="jazzy"):
             open(hdr, "w").write(saved)
 
 
+def _fake_udp_config(tmp_path):
+    """gendrv turned into what esp32_wifi_config.yaml used to be.
+
+    That file -- the fake-mode, udp-sink ESP32 reference -- was deleted on
+    2026-09-20 along with esp32_config.yaml: same silicon as gendrv, differing
+    only in keys the env partition decides at boot. The COMBINATION it supplied
+    is still worth testing, so it is built here instead of stored.
+    """
+    import yaml as _yaml
+    src = _yaml.safe_load(open(os.path.join(REF, "gendrv_config.yaml")))
+    ctrl = src["base_controller"]
+    ctrl["transport"] = "udp4"
+    ctrl["sensors"]["use_fake_ld19"] = True
+    ctrl.setdefault("lidar", {})["comm_mode"] = "udp"
+    cfg = tmp_path / "fake_udp_config.yaml"
+    cfg.write_text(_yaml.safe_dump(src))
+    return cfg, src
+
+
 def _comm_mode(cfg_stem):
     d = yaml.safe_load(open(os.path.join(REF, f"{cfg_stem}_config.yaml")))
     lidar = ((d.get("hardware") or {}).get("lidar")
@@ -59,7 +79,7 @@ def _comm_mode(cfg_stem):
     return (lidar or {}).get("comm_mode")
 
 
-@pytest.mark.parametrize("cfg_stem", ["esp32_wifi", "gendrv"])
+@pytest.mark.parametrize("cfg_stem", ["gendrv"])
 def test_the_header_names_the_build_default_mode(cfg_stem, tmp_path):
     text = _header(cfg_stem, tmp_path)
     m = re.search(r'#define LIDAR_COMM_DEFAULT\s+"(\w+)"', text)
@@ -74,8 +94,8 @@ def test_the_configured_rx_pin_survives_a_non_serial_build(tmp_path):
     build's comm_mode is udp is precisely what welded the transport into the image.
 
     No reference config combines a udp comm_mode with an rx_pin -- gendrv has the
-    pin and is serial, esp32_wifi is udp with no pin -- so this builds that
-    combination rather than asserting against one that cannot fail.
+    pin and is serial -- so this builds that combination rather than asserting
+    against one that cannot fail.
     """
     import subprocess
     src = yaml.safe_load(open(os.path.join(REF, "gendrv_config.yaml")))
@@ -127,14 +147,32 @@ def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
     """lidar.cpp's path is gated `USE_LIDAR_UDP && !USE_FAKE_LD19` -- forwarding a
     PHYSICAL LiDAR's bytes over UDP. A fake-mode udp robot must not define it, or
     the emulator's sink goes back to being chosen by the build."""
-    text = _header("esp32_wifi", tmp_path)
-    assert "#define USE_FAKE_LD19" in text, "esp32_wifi is a fake-mode reference"
+    import subprocess
+    cfg, _src = _fake_udp_config(tmp_path)
+    hdr = os.path.join(FW, "include", "custom", "lino_base_config.h")
+    saved = open(hdr).read() if os.path.exists(hdr) else None
+    env = dict(os.environ)
+    env["COCKPIT_CONFIG_DIR"] = str(tmp_path / "cfg")
+    env.pop("ROS_DISTRO", None)
+    try:
+        subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+                        "--params", str(cfg), "--distro", "jazzy", "--no-embed-secrets"],
+                       check=True, capture_output=True, env=env)
+        text = open(hdr).read()
+    finally:
+        if saved is not None:
+            open(hdr, "w").write(saved)
+    # Both sinks are compiled into every image now, so the header no longer
+    # decides. What it still carries is the DEFAULT the board falls back to,
+    # and lidar.cpp forwards a real LiDAR only when the env says the emulator
+    # is off -- checked here rather than asserting on a macro that is gone.
+    assert 'FAKE_LD19_DEFAULT true' in text, "the built config is a fake-mode one"
     assert "#define USE_LIDAR_UDP" not in text, (
-        "a fake-mode udp build still defines USE_LIDAR_UDP; that macro now means "
-        "'forward a real LiDAR over UDP' and nothing else.")
+        "USE_LIDAR_UDP is gone: forwarding a real LiDAR over UDP is a run-time "
+        "decision from lidar_comm + fake_ld19, not a build.")
 
 
-@pytest.mark.parametrize("cfg_stem", ["esp32_wifi", "gendrv"])
+@pytest.mark.parametrize("cfg_stem", ["gendrv"])
 def test_the_env_block_carries_the_mode(cfg_stem):
     """Without this key the firmware falls back to the image's own default, which is
     exactly the behaviour being fixed -- so mcu_env.py has to write it."""

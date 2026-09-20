@@ -205,6 +205,37 @@ const char *envGet(const char *key, const char *fallback)
     return fallback;
 }
 
+// Signed, because a PIN is the one env value whose "absent" is a number: -1
+// means "not wired", and every driver that takes a pin has to be able to say
+// so. Four call sites had each open-coded this strtol dance (hw_factory's
+// envPin, main.cpp for the LED and the LiDAR RX, battery.cpp for the ADC), and
+// range.cpp needed a fifth -- so it lives here once.
+int envInt(const char *key, int fallback)
+{
+    const char *value = envGet(key, NULL);
+    if (!value || !*value)
+        return fallback;
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (end == value)          // not a number at all: keep the compiled default
+        return fallback;
+    return (int)parsed;
+}
+
+// Booleans. Five private copies of this had accumulated -- envFlagMain in
+// main.cpp, envFlag in hw_factory.cpp, and one each that I added to env.cpp and
+// lidar.cpp while moving their compile-time gates to run time. They all parsed
+// "0"/"false"/"no" identically, and the env-contract test can only see the
+// spellings it knows, so a private helper also hides its key from the test.
+bool envFlag(const char *key, bool fallback)
+{
+    const char *value = envGet(key, NULL);
+    if (!value || !*value)
+        return fallback;
+    return !(strcmp(value, "0") == 0 || strcasecmp(value, "false") == 0
+             || strcasecmp(value, "no") == 0);
+}
+
 uint16_t envU16(const char *key, uint16_t fallback)
 {
     const char *value = envGet(key, NULL);

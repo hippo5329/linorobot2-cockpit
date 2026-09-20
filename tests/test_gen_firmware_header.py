@@ -29,11 +29,22 @@ def test_gendrv_pins_and_driver(reference):
 
 
 def test_dual_core_is_opt_in_and_esp32_only(reference):
-    assert "USE_DUAL_CORE" in _header(reference, "esp32")            # use_dual_core: true
-    assert "USE_DUAL_CORE" not in _header(reference, "esp32_wifi")   # use_dual_core: false
+    """Both halves built from gendrv, because no shipped config turns it on.
+
+    The DevKit pair used to supply the "on" case; they were deleted on
+    2026-09-20 and gendrv (the surviving ESP32 reference) has it off. Asking
+    for it explicitly is the honest test anyway -- it is the config key that is
+    under test, not which file happens to set it.
+    """
+    on = reference("gendrv")
+    on["base_controller"]["use_dual_core"] = True
+    assert "USE_DUAL_CORE" in _macros(gh.generate_header(on, {}, None, True, "jazzy"))
+    assert "USE_DUAL_CORE" not in _header(reference, "gendrv")       # use_dual_core: false
     # No RP2 port exists: the implementation is xTaskCreatePinnedToCore under
     # `#if defined(ESP32)`, so the macro is withheld whatever the config says.
-    assert "USE_DUAL_CORE" not in _header(reference, "pico2_mecanum")
+    rp2 = reference("pico2_mecanum")
+    rp2["base_controller"]["use_dual_core"] = True
+    assert "USE_DUAL_CORE" not in _macros(gh.generate_header(rp2, {}, None, True, "jazzy"))
 
 
 def test_dual_core_absent_key_means_off(reference):
@@ -44,8 +55,9 @@ def test_dual_core_absent_key_means_off(reference):
     default for those topics now, which removed the stall it was compensating
     for, so a config that wants it has to say so.
     """
-    params = reference("esp32")
-    params["base_controller"].pop("use_dual_core", None)
+    params = reference("gendrv")
+    params["base_controller"]["use_dual_core"] = True     # start from the opt-in
+    params["base_controller"].pop("use_dual_core", None)  # then take the key away
     assert "USE_DUAL_CORE" not in _macros(gh.generate_header(params, {}, None, True, "jazzy"))
 
 
@@ -55,7 +67,10 @@ def test_mecanum_four_motors_and_geometry(reference):
     assert m["MOTOR4_IN_A"] == "10" and m["MOTOR4_ENCODER_A"] == "18"
     assert m["FR_WHEELS_DISTANCE"] == "0.24"
     assert m["COUNTS_PER_REV1"] == "1320"
-    assert "USE_MPU6050_IMU" in m
+    # The IMU is a NAME now, not a macro. `USE_MPU6050_IMU` selected a driver
+    # at compile time; sensor_factory dispatches on this string at boot and the
+    # I2C probe overrides it when the bus disagrees.
+    assert m["IMU_DEFAULT_NAME"] == '"mpu6050"' 
 
 
 def test_generated_bare_config_is_pinless(reference):
@@ -69,10 +84,16 @@ def test_generated_bare_config_is_pinless(reference):
         m = _macros(gh.generate_header(bare_config(mcu), {}, None, True, "jazzy"))
         assert m["MOTOR1_PWM"] == "-1", mcu
         assert m["SDA_PIN"] == "-1", mcu
-        assert "USE_FAKE_WHEEL" in m, mcu
-        assert "USE_FAKE_IMU" in m, mcu
-        # Nothing optional gets compiled into a board with nothing attached.
-        for absent in ("TRIG_PIN", "ECHO_PIN", "BATTERY_PIN", "USE_BMP280"):
+        # The fakes are DEFAULTS now, not gates: the drivers are compiled into
+        # every image and the env decides. A bare module is the one design that
+        # wants them all on with no wiring, so it says so as a value.
+        assert m["FAKE_WHEEL_DEFAULT"] == "true", mcu
+        assert m["IMU_DEFAULT_NAME"] == '"fake"', mcu
+        assert m["FAKE_LD19_DEFAULT"] == "true", mcu
+        # Pins stay absent: nothing is wired, so nothing is driven. (The
+        # drivers still compile -- range.cpp and battery.cpp take -1 and say
+        # so at boot -- which is what lets one image serve a wired board.)
+        for absent in ("TRIG_PIN", "ECHO_PIN", "BATTERY_PIN"):
             assert absent not in m, (mcu, absent)
 
 
@@ -82,7 +103,14 @@ def test_stamped_cmd_vel_is_a_distro_fact(reference):
 
 
 def test_wifi_capability_is_compiled_from_the_config(reference):
-    esp_wifi = _header(reference, "esp32_wifi")
-    assert esp_wifi["WIFI_DEFAULT_ENABLED"] == "1"
-    esp = _header(reference, "esp32")
-    assert esp["WIFI_DEFAULT_ENABLED"] == "0"
+    """WIFI_DEFAULT_ENABLED says what the CONFIG wants; the radio code is
+    compiled into every ESP32 build regardless, so one image serves both the
+    serial robot and the udp4 one and the env key `wifi` picks at boot."""
+    assert _header(reference, "gendrv")["WIFI_DEFAULT_ENABLED"] == "1"
+    off = reference("gendrv")
+    off["base_controller"]["wifi"] = {"enabled": False}
+    off["base_controller"]["transport"] = "serial"
+    m = _macros(gh.generate_header(off, {}, None, True, "jazzy"))
+    assert m["WIFI_DEFAULT_ENABLED"] == "0"
+    # ...and the radio is still there to be switched on from the env.
+    assert "WIFI_AP_LIST" in m

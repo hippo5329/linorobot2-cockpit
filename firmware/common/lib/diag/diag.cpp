@@ -29,26 +29,24 @@ void diagBegin(void)
     if (!tx_env || !*tx_env) return;
     const int tx = (int)strtol(tx_env, NULL, 10);
     if (tx < 0) return;
-#ifdef USE_FAKE_LD19
     // The LiDAR emulator streams out of this same UART (both take
     // LIDAR_SERIAL), and on an ESP32 the second begin() simply re-points the
     // peripheral: whichever starts last owns the pin and the other goes
     // silently nowhere. Turning both on has never meant anything, so say so
     // instead of leaving the operator to wonder which instrument is lying.
     const char *fake = envGet("fake_ld19", NULL);
-    const bool fake_on = !(fake && *fake && (strcmp(fake, "0") == 0
-                                             || strcasecmp(fake, "false") == 0
-                                             || strcasecmp(fake, "no") == 0));
+    const bool fake_on = (fake && *fake)
+        ? !(strcmp(fake, "0") == 0 || strcasecmp(fake, "false") == 0
+            || strcasecmp(fake, "no") == 0)
+        : (bool)FAKE_LD19_DEFAULT;
     // Same defaulting as main.cpp: the env's pin, else the header's, and a
     // negative pin means the emulator has no UART sink at all.
-    const char *rx_env = envGet("lidar_rx", NULL);
-    const int lidar_rx = (rx_env && *rx_env) ? (int)strtol(rx_env, NULL, 10) : LIDAR_RXD;
+    const int lidar_rx = envInt("lidar_rx", LIDAR_RXD);
     if (fake_on && lidar_rx >= 0) {
         Serial.printf("[diag] diag_tx=%d ignored: the LiDAR emulator owns UART%d "
                       "(set fake_ld19=0 to use the diagnostic UART)\r\n", tx, LIDAR_SERIAL);
         return;
     }
-#endif
     const uint32_t baud = envU32("diag_baud", 230400);
 #if defined(ESP32)
     HardwareSerial *serial = new HardwareSerial(LIDAR_SERIAL);

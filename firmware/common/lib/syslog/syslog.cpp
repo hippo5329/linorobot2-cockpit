@@ -15,10 +15,8 @@
 WiFiUDP udpClient;
 Syslog syslogv(udpClient, SYSLOG_SERVER, SYSLOG_PORT, DEVICE_HOSTNAME, APP_NAME, LOG_KERN);
 void initSyslog(void) {
-#ifdef USE_MCU_ENV
   initMcuEnv();
   syslogv.server(envIP("syslog_ip", SYSLOG_SERVER), envU16("syslog_port", SYSLOG_PORT));
-#endif
 }
 
 void syslog(uint16_t priority, const char *fmt, ...) {

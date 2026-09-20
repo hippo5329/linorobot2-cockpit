@@ -39,6 +39,18 @@ inline void analogWriteFrequency(uint8_t pin, double frequency)
 #endif
 
 #include "motor_interface.h"
+#include "mcu_env.h"
+
+// Short brake: both half-bridges pulled to the same rail so the motor windings
+// are shorted and the rotor is damped, instead of letting it coast.
+//
+// This was `#ifdef USE_SHORT_BRAKE`, emitted by nothing -- not the generator,
+// not platformio.ini, not any config -- so the coast branch is the only one
+// that has ever been compiled, on every board, and the brake() of a BTS7960
+// robot has been releasing the wheels rather than holding them. It is an env
+// key now (`short_brake`), read once in initMotors(), and it defaults ON
+// because that is what the code was written to do.
+bool motorShortBrake();
 
 class Generic2: public MotorInterface
 {
@@ -90,10 +102,10 @@ class Generic2: public MotorInterface
         {
             if (in_a_pin_ < 0) return;
             analogWrite(pwm_pin_, 0);
-#ifdef USE_SHORT_BRAKE
-            digitalWrite(in_a_pin_, HIGH); // short brake
-            digitalWrite(in_b_pin_, HIGH);
-#endif
+            if (motorShortBrake()) {
+                digitalWrite(in_a_pin_, HIGH); // short brake
+                digitalWrite(in_b_pin_, HIGH);
+            }
         }
 };
 
@@ -170,25 +182,25 @@ class BTS7960: public MotorInterface
         void forward(int pwm) override
         {
             if (in_a_pin_ < 0) return;
-#ifdef USE_SHORT_BRAKE
-            analogWrite(in_a_pin_, pwm_max_ - abs(pwm));
-            analogWrite(in_b_pin_, pwm_max_); // short brake
-#else
-            analogWrite(in_a_pin_, 0);
-            analogWrite(in_b_pin_, abs(pwm));
-#endif
+            if (motorShortBrake()) {
+                analogWrite(in_a_pin_, pwm_max_ - abs(pwm));
+                analogWrite(in_b_pin_, pwm_max_); // short brake
+            } else {
+                analogWrite(in_a_pin_, 0);
+                analogWrite(in_b_pin_, abs(pwm));
+            }
         }
 
         void reverse(int pwm) override
         {
             if (in_a_pin_ < 0) return;
-#ifdef USE_SHORT_BRAKE
-            analogWrite(in_b_pin_, pwm_max_ - abs(pwm));
-            analogWrite(in_a_pin_, pwm_max_); // short brake
-#else
-            analogWrite(in_b_pin_, 0);
-            analogWrite(in_a_pin_, abs(pwm));
-#endif
+            if (motorShortBrake()) {
+                analogWrite(in_b_pin_, pwm_max_ - abs(pwm));
+                analogWrite(in_a_pin_, pwm_max_); // short brake
+            } else {
+                analogWrite(in_b_pin_, 0);
+                analogWrite(in_a_pin_, abs(pwm));
+            }
         }
 
     public:
@@ -242,13 +254,13 @@ class BTS7960: public MotorInterface
         void brake() override
         {
             if (in_a_pin_ < 0) return;
-#ifdef USE_SHORT_BRAKE
-            analogWrite(in_a_pin_, pwm_max_);
-            analogWrite(in_b_pin_, pwm_max_); // short brake
-#else
-            analogWrite(in_b_pin_, 0);
-            analogWrite(in_a_pin_, 0);            
-#endif
+            if (motorShortBrake()) {
+                analogWrite(in_a_pin_, pwm_max_);
+                analogWrite(in_b_pin_, pwm_max_); // short brake
+            } else {
+                analogWrite(in_b_pin_, 0);
+                analogWrite(in_a_pin_, 0);
+            }
         }
 };
 

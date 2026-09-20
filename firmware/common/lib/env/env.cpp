@@ -16,6 +16,13 @@
 #include <Wire.h>
 #include "config.h"
 #include "env.h"
+#include "mcu_env.h"
+
+#ifndef FAKE_ENV_DEFAULT
+#define FAKE_ENV_DEFAULT false
+#endif
+
+
 
 // The BMP280/BME280 is compiled in unconditionally and detected at boot,
 // exactly like the IMU, the magnetometer and the INA219. It was the last
@@ -25,7 +32,7 @@
 // released profiles named it. The barometer was therefore absent from every
 // shipped image and no runtime key could bring it back. initEnv() probes 0x76
 // and 0x77 and returns false when nothing answers, which is the only gate that
-// was ever needed; publish_env follows envFlagMain("pub_env", env_present).
+// was ever needed; publish_env follows envFlag("pub_env", env_present).
 
 #ifndef BMP280_ADDR
 #define BMP280_ADDR 0x77          // Waveshare General Driver board barometer
@@ -127,16 +134,29 @@ static void loadCalibration()
     }
 }
 
+// Simulated barometer, from the env rather than the build. `USE_FAKE_ENV`
+// decided this at compile time, which meant a bench board could only report a
+// synthetic 25 C / 1013 hPa if someone had generated its header that way --
+// and a released image could never do it at all.
+static bool s_fake = false;
+
+bool envIsFake() { return s_fake; }
+
 bool initEnv()
 {
     s_ok = false;
     s_is_bme = false;
 
-#if defined(USE_FAKE_ENV)
-    s_ok = true;
-    s_is_bme = false;
-    return true;
-#else
+    initMcuEnv();
+    s_fake = envFlag("fake_env", FAKE_ENV_DEFAULT);
+    if (s_fake)
+    {
+        s_ok = true;
+        s_is_bme = false;
+        Serial.println("[env] fake_env=1: synthetic barometer (25 C, 1013 hPa)");
+        return true;
+    }
+
     if (!probe(BMP280_ADDR))
     {
         uint8_t alt = (BMP280_ADDR == 0x76) ? 0x77 : 0x76;
@@ -165,7 +185,6 @@ bool initEnv()
 
     s_ok = true;
     return true;
-#endif
 }
 
 bool envOk()          { return s_ok; }
@@ -177,13 +196,15 @@ EnvData readEnv()
     if (!s_ok)
         return d;
 
-#if defined(USE_FAKE_ENV)
-    d.valid = true;
-    d.temperature = 25.0f;
-    d.pressure = 101325.0f;
-    d.humidity = 0.5f;
-    return d;
-#else
+    if (s_fake)
+    {
+        d.valid = true;
+        d.temperature = 25.0f;
+        d.pressure = 101325.0f;
+        d.humidity = 0.5f;
+        return d;
+    }
+
     // Non-blocking: the sensor is in normal mode, just read the latest result.
     uint8_t b[8];
     uint8_t len = s_is_bme ? 8 : 6;
@@ -233,6 +254,5 @@ EnvData readEnv()
 
     d.valid = true;
     return d;
-#endif
 }
 

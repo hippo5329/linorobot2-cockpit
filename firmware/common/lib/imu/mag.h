@@ -20,34 +20,25 @@
 #include "default_mag.h"
 
 // now you can create a config constant that you can use in lino_base_config.h
-#ifdef USE_HMC5883L_MAG
-    // pass your built in class to MAG macro
-    #define MAG HMC5883LMAG
-#endif
 
-#ifdef USE_AK8963_MAG
-    #define MAG AK8963MAG
-#endif
 
-#ifdef USE_AK8975_MAG
-    #define MAG AK8975MAG
-#endif
 
-#ifdef USE_AK09918_MAG
-    #define MAG AK09918MAG
-#endif
 
-#ifdef USE_QMC5883L_MAG
-    #define MAG QMC5883LMAG
-#endif
 
-#ifdef USE_ICM20948_MAG
-    #define MAG ICM20948MAG
-#endif
 
 #ifndef MAG // use fake mag when there is no real mag
     #define USE_FAKE_MAG
     #define MAG FakeMAG
 #endif
+
+// No `#define MAG <class>` chain below any more.
+//
+// It mapped USE_MPU6050_MAG, USE_QMI8658_MAG and the rest onto a single typedef
+// so that one driver could be named at COMPILE time -- the thing sensor_factory
+// exists to replace. Every driver class above is compiled into every image and
+// createIMU()/createMAG() dispatch on a name from the env, which the I2C probe
+// can overrule. Nothing has referenced the typedefs since test_motors.cpp moved
+// to the factory, so the selection chain was dead code that still made a board
+// look like a build-time choice.
 
 #endif

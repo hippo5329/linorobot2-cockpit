@@ -19,16 +19,48 @@
 #include <Arduino.h>
 #include "config.h"
 #include "syslog.h"
+#include "mcu_env.h"
+#include <string.h>
 
-#if defined(USE_LIDAR_UDP) && !defined(USE_FAKE_LD19)
+// Forwarding a PHYSICAL LiDAR's bytes to a UDP server. The gate was
+// `#if defined(USE_LIDAR_UDP) && !defined(USE_FAKE_LD19)`, which made this an
+// either/or decided by the build: an image that carried the emulator could
+// never forward a real LiDAR, and an image that forwarded one could never
+// simulate. Both now compile, and initLidar() picks at boot from `lidar_comm`
+// and `fake_ld19`.
+//
+// The remaining gate is ARCHITECTURE: this needs WiFiUdp and a spare
+// HardwareSerial, neither of which exists on a bare RP2040/RP2350.
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
 #include <HardwareSerial.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #define BUFSIZE 512
 
+#ifndef LIDAR_SERIAL
+#define LIDAR_SERIAL 1
+#endif
+#ifndef LIDAR_RXD
+#define LIDAR_RXD -1
+#endif
+#ifndef LIDAR_BAUDRATE
+#define LIDAR_BAUDRATE 230400
+#endif
+#ifndef LIDAR_POWEROFF
+#define LIDAR_POWEROFF -1
+#endif
+
 HardwareSerial comm(LIDAR_SERIAL);
 WiFiUDP udp;
 uint8_t buf[BUFSIZE];
+
+// Resolved in initLidar(): -1 for "not wired", and forwarding stays off unless
+// this board is actually the tap for a real LiDAR.
+static int  lidar_rx = -1;
+static int  lidar_poweroff = -1;
+static bool forwarding = false;
+
+
 
 void rx_err_callback(hardwareSerial_error_t err)
 {
@@ -45,7 +77,7 @@ void rx_callback(void)
   // receive callback the moment a LiDAR is wired up. Keep draining the UART --
   // dropping the bytes is right, blocking the callback is not. The radio can
   // arrive after setup() now that initWifis() no longer waits for it.
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!forwarding || WiFi.status() != WL_CONNECTED) {
     len = 0;
     return;
   }
@@ -61,16 +93,14 @@ void rx_callback(void)
 
 void poweronLidar(void)
 {
-#ifdef LIDAR_POWEROFF
-    digitalWrite(LIDAR_POWEROFF, LOW);
-#endif
+    if (lidar_poweroff >= 0)
+        digitalWrite(lidar_poweroff, LOW);
 }
 
 void poweroffLidar(void)
 {
-#ifdef LIDAR_POWEROFF
-    digitalWrite(LIDAR_POWEROFF, HIGH);
-#endif
+    if (lidar_poweroff >= 0)
+        digitalWrite(lidar_poweroff, HIGH);
 }
 
 // A generous default, because the cost of getting it wrong is asymmetric. An
@@ -84,15 +114,35 @@ void poweroffLidar(void)
 #endif
 
 void initLidar(void) {
-  pinMode(LIDAR_RXD, INPUT);
-#ifdef LIDAR_POWEROFF
-  pinMode(LIDAR_POWEROFF, OUTPUT);
-#endif
+  initMcuEnv();
+  lidar_rx = envInt("lidar_rx", LIDAR_RXD);
+  lidar_poweroff = envInt("lidar_poweroff", LIDAR_POWEROFF);
+
+  if (lidar_poweroff >= 0)
+    pinMode(lidar_poweroff, OUTPUT);
   poweronLidar();
+
+  // Forward only when this board is the tap for a REAL LiDAR going out over
+  // UDP. `fake_ld19` means the scan is synthesised instead, and the emulator
+  // owns the same UART -- starting both would leave whichever began last
+  // holding the pin.
+  const char *comm_mode = envGet("lidar_comm", LIDAR_COMM_DEFAULT);
+  const bool fake = envFlag("fake_ld19", FAKE_LD19_DEFAULT);
+  forwarding = (lidar_rx >= 0) && !fake
+               && (strcasecmp(comm_mode, "udp") == 0
+                   || strcasecmp(comm_mode, "udp_server") == 0);
+  if (!forwarding) {
+    Serial.printf("[lidar] UDP forwarder off (rx=%d fake_ld19=%d comm=%s)\n",
+                  lidar_rx, (int)fake, comm_mode);
+    return;
+  }
+
+  pinMode(lidar_rx, INPUT);
   comm.setRxBufferSize(LIDAR_RX_BUFFER_SIZE);
   comm.onReceiveError(rx_err_callback);
   comm.onReceive(rx_callback);
-  comm.begin(LIDAR_BAUDRATE, SERIAL_8N1, LIDAR_RXD);
+  comm.begin(envU32("lidar_baud", LIDAR_BAUDRATE), SERIAL_8N1, lidar_rx);
+  Serial.printf("[lidar] forwarding a real LiDAR from GPIO %d to the UDP server\n", lidar_rx);
 };
 #else
 void initLidar(void) {};

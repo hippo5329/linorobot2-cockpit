@@ -34,6 +34,7 @@ struct EnvData
 bool     initEnv();          // probe + calibrate; true when a sensor is present
 bool     envOk();            // result of the last initEnv()
 bool     envHasHumidity();   // true only for BME280 (chip id 0x60)
+bool     envIsFake();        // readings are synthetic (env key `fake_env`)
 EnvData  readEnv();          // forced measurement + compensation
 
 #endif

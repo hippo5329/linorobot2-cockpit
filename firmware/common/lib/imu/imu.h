@@ -15,46 +15,27 @@
 #ifndef IMU_CONFIG_H
 #define IMU_CONFIG_H
 
-#if defined(USE_MPU9150_IMU) && !defined(USE_MPU6050_IMU)
-#define USE_MPU6050_IMU
-#endif
 
 // include the header of your new driver here similar to default_imu.h
 #include "default_imu.h"
 
 // now you can create a config constant that you can use in lino_base_config.h
-#ifdef USE_GY85_IMU
-    // pass your built in class to IMU macro
-    #define IMU GY85IMU
-#endif
 
-#ifdef USE_MPU6050_IMU
-    #define IMU MPU6050IMU
-#endif
 
-#ifdef USE_MPU9250_IMU
-    #define IMU MPU9250IMU
-#endif
 
-#ifdef USE_BNO085_IMU
-    #define IMU BNO085IMU
-#endif
 
-#ifdef USE_QMI8658_IMU
-    #define IMU QMI8658IMU
-#endif
 
-#ifdef USE_LSM6DSOX_IMU
-    #define IMU LSM6DSOXIMU
-#endif
 
-#ifdef USE_ICM20948_IMU
-    #define IMU ICM20948IMU
-#endif
 
-#ifndef IMU
-    #define USE_FAKE_IMU
-    #define IMU FakeIMU
-#endif
+
+// No `#define IMU <class>` chain below any more.
+//
+// It mapped USE_MPU6050_IMU, USE_QMI8658_IMU and the rest onto a single typedef
+// so that one driver could be named at COMPILE time -- the thing sensor_factory
+// exists to replace. Every driver class above is compiled into every image and
+// createIMU()/createMAG() dispatch on a name from the env, which the I2C probe
+// can overrule. Nothing has referenced the typedefs since test_motors.cpp moved
+// to the factory, so the selection chain was dead code that still made a board
+// look like a build-time choice.
 
 #endif

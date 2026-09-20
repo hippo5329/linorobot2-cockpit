@@ -540,35 +540,31 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         f'#define AGENT_PORT_DEFAULT {agent_port_default}',
         f'#endif',
         "// --- Runtime sensor selection (env keys `imu` and `mag`) ---",
-        "#define USE_RUNTIME_SENSORS",
+        "// No USE_RUNTIME_SENSORS gate: the factory is the only path. The macro",
+        "// used to choose between it and a compile-time `IMU imu_instance;`, which",
+        "// is the thing the factory exists to remove.",
         f'#define IMU_DEFAULT_NAME "{imu_name}"',
         f'#define MAG_DEFAULT_NAME "{mag_name}"',
     ])
 
-    if sensors.get("use_fake_imu", False):
-        lines.append("#define USE_FAKE_IMU  // Prevent I2C NACK loop stall on bare bench")
-    else:
-        imu_model = sensors.get("imu", "NONE").upper()
-        if imu_model != "NONE":
-            lines.append(f"#define USE_{imu_model}_IMU")
-
-    if sensors.get("use_fake_mag", False):
-        lines.append("#define USE_FAKE_MAG  // Prevent compass NACK stall on bare bench")
-    else:
-        mag_model = sensors.get("mag", "NONE").upper()
-        if mag_model != "NONE":
-            lines.append(f"#define USE_{mag_model}_MAG")
-
-    if sensors.get("current", "").upper() == "INA219":
-        lines.append("#define USE_INA219")
-
-    if str(sensors.get("env", "")).upper() in ("BMP280", "BME280") or sensors.get("bmp280", False):
-        lines.append("#define USE_BMP280")
-        if sensors.get("use_fake_env", False):
-            lines.append("#define USE_FAKE_ENV  // Simulate barometer readings on bench")
-
-    if sensors.get("use_fake_wheel", False):
-        lines.append("#define USE_FAKE_WHEEL  // Simulate encoder ticks on bench")
+    # Defaults, not gates.
+    #
+    # These used to be `#define USE_FAKE_*`, and every one of them decided at
+    # BUILD time something that belongs to a robot: whether the wheels are
+    # simulated, whether the barometer is. An image built without them could
+    # never be told to simulate, and one built with them could never be told to
+    # stop -- which is why the bare-module design had to be a separate file per
+    # board, and why a released image could not serve both a bench and a robot.
+    #
+    # What the config says now survives as the FALLBACK each driver takes when
+    # its env key is absent, so a board with a blank env still behaves exactly
+    # as its config describes.
+    lines.extend([
+        f"#define FAKE_IMU_DEFAULT {'true' if sensors.get('use_fake_imu', False) else 'false'}",
+        f"#define FAKE_MAG_DEFAULT {'true' if sensors.get('use_fake_mag', False) else 'false'}",
+        f"#define FAKE_WHEEL_DEFAULT {'true' if sensors.get('use_fake_wheel', False) else 'false'}",
+        f"#define FAKE_ENV_DEFAULT {'true' if sensors.get('use_fake_env', False) else 'false'}",
+    ])
 
     # The MCU-side fake scan and the host-side one are separate things. Bringup
     # launches scripts/fake_laser_node.py off sensors.use_fake_ld19, whereas this
@@ -581,13 +577,16 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         mcu_fake_ld19 = bool(lidar.get("use_fake_ld19"))
     else:
         mcu_fake_ld19 = bool(sensors.get("use_fake_ld19", False))
-    if mcu_fake_ld19:
-        lines.append("#define USE_FAKE_LD19   // Raycast virtual 10x6m room on bench")
-        # The emulator raycasts from where the config says the LiDAR sits, so
-        # /scan and the TF tree agree (a 12 cm mismatch smeared the map by
-        # 0.196 m median once). The env key lidar_x overrides at run time.
-        laser = gen_robot_description.effective_geometry(params)["laser"]
-        lines.append(f"#define FAKE_LIDAR_OFFSET_X {float(laser['x'])}f")
+    # Same: a default, not a gate. The emulator is compiled into every image
+    # (12,396 bytes of flash and 4,084 of RAM on an ESP32, measured) so that
+    # `fake_ld19` in the env can turn it on for a bench board and off for the
+    # robot that same image later becomes.
+    lines.append(f"#define FAKE_LD19_DEFAULT {'true' if mcu_fake_ld19 else 'false'}")
+    # The emulator raycasts from where the config says the LiDAR sits, so /scan
+    # and the TF tree agree (a 12 cm mismatch smeared the map by 0.196 m median
+    # once). The env key lidar_x overrides at run time.
+    laser = gen_robot_description.effective_geometry(params)["laser"]
+    lines.append(f"#define FAKE_LIDAR_OFFSET_X {float(laser['x'])}f")
     lines.append("")
 
     # LiDAR settings
@@ -684,7 +683,8 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             "// and it is empty when the header was generated with",
             "// --no-embed-secrets (which is how firmware/prebuilt is built).",
             '#include "mcu_env.h"',
-            "#define USE_MCU_ENV",
+            "// No USE_MCU_ENV gate: an image that cannot read its env partition",
+            "// cannot be configured, and configuration is what the partition is.",
             "#ifndef USE_WIFI",
             "#define USE_WIFI",
             "#endif",
@@ -723,7 +723,12 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
 
     # Syslog Remote UDP Telemetry
     telemetry = tgt.get("telemetry", {})
-    use_syslog = telemetry.get("syslog", True) if has_wifi else bool(tgt.get("use_syslog", False))
+    # Follows the SILICON, like the Wi-Fi block above it. These compile WiFiUdp
+    # and lwIP in, which is a link error on a board with no radio and free on one
+    # that has it -- so "can this MCU talk" decides, and `syslog_ip` in the env
+    # decides whether it does. Keying it on the robot's config meant a
+    # serial-transport ESP32 shipped an image that could never be told to log.
+    use_syslog = wifi_capable or has_wifi
     if use_syslog:
         syslog_srv_str = telemetry.get("syslog_server") or secrets.get("telemetry", {}).get("syslog_server") or tgt.get("agent_ip") or secrets.get("micro_ros", {}).get("agent_ip") or "192.168.1.10"
         # The Cockpit's syslog sink is on 5140 unconditionally (see
@@ -760,7 +765,9 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         ])
 
     # ArduinoOTA Wireless Firmware Flashing
-    use_ota = telemetry.get("ota", True) if has_wifi else bool(tgt.get("use_ota", False))
+    # Same rule: a radio-capable MCU gets the OTA responder compiled in, and the
+    # `ota_port` env key is what turns it on for a given robot.
+    use_ota = wifi_capable or has_wifi
     if use_ota:
         lines.extend([
             "// --- ArduinoOTA Wireless Firmware Flashing ---",

@@ -22,14 +22,6 @@ static int envPin(int index, const char *suffix, int fallback)
     return (int)strtol(value, NULL, 10);
 }
 
-static bool envFlag(const char *key, bool fallback)
-{
-    const char *value = envGet(key, NULL);
-    if (!value || !*value)
-        return fallback;
-    return !(strcmp(value, "0") == 0 || strcasecmp(value, "false") == 0
-             || strcasecmp(value, "no") == 0);
-}
 
 static float envFloat(const char *key, float fallback)
 {
@@ -64,14 +56,17 @@ class RealEncoder : public EncoderInterface
         Encoder enc_;
 };
 
+#ifndef FAKE_WHEEL_DEFAULT
+#define FAKE_WHEEL_DEFAULT false
+#endif
+
 bool wheelsAreFake(void)
 {
     initMcuEnv();
-#ifdef USE_FAKE_WHEEL
-    return envFlag("fake_wheel", true);
-#else
-    return envFlag("fake_wheel", false);
-#endif
+    // One line, one default. This was an #ifdef choosing which fallback to
+    // pass -- the same call twice -- so the build still decided what a blank
+    // env meant. FAKE_WHEEL_DEFAULT carries the config's intent as a value.
+    return envFlag("fake_wheel", FAKE_WHEEL_DEFAULT);
 }
 
 EncoderInterface *createEncoder(int index)
@@ -88,6 +83,17 @@ EncoderInterface *createEncoder(int index)
     if (wheelsAreFake())
         return new FakeEncoder(pin_a, pin_b, cpr, invert);
     return new RealEncoder(pin_a, pin_b, cpr, invert);
+}
+
+// Read once, not per call: brake() runs inside the control loop and the env is
+// a linear scan of the partition. Defaults ON -- see default_motor.h for why
+// the compile-time gate it replaces had never once been true.
+bool motorShortBrake()
+{
+    static int cached = -1;
+    if (cached < 0)
+        cached = envFlag("short_brake", true) ? 1 : 0;
+    return cached == 1;
 }
 
 MotorInterface *createMotor(int index)

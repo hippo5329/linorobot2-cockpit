@@ -57,9 +57,7 @@
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
 #include "fake_wheel.h"
-#ifdef USE_FAKE_LD19
 #include "fake_ld19.h"
-#endif
 // The synthetic scan can reach the host three ways, and running two at once
 // wastes a link that has no headroom to spare -- so exactly one is chosen, at
 // BOOT rather than at build time. The publisher below is compiled into every
@@ -72,9 +70,6 @@
 // is built `udp`, so flashing it onto the gendrv bench -- wired for a serial
 // LD19 into a USB-serial bridge -- gave a board that could not be told to use
 // the UART, whatever its env said.
-#ifdef USE_FAKE_LD19
-#define USE_FAKE_LD19_RAW_SCAN
-#endif
 #include "battery.h"
 #include "range.h"
 #include "env.h"
@@ -178,11 +173,17 @@ static char twist_stamped_frame_id[64];
 #endif
 rcl_subscription_t twist_subscriber;
 rcl_publisher_t battery_publisher;
-#ifdef USE_SAFETY_STOP
+// The forward hazard stop. `USE_SAFETY_STOP` guarded all of this and was
+// emitted by nothing -- not gen_firmware_header.py, not platformio.ini, not any
+// config -- so the reflex has never been compiled into a single image. It is an
+// env flag now (`safety_stop`), and it defaults OFF: it brakes the robot, and a
+// behaviour that has never run on hardware should be asked for explicitly
+// rather than arrive with a firmware update.
 rcl_publisher_t safety_stop_publisher;
 std_msgs__msg__Bool safety_stop_msg;
 bool safety_stopped = false;
-#endif
+static bool safety_stop_on = false;
+static float safety_stop_range = 0.25f;   // metres ahead before forward motion is cut
 rcl_publisher_t range_publisher;
 rcl_publisher_t pressure_publisher;
 rcl_publisher_t temperature_publisher;
@@ -255,17 +256,26 @@ FakeIMUFromWheels fake_imu;
 // wheelsAreFake() reads the env; it is read once in setup() and used from the
 // control loop, which runs on the other core on ESP32.
 static bool fake_wheels = false;
-#ifdef USE_FAKE_LD19
 FakeLD19 fake_ld19;
 // Whether the emulator runs at all is a robot fact, not an image fact: a
 // prebuilt image is built from a fake-mode reference, and every real robot
 // that flashes it would otherwise raycast a room and stream it (env key
 // fake_ld19; the compiled-in default is on, so a blank env keeps the bench).
 static bool fake_lidar_on = false;
-#ifdef USE_FAKE_LD19
+
+// /sonar, decided at boot rather than by the build.
+//
+// It used to take `#if defined(ECHO_PIN) || (defined(USE_FAKE_SONAR) &&
+// defined(USE_FAKE_LD19))`. Neither half was ever true in a shipped image: no
+// reference config carried sonar pins, so ECHO_PIN was never defined, and
+// USE_FAKE_SONAR is emitted by nothing at all. The topic has therefore never
+// been published by any release, on either path.
+//
+// publish_range is now rangePresent() -- both pins resolved from the env -- or
+// the simulated cone, which follows the emulator. range_fake says which.
+static bool publish_range = false;
+static bool range_fake = false;
 static FakeLD19::CommMode fake_lidar_comm = FakeLD19::COMM_SERIAL;
-#endif
-#ifdef USE_FAKE_LD19_RAW_SCAN
 rcl_publisher_t raw_scan_publisher;
 std_msgs__msg__UInt8MultiArray raw_scan_msg;
 // Heap, and only on a board that actually publishes raw_scan. Held statically
@@ -310,8 +320,6 @@ void flushRawScan()
         raw_scan_batch_len = 0;
     }
 }
-#endif
-#endif
 
 // The drivetrain is built in setup() from the env partition, not here. Pins,
 // wheel geometry, PID gains, the motor driver type and whether the wheels are
@@ -356,15 +364,10 @@ Odometry odometry;
 // named by the env partition, and the flash partition API is not usable during
 // static initialisation -- a global built here would have to be chosen at
 // compile time, which is exactly what this removes.
-#ifdef USE_RUNTIME_SENSORS
 IMUInterface *imu = nullptr;
 MAGInterface *mag = nullptr;
-#else
-IMU imu_instance;
-MAG mag_instance;
-IMUInterface *imu = &imu_instance;
-MAGInterface *mag = &mag_instance;
-#endif
+// Set in setup() once the name is resolved (config, then env, then the bus).
+static bool imu_is_fake = false;
 
 #ifndef BAUDRATE
 #define BAUDRATE 921600
@@ -504,14 +507,6 @@ static inline void wdtFeed()  {}
 // and it stays there: one is file-static in a library, this one is file-static
 // in main, and exporting it would put a fourth spelling of `env` in the public
 // headers for no gain.
-static bool envFlagMain(const char *key, bool fallback)
-{
-    const char *value = envGet(key, NULL);
-    if (!value || !*value)
-        return fallback;
-    return !(strcmp(value, "0") == 0 || strcasecmp(value, "false") == 0
-             || strcasecmp(value, "no") == 0);
-}
 
 // What this board is running, printed before anything else it does.
 //
@@ -680,7 +675,7 @@ void setup()
     // bench module and the same board with an IMU on it.
     fake_wheels = wheelsAreFake();
 #ifdef USE_ESP32_DUAL_CORE
-    dual_core = envFlagMain("dual_core", DUAL_CORE_DEFAULT);
+    dual_core = envFlag("dual_core", DUAL_CORE_DEFAULT);
     // Dual core is the SERIAL robot's tool: it takes moveBase() off the core
     // that services micro-ROS, and on the GenDrv over 1.5 Mbaud with four real
     // sensors that is the difference between 43 and 49 Hz. It is not for a
@@ -719,7 +714,6 @@ void setup()
         toolSetup(app_mode);
         return;
     }
-#ifdef USE_RUNTIME_SENSORS
     // Which IMU and magnetometer this board has is read from the env partition,
     // falling back to what the config was generated for. This is the first use
     // of the env, so initMcuEnv() runs here -- it is safe now and was not during
@@ -757,19 +751,24 @@ void setup()
     const bool all_fake = wheelsAreFake()
                           && strcasecmp(imu_name, "fake") == 0
                           && strcasecmp(mag_name, "fake") == 0;
-    if (envFlagMain("i2c_scan", !all_fake))
+    if (envFlag("i2c_scan", !all_fake))
         i2cProbeSelect(&imu_name, &mag_name);
 
     imu = createIMU(imu_name);
     mag = createMAG(mag_name);
+    // Which driver was actually built, after the probe has had its say. The
+    // simulated IMU has no gyro of its own, so the loop below takes yaw rate
+    // from the odometry instead -- that used to be `#ifdef USE_FAKE_IMU`, which
+    // asked the BUILD a question only the boot can answer, and got it wrong on
+    // any board whose IMU was chosen by detection rather than by the config.
+    imu_is_fake = (strcasecmp(imu_name, "fake") == 0);
 
     // A real magnetometer answered the bus, or fake wheels are synthesising a
     // field to calibrate against. Either way there is something to publish; a
     // FakeMAG standing in for absent hardware has nothing to say and the topic
     // stays off the wire.
-    publish_mag = envFlagMain("pub_mag",
+    publish_mag = envFlag("pub_mag",
                               (strcasecmp(mag_name, "fake") != 0) || fake_wheels);
-#endif
 
     if (fake_wheels) {
         // A bare module has nothing on the I2C bus, so probing it would fail and
@@ -814,9 +813,9 @@ void setup()
     //   pub_x=1     enable  -- publish even if the probe missed it, so a wiring
     //                          fault reads as a dead topic rather than as a
     //                          topic that was never configured.
-    publish_env = envFlagMain("pub_env", env_present);
-    publish_battery = envFlagMain("pub_battery", batteryPresent());
-    best_effort = envFlagMain("best_effort", true);
+    publish_env = envFlag("pub_env", env_present);
+    publish_battery = envFlag("pub_battery", batteryPresent());
+    best_effort = envFlag("best_effort", true);
     if (env_present)
     {
         pressure_msg.header.frame_id = micro_ros_string_utilities_set(pressure_msg.header.frame_id, "base_link");
@@ -834,14 +833,8 @@ void setup()
     {
         syslog(LOG_WARNING, "%s BMP280/BME280 not found (0x76/0x77) %lu", __FUNCTION__, millis());
     }
-#if defined(USE_FAKE_SONAR) && defined(USE_FAKE_LD19)
-    // initRange() only sets this up when a real sensor is compiled in
-    range_msg.header.frame_id =
-        micro_ros_string_utilities_set(range_msg.header.frame_id, "sonar_link");
-#endif
     initLidar(); // after wifi connected
-#ifdef USE_FAKE_LD19
-    fake_lidar_on = envFlagMain("fake_ld19", true);
+    fake_lidar_on = envFlag("fake_ld19", true);
     if (fake_lidar_on)
     {
         // The mode, before begin(): it decides whether a UART is opened, which
@@ -854,13 +847,11 @@ void setup()
                       fake_lidar_comm == FakeLD19::COMM_SERIAL ? "serial"
                       : fake_lidar_comm == FakeLD19::COMM_UDP ? "udp" : "topic",
                       LIDAR_COMM_DEFAULT);
-#ifdef USE_FAKE_LD19_RAW_SCAN
         if (fake_lidar_comm == FakeLD19::COMM_TOPIC)
         {
             initRawScan();
             fake_ld19.setPacketCallback(onRawScanPacket);
         }
-#endif
         // Where on the robot the scan is taken from: geometry.laser.x, the
         // same number the URDF puts the laser frame at.
         {
@@ -872,8 +863,7 @@ void setup()
         // facts about one board -- so they come from the env with the generated
         // header as the fallback, like every other pin. -1 means no UART: the
         // scan then leaves over UDP or micro-ROS instead.
-        const char *rx_env = envGet("lidar_rx", NULL);
-        const int rx = (rx_env && *rx_env) ? (int)strtol(rx_env, NULL, 10) : LIDAR_RXD;
+        const int rx = envInt("lidar_rx", LIDAR_RXD);
         if (rx >= 0)
             fake_ld19.begin(rx, envU32("lidar_baud", LIDAR_BAUDRATE));
         else
@@ -881,7 +871,20 @@ void setup()
     }
     else
         Serial.println("[lidar] fake_ld19=0: the LiDAR emulator is off (a real LiDAR on this robot)");
-#endif
+
+    // /sonar: a real HC-SR04 if the env named both pins, else the simulated
+    // cone when the emulator is running to raycast it. `fake_sonar` can turn
+    // the simulated one off on a bench that does not want it; it cannot
+    // conjure one without the emulator.
+    safety_stop_on = envFlag("safety_stop", false);
+    safety_stop_range = (float)atof(envGet("safety_stop_m", "0.25"));
+    range_fake = !rangePresent() && fake_lidar_on && envFlag("fake_sonar", true);
+    publish_range = rangePresent() || range_fake;
+    Serial.printf("[range] /sonar %s\n",
+                  !publish_range ? "off (no sonar pins, no emulator)"
+                  : range_fake ? "simulated (raycast from the fake LiDAR room)"
+                               : "from the HC-SR04");
+
     battery_msg = getBattery();
     prev_voltage = battery_msg.voltage;
 
@@ -914,7 +917,6 @@ void setup()
     wdtBegin();
 }
 
-#ifdef USE_FAKE_LD19
 // Simulated wall contact indicator.
 //
 // LED_PIN may be -1 on boards with no addressable status LED, or LED_BUILTIN,
@@ -947,7 +949,6 @@ static inline void fakeWallLedService()
     }
 #endif
 }
-#endif
 
 void loop() {
     if (app_mode != APP_BASE) {
@@ -959,9 +960,7 @@ void loop() {
         wdtFeed();
         return;
     }
-#ifdef USE_FAKE_LD19
     fakeWallLedService();
-#endif
     diagCount(DIAG_LOOP);
     diagState((int)state);
     switch (state) 
@@ -1026,11 +1025,8 @@ void loop() {
 #ifdef BOARD_LOOP // board specific loop
     BOARD_LOOP
 #endif
-#ifdef USE_FAKE_LD19
     fake_ld19.step();
-#ifdef USE_FAKE_LD19_RAW_SCAN
     flushRawScan();
-#endif
     // The emulator's own account of itself every 5 s, over syslog (verified to
     // arrive with the agent up). Cumulative counters; read the deltas. Not
     // UDP-only: a serial robot's scan goes out of a UART pin, and "the
@@ -1047,7 +1043,6 @@ void loop() {
             syslog(LOG_INFO, "fake_ld19 %s state=%d", stats, (int)state);
         });
     }
-#endif
     diagTick();
 }
 
@@ -1134,26 +1129,28 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState),
         TOPIC_PREFIX "battery"
         ));
-#ifdef USE_SAFETY_STOP
-    // Tells ROS the robot stopped itself. The stop is a firmware reflex -- it
-    // has to keep working when the ROS side is busy, wedged or disconnected --
-    // so this publisher only reports the state, it never decides it.
-    RCCHECK(rclc_publisher_init_default(
-    &safety_stop_publisher,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    TOPIC_PREFIX "safety_stop"
-    ));
-#endif
-#if defined(ECHO_PIN) || (defined(USE_FAKE_SONAR) && defined(USE_FAKE_LD19))
-    // create range pyblisher
-    RCCHECK(rclc_publisher_init_default(
-    &range_publisher,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
-    TOPIC_PREFIX "sonar"
-    ));
-#endif
+    if (safety_stop_on)
+    {
+        // Tells ROS the robot stopped itself. The stop is a firmware reflex --
+        // it has to keep working when the ROS side is busy, wedged or
+        // disconnected -- so this publisher only reports the state, it never
+        // decides it.
+        RCCHECK(rclc_publisher_init_default(
+        &safety_stop_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
+        TOPIC_PREFIX "safety_stop"
+        ));
+    }
+    if (publish_range)
+    {
+        RCCHECK(rclc_publisher_init_default(
+        &range_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
+        TOPIC_PREFIX "sonar"
+        ));
+    }
     if (publish_env)
     {
         RCCHECK(rclc_publisher_init_default(
@@ -1170,7 +1167,6 @@ bool createEntities()
                 ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, RelativeHumidity),
                 TOPIC_PREFIX "humidity"));
     }
-#ifdef USE_FAKE_LD19_RAW_SCAN
     // create raw_scan publisher for fake LiDAR -- only in topic mode. The
     // publisher is compiled into every image now, so `fake_lidar_on` alone
     // would put an unread raw_scan on the wire for every serial and udp robot,
@@ -1186,7 +1182,6 @@ bool createEntities()
         std_msgs__msg__UInt8MultiArray__init(&raw_scan_msg);
         raw_scan_pub_ready = true;
     }
-#endif
 #ifdef USE_STAMPED_CMD_VEL
     // create stamped twist subscriber for Nav2 on /cmd_vel
     RCCHECK(rclc_subscription_init_default( 
@@ -1256,7 +1251,7 @@ bool createEntities()
         // and its pose is board state: it survives the host container, the agent
         // and the whole ROS stack being torn down and rebuilt. So a second test run
         // silently begins wherever the first one parked the robot -- and once that
-        // is against a simulated wall, USE_SAFETY_STOP zeroes forward velocity and
+        // is against a simulated wall, the safety stop zeroes forward velocity and
         // navigation fails as "goal outside map" or "failed to make progress",
         // neither of which points at inherited state. A new agent session means a
         // new run, so start it from the origin.
@@ -1265,9 +1260,7 @@ bool createEntities()
         // across a reconnect, or the transform tree jumps under whatever is
         // localising against it.
         odometry.reset();
-#ifdef USE_FAKE_LD19
         fake_ld19.updatePose(0.0f, 0.0f, 0.0f);
-#endif
         syslog(LOG_INFO, "%s simulated pose reset to origin %lu", __FUNCTION__, millis());
     }
 
@@ -1286,12 +1279,10 @@ bool destroyEntities()
         RCSOFTCHECK(rcl_publisher_fini(&mag_publisher, &node));
     if (publish_battery)
         RCSOFTCHECK(rcl_publisher_fini(&battery_publisher, &node));
-#ifdef USE_SAFETY_STOP
-    RCSOFTCHECK(rcl_publisher_fini(&safety_stop_publisher, &node));
-#endif
-#if defined(ECHO_PIN) || (defined(USE_FAKE_SONAR) && defined(USE_FAKE_LD19))
-    RCSOFTCHECK(rcl_publisher_fini(&range_publisher, &node));
-#endif
+    if (safety_stop_on)
+        RCSOFTCHECK(rcl_publisher_fini(&safety_stop_publisher, &node));
+    if (publish_range)
+        RCSOFTCHECK(rcl_publisher_fini(&range_publisher, &node));
     if (publish_env)
     {
         RCSOFTCHECK(rcl_publisher_fini(&pressure_publisher, &node));
@@ -1299,14 +1290,12 @@ bool destroyEntities()
         if (envHasHumidity())
             RCSOFTCHECK(rcl_publisher_fini(&humidity_publisher, &node));
     }
-#ifdef USE_FAKE_LD19_RAW_SCAN
     if (raw_scan_pub_ready)
     {
         raw_scan_pub_ready = false;
         std_msgs__msg__UInt8MultiArray__fini(&raw_scan_msg);
         RCSOFTCHECK(rcl_publisher_fini(&raw_scan_publisher, &node));
     }
-#endif
 #ifdef USE_STAMPED_CMD_VEL
     RCSOFTCHECK(rcl_subscription_fini(&twist_stamped_subscriber, &node));
 #endif
@@ -1357,26 +1346,18 @@ void controlTask(void *pvParameters)
 }
 #endif
 
-#ifdef USE_SAFETY_STOP
-#ifndef SAFETY_STOP_RANGE
-#define SAFETY_STOP_RANGE 0.25f     // metres ahead before forward motion is cut
-#endif
-
-// Forward range from whichever sensor is compiled in, or -1 when there is none
-// to consult -- in which case nothing is blocked, because a missing sensor must
+// Forward range from whichever sensor is live, or -1 when there is none to
+// consult -- in which case nothing is blocked, because a missing sensor must
 // not brake the robot.
 static inline float rangeAheadOrNegative()
 {
-#if defined(USE_FAKE_SONAR) && defined(USE_FAKE_LD19)
-    return fake_lidar_on ? fake_ld19.rangeAheadM() : -1.0f;
-#elif defined(ECHO_PIN)
+    if (!publish_range)
+        return -1.0f;
+    if (range_fake)
+        return fake_lidar_on ? fake_ld19.rangeAheadM() : -1.0f;
     const float r = getRange().range;
     return isfinite(r) ? r : -1.0f;
-#else
-    return -1.0f;
-#endif
 }
-#endif
 
 void moveBase()
 {
@@ -1390,7 +1371,6 @@ void moveBase()
         ledWrite(HIGH);
     }
 
-#ifdef USE_SAFETY_STOP
     // Forward hazard stop, decided here rather than in ROS. A stop that has to
     // travel out on a topic, be reasoned about, and come back as cmd_vel is one
     // network round trip too slow, and does nothing at all if the ROS side is
@@ -1398,9 +1378,10 @@ void moveBase()
     //
     // Only forward motion is blocked: reverse and rotation stay available, or
     // the robot would be stuck against the obstacle with no way to back off.
+    if (safety_stop_on)
     {
         const float range = rangeAheadOrNegative();
-        const bool blocked = (range >= 0.0f) && (range < (float)SAFETY_STOP_RANGE);
+        const bool blocked = (range >= 0.0f) && (range < safety_stop_range);
         if (blocked && twist_msg.linear.x > 0.0)
         {
             twist_msg.linear.x = 0.0;
@@ -1413,7 +1394,6 @@ void moveBase()
                    blocked ? "engaged" : "cleared", range, millis());
         }
     }
-#endif
 
     // get the required rpm for each motor based on required velocities, and base used
     Kinematics::rpm req_rpm = kinematics->getRPM(
@@ -1462,18 +1442,17 @@ void moveBase()
         current_vel.linear_y, 
         current_vel.angular_z
     );
-#ifdef USE_FAKE_LD19
     // Stop the simulated robot at the simulated walls, and correct the
     // odometry to match, so /odom and /scan never disagree about where it is.
+    // fake_lidar_on is the only gate: on a real robot the emulator is off and
+    // clampToRoom() is never consulted, so the walls do not exist.
     float fake_x = odometry.getX();
     float fake_y = odometry.getY();
-    bool hit_wall = fake_lidar_on && fake_ld19.clampToRoom(fake_x, fake_y);
+    const bool hit_wall = fake_lidar_on && fake_ld19.clampToRoom(fake_x, fake_y);
     if (hit_wall)
         odometry.setPosition(fake_x, fake_y);
-    fake_ld19.updatePose(fake_x, fake_y, odometry.getHeading());
-#else
-    const bool hit_wall = false;
-#endif
+    if (fake_lidar_on)
+        fake_ld19.updatePose(fake_x, fake_y, odometry.getHeading());
     if (fake_wheels) {
         // The IMU rides on how the body actually moved, which is not what the
         // wheels claim once the robot is against a wall. Real hardware behaves
@@ -1490,7 +1469,6 @@ void moveBase()
         );
         fake_imu.setHeading(odometry.getHeading());
     }
-#ifdef USE_FAKE_LD19
     // Announce the contact once, on the way in. Driving into a wall holds the
     // clamp active for as long as the command lasts, so logging every 20 ms
     // cycle would bury the syslog in identical lines.
@@ -1502,7 +1480,6 @@ void moveBase()
         fakeWallLedOn();
     }
     was_clamped = hit_wall;
-#endif
 }
 
 void publishData()
@@ -1526,9 +1503,8 @@ void publishData()
         fake_imu.applyMag(mag_msg);
     } else {
         imu_msg = imu->getData();
-#ifdef USE_FAKE_IMU
-        imu_msg.angular_velocity.z = odom_msg.twist.twist.angular.z;
-#endif
+        if (imu_is_fake)
+            imu_msg.angular_velocity.z = odom_msg.twist.twist.angular.z;
         mag_msg = mag->getData();
     }
 #ifdef MAG_BIAS
@@ -1586,31 +1562,35 @@ void publishData()
     });
 #endif
     }
-#ifdef USE_SAFETY_STOP
-    safety_stop_msg.data = safety_stopped;
-    RCSOFTCHECK(rcl_publish(&safety_stop_publisher, &safety_stop_msg, NULL));
-#endif
-#if defined(USE_FAKE_SONAR) && defined(USE_FAKE_LD19)
-    // A simulated ultrasonic sensor, raycast from the same room the simulated
-    // LiDAR uses. This is the robot's own feedback that something is ahead --
-    // wheel odometry cannot provide it, because the wheels keep turning when
-    // the robot is stopped against something.
-    EXECUTE_EVERY_N_MS(RANGE_TIMER, {
-        range_msg.range = fake_ld19.rangeAheadM();
-        range_msg.field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
-        range_msg.min_range = 0.02;
-        range_msg.max_range = 4.0;
-        range_msg.radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
-        range_msg.header.stamp.sec = time_stamp.tv_sec;
-        range_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-        RCSOFTCHECK(rcl_publish(&range_publisher, &range_msg, NULL)) });
-#elif defined(ECHO_PIN)
-    EXECUTE_EVERY_N_MS(RANGE_TIMER, {
-        range_msg = getRange();
-        range_msg.header.stamp.sec = time_stamp.tv_sec;
-        range_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-        RCSOFTCHECK(rcl_publish(&range_publisher, &range_msg, NULL)) });
-#endif
+    if (safety_stop_on)
+    {
+        safety_stop_msg.data = safety_stopped;
+        RCSOFTCHECK(rcl_publish(&safety_stop_publisher, &safety_stop_msg, NULL));
+    }
+    if (publish_range)
+    {
+        // Either a real HC-SR04 on the pins the env named, or a simulated
+        // ultrasonic cone raycast from the same room the simulated LiDAR uses.
+        // The simulated one is the robot's own feedback that something is
+        // ahead -- wheel odometry cannot provide it, because the wheels keep
+        // turning when the robot is stopped against something.
+        EXECUTE_EVERY_N_MS(RANGE_TIMER, {
+            if (range_fake)
+            {
+                range_msg.range = fake_ld19.rangeAheadM();
+                range_msg.field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
+                range_msg.min_range = 0.02;
+                range_msg.max_range = 4.0;
+                range_msg.radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
+            }
+            else
+            {
+                range_msg = getRange();
+            }
+            range_msg.header.stamp.sec = time_stamp.tv_sec;
+            range_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+            RCSOFTCHECK(rcl_publish(&range_publisher, &range_msg, NULL)) });
+    }
     // PHASE 60 ms — the barometer's 1 Hz burst lands between the /sonar (≈20 ms)
     // and /battery (40 ms) cycles, not on top of them.
     if (publish_env)

@@ -19,25 +19,13 @@
 #include "default_motor.h"
 
 // now you can create a config constant that you can use in lino_base_config.h
-#ifdef USE_GENERIC_2_IN_MOTOR_DRIVER
-    // pass your built in class to Motor macro
-    #define Motor Generic2
-#endif
 
-#ifdef USE_GENERIC_1_IN_MOTOR_DRIVER
-    // pass your built in class to Motor macro
-    #define Motor Generic1
-#endif
 
-#ifdef USE_BTS7960_MOTOR_DRIVER
-    // pass your built in class to Motor macro
-    #define Motor BTS7960
-#endif
 
-#ifdef USE_ESC_MOTOR_DRIVER
-    // pass your built in class to Motor macro
-    #define Motor ESC
-#endif
 
+
+// No `#define MOTOR <class>` chain. createMotor() in hw_factory.cpp dispatches
+// on the `motor_driver` env key instead, so one image drives a BTS7960 robot
+// and a generic-2-pin one and the board says which it is at boot.
 
 #endif

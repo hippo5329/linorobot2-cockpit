@@ -34,8 +34,8 @@
 #include "kinematics.h"
 #include "pid.h"
 #include "odometry.h"
-#include "imu.h"
-#include "mag.h"
+#include "sensor_factory.h"
+#include "mcu_env.h"
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
@@ -108,8 +108,13 @@ PID motor4_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 // No `Odometry odometry;` here: declared, never referenced, 728 bytes of
 // .bss out of a 124580-byte static segment. A motor test has no use for an
 // odometry estimate.
-IMU imu;
-MAG mag;
+// Through the factory, like main.cpp. `IMU imu;` was the legacy compile-time
+// typedef -- imu.h resolved the macro to whichever driver the header named --
+// so this tool built for one chip while the firmware beside it in the same
+// image chose at boot. It only ever needs init() here, but it should be the
+// same sensor the robot will use.
+IMUInterface *imu = nullptr;
+MAGInterface *mag = nullptr;
 unsigned total_motors = 4;
 
 void setup_()
@@ -131,8 +136,11 @@ void setup_()
     initWifis();
     initOta();
     i2cdetect();  // default range from 0x03 to 0x77
-    imu.init();
-    mag.init();
+    initMcuEnv();
+    imu = createIMU(envGet("imu", defaultIMUName()));
+    mag = createMAG(envGet("mag", defaultMAGName()));
+    imu->init();
+    mag->init();
 
     if(Kinematics::LINO_BASE == Kinematics::DIFFERENTIAL_DRIVE)
     {

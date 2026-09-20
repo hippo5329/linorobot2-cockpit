@@ -401,10 +401,8 @@ public:
     }
 };
 
-#ifdef USE_FAKE_WHEEL
-    #define ENCODER FakeEncoder
-#else
-    #define ENCODER Encoder
-#endif
+
+// No `#define ENCODER` either: createEncoder() picks FakeEncoder or Encoder
+// from `fake_wheel` in the env, per board, at boot.
 
 #endif
