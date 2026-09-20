@@ -58,6 +58,30 @@ jobs:
             ~/.platformio/packages
           key: pio-release-${{ matrix.profile }}-${{ hashFiles('firmware/common/platformio_base.ini', 'firmware/platformio.ini') }}
       - run: pip install --break-system-packages --upgrade platformio pyyaml
+      # A self-hosted build host usually already has these packages from earlier
+      # builds -- 4.4 GB: both platforms, every toolchain and framework. A job
+      # container starts with an empty core dir and downloads them again, and
+      # that download is the one that stalls: the arduino-pico framework plus
+      # some forty submodules, from GitHub, several jobs at once.
+      #
+      # So copy, rather than share. The job gets its OWN writable core dir, so
+      # concurrent builds never touch each other's PlatformIO state, and it
+      # fetches nothing. (PLATFORMIO_PACKAGES_DIR could point straight at the
+      # mount, but a read-only packages dir is not a mode PlatformIO promises,
+      # and it would couple every running job to one directory.)
+      #
+      # Where no such mount exists -- GitHub -- this does nothing at all and
+      # the actions/cache entry above stays the mechanism.
+      - name: Seed PlatformIO from the runner's own cache, when there is one
+        run: |
+          src="${PIO_CACHE_DIR:-/pio-host}"
+          if [ -d "$src/packages" ]; then
+            mkdir -p ~/.platformio
+            cp -a "$src/packages" "$src/platforms" ~/.platformio/
+            echo "seeded $(du -sh ~/.platformio/packages | cut -f1) from $src"
+          else
+            echo "no runner cache at $src; PlatformIO will download what it needs"
+          fi
       - name: Build the image
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"

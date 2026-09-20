@@ -94,7 +94,7 @@ jobs:
           python3 web/backend/main.py > "$RUNNER_TEMP/cockpit.log" 2>&1 &
           # Its own pid, kept for the stop step. Never hunt for it with a
           # pattern: `pgrep -f web/backend/main.py` also matches the cockpits
-          # running inside the rig's containers.
+          # running in any other container on the same machine.
           echo $! > "$RUNNER_TEMP/cockpit.pid"
           for i in $(seq 1 30); do
             curl -sf -m 2 -o /dev/null http://127.0.0.1:18099/ && break
@@ -249,6 +249,30 @@ jobs:
           git config --global http.lowSpeedLimit 1000
           git config --global http.lowSpeedTime 60
       - run: pip install --break-system-packages --upgrade platformio pyyaml
+      # A self-hosted build host usually already has these packages from earlier
+      # builds -- 4.4 GB: both platforms, every toolchain and framework. A job
+      # container starts with an empty core dir and downloads them again, and
+      # that download is the one that stalls: the arduino-pico framework plus
+      # some forty submodules, from GitHub, several jobs at once.
+      #
+      # So copy, rather than share. The job gets its OWN writable core dir, so
+      # concurrent builds never touch each other's PlatformIO state, and it
+      # fetches nothing. (PLATFORMIO_PACKAGES_DIR could point straight at the
+      # mount, but a read-only packages dir is not a mode PlatformIO promises,
+      # and it would couple every running job to one directory.)
+      #
+      # Where no such mount exists -- GitHub -- this does nothing at all and
+      # the actions/cache entry above stays the mechanism.
+      - name: Seed PlatformIO from the runner's own cache, when there is one
+        run: |
+          src="${PIO_CACHE_DIR:-/pio-host}"
+          if [ -d "$src/packages" ]; then
+            mkdir -p ~/.platformio
+            cp -a "$src/packages" "$src/platforms" ~/.platformio/
+            echo "seeded $(du -sh ~/.platformio/packages | cut -f1) from $src"
+          else
+            echo "no runner cache at $src; PlatformIO will download what it needs"
+          fi
       - name: Generate the header for the reference robot of this env
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
