@@ -71,11 +71,19 @@ for pkg in "${PACKAGES[@]}"; do
     fi
 done
 
-# Three defects in the driver as shipped: it calls pthread_mutex_lock without
-# <pthread.h> (fails on GCC 13+), it uses ament_target_dependencies(), which
-# lyrical's ament_cmake removed, and its near filter throws away any revolution
-# that has no gap in it (below). Patch the staged copy; all three belong in the
-# fork.
+# Four defects, and ALL FOUR ARE NOW FIXED IN THE FORK (2026-09-20): the
+# missing <pthread.h> behind pthread_mutex_lock (fails on GCC 13+),
+# ament_target_dependencies(), which lyrical's ament_cmake removed, the near
+# filter throwing away any revolution with no gap in it, and the network
+# Start() that never marked the driver started. Every block below is therefore
+# a no-op against the current fork.
+#
+# They are kept because SRC_ROOT wins over the clone: a developer with an older
+# sibling checkout of the driver stages THAT, and each block is idempotent and
+# costs a grep. The two behavioural ones are covered by
+# tests/test_ldlidar_scan_assembly.py and tests/test_ldlidar_network_start.py,
+# which compile whatever was staged and run it -- so a stale checkout that
+# somehow defeats a guard fails the suite rather than a robot.
 LOG="${VENDOR}/ldlidar_stl_ros2/ldlidar_driver/src/logger/log_module.cpp"
 if [ -f "$LOG" ] && ! grep -q "<pthread.h>" "$LOG"; then
     sed -i '1i #include <pthread.h>' "$LOG"
