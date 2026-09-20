@@ -445,7 +445,15 @@ def hardware_env(params: dict) -> dict:
     # envU16("dac_pin", DAC_PIN) -- and nothing has ever written it, so the
     # selector on the ADC Calibration panel could not change anything and the
     # tool always used its compiled-in default.
-    if pins.get("dac") is not None:
+    #
+    # ESP32/S2 ONLY. Building the table means sweeping a hardware DAC, and the
+    # ESP32-S3, the C-series and the RP2040/RP2350 do not have one -- adc_lut.h
+    # gates the whole facility on exactly that condition, and adc_calibrate
+    # refuses to run there. Writing the key anyway would spend bytes of a 4 KB
+    # partition describing a pin that no code on that board will ever read.
+    mcu = str(tgt.get("mcu") or "").lower()
+    has_dac = mcu in ("esp32", "esp32s2")
+    if has_dac and pins.get("dac") is not None:
         try:
             dac = int(pins["dac"])
         except (TypeError, ValueError):
@@ -587,6 +595,26 @@ def hardware_env(params: dict) -> dict:
             values = []
         if values and any(v != 0.0 for v in values):
             env["mag_bias"] = ",".join(_num(v) for v in values)
+
+    # The topic namespace. Two robots on one DDS domain used to need a rebuild
+    # each, because the prefix was pasted onto every topic name at compile
+    # time -- and the published images, built from the generated bare config,
+    # could not carry one at all. A trailing slash is added when it is missing,
+    # so `robot1` and `robot1/` mean the same thing (the config engine, which
+    # emits TOPIC_PREFIX, normalises it the same way).
+    prefix = tgt.get("topic_prefix")
+    if prefix is not None:
+        prefix = str(prefix).strip().strip('"')
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        # Only what a ROS 2 topic name may contain. A prefix the middleware
+        # rejects leaves the robot with NO topics and nothing to say why, so it
+        # is better refused here, where a person is watching.
+        if prefix and all(c.isalnum() or c in "_/" for c in prefix):
+            env["topic_prefix"] = prefix
+        elif prefix:
+            print(f"[mcu_env] ignoring topic_prefix {prefix!r}: a ROS 2 topic "
+                  f"name may only contain letters, digits, underscore and /")
 
     # The barometer's address. 0x77 on the Waveshare General Driver board,
     # 0x76 on most breakouts -- env.cpp probes the compiled-in one only.

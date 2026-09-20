@@ -172,3 +172,27 @@ def test_the_simulated_imu_reads_the_same_covariance_keys():
     init = init[:init.index("void update(")]
     for key in ("accel_cov", "gyro_cov", "ori_cov", "mag_cov"):
         assert f'envFloatVec("{key}"' in init, f"initMsgs ignores {key}"
+
+
+def test_the_dac_pin_is_esp32_only():
+    """Sweeping a hardware DAC is the only way to measure the ADC curve, and
+    only the classic ESP32 and the S2 have one. adc_lut.h gates the facility on
+    exactly that, and adc_calibrate refuses to run anywhere else -- so writing
+    dac_pin for an S3 or an RP2 spends bytes of a 4 KB partition describing a
+    pin no code on that board will ever read."""
+    for mcu, expected in (("esp32", 25), ("esp32s3", None),
+                          ("pico2", None), ("pico", None)):
+        cfg = copy.deepcopy(bare_config(mcu))
+        cfg["base_controller"].setdefault("pins", {})["dac"] = 25
+        assert _env(cfg).get("dac_pin") == expected, (
+            f"{mcu}: dac_pin should be {expected}")
+
+
+def test_the_panel_does_not_offer_calibration_without_a_dac():
+    """The firmware's own comment says "the app list is supposed to exclude it
+    there" -- nothing did, so flashing adc_calibrate to a Pico left the robot
+    running a tool that can only print an apology and idle."""
+    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app.js")).read()
+    assert "function mcuHasDac(" in js and "applyDacAvailability" in js
+    assert 'e === "esp32" || e === "esp32s2"' in js, (
+        "mcuHasDac must not claim a DAC on the S3 or the RP2 boards")

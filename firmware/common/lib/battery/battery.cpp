@@ -10,6 +10,9 @@
 #include <INA219_WE.h>
 #include <stdlib.h>
 #include "mcu_env.h"
+// ESP32/S2 only in substance: adc_lut.h compiles to stubs everywhere else, so
+// this include and the call below cost nothing on an S3 or an RP2.
+#include "adc_lut.h"
 
 // The ADC battery monitor, from the env with the generated header as the
 // fallback. -1 means no ADC pin: the INA219 (if any) is then the only source.
@@ -67,6 +70,13 @@ void initBattery(){
   if (bat_pin >= 0) {
     pinMode(bat_pin, INPUT);
     analogReadResolution(12);
+    // Map the calibration table, if this board has one. Safe to call when no
+    // table has ever been written -- adcLutValid() then stays false and
+    // readVoltage() keeps using the core's own conversion.
+    initAdcLut();
+    if (adcLutValid())
+      Serial.println("[battery] ADC linearisation table found — using the "
+                     "measured curve for this chip");
   }
 }
 
@@ -91,18 +101,38 @@ void InaDataUpdate(){
 static double readVoltage(int pin) {
   long reading = 0;
   int i;
-  for (i = 0; i < 4; i++) // smoothing
-#ifdef ESP32
-    reading += analogReadMilliVolts(pin);
-#else
-    reading += analogRead(pin);
+  double pin_v;
+#if defined(ESP32) && ADC_LUT_SUPPORTED
+  // ESP32 (and S2) only: the one family with a DAC to sweep, so the only one
+  // that can have a table. When this board has been calibrated, its OWN
+  // measured curve beats the factory eFuse calibration that
+  // analogReadMilliVolts applies -- measuring THIS chip is the entire point of
+  // firmware/adc_calibrate, and until now the table it wrote was read by
+  // nobody: adcLinearize() had no callers anywhere in the firmware.
+  if (adcLutValid()) {
+    for (i = 0; i < 4; i++) // smoothing, on the linearised reading
+      reading += adcLinearize((uint16_t)analogRead(pin));
+    reading /= i;
+    // The table maps a raw count to the count a LINEAR converter would have
+    // produced, so full scale is the top of the ADC range: 3.3 V at the 11 dB
+    // attenuation the Arduino core defaults to.
+    pin_v = reading * 3.3 / (double)(ADC_LUT_ENTRIES - 1);
+  } else
 #endif
-  reading /= i;
+  {
+    for (i = 0; i < 4; i++) // smoothing
 #ifdef ESP32
-  const double pin_v = reading / 1000.0;
+      reading += analogReadMilliVolts(pin);
 #else
-  const double pin_v = reading * 3.3 / 4095.0;
+      reading += analogRead(pin);
 #endif
+    reading /= i;
+#ifdef ESP32
+    pin_v = reading / 1000.0;
+#else
+    pin_v = reading * 3.3 / 4095.0;
+#endif
+  }
   const double ratio = (bat_r2 > 0.0f) ? (bat_r1 + bat_r2) / bat_r2 : 1.0;
   return pin_v * ratio;
 }

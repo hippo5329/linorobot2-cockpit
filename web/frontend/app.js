@@ -6419,6 +6419,56 @@ async function executeHardwareAction(action, customFirmware = null) {
   }
 }
 
+// Which silicon can build an ADC linearisation table at all.
+//
+// Sweeping a hardware DAC is the only way to measure the curve, and only the
+// classic ESP32 and the ESP32-S2 have one -- the ESP32-S3, the C-series and the
+// RP2040/RP2350 do not. adc_lut.h gates the whole facility on exactly this
+// condition and adc_calibrate refuses to run anywhere else, printing
+// "adc_calibrate is an ESP32-only tool" and then idling forever.
+//
+// Which is the problem: the panel offered it on every board. Flashing it to a
+// Pico spends a flash cycle and leaves the robot running a tool that can only
+// apologise -- no /odom, no /scan, until somebody reflashes. The firmware's own
+// comment says "the app list is supposed to exclude it there"; nothing did.
+function mcuHasDac(env) {
+  const e = String(env || "").toLowerCase();
+  return e === "esp32" || e === "esp32s2";
+}
+
+// Hides the calibration tool wherever it cannot run, and says why rather than
+// silently dropping a control the user saw a moment ago.
+function applyDacAvailability() {
+  const env = document.getElementById("hw-flash-env")?.value
+    || document.getElementById("cfg-mcu")?.value || "";
+  const usable = mcuHasDac(env);
+
+  const opt = document.querySelector('#hw-flash-target option[value="adc_calibrate"]');
+  if (opt) {
+    opt.disabled = !usable;
+    opt.hidden = !usable;
+    // Never leave the selector pointing at something that cannot be flashed.
+    const sel = document.getElementById("hw-flash-target");
+    if (!usable && sel && sel.value === "adc_calibrate") sel.value = "test_sensors";
+  }
+  const uploadBtn = document.getElementById("btn-upload-adc");
+  if (uploadBtn) {
+    uploadBtn.disabled = !usable;
+    uploadBtn.style.display = usable ? "" : "none";
+  }
+  const card = document.getElementById("adc-studio-card");
+  if (card) {
+    card.style.display = usable ? "" : "none";
+  }
+  const note = document.getElementById("adc-no-dac-note");
+  if (note) {
+    note.style.display = usable ? "none" : "";
+    note.textContent = `${env || "this board"} has no hardware DAC, so it cannot `
+      + "sweep one into an ADC pin to measure the curve. ADC calibration and the "
+      + "linearisation table are ESP32 / ESP32-S2 only.";
+  }
+}
+
 function initBaseControllerConfigModule() {
   loadHardwareConfig();
 
@@ -6445,7 +6495,12 @@ function initBaseControllerConfigModule() {
     if (elHwEnv) elHwEnv.value = e.target.value;
     syncMcuSerialSettings();
     validateHardwareSafety();
+    applyDacAvailability();
   });
+
+  const elHwEnvSel = document.getElementById("hw-flash-env");
+  if (elHwEnvSel) elHwEnvSel.addEventListener("change", applyDacAvailability);
+  applyDacAvailability();
 
   const elDrv = document.getElementById("cfg-driver-type");
   if (elDrv) elDrv.addEventListener("change", () => {

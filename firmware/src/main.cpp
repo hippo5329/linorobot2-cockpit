@@ -102,6 +102,77 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 #ifndef TOPIC_PREFIX
 #define TOPIC_PREFIX
 #endif
+
+// The topic namespace, from the env. It used to be pasted on at COMPILE time
+// -- the macro was pasted onto each literal -- so putting two robots on one DDS
+// domain meant a rebuild per robot, and the published images (built from the
+// generated bare config) could not do it at all. Making it runtime means the
+// names have to be built at run time too, which is what topicName() is for.
+//
+// Cached by the suffix's ADDRESS: every caller passes a string literal, so the
+// pointer is stable, and a reconnect (destroyEntities -> createEntities) reuses
+// the same buffer instead of consuming the arena a second time.
+#define TOPIC_PREFIX_SLOTS 20
+#define TOPIC_ARENA_BYTES  640
+
+static const char *topicName(const char *suffix)
+{
+    static const char *keys[TOPIC_PREFIX_SLOTS] = {nullptr};
+    static const char *vals[TOPIC_PREFIX_SLOTS] = {nullptr};
+    static char arena[TOPIC_ARENA_BYTES];
+    static size_t used = 0;
+
+    for (int i = 0; i < TOPIC_PREFIX_SLOTS && keys[i]; i++)
+        if (keys[i] == suffix)
+            return vals[i];
+
+    // The compiled-in macro is the fallback, so a board with a blank env
+    // behaves exactly as it always did. `TOPIC_PREFIX ""` is the empty string
+    // when the macro is empty and the prefix when it is a literal.
+    const char *prefix = envGet("topic_prefix", TOPIC_PREFIX "");
+    if (!prefix)
+        prefix = "";
+
+    // A prefix ROS 2 would reject leaves the robot with no topics at all and
+    // nothing in the log to say why, because rclc just fails the entity. Only
+    // the characters a topic name may contain get through; anything else means
+    // no prefix, and a line on the console.
+    for (const char *p = prefix; *p; p++)
+    {
+        const bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')
+                     || (*p >= '0' && *p <= '9') || *p == '_' || *p == '/';
+        if (!ok)
+        {
+            Serial.printf("[topic] ignoring topic_prefix \"%s\": '%c' is not "
+                          "valid in a ROS 2 topic name\n", prefix, *p);
+            prefix = "";
+            break;
+        }
+    }
+
+    const size_t plen = strlen(prefix);
+    const size_t slen = strlen(suffix);
+    // A trailing slash is added when it is missing, so `robot1` and `robot1/`
+    // both mean the same thing -- the config engine does the same.
+    const bool need_slash = (plen > 0 && prefix[plen - 1] != '/');
+    const size_t total = plen + (need_slash ? 1 : 0) + slen + 1;
+
+    int slot = 0;
+    while (slot < TOPIC_PREFIX_SLOTS && keys[slot])
+        slot++;
+    if (plen == 0 || slot >= TOPIC_PREFIX_SLOTS || used + total > sizeof(arena))
+        return suffix;          // nothing to add, or nowhere to put it
+
+    char *out = arena + used;
+    memcpy(out, prefix, plen);
+    if (need_slash)
+        out[plen] = '/';
+    memcpy(out + plen + (need_slash ? 1 : 0), suffix, slen + 1);
+    used += total;
+    keys[slot] = suffix;
+    vals[slot] = out;
+    return out;
+}
 #ifndef CONTROL_TIMER
 #define CONTROL_TIMER 20 // 50Hz
 #endif
@@ -1174,21 +1245,21 @@ bool createEntities()
         &odom_publisher, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
-        TOPIC_PREFIX "odom/unfiltered"
+        topicName("odom/unfiltered")
     ));
     // create IMU publisher: raw sensor data for madgwick filter
     RCCHECK(init_fast(
         &imu_publisher, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-        TOPIC_PREFIX "imu/data_raw"
+        topicName("imu/data_raw")
     ));
     if (publish_mag)
         RCCHECK(init_fast(
             &mag_publisher,
             &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, MagneticField),
-            TOPIC_PREFIX "imu/mag"
+            topicName("imu/mag")
         ));
     // create battery publisher, if this robot can measure a voltage at all
     if (publish_battery)
@@ -1196,7 +1267,7 @@ bool createEntities()
         &battery_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState),
-        TOPIC_PREFIX "battery"
+        topicName("battery")
         ));
     if (safety_stop_on)
     {
@@ -1208,7 +1279,7 @@ bool createEntities()
         &safety_stop_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-        TOPIC_PREFIX "safety_stop"
+        topicName("safety_stop")
         ));
     }
     if (publish_range)
@@ -1217,7 +1288,7 @@ bool createEntities()
         &range_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
-        TOPIC_PREFIX "sonar"
+        topicName("sonar")
         ));
     }
     if (publish_env)
@@ -1225,16 +1296,16 @@ bool createEntities()
         RCCHECK(rclc_publisher_init_default(
             &pressure_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, FluidPressure),
-            TOPIC_PREFIX "pressure"));
+            topicName("pressure")));
         RCCHECK(rclc_publisher_init_default(
             &temperature_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Temperature),
-            TOPIC_PREFIX "temperature"));
+            topicName("temperature")));
         if (envHasHumidity())
             RCCHECK(rclc_publisher_init_default(
                 &humidity_publisher, &node,
                 ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, RelativeHumidity),
-                TOPIC_PREFIX "humidity"));
+                topicName("humidity")));
     }
     // create raw_scan publisher for fake LiDAR -- only in topic mode. The
     // publisher is compiled into every image now, so `fake_lidar_on` alone
@@ -1246,7 +1317,7 @@ bool createEntities()
             &raw_scan_publisher,
             &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
-            TOPIC_PREFIX "raw_scan"
+            topicName("raw_scan")
         ));
         std_msgs__msg__UInt8MultiArray__init(&raw_scan_msg);
         raw_scan_pub_ready = true;
@@ -1257,7 +1328,7 @@ bool createEntities()
         &twist_stamped_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, TwistStamped),
-        TOPIC_PREFIX "cmd_vel"
+        topicName("cmd_vel")
     ));
     geometry_msgs__msg__TwistStamped__init(&twist_stamped_msg);
     twist_stamped_msg.header.frame_id.data = twist_stamped_frame_id;
@@ -1269,7 +1340,7 @@ bool createEntities()
         &twist_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        TOPIC_PREFIX "cmd_vel_unstamped"
+        topicName("cmd_vel_unstamped")
     ));
     const size_t executor_handles = 3;
 #else
@@ -1278,7 +1349,7 @@ bool createEntities()
         &twist_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        TOPIC_PREFIX "cmd_vel"
+        topicName("cmd_vel")
     ));
     const size_t executor_handles = 2;
 #endif
