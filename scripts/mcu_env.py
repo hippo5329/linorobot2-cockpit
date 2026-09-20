@@ -17,10 +17,10 @@ enter their own SSID would defeat the purpose of shipping one.
 With the split, re-keying a robot never involves a compiler:
 
     python3 scripts/mcu_env.py build --out env.bin      # from <config dir>/secrets.yaml
-    esptool write_flash 0x290000 env.bin
+    esptool write_flash 0x3ff000 env.bin
 
 and reflashing the application leaves the keys alone, because writing the app at
-0x10000 does not touch 0x290000.
+0x10000 does not touch 0x3ff000.
 
 The env does not only carry the site keys. It carries the whole robot, because
 there are only three firmware images -- one per MCU -- and a Waveshare General
@@ -74,7 +74,7 @@ import cockpit_paths  # noqa: E402
 import gen_firmware_header  # noqa: E402  (counts_per_rev)
 
 # Must match the `env` row of firmware/common/partitions_lino.csv.
-ENV_OFFSET = 0x290000
+ENV_OFFSET = 0x3FF000
 ENV_SIZE = 0x1000
 CRC_LEN = 4
 DATA_LEN = ENV_SIZE - CRC_LEN

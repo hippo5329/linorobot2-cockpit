@@ -752,7 +752,7 @@ def esp32_flash_plan(build_dir: str, env: str) -> List[tuple]:
     return plan
 
 
-ENV_PARTITION_OFFSET = "0x290000"   # the `env` row of firmware/common/partitions_lino.csv
+ENV_PARTITION_OFFSET = "0x3FF000"   # the `env` row of firmware/common/partitions_lino.csv
 
 
 def rp2_env_offset(env: str) -> Optional[int]:

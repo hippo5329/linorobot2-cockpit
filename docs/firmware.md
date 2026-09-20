@@ -205,7 +205,7 @@ What differs is the region:
 
 | MCU | region | reached by |
 |---|---|---|
-| ESP32 / S3 | `env` partition, 0x290000, 4 KB | `esp_partition_read` into RAM |
+| ESP32 / S3 | `env` partition, 0x3ff000, 4 KB | `esp_partition_read` into RAM |
 | RP2040 / RP2350 | last 4 KB of flash (`_EEPROM_start`) | XIP-mapped, parsed in place |
 
 On RP2 there is no partition table, so the block goes in the sector arduino-pico already
@@ -229,7 +229,7 @@ because loading the application with `-x` runs it and leaves BOOTSEL.
 ### The ADC LUT is flash data, not source to paste
 `firmware/adc_calibrate` used to print `const int16_t ADC_LUT[4096]` over serial for the user
 to paste into a config header and rebuild. Under tool mode there is nothing to paste into, so
-the table goes to its own `adclut` partition (0x291000, 12 KB: header sector + 8 KB of int16),
+the table goes to its own `adclut` partition (0x3f0000, 12 KB: header sector + 8 KB of int16),
 carved out of the front of the unused `spiffs` area so `env` and both app slots keep their
 offsets and no already-flashed board is disturbed. The header is written **last** and acts as
 the commit flag, so an interrupted calibration leaves an invalid table rather than a

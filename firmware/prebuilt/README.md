@@ -62,7 +62,7 @@ are facts about **your network**; the pin matrix is a fact about **your board**.
 An image with either compiled in works on exactly one bench, which would make a
 prebuilt image pointless.
 
-They live in a separate 4 KB `env` flash partition at `0x290000` instead
+They live in a separate 4 KB `env` flash partition at `0x3ff000` instead
 (`firmware/common/partitions_lino.csv`), in the same layout U-Boot uses: a
 CRC32 followed by `key=value\0…\0\0`. Every key falls back to what the image was
 compiled with, so a board with a blank env still boots and still says so.
@@ -78,10 +78,10 @@ To re-key or rewire a robot later, without touching the application:
 ```bash
 python3 scripts/mcu_env.py build --params ~/linorobot2-config/gendrv_config.yaml --out env.bin
 python3 scripts/mcu_env.py set env.bin wifi_ssid=other-ap agent_ip=192.168.1.10
-esptool write_flash 0x290000 env.bin
+esptool write_flash 0x3ff000 env.bin
 ```
 
-Writing the application at `0x10000` never touches `0x290000`, so reflashing
+Writing the application at `0x10000` never touches `0x3ff000`, so reflashing
 firmware keeps the configuration, and rewriting the configuration keeps the
 firmware.
 
