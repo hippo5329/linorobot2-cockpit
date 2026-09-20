@@ -21,6 +21,10 @@ into — and you drive it from any browser on the network.
 - **One config file per robot**, kept in your own git repository outside this one.
 - **The board says what it runs.** Every boot prints its application, distro, build date and
   git revision; the cockpit only reflashes a board that actually differs.
+- **Nothing about a robot is compiled in.** Pins, sensors, transport, baud, the fake-sensor
+  flags, the LiDAR sink, the sonar, the motor brake mode — all of it comes from a 4 KB `env`
+  flash partition and can be changed on a flashed board without a compiler. The firmware's
+  remaining `#if`s are about the silicon or the ROS 2 distro's message ABI, nothing else.
 
 ---
 
@@ -100,7 +104,7 @@ to flash. The Docker image carries all of that, which is why it is the recommend
 
 ```bash
 python3 scripts/one_click_pipeline.py --controller pico2 --distro jazzy
-python3 scripts/one_click_pipeline.py --controller esp32_wifi --firmware prebuilt --no-nav2
+python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --no-nav2
 ```
 
 ---
@@ -156,9 +160,9 @@ The cockpit's **Config Studio** edits it; you commit it.
 
 ```yaml
 robot:
-  name: rover_pico2
+  name: pico2_mecanum
 base_controller:
-  name: pico2            # also the PlatformIO env
+  name: pico2            # the controller name; the PlatformIO env is picked per board
   transport: serial      # or udp4 on an ESP32
   serial_port: /dev/ttyACM0
   baudrate: 921600
