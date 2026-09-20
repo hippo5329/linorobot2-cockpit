@@ -596,6 +596,27 @@ def hardware_env(params: dict) -> dict:
         if values and any(v != 0.0 for v in values):
             env["mag_bias"] = ",".join(_num(v) for v in values)
 
+    # How long the board may stop feeding its watchdog before it resets, in
+    # seconds. 0 disables it; the firmware's own default is 8 s.
+    #
+    # One key for both families because it is one question -- and until now the
+    # RP2 armed a hardware watchdog at a hardcoded 8000 ms while the ESP32
+    # armed nothing at all, so the family with the radio, the one that can
+    # actually stall on a network, was the one with no watchdog.
+    wdt = tgt.get("wdt_timeout")
+    if wdt is not None:
+        try:
+            seconds = int(wdt)
+        except (TypeError, ValueError):
+            seconds = -1
+        # The config engine validates 1-300 s; 0 is "off", which it does not
+        # offer and this does.
+        if 0 <= seconds <= 300:
+            env["wdt_timeout"] = seconds
+        else:
+            print(f"[mcu_env] ignoring wdt_timeout {wdt!r}: give 0 to disable, "
+                  f"or 1-300 seconds")
+
     # The topic namespace. Two robots on one DDS domain used to need a rebuild
     # each, because the prefix was pasted onto every topic name at compile
     # time -- and the published images, built from the generated bare config,

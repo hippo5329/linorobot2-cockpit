@@ -196,3 +196,31 @@ def test_the_panel_does_not_offer_calibration_without_a_dac():
     assert "function mcuHasDac(" in js and "applyDacAvailability" in js
     assert 'e === "esp32" || e === "esp32s2"' in js, (
         "mcuHasDac must not claim a DAC on the S3 or the RP2 boards")
+
+
+def test_the_watchdog_timeout_is_one_key_for_both_families():
+    """Until now the RP2 armed a hardware watchdog at a hardcoded 8000 ms and
+    the ESP32 armed NOTHING: esp_task_wdt_reset() sat under a macro nobody
+    defined and esp_task_wdt_init() was called from nowhere. One env key now,
+    validated to the config engine's 1-300 s, with 0 meaning off."""
+    for value, expected in ((None, None), (0, 0), (30, 30), (300, 300),
+                            (301, None), (-1, None), ("x", None)):
+        cfg = copy.deepcopy(bare_config("esp32"))
+        if value is not None:
+            cfg["base_controller"]["wdt_timeout"] = value
+        assert _env(cfg).get("wdt_timeout") == expected, f"{value!r} -> {expected!r}"
+    src = _src("firmware/src/main.cpp")
+    assert "esp_task_wdt_init(" in src and "esp_task_wdt_add(" in src, (
+        "the ESP32 watchdog is not armed")
+    assert 'envU32("wdt_timeout"' in src
+
+
+def test_the_calibration_tool_emits_the_curve_for_the_chart():
+    """The table itself never leaves the board (it goes to the adclut
+    partition); the chart needs the SHAPE, so the tool prints one tagged
+    [ADC_JSON] line with the 257 knots it measured and a sample of the
+    inverse -- the same convention as i2c_detect's [I2C_JSON]."""
+    src = _src("firmware/src/tools/adc_calibrate.cpp")
+    assert '[ADC_JSON]' in src and '"knots"' in src and '"lut"' in src
+    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app.js")).read()
+    assert "adcCurveFromLine" in js and "[ADC_JSON]" in js

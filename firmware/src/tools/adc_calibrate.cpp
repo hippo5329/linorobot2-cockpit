@@ -175,6 +175,8 @@ static void enforceMonotonic()
 // `knot_index` walks forward across calls; callers feed readings in ascending
 // order, so the whole inverse costs one pass over the knots rather than a
 // search per target.
+static void emitCurveJson();
+
 static float invert(int reading, int *knot_index)
 {
     int k = *knot_index;
@@ -242,6 +244,58 @@ static void generateLut()
                          "application, so this calibration does not need repeating."));
     else
         Serial.println(F("Committing FAILED - re-run the calibration."));
+
+    emitCurveJson();
+}
+
+// One machine-readable line, for the cockpit's ADC Studio to chart.
+//
+// NOT the 4096-entry table. Upstream echoes the whole array because the user
+// has to paste it into a header and rebuild; here it went to flash and nothing
+// was echoed at all, which left the browser with nothing to plot. What a chart
+// needs is the SHAPE, and the shape is the 257 knots the sweep actually
+// measured plus a sample of the inverse -- about 2.5 KB, against 24 KB for the
+// full table.
+//
+// Same convention as i2c_detect's [I2C_JSON]: one tagged line the stream
+// reader can pick out of the log without parsing prose.
+static void emitCurveJson()
+{
+    Serial.print(F("[ADC_JSON] {\"dac_pin\":"));
+    Serial.print(dac_pin);
+    Serial.print(F(",\"adc_pin\":"));
+    Serial.print(adc_pin);
+    Serial.print(F(",\"steps\":"));
+    Serial.print(DAC_STEPS);
+    Serial.print(F(",\"entries\":"));
+    Serial.print(ADC_LUT_ENTRIES);
+    Serial.print(F(",\"span\":"));
+    Serial.print(STEP_SPAN);
+
+    // The measured curve: what the ADC answered for each DAC code.
+    Serial.print(F(",\"knots\":["));
+    for (int k = 0; k <= DAC_STEPS; k++) {
+        if (k) Serial.print(',');
+        Serial.print((int)(knot[k] + 0.5f));
+    }
+
+    // ...and the inverse it produced, one sample per DAC step, so the chart
+    // can draw the correction without reimplementing invert().
+    Serial.print(F("],\"lut\":["));
+    int knot_index = 0;
+    for (int k = 0; k < DAC_STEPS; k++) {
+        const int reading = k * STEP_SPAN;
+        int value = 0;
+        if (reading > 0) {
+            float position = invert(reading, &knot_index);
+            value = (int)position;
+            if (value < 0) value = 0;
+            if (value > ADC_LUT_ENTRIES - 1) value = ADC_LUT_ENTRIES - 1;
+        }
+        if (k) Serial.print(',');
+        Serial.print(value);
+    }
+    Serial.println(F("]}"));
 }
 
 #endif // ADC_LUT_SUPPORTED

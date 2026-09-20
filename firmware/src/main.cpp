@@ -566,14 +566,66 @@ static AppMode app_mode = APP_BASE;
 // RP2350, none of them mute. The recovery is a USB device reset
 // (USBDEVFS_RESET, `usbreset.py --vid 2e8a`), after which the very next touch
 // succeeds; a RESET button press is the fallback, not the only way back.
+// How long the board may stop feeding the watchdog before it is reset, in
+// seconds, from the env (`wdt_timeout`; 0 disables). Default 8 s: long enough
+// that no normal blocking stretch reaches it -- entity creation over a live
+// serial link is well under a second, and SerialUSB::write() gives up on an
+// undrained host after 1 s -- and short enough that the recovery is a pause
+// rather than an outage.
+//
+// It is ONE key for both families because it is one question. Until now the
+// RP2 armed a hardware watchdog at a hardcoded 8000 ms and the ESP32 armed
+// NOTHING: `esp_task_wdt_reset()` sat under `#ifdef WDT_TIMEOUT`, which the
+// header generator never emitted, and `esp_task_wdt_init()` was called from
+// nowhere at all. So the family with the radio -- the one that can actually
+// stall waiting on a network -- was the one with no watchdog.
+#define WDT_DEFAULT_SEC 8
+
+static uint32_t wdtSeconds()
+{
+    uint32_t sec = envU32("wdt_timeout", WDT_DEFAULT_SEC);
+    if (sec > 300)          // the config engine's ceiling, and past any sane stall
+        sec = 300;
+    return sec;
+}
+
 #if defined(ARDUINO_ARCH_RP2040)
-// Long enough that no normal blocking stretch reaches it -- entity creation
-// over a live serial link is well under a second, and SerialUSB::write() gives
-// up on an undrained host after 1 s -- and short enough that the recovery is a
-// pause rather than an outage. 8388 ms is the RP2040 ceiling.
-#define RP2_WDT_TIMEOUT_MS 8000
-static inline void wdtBegin() { rp2040.wdt_begin(RP2_WDT_TIMEOUT_MS); }
+static inline void wdtBegin()
+{
+    const uint32_t sec = wdtSeconds();
+    if (!sec)
+        return;
+    // 8388 ms is the RP2040/RP2350 ceiling -- ask for more and the hardware
+    // silently takes something else.
+    uint32_t ms = sec * 1000UL;
+    if (ms > 8388) ms = 8388;
+    rp2040.wdt_begin(ms);
+    Serial.printf("[wdt] hardware watchdog armed at %lu ms\n", (unsigned long)ms);
+}
 static inline void wdtFeed()  { rp2040.wdt_reset(); }
+#elif defined(ESP32)
+#include <esp_task_wdt.h>
+static bool wdt_armed = false;
+static inline void wdtBegin()
+{
+    const uint32_t sec = wdtSeconds();
+    if (!sec)
+        return;
+    // panic=true so a stall REBOOTS rather than just logging: an unattended
+    // robot that has stopped feeding its watchdog is not going to recover by
+    // being told about it.
+    if (esp_task_wdt_init(sec, true) != ESP_OK)
+        return;
+    if (esp_task_wdt_add(NULL) != ESP_OK)
+        return;
+    wdt_armed = true;
+    Serial.printf("[wdt] task watchdog armed at %lu s\n", (unsigned long)sec);
+}
+static inline void wdtFeed()
+{
+    if (wdt_armed)
+        esp_task_wdt_reset();
+}
 #else
 static inline void wdtBegin() {}
 static inline void wdtFeed()  {}
@@ -1158,9 +1210,6 @@ void loop() {
     }
     runWifis();
     runOta();
-#ifdef WDT_TIMEOUT
-    esp_task_wdt_reset();
-#endif
     wdtFeed();
 #ifdef BOARD_LOOP // board specific loop
     BOARD_LOOP

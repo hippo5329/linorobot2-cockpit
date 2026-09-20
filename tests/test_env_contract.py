@@ -47,6 +47,7 @@ MAXIMAL_CONFIG = {
         # nobody will ever set.
         "bmp280_addr": "0x76",
         "topic_prefix": "robot1",
+        "wdt_timeout": 8,
         "imu_tuning": {"accel_cov": 0.5, "gyro_cov": 0.5, "ori_cov": 0.5,
                        "mag_cov": 0.5, "env_cov": [3, 0.25, 9e-4],
                        "pose_cov": [1, 2, 3, 4, 5, 6], "twist_cov": 0.001,
