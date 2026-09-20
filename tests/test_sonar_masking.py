@@ -78,3 +78,20 @@ def test_main_masks_the_sonar_whenever_anything_is_simulated():
     assert m, "the fake-mode mask is gone"
     assert "fake_wheels" in m.group(1) and "fake_ld19" in m.group(1)
     assert "initRange(!sonar_faked)" in src
+
+
+def test_the_bare_scan_sink_follows_the_silicon():
+    """An RP2 can carry the scan over micro-ROS; an ESP32 cannot.
+
+    Measured on the bench 2026-09-20. RP2: /odom and /imu at 50.0 Hz with
+    /raw_scan at 85-100 Hz alongside. ESP32, same configuration: every topic
+    drops to 40-45 Hz, and 33 Hz on a GenDrv that also reads four I2C sensors,
+    because one 921600 link is carrying both. So a bare ESP32 defaults to the
+    UART sink -- with no LIDAR_RXD wired it simply has no scan, which is honest
+    -- rather than to a mode that halves its control rate.
+    """
+    from gen_bare_config import bare_config
+    for mcu in ("pico", "pico2"):
+        assert bare_config(mcu)["base_controller"]["lidar"]["comm_mode"] == "topic", mcu
+    for mcu in ("esp32", "esp32s3"):
+        assert bare_config(mcu)["base_controller"]["lidar"]["comm_mode"] == "serial", mcu

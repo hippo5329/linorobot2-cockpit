@@ -68,6 +68,26 @@ BARE_KINEMATICS = {
 }
 
 
+def _bare_comm_mode(mcu: str) -> str:
+    """Which sink a bare board's synthetic scan takes by default.
+
+    Not one answer for every MCU, because the links are not comparable.
+
+    An RP2 carries the scan over micro-ROS and still holds the control loop:
+    measured on the bench 2026-09-20, /odom and /imu at 50.0 Hz with /raw_scan
+    at 85-100 Hz alongside. So `topic` is right there -- a bare Pico needs no
+    wiring at all to produce a scan.
+
+    An ESP32 cannot. The same configuration drops every topic to 40-45 Hz,
+    because 921600 baud is carrying the scan and the 50 Hz loop together (33 Hz
+    on a GenDrv that also reads four I2C sensors). Its scan has to leave by a
+    UART (`serial`, LIDAR_RXD to a bridge) or over the radio (`udp`) -- and a
+    BARE ESP32 has neither wired, so it has no scan source, which is the honest
+    default rather than one that quietly halves the control rate.
+    """
+    return "topic" if mcu.startswith("pico") else "serial"
+
+
 def bare_pins() -> dict:
     """Every pin unconnected.
 
@@ -135,7 +155,8 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
         "transport": "serial",
         "serial_port": "/dev/ttyACM0" if key.startswith("pico") else "/dev/ttyUSB0",
         "baudrate": 921600,
-        "lidar": {"model": "ld19", "comm_mode": "topic", "raw_scan_topic": "raw_scan"},
+        "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
+                  "raw_scan_topic": "raw_scan"},
         "sensors": bare_sensors(),
         "pins": bare_pins(),
     }
