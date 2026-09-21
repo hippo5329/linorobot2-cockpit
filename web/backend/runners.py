@@ -528,9 +528,16 @@ def sub(topic, typ):
                              qos_profile_sensor_data)
 for t, typ in spec.items():
     sub(t, typ)
+# The micro-ROS agent's endpoints can take several seconds to match a new
+# participant under the cockpit's Fast DDS profile, where host nodes match at
+# once: a fixed 3 s window rated /odom and /scan and showed /odom/unfiltered
+# as silent while a 6 s reader beside it saw 50 Hz. So spin up to `window`
+# but leave as soon as every topic has enough samples to rate.
 deadline = time.monotonic() + window
 while time.monotonic() < deadline:
     rclpy.spin_once(node, timeout_sec=0.05)
+    if all(len(v) >= 8 for v in stamps.values()):
+        break
 print(json.dumps({t: s for t, s in stamps.items()}))
 """
 
@@ -586,7 +593,9 @@ def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
     spec = {e["topic"]: BRINGUP_HEALTH_TYPES[k]
             for k, e in res["topics"].items() if e["advertised"] and k in BRINGUP_HEALTH_TYPES}
     if spec:
-        window = max(1.5, min(3.0, timeout - 1.0))
+        # Ceiling, not a duration: the probe returns the moment every topic has
+        # rated. 8 s covers the slow micro-ROS match; the card says "up to ~30 s".
+        window = max(4.0, min(8.0, timeout + 4.0))
         cmd = ["bash", "-lc",
                f"{ros_setup_shell()} && python3 -c {shlex.quote(_HEALTH_PROBE_PY)} "
                f"{shlex.quote(json.dumps(spec))} {window}"]
