@@ -167,6 +167,28 @@ def launch_setup(context, *args, **kwargs):
     )
     effective_lidar_comm_mode = "udp_server" if lidar_comm_mode in ("udp", "udp_server") else lidar_comm_mode
 
+    # Should the host-side fake laser (the "virtual room") stand in for a real
+    # driver? Only when the scan is meant to be faked (use_fake_ld19), and:
+    #   - the comm mode is not a real serial tty, or
+    #   - it *is* serial but that tty is absent.
+    # A `serial` comm_mode says LD19 packets arrive on a real port, and on the
+    # gendrv bench the ESP32 itself emits fake_ld19 out LIDAR_RXD into a
+    # USB-serial bridge -- so when that bridge is present the real driver must
+    # read it, and routing to the host node would bypass the very driver path
+    # under test. But a *bare* module has only its one micro-ROS USB and no such
+    # bridge: the lidar tty never appears, the serial driver dies on a missing
+    # port, and /scan never comes -- which would strand SLAM/Nav2 on a bare
+    # bench. Falling back to the virtual room only when the port is absent keeps
+    # the bench-with-a-bridge case byte-identical while letting a bare module
+    # preview SLAM/Nav2 in pure simulation.
+    use_host_fake_laser = (
+        controller.get("sensors", {}).get("use_fake_ld19", False)
+        and (
+            effective_lidar_comm_mode != "serial"
+            or not os.path.exists(lidar_port)
+        )
+    )
+
     if transport in ("udp4", "udp", "wifi"):
         micro_ros_args = ["udp4", "--port", str(udp_port)]
     else:
@@ -388,15 +410,9 @@ def launch_setup(context, *args, **kwargs):
                     parameters=[{"frame_id": laser_frame,
                                  "offset_x": float(geometry["laser"]["x"])}],
                 )
-                # A `serial` comm_mode means LD19 packets arrive on a real tty, and
-                # the driver cannot tell -- nor does it care -- who put them there.
-                # On the gendrv bench that producer is the ESP32 itself: fake_ld19
-                # emits a synthetic scan out LIDAR_RXD, which is wired to a
-                # USB-serial bridge showing up as the lidar port. Letting
-                # use_fake_ld19 pick the host-side fake node here would leave those
-                # bytes unread and bypass the very driver path under test.
-                if (controller.get("sensors", {}).get("use_fake_ld19", False)
-                        and effective_lidar_comm_mode != "serial")
+                # The virtual room stands in for the driver on a bare bench; see
+                # use_host_fake_laser above for why a present serial port is not.
+                if use_host_fake_laser
                 else Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
                     package="ldlidar_stl_ros2",

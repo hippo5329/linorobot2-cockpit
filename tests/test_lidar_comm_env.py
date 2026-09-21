@@ -219,3 +219,34 @@ def test_the_serial_lidar_driver_respawns():
             "the serial ldlidar node does not respawn; it dies ~3s after launch "
             "if its producer has not started yet, and never comes back"
         )
+
+
+def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_absent():
+    """use_fake_ld19 + serial + no lidar tty must use the host-side fake laser.
+
+    A bare ESP32 module has only its one micro-ROS USB; there is no second
+    USB-serial bridge for a lidar. A serial ldlidar driver then dies on a
+    missing /dev/ttyUSB1 and /scan never comes -- stranding SLAM/Nav2 and
+    breaking the "bring up a bare module instantly" promise. When the scan is
+    meant to be faked, an absent serial port must route to fake_laser_node (the
+    virtual room); a *present* port still drives the real serial driver, so the
+    gendrv driver-path test is unchanged.
+    """
+    path = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
+    text = open(path).read()
+    assert "use_host_fake_laser" in text, "the host-fake-laser guard is gone"
+    m = re.search(r"use_host_fake_laser\s*=\s*\((.*?)\n    \)", text, re.S)
+    assert m, "use_host_fake_laser is no longer a single assignment block"
+    guard = m.group(1)
+    assert "use_fake_ld19" in guard, "the fallback no longer requires a faked scan"
+    assert 'effective_lidar_comm_mode != "serial"' in guard, (
+        "the fallback no longer routes non-serial fake modes to the host node"
+    )
+    assert "os.path.exists(lidar_port)" in guard, (
+        "the bare-module fallback no longer checks whether the serial lidar "
+        "port exists; a bare board will strand SLAM/Nav2 on a missing /scan"
+    )
+    # The fake-laser Node must be selected by exactly this guard.
+    assert "if use_host_fake_laser" in text, (
+        "fake_laser_node is no longer gated on use_host_fake_laser"
+    )
