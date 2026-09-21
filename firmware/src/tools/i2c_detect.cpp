@@ -16,6 +16,7 @@
 #include "tools.h"
 #include "board_init.h"
 #include "i2c_probe.h"
+#include "mcu_env.h"
 
 #if defined(I2C_SDA_OVERRIDE) && defined(I2C_SCL_OVERRIDE)
   #define I2C_SCAN_SDA I2C_SDA_OVERRIDE
@@ -23,6 +24,11 @@
 #elif defined(SDA_PIN) && defined(SCL_PIN)
   #define I2C_SCAN_SDA SDA_PIN
   #define I2C_SCAN_SCL SCL_PIN
+#else
+  // No macro from the config header: -1 is what initBoard() treats as "leave the
+  // board's Wire default alone", so the fallback says exactly that.
+  #define I2C_SCAN_SDA (-1)
+  #define I2C_SCAN_SCL (-1)
 #endif
 
 namespace i2c_detect {
@@ -38,11 +44,24 @@ void scanAndIdentify() {
     Serial.println("\n=======================================================");
     Serial.println("  Linorobot2 I2C Sensor Detection                       ");
     Serial.println("=======================================================");
-#if defined(I2C_SCAN_SDA) && defined(I2C_SCAN_SCL)
-    Serial.printf("Scanning I2C bus (SDA:%d, SCL:%d)...\n", I2C_SCAN_SDA, I2C_SCAN_SCL);
-#else
-    Serial.println("Scanning I2C bus (pins from the env partition / config header)...");
-#endif
+    // Report the pins the bus is ACTUALLY on, which is what initBoard() resolved:
+    // envInt("i2c_sda", SDA_PIN), env first and the macro only as a fallback. The
+    // banner used to print the macro alone, so the prebuilt release image -- built
+    // from a generated bare config, where both are -1 -- told every user of the
+    // unified image "SDA:-1, SCL:-1" while happily scanning the env's pins and
+    // finding their chip. Reading the same source as the bus is the whole point
+    // of a diagnostic: a wiring check that reports the wrong wiring is worse than
+    // none. `origin` says which answered, so a blank env still reads honestly.
+    const int scan_sda = envInt("i2c_sda", I2C_SCAN_SDA);
+    const int scan_scl = envInt("i2c_scl", I2C_SCAN_SCL);
+    const char *origin = (envInt("i2c_sda", -32768) != -32768) ? "env" : "config header";
+    if (scan_sda >= 0 && scan_scl >= 0)
+        Serial.printf("Scanning I2C bus (SDA:%d, SCL:%d, from the %s)...\n",
+                      scan_sda, scan_scl, origin);
+    else
+        Serial.printf("Scanning I2C bus (SDA:%d, SCL:%d, from the %s - "
+                      "negative means this board's Wire default)...\n",
+                      scan_sda, scan_scl, origin);
 
     num_found = i2cProbe(found, I2C_PROBE_MAX);
 

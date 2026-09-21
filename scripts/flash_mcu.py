@@ -955,6 +955,36 @@ def rp2_env_offset(env: str) -> Optional[int]:
         return None
 
 
+# Parts with a hardware DAC, the same condition as ADC_LUT_SUPPORTED in
+# firmware/common/lib/adc_lut/adc_lut.h: the classic ESP32 and the ESP32-S2.
+# The S3, C3, C6 and H2 have none, and neither do the RP2040/RP2350.
+_DAC_ENVS = ("esp32", "esp32s2")
+
+
+def warn_if_app_unsupported(app: str, env: str) -> None:
+    """Say so HERE when the board cannot run the application being selected.
+
+    `adc_calibrate` is compiled in only on a part with a hardware DAC; elsewhere
+    the name is not in the firmware's tool table at all and `toolSelect()` falls
+    back to the robot firmware. That fallback is correct and deliberate -- but
+    its only trace is one line on the board's serial at boot, which nobody is
+    attached to during a 4 KB env write. So the write "succeeded", the flasher
+    reported success, and the board came up running `base` with nothing to
+    explain it. Measured on a Pico 2, 2026-09-21. Warn where the choice is made.
+    """
+    if app != "adc_calibrate":
+        return
+    name = (env or "").strip().lower()
+    if name in _DAC_ENVS:
+        return
+    log(f"\u26a0\ufe0f  '{app}' needs a hardware DAC; '{env or 'this board'}' has none "
+        f"(only {', '.join(_DAC_ENVS)} do).")
+    log("    The env key will be written, but the image does not carry that "
+        "application:")
+    log("    the board will print '[app] ... is not an application this image "
+        "carries' and boot `base`.")
+
+
 def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     """The env block to write alongside an application image, built on demand.
 
@@ -992,6 +1022,7 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     # so that flashing the robot firmware over a board left in a diagnostic mode
     # actually returns it to the robot firmware.
     app = getattr(args, "app", None) or "base"
+    warn_if_app_unsupported(app, getattr(args, "env", "") or "")
     cmd += ["--set", f"app={app}"]
     log("Building the env block (Wi-Fi keys + agent/syslog/lidar addresses)...")
     res = run_tool(cmd, timeout=30)
