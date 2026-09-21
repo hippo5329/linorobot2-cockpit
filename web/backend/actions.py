@@ -74,9 +74,13 @@ _IDENT_RE = re.compile(r"^[A-Za-z0-9_.:+/@-]+$")   # ros pkg/exec, distro, image
 _DEVICE_RE = re.compile(r"^/dev/[A-Za-z0-9_./-]+$")
 _PKG_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]*$")     # apt / ros package names
 
+# A browser field that was never set serialises as these literal strings; treat
+# them as "not given" so a default applies, rather than validating the word.
+_EMPTY = (None, "", "undefined", "null", "NaN")
+
 
 def _ident(value, name: str, default: str = None) -> str:
-    s = str(value if value not in (None, "") else (default if default is not None else ""))
+    s = str(value if value not in _EMPTY else (default if default is not None else ""))
     if default is not None and s == "":
         s = default
     if not _IDENT_RE.match(s):
@@ -85,7 +89,7 @@ def _ident(value, name: str, default: str = None) -> str:
 
 
 def _enum(value, name: str, allowed, default: str = None) -> str:
-    s = str(value) if value not in (None, "") else default
+    s = str(value) if value not in _EMPTY else default
     if s not in allowed:
         raise ValueError(f"{name}: {value!r} is not one of {sorted(allowed)}")
     return s
@@ -93,7 +97,7 @@ def _enum(value, name: str, allowed, default: str = None) -> str:
 
 def _int(value, name: str, lo: int, hi: int, default: int = None) -> int:
     try:
-        n = int(value) if value not in (None, "") else default
+        n = int(value) if value not in _EMPTY else default
     except (TypeError, ValueError):
         raise ValueError(f"{name}: {value!r} is not an integer")
     if n is None or not (lo <= n <= hi):
@@ -103,7 +107,7 @@ def _int(value, name: str, lo: int, hi: int, default: int = None) -> int:
 
 def _num(value, name: str, lo: float, hi: float, default: float) -> float:
     try:
-        x = float(value) if value not in (None, "") else default
+        x = float(value) if value not in _EMPTY else default
     except (TypeError, ValueError):
         raise ValueError(f"{name}: {value!r} is not a number")
     if not (lo <= x <= hi):
@@ -112,7 +116,7 @@ def _num(value, name: str, lo: float, hi: float, default: float) -> float:
 
 
 def _device(value, name: str, default: str) -> str:
-    s = str(value) if value not in (None, "") else default
+    s = str(value) if value not in _EMPTY else default
     if not _DEVICE_RE.match(s):
         raise ValueError(f"{name}: {value!r} is not a /dev device node")
     return s
@@ -260,13 +264,24 @@ def _slam(a: Dict) -> str:
 def _nav2(a: Dict) -> str:
     distro = _ident(a.get("distro"), "distro", "jazzy")
     launcher = _path(a.get("launcher"), "launcher")
-    params = a.get("params_file")
-    params_arg = f" params_file:={shlex.quote(_path(params, 'params_file'))}" if params else ""
+    custom = a.get("params_file")
+    default_params = a.get("default_params")
+    params = custom or default_params
     depth = "true" if _bool(a.get("depth")) else "false"
     map_arg = f" map:={shlex.quote(_path(a.get('map'), 'map'))}" if a.get("map") else ""
-    return (f"{ros_setup_shell(distro)}; if [ -f {shlex.quote(launcher)} ]; then "
-            f"ros2 launch {shlex.quote(launcher)} slam:=false{params_arg}{map_arg} depth_costmap:={depth} distro:={distro} sim:=false; "
-            f"else ros2 launch linorobot2_navigation navigation.launch.py; fi")
+    custom_arg = f" params_file:={shlex.quote(_path(custom, 'params_file'))}" if custom else ""
+    q_launcher = shlex.quote(launcher)
+    # Three ways, in order: the console launcher (auto-resolves its own params);
+    # plain nav2_bringup with an explicit params file, when one exists; and the
+    # linorobot2_navigation fallback. Matches the frontend's original branches.
+    branches = (f"if [ -f {q_launcher} ]; then "
+                f"ros2 launch {q_launcher}{map_arg}{custom_arg} depth_costmap:={depth} distro:={distro} sim:=false; ")
+    if params:
+        qp = shlex.quote(_path(params, "params_file"))
+        branches += (f"elif [ -f {qp} ]; then "
+                     f"ros2 launch nav2_bringup bringup_launch.py{map_arg} params_file:={qp} use_sim_time:=false; ")
+    branches += (f"else ros2 launch linorobot2_navigation navigation.launch.py{map_arg}; fi")
+    return f"{ros_setup_shell(distro)}; {branches}"
 
 
 def _teleop(a: Dict) -> str:
@@ -325,6 +340,102 @@ def _apt_install(a: Dict) -> str:
     return "sudo apt-get update && sudo apt-get install -y " + " ".join(shlex.quote(p) for p in pkgs)
 
 
+def _ld_node_params(a: Dict, overrides: Dict) -> str:
+    base = {
+        "product_name": _ident(a.get("product"), "product", "LDLiDAR_LD19"),
+        "topic_name": "scan",
+        "frame_id": "laser",
+        "laser_scan_dir": "true",
+        "bins": str(_int(a.get("bins"), "bins", 1, 100000, 456)),
+        "enable_angle_crop_func": "false",
+        "angle_crop_min": "135.0",
+        "angle_crop_max": "225.0",
+    }
+    base.update(overrides)
+    return " ".join(f"-p {k}:={shlex.quote(str(v))}" for k, v in base.items())
+
+
+def _laser_driver(a: Dict) -> str:
+    distro = _ident(a.get("distro"), "distro", "jazzy")
+    prefix = ros_setup_shell(distro)
+    if not _bool(a.get("is_ld")):
+        code = _ident(a.get("code"), "code")
+        cmd = f"ros2 launch linorobot2_bringup lasers.launch.py sensor:={code}"
+        if a.get("port"):
+            dev = _device(a.get("port"), "port", "/dev/ttyUSB0")
+            cmd += f" lidar_transport:=serial lidar_serial_port:={shlex.quote(dev)}"
+        return f"{prefix}; {cmd}"
+
+    mode = _enum(a.get("mode"), "mode", {"serial", "udp_bridge", "udp_server", "udp_client"}, "serial")
+    baud = _int(a.get("baud"), "baud", 1200, 6000000, 230400)
+    node = "ros2 run ldlidar_stl_ros2 ldlidar_stl_ros2_node"
+
+    if mode == "serial":
+        dev = _device(a.get("port") or a.get("symlink"), "port", "/dev/ttyUSB0")
+        params = _ld_node_params(a, {"comm_mode": "serial", "port_name": dev, "port_baudrate": str(baud)})
+        return f"{prefix}; {node} --ros-args {params}"
+
+    if mode == "udp_bridge":
+        udp_port = _int(a.get("udp_port"), "udp_port", 1, 65535, 8889)
+        bridge = _device(a.get("bridge_path"), "bridge_path", "/dev/lidar_udp_bridge")
+        params = _ld_node_params(a, {"comm_mode": "serial", "port_name": bridge, "port_baudrate": str(baud)})
+        # Reclaim the pty by INSPECTED PID (bracketed pgrep), never `pkill -f`
+        # -- AGENTS.md Rule 1. The original client code broke that rule.
+        qb = shlex.quote(bridge)
+        bridge_cmd = (
+            "command -v socat >/dev/null 2>&1 || sudo apt-get install -y socat; "
+            f"for pid in $(pgrep -f \"[s]ocat.*{bridge}\"); do sudo kill \"$pid\" 2>/dev/null; done; sleep 0.3; "
+            f"(socat -d -d UDP-LISTEN:{udp_port},reuseaddr PTY,link={qb},raw,echo=0,mode=666 &) && sleep 1.5")
+        return f"{prefix}; {bridge_cmd} && {node} --ros-args {params}"
+
+    # udp_server / udp_client: the driver's own native network modes.
+    server_ip = a.get("server_ip", "0.0.0.0")
+    if not re.match(r"^[0-9A-Za-z_.:-]+$", str(server_ip)):
+        raise ValueError(f"server_ip: {server_ip!r} is not a host")
+    server_port = _int(a.get("server_port"), "server_port", 1, 65535, 8889)
+    params = _ld_node_params(a, {"comm_mode": mode, "server_ip": str(server_ip),
+                                 "server_port": str(server_port), "port_baudrate": str(baud)})
+    return f"{prefix}; {node} --ros-args {params}"
+
+
+def _mag_calibrate(a: Dict) -> str:
+    distro = _ident(a.get("distro"), "distro", "jazzy")
+    return (f"{ros_setup_shell(distro)}; "
+            "dpkg -s ros-$ROS_DISTRO-robot-calibration >/dev/null 2>&1 || "
+            "sudo apt-get install -y ros-$ROS_DISTRO-robot-calibration; "
+            "ros2 run robot_calibration magnetometer_calibration")
+
+
+def _rviz_novnc(a: Dict) -> str:
+    """RViz on a headless Xvfb, streamed to the browser through x11vnc + noVNC.
+    A host-side viewer for a machine with no screen."""
+    distro = _ident(a.get("distro"), "distro", "jazzy")
+    display = a.get("display", ":99")
+    if not re.match(r"^:\d+$", str(display)):
+        raise ValueError(f"display: {display!r} is not an X display like :99")
+    display_num = str(display)[1:]
+    novnc_port = _int(a.get("novnc_port"), "novnc_port", 1, 65535, 6080)
+    cfg = a.get("rviz_config")
+    # Fall back to a bare rviz2 if the config file is missing, rather than
+    # failing to start (matches the original client behaviour).
+    rviz = (f"[ -f {shlex.quote(_path(cfg, 'rviz_config'))} ] && "
+            f"rviz2 -d {shlex.quote(_path(cfg, 'rviz_config'))} || rviz2") if cfg else "rviz2"
+    return f"{ros_setup_shell(distro)}; " + " && ".join([
+        "command -v Xvfb >/dev/null 2>&1 || sudo apt-get install -y xvfb",
+        "command -v x11vnc >/dev/null 2>&1 || sudo apt-get install -y x11vnc",
+        "command -v websockify >/dev/null 2>&1 || sudo apt-get install -y novnc websockify",
+        # Reclaim the display through its own lock file (a single inspected PID) --
+        # never a broad string-matching kill (AGENTS.md).
+        (f"if [ -e /tmp/.X{display_num}-lock ]; then XPID=$(cat /tmp/.X{display_num}-lock 2>/dev/null | tr -d ' '); "
+         f"if [ -n \"$XPID\" ] && [ -r /proc/$XPID/cmdline ] && tr '\\0' ' ' < /proc/$XPID/cmdline | grep -q Xvfb; "
+         f"then kill \"$XPID\" 2>/dev/null; fi; fi; sleep 0.3"),
+        f"(Xvfb {display} -screen 0 1280x800x24 &) && sleep 1",
+        f"(DISPLAY={display} {rviz} &) && sleep 1",
+        f"(x11vnc -display {display} -forever -shared -nopw -quiet -rfbport 5900 &) && sleep 1",
+        f"websockify --web=/usr/share/novnc {novnc_port} localhost:5900",
+    ])
+
+
 # --------------------------------------------------------------------------
 # Registry.
 # --------------------------------------------------------------------------
@@ -340,6 +451,9 @@ _ACTIONS: Dict[str, Callable[[Dict], str]] = {
     "docker_service_up": _docker_service_up,
     "docker_down": _docker_down,
     "apt_install": _apt_install,
+    "mag_calibrate": _mag_calibrate,
+    "rviz_novnc": _rviz_novnc,
+    "laser_driver": _laser_driver,
 }
 
 

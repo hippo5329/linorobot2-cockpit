@@ -1532,10 +1532,12 @@ btnDockerServiceStart.addEventListener("click", async () => {
   // virtual display, which the kasmvnc service then streams to a browser.
   // Skipping it isn't just "no picture" -- gz sim's GUI process crashes
   // outright trying to open an unset/invalid display.
-  const cmd = `${composeResolveSnippet()}cd ${dockerDir()} && DISPLAY=:200 $COMPOSE ${dockerComposeFlags()} up ${service}`;
   btnDockerServiceStart.disabled = true;
   btnDockerServiceStop.disabled = false;
-  runCommand(cmd, {
+  runCommand({ action: "docker_service_up", args: {
+    engine: installModeSel.value === "podman" ? "podman" : "docker",
+    docker_dir: dockerDir(), service,
+  } }, {
     title: `Docker/Podman service: ${service}`,
     onDone: () => {
       btnDockerServiceStart.disabled = false;
@@ -1552,8 +1554,9 @@ if (vncBtn) {
 }
 
 document.getElementById("btn-docker-down").addEventListener("click", () => {
-  const cmd = `${composeResolveSnippet()}cd ${dockerDir()} && $COMPOSE ${dockerComposeFlags()} down`;
-  runCommand(cmd, { title: "Docker/Podman: stop + remove all containers" });
+  runCommand({ action: "docker_down", args: {
+    engine: installModeSel.value === "podman" ? "podman" : "docker", docker_dir: dockerDir(),
+  } }, { title: "Docker/Podman: stop + remove all containers" });
 });
 
 // ---------- micro-ROS agent: find-or-build, then launch ----------
@@ -1732,12 +1735,40 @@ function _unused_old_agentLaunchCommand() {
   return envPrefix() + `[ -f ~/uros_ws/install/setup.bash ] && source ~/uros_ws/install/setup.bash; ` + runLine;
 }
 
+// The command that finds-or-builds / pulls the agent, and the one that runs it,
+// are built SERVER-SIDE now (web/backend/actions.py). Here we only gather the
+// operator's choices -- engine, registry, transport, device, baud -- and name
+// the action. The registry host, if any, is whatever the operator typed.
+function agentPrepareSpec() {
+  const engine = getAgentEngine();
+  const regMode = getContainerRegistry();
+  const customReg = (document.getElementById("hdr-custom-registry")?.value
+    || document.getElementById("cfg-custom-registry")?.value
+    || (state.config && state.config.custom_registry) || "").trim();
+  let registry = "";
+  if (regMode === "custom" || regMode === "cluster" || regMode === "auto") registry = customReg;
+  else if (regMode && regMode !== "dockerhub") registry = regMode;
+  return { action: "agent_prepare", args: { engine, registry, distro: state.status?.ros_distro || getDistro() } };
+}
+
+function agentStartSpec() {
+  const c = state.config || {};
+  return { action: "agent_start", args: {
+    engine: getAgentEngine(),
+    transport: document.getElementById("cfg-agent-transport")?.value || c.agent_transport || "serial",
+    device: document.getElementById("cfg-agent-device")?.value || c.agent_device || "/dev/ttyACM0",
+    port: document.getElementById("cfg-agent-port")?.value || c.agent_port || "8888",
+    baud: document.getElementById("cfg-agent-baud")?.value || c.agent_baud || "921600",
+    distro: state.status?.ros_distro || getDistro(),
+  } };
+}
+
 function ensureAgentRunning() {
   if (state.status && (state.status.agent_alive_external || state.status.agent_busy_console)) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    runCommand(findOrBuildAgentCommand(), {
+    runCommand(agentPrepareSpec(), {
       title: "Preparing micro-ROS agent",
       onDone: (code) => {
         if (code !== 0) {
@@ -1746,7 +1777,7 @@ function ensureAgentRunning() {
         }
         const stopBtn = document.getElementById("btn-agent-stop");
         if (stopBtn) stopBtn.disabled = false;
-        runCommand(agentLaunchCommand(), { slot: "agent", title: "micro-ROS agent" });
+        runCommand(agentStartSpec(), { slot: "agent", title: "micro-ROS agent" });
         setTimeout(resolve, 2500); // give the agent a moment to bind before the caller launches
       },
     });
@@ -1836,7 +1867,7 @@ async function ensureRosPackages(pkgs, label) {
   let ok = true;
   if (apt.length) {
     ok = await new Promise((resolve) => {
-      runCommand(`sudo apt-get update && sudo apt-get install -y ${apt.join(" ")}`, {
+      runCommand({ action: "apt_install", args: { packages: apt.join(" ") } }, {
         title: `Install ${label} prerequisites`,
         action: `install ${label} prerequisites`,
         onDone: (exitCode) => resolve(exitCode === 0),
@@ -1945,9 +1976,11 @@ function isBringupAlive() {
   return Boolean(state.status && (state.status.bringup_alive_external || state.status.bringup_busy_console));
 }
 
+// Returns an action SPEC (built server-side, actions.py), not a command string.
 function bringupLaunchCommand() {
   if (isDockerMode()) {
-    return `${composeResolveSnippet()}cd ${dockerDir()} && $COMPOSE ${dockerComposeFlags()} up bringup`;
+    return { action: "bringup_docker", args: { engine: getAgentEngine() === "podman" ? "podman" : "docker",
+                                               docker_dir: dockerDir() } };
   }
   const launcher = `${state.status?.web_dir || "."}/../launch_bringup.py`;
   const cfgPath = (state.robot_config && state.robot_config.path) || "~/.config/linorobot2/robot_config.yaml";
@@ -1963,8 +1996,10 @@ function bringupLaunchCommand() {
   const nativeAgent = getAgentEngine() === "native";
   const microRos = (nativeAgent && !isAgentAlive()) ? "true" : "false";
 
-  return envPrefix() +
-    `ros2 launch ${launcher} config_file:=${cfgPath} base:=${base} base_serial_port:=${dev} micro_ros_baudrate:=${baud} madgwick:=${madgwick} micro_ros:=${microRos}`;
+  return { action: "bringup", args: {
+    launcher, config_path: cfgPath, base, device: dev, baud,
+    madgwick, micro_ros: microRos, distro: getDistro(),
+  } };
 }
 
 async function ensureBringupRunning(targetTitle = "requested action") {
@@ -2142,7 +2177,7 @@ async function ensureRos2Installed() {
     if (res.ok) {
       const data = await res.json();
       if (data.installed) return true;
-      cmd = data.command;
+      cmd = data.handle;
     }
   } catch (err) {
     console.warn("ROS 2 install command lookup failed:", err);
@@ -2158,9 +2193,8 @@ async function ensureRos2Installed() {
   logLine("[console] Installing it now -- this takes several minutes on a fresh machine.");
   logLine("[console] -------------------------------------------------------------");
   const ok = await new Promise((resolve) => {
-    runCommand(cmd, {
+    runCommand({ handle: cmd }, {
       title: `Install ROS 2 ${distro}`,
-      action: `install ROS 2 ${distro}`,
       onDone: (exitCode) => resolve(exitCode === 0),
     });
   });
@@ -2419,28 +2453,13 @@ wireStartStop({
   slot: "main",
   title: "Gamepad teleop",
   needsBringup: true,
-  buildCommand: async () => {
-    const axisLinear = document.getElementById("joy-axis-linear").value || 1;
-    const scaleLinear = document.getElementById("joy-scale-linear").value || 0.5;
-    const axisAngular = document.getElementById("joy-axis-angular").value || 0;
-    const scaleAngular = document.getElementById("joy-scale-angular").value || 1.0;
-    const yamlBody =
-      `teleop_twist_joy_node:\n  ros__parameters:\n` +
-      `    axis_linear:\n      x: ${axisLinear}\n` +
-      `    scale_linear:\n      x: ${scaleLinear}\n` +
-      `    axis_angular:\n      yaw: ${axisAngular}\n` +
-      `    scale_angular:\n      yaw: ${scaleAngular}\n`;
-    const tmpFile = "/tmp/linorobot2_console_joy.yaml";
-    // The heredoc terminator must be alone on its own line -- appending
-    // " && (...)" right after it on the same line means bash never
-    // recognizes it as the terminator and keeps consuming everything after
-    // it (including the ros2 run commands) as more heredoc body instead of
-    // running them. A real newline before the next statement fixes it.
-    const writeYaml = `cat > ${tmpFile} << 'CONSOLE_JOY_EOF'\n${yamlBody}CONSOLE_JOY_EOF`;
-    return envPrefix() + writeYaml + "\n" +
-      `(ros2 run joy_linux joy_linux_node & ` +
-      `ros2 run teleop_twist_joy teleop_node --ros-args --params-file ${tmpFile}; wait)`;
-  },
+  buildCommand: async () => ({ action: "teleop", args: {
+    axis_linear: document.getElementById("joy-axis-linear").value || 1,
+    scale_linear: document.getElementById("joy-scale-linear").value || 0.5,
+    axis_angular: document.getElementById("joy-axis-angular").value || 0,
+    scale_angular: document.getElementById("joy-scale-angular").value || 1.0,
+    distro: getDistro(),
+  } }),
 });
 
 // ---------- SLAM / navigation ----------
@@ -2459,22 +2478,12 @@ wireStartStop({
   // also meant every parameter tuned in Console was quietly ignored, which is
   // the opposite of what this tab claims. Go through Console's own launcher
   // with slam:=true, exactly as the Navigation button does.
-  buildCommand: async () => {
-    const launcher = `${state.status?.web_dir || "."}/../launch_nav2.py`;
-    const distro = getDistro();
-    // Blank means "auto-resolve": launch_nav2.py then tries
-    // web/console_nav2_<distro>.yaml, config/nav2_<distro>_<base>.yaml and
-    // config/nav2_<distro>.yaml in turn. Naming console_nav2_<distro>.yaml
-    // explicitly defeats that -- only the jazzy one is shipped, so on every
-    // other distro nav2 was handed a path that does not exist.
-    const customParams = document.getElementById("nav-params-file")?.value.trim() || "";
-    const paramsArg = customParams ? ` params_file:=${customParams}` : "";
-    const depthArg = ` depth_costmap:=${document.getElementById("bringup-depth-sensor")?.value ? "true" : "false"}`;
-    return envPrefix() +
-      `if [ -f ${launcher} ]; then ` +
-      `ros2 launch ${launcher} slam:=true${paramsArg}${depthArg} distro:=${distro} sim:=false; ` +
-      `else ros2 launch linorobot2_navigation slam.launch.py; fi`;
-  },
+  buildCommand: async () => ({ action: "slam", args: {
+    launcher: `${state.status?.web_dir || "."}/../launch_nav2.py`,
+    distro: getDistro(),
+    params_file: document.getElementById("nav-params-file")?.value.trim() || "",
+    depth: !!document.getElementById("bringup-depth-sensor")?.value,
+  } }),
 });
 
 document.getElementById("btn-map-save").addEventListener("click", () => {
@@ -2485,7 +2494,7 @@ document.getElementById("btn-map-save").addEventListener("click", () => {
   // cannot take the slot SLAM is holding. On "main" it was refused with a 409
   // every time, i.e. the map could never be saved from the UI at all.
   runCommand(
-    envPrefix() + `mkdir -p ${mapsDir} && ros2 run nav2_map_server map_saver_cli -f ${mapsDir}/${name}`,
+    { action: "map_save", args: { name, maps_dir: mapsDir, distro: getDistro() } },
     { slot: "tool", title: `Save map: ${name}`, onDone: refreshMaps }
   );
 });
@@ -2518,35 +2527,15 @@ wireStartStop({
   title: "Navigation",
   needsBringup: true,
   buildCommand: async () => {
-    const mapPath = document.getElementById("nav-map-select").value;
-    const mapArg = mapPath ? ` map:=${mapPath}` : "";
-    const customParams = document.getElementById("nav-params-file").value.trim();
-    const launcher = `${state.status?.web_dir || "."}/../launch_nav2.py`;
     const distro = getDistro();
-    // Same as SLAM: leave it blank and let launch_nav2.py resolve. Only
-    // console_nav2_jazzy.yaml is shipped in web/, so naming
-    // console_nav2_<distro>.yaml pointed Lyrical and Rolling at a file that
-    // is not there.
-    const defaultParams = `${state.status?.web_dir || "."}/console_nav2_${distro}.yaml`;
-    const paramsArg = customParams ? ` params_file:=${customParams}` : "";
-
-    // Depth camera -> costmap: the console's launch_nav2.py resolves this and
-    // hands nav2 a finished params file (it never mutates the editable YAML and
-    // never touches upstream navigation.launch.py). Pass an explicit true/false
-    // from the Bringup depth-sensor selection -- only the console launcher
-    // understands depth_costmap, so it's omitted from the plain-launch fallback.
-    const depthArg = ` depth_costmap:=${document.getElementById("bringup-depth-sensor")?.value ? "true" : "false"}`;
-    return envPrefix() +
-      `if [ -f ${launcher} ]; then ` +
-      `ros2 launch ${launcher}${mapArg}${paramsArg}${depthArg} distro:=${distro} sim:=false; ` +
-      // Fallback path: plain nav2_bringup has no auto-resolution of its own,
-      // so it does need an explicit file -- and the branch is only taken when
-      // that file exists.
-      `elif [ -f ${customParams || defaultParams} ]; then ` +
-      `ros2 launch nav2_bringup bringup_launch.py${mapArg} params_file:=${customParams || defaultParams} use_sim_time:=false; ` +
-      `else ` +
-      `ros2 launch linorobot2_navigation navigation.launch.py${mapArg}; ` +
-      `fi`;
+    return { action: "nav2", args: {
+      launcher: `${state.status?.web_dir || "."}/../launch_nav2.py`,
+      distro,
+      map: document.getElementById("nav-map-select").value || "",
+      params_file: document.getElementById("nav-params-file").value.trim(),
+      default_params: `${state.status?.web_dir || "."}/console_nav2_${distro}.yaml`,
+      depth: !!document.getElementById("bringup-depth-sensor")?.value,
+    } };
   },
 });
 
@@ -2577,31 +2566,18 @@ btnVncStart.addEventListener("click", () => {
   const which = document.getElementById("vnc-rviz-config").value;
   const rel = RVIZ_CONFIGS[which];
   const root = state.status?.repo_root || state.status?.web_dir || ".";
-  // fall back to a bare rviz2 if the config is missing rather than failing to start
-  const rvizCmd = rel
-    ? `[ -f "${root}${rel}" ] && rviz2 -d "${root}${rel}" || rviz2`
-    : "rviz2";
   // Reclaim the display through its own lock file (a single inspected PID) --
   // `pkill -f "Xvfb :99"` is a broad string-matching kill, banned outright by
   // AGENTS.md section 6.
-  const displayNum = display.replace(/^:/, "");
-  const cmd = envPrefix() + [
-    "command -v Xvfb >/dev/null 2>&1 || sudo apt-get install -y xvfb",
-    "command -v x11vnc >/dev/null 2>&1 || sudo apt-get install -y x11vnc",
-    "command -v websockify >/dev/null 2>&1 || sudo apt-get install -y novnc websockify",
-    `if [ -e /tmp/.X${displayNum}-lock ]; then XPID=$(cat /tmp/.X${displayNum}-lock 2>/dev/null | tr -d ' '); ` +
-      `if [ -n "$XPID" ] && [ -r /proc/$XPID/cmdline ] && tr '\\0' ' ' < /proc/$XPID/cmdline | grep -q Xvfb; then kill "$XPID" 2>/dev/null; fi; fi; sleep 0.3`,
-    `(Xvfb ${display} -screen 0 1280x800x24 &) && sleep 1`,
-    `(DISPLAY=${display} ${rvizCmd} &) && sleep 1`,
-    `(x11vnc -display ${display} -forever -shared -nopw -quiet -rfbport 5900 &) && sleep 1`,
-    `websockify --web=/usr/share/novnc ${novncPort} localhost:5900`,
-  ].join(" && ");
   btnVncStart.disabled = true;
   btnVncStop.disabled = false;
   const link = document.getElementById("vnc-link");
   link.href = `http://${location.hostname}:${novncPort}/vnc.html`;
   link.style.display = "inline";
-  runCommand(cmd, {
+  runCommand({ action: "rviz_novnc", args: {
+    distro: getDistro(), display, novnc_port: novncPort,
+    rviz_config: rel ? `${root}${rel}` : "",
+  } }, {
     title: "RViz via noVNC",
     onDone: () => {
       btnVncStart.disabled = false;
@@ -2624,10 +2600,7 @@ document.getElementById("btn-mag-cal").addEventListener("click", async () => {
   }
   const resultEl = document.getElementById("mag-cal-result");
   resultEl.textContent = "";
-  const cmd = envPrefix() +
-    `dpkg -s ros-$ROS_DISTRO-robot-calibration >/dev/null 2>&1 || sudo apt-get install -y ros-$ROS_DISTRO-robot-calibration; ` +
-    `ros2 run robot_calibration magnetometer_calibration`;
-  runCommand(cmd, {
+  runCommand({ action: "mag_calibrate", args: { distro: getDistro() } }, {
     title: "Magnetometer calibration",
     onLine: (line) => {
       if (/mag_bias|bias_x|bias_y|bias_z/i.test(line)) {
@@ -2802,52 +2775,29 @@ function ldNodeParams(meta, overrides) {
   return Object.entries(base).map(([k, v]) => `-p ${k}:=${v}`).join(" ");
 }
 
+// Returns a laser_driver action SPEC (built server-side, actions.py). The four
+// modes -- non-LD sensor, LD serial, LD udp_bridge (socat), LD udp server/client
+// -- are all reproduced there from these fields.
 function buildLaserDriverCommand() {
   const meta = laserModelMeta(laserModelSel.value);
   const port = document.getElementById("laser-driver-serial-port").value.trim();
   persistLaserPort();
-
-  if (!meta.isLd) {
-    let cmd = `ros2 launch linorobot2_bringup lasers.launch.py sensor:=${meta.code}`;
-    if (port) cmd += ` lidar_transport:=serial lidar_serial_port:=${port}`;
-    return { command: envPrefix() + cmd };
-  }
-
-  const mode = document.getElementById("laser-driver-mode").value;
-  const baud = document.getElementById("laser-driver-baud").value.trim() || meta.baud;
-  const nodeCmd = "ros2 run ldlidar_stl_ros2 ldlidar_stl_ros2_node";
-
-  if (mode === "serial") {
-    const params = ldNodeParams(meta, { comm_mode: "serial", port_name: port || meta.symlink, port_baudrate: baud });
-    return { command: envPrefix() + `${nodeCmd} --ros-args ${params}` };
-  }
-
-  if (mode === "udp_bridge") {
-    // The MCU relays raw LiDAR UART bytes as UDP datagrams to this port (the
-    // firmware's own "LiDAR over WiFi UDP" feature -- see LIDAR_SERVER/
-    // LIDAR_PORT in config-engine). There is no ROS2-side consumer for a raw
-    // byte stream like that, so socat turns it into a normal-looking local
-    // serial device (a pty) that ldlidar_stl_ros2_node can just open with
-    // comm_mode=serial like any USB-attached unit.
-    const udpPort = document.getElementById("laser-driver-udp-port").value.trim() || "8889";
-    const bridgePath = document.getElementById("laser-driver-bridge-path").value.trim() || "/dev/lidar_udp_bridge";
-    const params = ldNodeParams(meta, { comm_mode: "serial", port_name: bridgePath, port_baudrate: baud });
-    const bridgeCmd =
-      `command -v socat >/dev/null 2>&1 || sudo apt-get install -y socat; ` +
-      `sudo pkill -f "socat.*${bridgePath}" 2>/dev/null; sleep 0.3; ` +
-      `(socat -d -d UDP-LISTEN:${udpPort},reuseaddr PTY,link=${bridgePath},raw,echo=0,mode=666 &) && sleep 1.5`;
-    return { command: envPrefix() + `${bridgeCmd} && ${nodeCmd} --ros-args ${params}` };
-  }
-
-  // udp_server / udp_client: the ldlidar_stl_ros2 driver's own native network
-  // modes (talking to a network-attached LiDAR directly) -- unrelated to the
-  // firmware's raw-relay feature above, offered for completeness.
-  const serverIp = document.getElementById("laser-driver-server-ip").value.trim() || "0.0.0.0";
-  const serverPort = document.getElementById("laser-driver-server-port").value.trim() || "8889";
-  const params = ldNodeParams(meta, {
-    comm_mode: mode, server_ip: serverIp, server_port: serverPort, port_baudrate: baud,
-  });
-  return { command: envPrefix() + `${nodeCmd} --ros-args ${params}` };
+  const args = {
+    distro: getDistro(),
+    is_ld: !!meta.isLd,
+    code: meta.code,
+    product: meta.product,
+    bins: meta.bins,
+    port,
+    symlink: meta.symlink,
+    baud: document.getElementById("laser-driver-baud").value.trim() || meta.baud,
+    mode: document.getElementById("laser-driver-mode")?.value || "serial",
+    udp_port: document.getElementById("laser-driver-udp-port")?.value.trim() || "8889",
+    bridge_path: document.getElementById("laser-driver-bridge-path")?.value.trim() || "/dev/lidar_udp_bridge",
+    server_ip: document.getElementById("laser-driver-server-ip")?.value.trim() || "0.0.0.0",
+    server_port: document.getElementById("laser-driver-server-port")?.value.trim() || "8889",
+  };
+  return { spec: { action: "laser_driver", args } };
 }
 
 const btnLaserStart = document.getElementById("btn-laser-driver-start");
@@ -2861,10 +2811,10 @@ function isLaserRunning() {
 // same way. Resolves once the process has been accepted, not once it exits --
 // the driver is long-lived and the caller has to carry on to SLAM.
 function startLaserDriver() {
-  const { command } = buildLaserDriverCommand();
+  const { spec } = buildLaserDriverCommand();
   btnLaserStart.disabled = true;
   btnLaserStop.disabled = false;
-  runCommand(command, {
+  runCommand(spec, {
     // Its own slot: the driver has to keep running while SLAM and Nav2 do, and
     // bringup does not start the LiDAR, so sharing "main" made /scan and SLAM
     // mutually exclusive -- the second one was refused with a 409 that showed
@@ -6421,8 +6371,7 @@ async function executeHardwareAction(action, customFirmware = null) {
     }
 
     const data = await res.json();
-    const cmd = data.command;
-    await runCommand(cmd, {
+    await runCommand({ handle: data.handle }, {
       slot: "main",
       title: `${action === "upload" ? "Flashing" : action === "monitor" ? "Monitoring" : "Building"} ${firmwareName} (${mcuEnv})`,
       // adc_calibrate ends by printing one [ADC_JSON] line: the curve it just

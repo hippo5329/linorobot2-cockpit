@@ -84,3 +84,43 @@ def test_prepared_handles_are_one_shot():
     assert actions.claim(h) == "echo hello"
     assert actions.claim(h) is None
     assert actions.claim("bogus") is None
+
+
+def test_nav2_has_three_branches_when_params_given():
+    cmd = actions.build("nav2", {"launcher": "/w/launch_nav2.py", "distro": "jazzy",
+                                 "map": "/m/kitchen.yaml", "params_file": "",
+                                 "default_params": "/w/console_nav2_jazzy.yaml", "depth": False})
+    assert "ros2 launch /w/launch_nav2.py" in cmd
+    assert "nav2_bringup bringup_launch.py" in cmd     # middle branch present
+    assert "linorobot2_navigation navigation.launch.py" in cmd
+    assert "map:=/m/kitchen.yaml" in cmd
+
+
+def test_laser_driver_serial():
+    cmd = actions.build("laser_driver", {"is_ld": True, "mode": "serial", "product": "LDLiDAR_LD19",
+                                         "bins": 456, "port": "/dev/ttyUSB0", "baud": 230400})
+    assert "ldlidar_stl_ros2_node --ros-args" in cmd
+    assert "-p comm_mode:=serial" in cmd and "-p port_name:=/dev/ttyUSB0" in cmd
+
+
+def test_laser_driver_udp_bridge_reclaims_pty_without_pkill_f():
+    cmd = actions.build("laser_driver", {"is_ld": True, "mode": "udp_bridge", "bins": 456,
+                                         "udp_port": 8889, "bridge_path": "/dev/lidar_udp_bridge"})
+    assert "socat" in cmd
+    assert "pkill -f" not in cmd            # AGENTS.md Rule 1 -- fixed in the port
+    assert "[s]ocat" in cmd                 # bracketed pgrep instead
+
+
+def test_laser_driver_non_ld_uses_lasers_launch():
+    cmd = actions.build("laser_driver", {"is_ld": False, "code": "rplidar_a1", "distro": "jazzy"})
+    assert "lasers.launch.py sensor:=rplidar_a1" in cmd
+
+
+def test_rviz_novnc_never_uses_pkill():
+    cmd = actions.build("rviz_novnc", {"display": ":99", "novnc_port": 6080})
+    assert "pkill" not in cmd and "Xvfb :99" in cmd
+
+
+def test_docker_down_builds_compose():
+    cmd = actions.build("docker_down", {"engine": "docker", "docker_dir": "/w/docker"})
+    assert 'COMPOSE="docker compose"' in cmd and "cd /w/docker" in cmd and "down" in cmd
