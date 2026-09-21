@@ -61,7 +61,23 @@ jobs:
             exit 1
           fi
       - name: Frontend syntax
-        run: node --check web/frontend/app.js && node --check web/frontend/rosviz.js && node --check web/frontend/webserial.js
+        # Glob, never a list. This named app.js, rosviz.js and webserial.js; when
+        # app.js was split into app-core.js and its siblings the step kept asking
+        # for a file that no longer existed, and CI stayed red for four runs on a
+        # stale filename rather than on anything wrong with the tree. A glob also
+        # covers the next module without anyone remembering to add it. Fails on
+        # an empty match rather than passing vacuously.
+        run: |
+          shopt -s nullglob
+          files=(web/frontend/*.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no frontend JS found — the glob or the layout changed"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo "  $f"
+            node --check "$f"
+          done
       - name: Reference configs are one-robot-per-file
         run: |
           export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
