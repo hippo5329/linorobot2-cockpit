@@ -96,6 +96,37 @@ def env_uses_wifi_transport(env_name, ini_path=DEFAULT_PIO_INI):
 RP2_MCUS = ("pico", "picow", "pico2", "pico2w")
 
 
+# Margin over Nav2's own footprint. The clamp holds the robot's CENTRE at this
+# distance from a wall; Nav2 refuses to plan from a cell its footprint overlaps,
+# so stopping at exactly robot_radius leaves the robot on the boundary, where
+# rounding decides whether it is stuck. A few centimetres of daylight costs
+# nothing in a 10 x 6 m room.
+FAKE_RADIUS_MARGIN_M = 0.05
+FAKE_RADIUS_FALLBACK_M = 0.20
+
+
+def nav2_robot_radius(params: dict) -> float:
+    """The largest robot_radius any costmap in this config plans with, plus margin.
+
+    Both costmaps are checked because either one refusing to plan is enough to
+    strand the robot, and nothing requires them to agree.
+    """
+    nav2 = params.get("nav2") or {}
+    best = 0.0
+    for cm in ("local_costmap", "global_costmap"):
+        node = nav2.get(cm) or {}
+        node = node.get(cm) or node      # nav2 keys are <name>: <name>: ros__parameters
+        rp = node.get("ros__parameters", node) or {}
+        try:
+            r = float(rp.get("robot_radius"))
+        except (TypeError, ValueError):
+            continue
+        best = max(best, r)
+    if best <= 0.0:
+        return FAKE_RADIUS_FALLBACK_M
+    return best + FAKE_RADIUS_MARGIN_M
+
+
 def check_pico_family_transport(params, controller_name):
     """Reject udp4 on the RP2 family — the radio cannot carry the control loop.
 
@@ -608,6 +639,17 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # once). The env key lidar_x overrides at run time.
     laser = gen_robot_description.effective_geometry(params)["laser"]
     lines.append(f"#define FAKE_LIDAR_OFFSET_X {float(laser['x'])}f")
+    # How close the simulated robot may get to a simulated wall, taken from the
+    # SAME radius Nav2 plans with. These must not be set independently: the
+    # emulator's own default was 0.20 m while the shipped configs plan with
+    # 0.22-0.26 m, so the simulation parked the robot 0.20 m off the wall --
+    # INSIDE Nav2's footprint, a lethal cell the planner can never leave. A
+    # soak found it: the robot reaches the wall, stops exactly where the clamp
+    # puts it, and every goal from then on fails while the planner keeps
+    # emitting correct escape paths the controller refuses to follow (measured:
+    # 48 plans in 80 s, 1.2 mm of travel). Deriving it here means a config that
+    # widens the robot widens the simulated one too.
+    lines.append(f"#define FAKE_ROBOT_RADIUS {nav2_robot_radius(params):.4f}f")
     lines.append("")
 
     # LiDAR settings

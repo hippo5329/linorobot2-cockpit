@@ -87,7 +87,21 @@
 #endif
 
 #ifndef FAKE_ROBOT_RADIUS
-#define FAKE_ROBOT_RADIUS 0.20f // Keeps the robot off the wall rather than in it
+// How close the simulated robot's CENTRE may get to a simulated wall.
+//
+// scripts/gen_firmware_header.py derives this from the same `robot_radius`
+// Nav2 plans with, plus a small margin, and this fallback only applies to an
+// image built without a generated header. It must stay at or above the widest
+// robot_radius the shipped configs use, because the two disagreeing is a real
+// failure and not a cosmetic one: at 0.20f against configs planning with
+// 0.22-0.26 m, the clamp parked the robot 0.20 m off the wall -- INSIDE Nav2's
+// own footprint. That cell is lethal, so the planner would not plan out of it,
+// and a soak watched a board sit there for 154 consecutive goals while the
+// planner emitted correct escape paths the controller refused to follow.
+//
+// Stopping the robot short of the wall is the point of the clamp; stopping it
+// somewhere Nav2 considers a collision defeats it.
+#define FAKE_ROBOT_RADIUS 0.30f
 #endif
 
 #ifndef FAKE_WALL_OBSTACLE
