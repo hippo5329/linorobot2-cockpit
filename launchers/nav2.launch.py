@@ -12,10 +12,10 @@ import re
 import tempfile
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import LoadComposableNodes, Node
+from launch_ros.actions import LoadComposableNodes, Node, PushRosNamespace
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
@@ -114,6 +114,36 @@ def _managed_node_names(src: str) -> list:
             if names:
                 return names
     return []
+
+
+_NAV2_FRAME_KEYS = {"global_frame", "robot_base_frame", "odom_frame", "base_frame",
+                    "base_frame_id", "odom_frame_id", "robot_base_frame_id", "fixed_frame"}
+# Topic values nav2 names that are ROOT-absolute in the shipped config and so
+# would ignore the namespace; rewrite them under /<prefix>/.
+_NAV2_TOPIC_KEYS = {"topic", "scan_topic", "map_topic", "odom_topic",
+                    "footprint_topic", "cmd_vel_in_topic", "cmd_vel_out_topic",
+                    "local_costmap_topic", "global_costmap_topic",
+                    "local_footprint_topic", "global_footprint_topic", "state_topic"}
+
+
+def _prefix_nav2_namespace(node, ns):
+    """Prefix nav2's frame names and its absolute topic references in place, so
+    a namespaced nav2 stack refers to this robot's frames and topics.
+    - frame values      -> <ns>/<frame>
+    - absolute topics    (/scan) -> /<ns>/scan ; relative ones are left to the
+      namespace to resolve.
+    Booleans and non-strings are left alone (e.g. map_subscribe_transient_local)."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and k in _NAV2_FRAME_KEYS:
+                node[k] = f"{ns}/{v}" if v and not v.startswith(f"{ns}/") else v
+            elif isinstance(v, str) and k in _NAV2_TOPIC_KEYS and v.startswith("/"):
+                node[k] = f"/{ns}{v}" if not v.startswith(f"/{ns}/") else v
+            else:
+                _prefix_nav2_namespace(v, ns)
+    elif isinstance(node, list):
+        for item in node:
+            _prefix_nav2_namespace(item, ns)
 
 
 def launch_setup(context, *args, **kwargs):
@@ -324,6 +354,15 @@ def launch_setup(context, *args, **kwargs):
         }.items():
             dock_params.setdefault(key, value)
 
+    # Multi-robot: run the whole nav2 stack under /<prefix> and prefix its frames
+    # and the /scan,/odom,/map topics it names, so it plans for THIS robot in its
+    # own namespace. Unset -> "" -> nav2_data and the launch are untouched. Full
+    # two-robot validation is still open; this makes a single prefixed robot's
+    # nav2 self-consistent.
+    ns = cockpit_paths.robot_namespace(params)
+    if ns:
+        _prefix_nav2_namespace(nav2_data, ns)
+
     nav2_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     yaml.dump(nav2_data, nav2_temp)
     nav2_temp.flush()
@@ -401,13 +440,19 @@ def launch_setup(context, *args, **kwargs):
     # reporting either way because lifecycle_manager_navigation is itself one of
     # the composable nodes that never loaded. So start the container here, the
     # way bringup_launch.py does.
+    # Under a namespace, TF must stay on the GLOBAL /tf with frame names prefixed
+    # (the ROS 2 multi-robot convention, and what bringup does via frame_prefix);
+    # the default single-robot layout keeps the historical /tf->tf remap. So the
+    # remap is dropped when namespaced, leaving /tf and /tf_static global.
+    tf_remaps = [] if ns else [("/tf", "tf"), ("/tf_static", "tf_static")]
     nav2_container = None if not needs_own_manager else Node(
         name="nav2_container",
+        namespace=ns or None,
         package="rclcpp_components",
         executable="component_container",
         parameters=[nav2_params_path, {"autostart": autostart}],
         arguments=["--isolated", "--executor-type", "single-threaded"],
-        remappings=[("/tf", "tf"), ("/tf_static", "tf_static")],
+        remappings=tf_remaps,
         output="screen",
     )
 
@@ -435,13 +480,16 @@ def launch_setup(context, *args, **kwargs):
                 "was started -- the Nav2 servers will load and stay unconfigured."))]
         if managed:
             mgr_params = dict(nav2_data.get("lifecycle_manager_navigation", {}).get("ros__parameters", {}))
+            # The manager drives nodes by name; under a namespace the servers are
+            # /<ns>/<server>, so the managed names carry the prefix too.
+            managed_names = [f"/{ns}/{n.lstrip('/')}" for n in managed] if ns else managed
             mgr_params.update({
                 "autostart": autostart.lower() in ("true", "1", "yes"),
-                "node_names": managed,
+                "node_names": managed_names,
                 "use_sim_time": use_sim_time.lower() in ("true", "1", "yes"),
             })
             manager_actions = [LoadComposableNodes(
-                target_container="/nav2_container",
+                target_container=f"/{ns}/nav2_container" if ns else "/nav2_container",
                 composable_node_descriptions=[ComposableNode(
                     package="nav2_lifecycle_manager",
                     plugin="nav2_lifecycle_manager::LifecycleManager",
@@ -452,11 +500,16 @@ def launch_setup(context, *args, **kwargs):
 
     actions = [LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}')")]
     if nav2_container is not None:
+        # The container already carries namespace=ns; it is not wrapped again.
         actions.append(nav2_container)
-    actions.append(IncludeLaunchDescription(
+    nav2_include = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(nav2_launch_path),
         launch_arguments=launch_args.items(),
-    ))
+    )
+    # Namespace the servers navigation_launch.py starts, so they are
+    # /<ns>/<server> for the manager to drive. The manager (LoadComposableNodes)
+    # names the container by its absolute path, so it stays outside the group.
+    actions.append(GroupAction([PushRosNamespace(ns), nav2_include]) if ns else nav2_include)
     return actions + manager_actions
 
 
