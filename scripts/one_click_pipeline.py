@@ -628,6 +628,10 @@ def main():
                         help="Flash even when the USB bus says the board is different silicon "
                              "than the config builds for")
     parser.add_argument("--explore-sec", type=int, default=15, help="Seconds to simulate mapping movement")
+    parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
+                        help="Run the six-manoeuvre drive suite after the topic gate (default: on)")
+    parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
+                        help="Skip the drive suite")
     # The stack STAYS UP. Pressing Start 1-Click is how a person gets a running
     # robot; tearing bringup, SLAM and Nav2 down the instant the pipeline
     # finished handed them one that had just been switched off, with no way to
@@ -943,6 +947,28 @@ def main():
             print("❌ Topic verification failed! Aborting before SLAM/Nav2. See logs/bringup.log.")
             return 1
         print("  ✅ Topic verification passed.")
+
+        # Step 4.5: the drive test. Rates prove the board TALKS; only driving
+        # proves it MOVES, and moves the way it was told -- the FakeEncoder
+        # invert and the PID windup each shipped perfect 50 Hz topics on a base
+        # that spun in place or pinned a rail. The six manoeuvres run every pass
+        # unless --no-drive-test, and a failure is recorded but not fatal: a base
+        # that talks but drives wrong is worth knowing about without throwing the
+        # map away. See scripts/drive_suite.py and docs memory "always flash and
+        # drive".
+        if args.drive_test:
+            print("\n[4.5/6] [DRIVE] Six manoeuvres, checked against odometry...")
+            stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
+            tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
+            drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {tname}",
+                                timeout=90, distro=args.distro)
+            if drive_res.stdout:
+                print(drive_res.stdout)
+            if drive_res.returncode == 0:
+                print("  ✅ All six manoeuvres correct.")
+            else:
+                print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
+                failures.append(f"Drive suite: exit {drive_res.returncode}")
 
         # Step 5: SLAM. A robot with no scan source has nothing to map.
         if has_lidar:

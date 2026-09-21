@@ -336,9 +336,16 @@ app.add_middleware(
 
 @app.middleware("http")
 async def require_access_token(request: Request, call_next):
-    """Writes to /api/ and the private GETs need the install's token (access.py)."""
+    """Writes to /api/ and the private GETs need the install's token (access.py).
+
+    The EventSource streams are the exception: a one-shot ?ticket= (minted by the
+    token-authed GET /api/stream_ticket) authorises them, so the long-lived token
+    never rides in a stream URL. A valid token still works for them too.
+    """
     if access.auth_enabled() and access.needs_token(request.method, request.url.path):
-        if not access.token_matches(access.presented_token(request), COCKPIT_TOKEN):
+        ticket_ok = (access.is_stream_path(request.url.path)
+                     and access.consume_stream_ticket(request.query_params.get("ticket", "")))
+        if not ticket_ok and not access.token_matches(access.presented_token(request), COCKPIT_TOKEN):
             return JSONResponse(
                 status_code=401,
                 content={
@@ -2507,6 +2514,18 @@ def api_nav2_stack(distro: str = "jazzy", ws: Optional[str] = None):
     return nav2_stack_status(distro=distro, ws=ws)
 
 
+@app.post("/api/stream_ticket")
+def api_stream_ticket():
+    """Mint a one-shot, one-minute ticket for a server-sent-event stream.
+
+    This is a POST, so the middleware requires the real token (in the header) to
+    reach it; it hands back a nonce the page puts in the stream URL's ?ticket=.
+    The token itself then never appears in a URL. Auth-off installs need no
+    ticket, but one is returned anyway so the same frontend path works.
+    """
+    return {"status": "ok", "ticket": access.mint_stream_ticket()}
+
+
 @app.get("/api/list_dir")
 def api_list_dir(path: str = "", only: str = "any", exts: str = ""):
     target = path or REPO_ROOT
@@ -2524,7 +2543,7 @@ async def api_params_export(request: Request):
     dest = text_field(data, "dest_dir")
     if not dest:
         raise HTTPException(status_code=400, detail="dest_dir required")
-    if not access.path_allowed(dest, CONFIG_DIR, REPO_ROOT):
+    if not access.path_allowed(dest, CONFIG_DIR, REPO_ROOT, for_write=True):
         raise HTTPException(status_code=403, detail=f"Not an export location: {dest}")
     os.makedirs(dest, exist_ok=True)
     out_file = os.path.join(dest, f"{ACTIVE_ROBOT_NAME}_config_export.yaml")

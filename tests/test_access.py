@@ -60,3 +60,36 @@ def test_path_allowlist(tmp_path):
     # pytest's tmp_path lives under /tmp, itself an allowed root, so the
     # traversal case has to climb out of every root.
     assert not access.path_allowed(cfg + "/../../../../../../etc", cfg, repo)
+
+
+def test_stream_tickets_are_one_shot_and_expire(monkeypatch):
+    t = access.mint_stream_ticket()
+    assert access.consume_stream_ticket(t)          # good once
+    assert not access.consume_stream_ticket(t)      # spent
+    assert not access.consume_stream_ticket("")     # empty never valid
+    assert not access.consume_stream_ticket("nope")
+    # an expired ticket is refused
+    t2 = access.mint_stream_ticket()
+    future = access.time.monotonic() + 120
+    monkeypatch.setattr(access.time, "monotonic", lambda: future)
+    assert not access.consume_stream_ticket(t2)
+
+
+def test_stream_paths_named():
+    assert access.is_stream_path("/api/lidar_stream")
+    assert access.is_stream_path("/api/workflow/one-click/stream/")
+    assert not access.is_stream_path("/api/exec")
+    assert not access.is_stream_path("/api/secrets")
+
+
+def test_export_write_fence_is_tighter_than_read(tmp_path):
+    cfg = str(tmp_path / "cfg"); repo = str(tmp_path / "repo")
+    os.makedirs(cfg); os.makedirs(repo)
+    # home and the checkout are browsable (read) but not export targets (write)
+    assert access.path_allowed("~", cfg, repo)
+    assert not access.path_allowed("~", cfg, repo, for_write=True)
+    assert access.path_allowed(repo, cfg, repo)
+    assert not access.path_allowed(repo, cfg, repo, for_write=True)
+    # the config dir and a removable mount are valid export targets
+    assert access.path_allowed(cfg, cfg, repo, for_write=True)
+    assert access.path_allowed("/media", cfg, repo, for_write=True)

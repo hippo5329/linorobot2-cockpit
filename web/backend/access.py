@@ -27,8 +27,42 @@ Two policies, both small:
 """
 import os
 import secrets
+import time
 
 TOKEN_FILE_NAME = ".cockpit_token"
+
+# Short-lived tickets for server-sent-event streams. EventSource cannot set an
+# Authorization header, so the long-lived token used to ride in the query string
+# of every stream URL -- and a query string lands in the backend's access log, in
+# any proxy log, and in `ps` while the request is open. A stream ticket is minted
+# by a normal token-authed GET (the header carries the real token), is good once
+# and for a minute, and is what the EventSource URL carries instead. The secret
+# never appears in a URL again.
+_STREAM_TICKET_TTL = 60.0
+_stream_tickets: dict = {}   # ticket -> expiry epoch
+
+
+def mint_stream_ticket() -> str:
+    _prune_stream_tickets()
+    ticket = secrets.token_urlsafe(24)
+    _stream_tickets[ticket] = time.monotonic() + _STREAM_TICKET_TTL
+    return ticket
+
+
+def consume_stream_ticket(ticket: str) -> bool:
+    """True exactly once for a valid, unexpired ticket; it is spent on use."""
+    if not ticket:
+        return False
+    _prune_stream_tickets()
+    expiry = _stream_tickets.pop(ticket, None)
+    return expiry is not None and expiry >= time.monotonic()
+
+
+def _prune_stream_tickets() -> None:
+    now = time.monotonic()
+    for t, expiry in list(_stream_tickets.items()):
+        if expiry < now:
+            _stream_tickets.pop(t, None)
 
 # GETs that return something a stranger must not have, or that DO something:
 # the 1-Click pipeline and the LiDAR viewer are server-sent streams, so the
@@ -93,19 +127,43 @@ def needs_token(method: str, path: str) -> bool:
     return path.rstrip("/") in PROTECTED_GETS
 
 
+def is_stream_path(path: str) -> bool:
+    """The protected GETs that are EventSource streams -- they may be authorised
+    by a one-shot stream ticket in ?ticket= instead of the token, so the token
+    stays out of the URL."""
+    return path.rstrip("/") in ("/api/workflow/one-click/stream", "/api/lidar_stream")
+
+
 def token_matches(presented: str, expected: str) -> bool:
     return bool(presented) and secrets.compare_digest(presented, expected)
 
 
-def allowed_roots(config_dir: str, repo_root: str):
-    roots = [os.path.expanduser("~"), config_dir, repo_root, "/dev", "/media", "/mnt", "/run/media", "/tmp"]
+def allowed_roots(config_dir: str, repo_root: str, for_write: bool = False):
+    """Where the browser's directory picker and config export may point.
+
+    This is a NAVIGATION fence, not a confidentiality boundary: it keeps the
+    picker out of `/etc`, `/proc`, `/sys`, `/root` and the like, and `list_dir`
+    only ever returns entry NAMES. Reads may look where a person legitimately
+    keeps ports, ROS workspaces and configs -- the home directory, the config
+    dir, the checkout, `/dev` and the removable-media mounts.
+
+    WRITES (config export) are narrower on purpose: the config dir, and a
+    removable drive. Not the whole home directory, and never the checkout --
+    the first review flagged an export that could drop a file anywhere under
+    `~`, and there is no reason a config export needs that reach.
+    """
+    if for_write:
+        roots = [config_dir, "/media", "/mnt", "/run/media"]
+    else:
+        roots = [os.path.expanduser("~"), config_dir, repo_root, "/dev", "/media", "/mnt", "/run/media"]
     return [os.path.realpath(r) for r in roots if r]
 
 
-def path_allowed(path: str, config_dir: str, repo_root: str) -> bool:
-    """True when `path` lies under one of the roots the browser may point at."""
+def path_allowed(path: str, config_dir: str, repo_root: str, for_write: bool = False) -> bool:
+    """True when `path` lies under one of the roots the browser may point at.
+    Pass `for_write=True` for the export destination, which is fenced tighter."""
     real = os.path.realpath(os.path.expanduser(path or ""))
-    for root in allowed_roots(config_dir, repo_root):
+    for root in allowed_roots(config_dir, repo_root, for_write=for_write):
         if real == root or real.startswith(root + os.sep):
             return True
     return False

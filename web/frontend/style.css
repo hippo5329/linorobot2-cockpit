@@ -966,6 +966,18 @@ body.console-collapsed {
   text-align: left;
 }
 
+/* The wiring chart renders as real tables, not a monospace code dump: readable
+   headings, a mono GPIO column so pin numbers line up, and shared-pin rows the
+   eye can catch. */
+.wiring-table-body h3 { margin: 0.5rem 0 0.25rem; font-size: 1rem; }
+.wiring-table-body h4 { margin: 0.75rem 0 0.25rem; font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
+.wiring-table-body .pin-table { margin: 0.25rem 0 0.5rem; }
+.wiring-table-body .pin-table th,
+.wiring-table-body .pin-table td { padding: 0.4rem 0.7rem; }
+.wiring-table-body .pin-table code { font-family: var(--font-mono); color: var(--text-bright); }
+.wiring-table-body ul { margin: 0.25rem 0 0.5rem 1.1rem; font-size: 0.85rem; color: var(--text-dim); }
+.wiring-table-body p { margin: 0.25rem 0; font-size: 0.82rem; color: var(--text-dim); }
+
 .pin-table th {
   padding: 0.75rem 1rem;
   background: rgba(15, 23, 42, 0.95);

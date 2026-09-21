@@ -35,6 +35,17 @@ const TOKEN_KEY = "cockpit_token";
 function cockpitToken() {
   try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
 }
+// A one-shot ticket for an EventSource stream. EventSource cannot set the
+// token header, so instead of putting the long-lived token in the stream URL
+// (where it lands in server and proxy logs), we spend a minute-long ticket the
+// backend mints for us -- the POST below carries the real token in its header.
+async function streamTicket() {
+  try {
+    const r = await fetch("/api/stream_ticket", { method: "POST" });
+    if (r.ok) return (await r.json()).ticket || "";
+  } catch { /* fall through: caller opens without a ticket, banner will ask */ }
+  return "";
+}
 function showTokenBanner() {
   if (document.getElementById("token-banner")) return;
   const bar = document.createElement("div");
@@ -2899,14 +2910,15 @@ function setLidarViewerStatus(message, level) {
   el.className = "hint lidar-status" + (level ? ` lidar-status-${level}` : "");
 }
 
-document.getElementById("btn-lidar-start").addEventListener("click", () => {
+document.getElementById("btn-lidar-start").addEventListener("click", async () => {
   if (lidarSource) lidarSource.close();
   const distro = document.getElementById("hdr-distro-select")?.value || "jazzy";
   const topic = document.getElementById("laser-driver-topic")?.value?.trim() || "/scan";
   const qs = new URLSearchParams({ distro, topic });
-  // EventSource cannot carry the access-token header; the stream is a
-  // protected GET, so the token rides in the query instead.
-  lidarSource = new EventSource(`/api/lidar_stream?${qs}&token=${encodeURIComponent(cockpitToken())}`);
+  // EventSource cannot carry the access-token header, so it carries a one-shot
+  // ticket instead -- the token itself never goes into a URL.
+  const ticket = await streamTicket();
+  lidarSource = new EventSource(`/api/lidar_stream?${qs}&ticket=${encodeURIComponent(ticket)}`);
   setLidarViewerStatus(`Connecting to ${topic}...`, "info");
 
   lidarSource.addEventListener("scan", (ev) => {

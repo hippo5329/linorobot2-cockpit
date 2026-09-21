@@ -183,6 +183,19 @@ def launch_setup(context, *args, **kwargs):
     gen_robot_description.write_urdf(params, urdf_path, robot_name)
     with open(urdf_path) as fh:
         robot_description = fh.read()
+    # The wiring chart, beside the URDF, so the sheet a builder reads at the
+    # bench exists as a file and not only behind a browser button. Same
+    # generated/ directory, regenerated every launch, best-effort: a wiring
+    # chart is documentation, and failing to write it must never stop a bringup.
+    try:
+        import gen_wiring_table
+        wiring_path = os.path.join(os.path.dirname(urdf_path),
+                                   os.path.basename(urdf_path).replace(".urdf", "_wiring.md"))
+        with open(wiring_path + ".tmp", "w") as fh:
+            fh.write(gen_wiring_table.render(params))
+        os.replace(wiring_path + ".tmp", wiring_path)
+    except Exception as exc:  # noqa: BLE001 -- documentation, never fatal
+        print(f"[bringup] could not write the wiring chart: {exc}")
     geometry = gen_robot_description.effective_geometry(params)
     laser_frame = str(geometry["laser"].get("frame") or gen_robot_description.DEFAULT_LASER_FRAME)
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
