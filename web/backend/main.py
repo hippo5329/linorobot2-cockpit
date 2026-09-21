@@ -1376,21 +1376,39 @@ async def api_hardware_test(request: Request):
         # Build and flash stay separate: pio only compiles, esptool/picotool
         # writes. With PlatformIO on this machine the image is built first;
         # without it the release image for this env is fetched and flashed.
-        # Either way the `app` env key selects the application (one image).
+        # One image carries base AND every diagnostic tool (firmware tools.h,
+        # the "swiss knife"): the `app` env key selects which boots, so flashing
+        # `adc_calibrate` writes the same base image and sets app=adc_calibrate.
+        # No per-tool binary, and no toolchain needed on the robot.
         flash_script = os.path.join(REPO_ROOT, "scripts", "flash_mcu.py")
-        image = (f"--firmware-dir {firmware_dir} --env {mcu_env} --build"
-                 if pio_present() else
-                 f"--prebuilt {fetch_prebuilt.profile_for_env(mcu_env)}")
-        fetch = ("" if pio_present() else
-                 f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {mcu_env} && ")
-        cmd = (
-            f"{fetch}python3 {flash_script} {image} "
-            f"--port {port} "
-            f"--params {shlex.quote(params_path)} "
-            f"--firmware-name {firmware} "
-            f"--app {firmware} "
-            f"--baud {baud}"
-        )
+        if firmware != "base":
+            # Switching to a diagnostic tool is the swiss knife's whole point: the
+            # installed image already carries every tool, so this is a 4 KB env
+            # write (app=<tool>) and a reboot -- no download, no reflash. Flash
+            # the base firmware once; then switch blades freely. If the board
+            # runs an image too old to have the tool, it boots base with a
+            # message rather than the tool (firmware tools.cpp), so this is safe.
+            cmd = (
+                f"python3 {flash_script} --env {mcu_env} --env-only "
+                f"--port {port} "
+                f"--params {shlex.quote(params_path)} "
+                f"--app {firmware} "
+                f"--baud {baud}"
+            )
+        else:
+            image = (f"--firmware-dir {firmware_dir} --env {mcu_env} --build"
+                     if pio_present() else
+                     f"--prebuilt {fetch_prebuilt.profile_for_env(mcu_env)}")
+            fetch = ("" if pio_present() else
+                     f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {mcu_env} && ")
+            cmd = (
+                f"{fetch}python3 {flash_script} {image} "
+                f"--port {port} "
+                f"--params {shlex.quote(params_path)} "
+                f"--firmware-name {firmware} "
+                f"--app {firmware} "
+                f"--baud {baud}"
+            )
     elif action == "monitor":
         # NOT miniterm. It builds a Console() in its constructor, which calls
         # termios.tcgetattr() on stdin, and every command here runs on a PIPE --
