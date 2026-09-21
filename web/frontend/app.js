@@ -1362,19 +1362,19 @@ async function fetchSensorInstallCmd(kind, key, { skipUdev = false, udevOnly = f
     body: JSON.stringify({ kind, key, skip_udev: skipUdev, udev_only: udevOnly, workspace_path: ws() }),
   });
   if (!r.ok) return null;
-  return (await r.json()).command || null;
+  return (await r.json()).handle || null;
 }
 
 async function runSensorInstall(kind, selId, skipId, titlePrefix) {
   const key = document.getElementById(selId).value;
   if (!key) return;
   const skip = document.getElementById(skipId).checked;
-  const cmd = await fetchSensorInstallCmd(kind, key, { skipUdev: skip });
-  if (!cmd) {
+  const handle = await fetchSensorInstallCmd(kind, key, { skipUdev: skip });
+  if (!handle) {
     logLine(`[console] no install steps defined for ${kind} "${key}" -- see its own driver docs.`);
     return;
   }
-  runCommand(envPrefix() + `cd ${ws()} && ` + cmd, { title: `${titlePrefix}: ${key}` });
+  runCommand({ handle }, { title: `${titlePrefix}: ${key}` });
 }
 
 document.getElementById("btn-install-laser").addEventListener("click", () =>
@@ -1454,54 +1454,23 @@ document.getElementById("btn-docker-build").addEventListener("click", () => {
   const gpuId = document.getElementById("docker-gpu-id").value.trim() || "0";
   const distro = (state.status && state.status.ros_distro) || "jazzy";
 
-  const envBody =
-    `DOCKER_ROS_DISTRO=${distro}\n` +
-    `BASE_IMAGE=${baseImage}\n` +
-    `ROBOT_BASE=${robotBase}\n` +
-    `LASER_SENSOR=${laser}\n` +
-    `DEPTH_SENSOR=${depth}\n` +
-    `BASE_SERIAL_PORT=${serialPort}\n` +
-    `ODOM_TOPIC=/odom\n` +
-    `ROBOT_NAME=${state.robot_name || "linorobot2"}\n` +
-    `ROS_DOMAIN_ID=${domainId}\n` +
-    `CUSTOM_ROBOT=false\n` +
-    `LAUNCH_EXTRA=false\n` +
-    `LAUNCH_JOYSTICK=false\n` +
-    `GPU_ID=${gpuId}\n` +
-    `VIRTUALGL_VER=3.1.4\n`;
-
-  // Only the two device mappings docs/docker.md itself documents as a
-  // Base-serial + lidar device mappings for the console compose's `bringup`
-  // service, written as its OWN overlay file inside tools/console/
-  // docker/ -- the repo's docker/ dir is never written.
-  const laserDevice = dockerLaserDevice(laser);
-  const deviceLines = [`      - ${serialPort}:${serialPort}`];
-  if (laserDevice) deviceLines.push(`      - ${laserDevice}:${laserDevice}`);
-  const overrideBody =
-    `services:\n  bringup:\n    devices:\n${deviceLines.join("\n")}\n`;
-
-  const dir = dockerDir();
-  // Steps are newline-joined, not `&&`-joined: a heredoc's closing delimiter
-  // must be alone on its own line, so anything appended right after it on
-  // the SAME line (like " && next-command") is never recognized as the
-  // terminator -- bash just keeps reading everything that follows as more
-  // heredoc body, silently swallowing every later step. `set -e` keeps the
-  // fail-fast behavior `&&` would have given.
-  const cmd = "set -e\n" + [
-    cloneLinorobot2Command(),
-    `mkdir -p ${dir}`,
-    `cat > ${dir}/.env << 'CONSOLE_DOCKER_ENV_EOF'\n${envBody}CONSOLE_DOCKER_ENV_EOF`,
-    `cat > ${dir}/devices.generated.yaml << 'CONSOLE_DOCKER_OVERRIDE_EOF'\n${overrideBody}CONSOLE_DOCKER_OVERRIDE_EOF`,
-    `cd ${dir}`,
-    `${composeResolveSnippet()}HOST_UID=$(id -u) HOST_GID=$(id -g) $COMPOSE ${dockerComposeFlags()} build`,
-  ].join("\n");
-  runCommand(cmd, { title: `Docker/Podman build (${baseImage})` });
+  // The whole build (clone + .env + device overlay + compose build) is assembled
+  // SERVER-SIDE now (actions.py docker_build); here we only pass the fields.
+  runCommand({ action: "docker_build", args: {
+    distro, base_image: baseImage, robot_base: robotBase,
+    laser, depth, serial_port: serialPort, domain_id: domainId, gpu_id: gpuId,
+    robot_name: state.robot_name || "linorobot2",
+    workspace: document.getElementById("install-workspace").value.trim() || ws(),
+    docker_dir: dockerDir(),
+    laser_device: dockerLaserDevice(laser) || "",
+    engine: installModeSel.value === "podman" ? "podman" : "docker",
+  } }, { title: `Docker/Podman build (${baseImage})` });
 });
 
 document.getElementById("btn-docker-udev").addEventListener("click", async () => {
   const laser = document.getElementById("docker-laser-sensor").value;
   const depth = document.getElementById("docker-depth-sensor").value;
-  const cmds = [];
+  const handles = [];
   for (const [kind, dockerVal] of [["laser", laser], ["depth", depth]]) {
     if (!dockerVal) continue;
     const key = sensorKeyForDockerValue(kind, dockerVal);
@@ -1509,12 +1478,15 @@ document.getElementById("btn-docker-udev").addEventListener("click", async () =>
       logLine(`[console] no registry entry for ${kind} "${dockerVal}" -- check its own driver docs (e.g. ZED SDK).`);
       continue;
     }
-    const c = await fetchSensorInstallCmd(kind, key, { udevOnly: true });
-    if (c) cmds.push(c);
+    const h = await fetchSensorInstallCmd(kind, key, { udevOnly: true });
+    if (h) handles.push(h);
     else logLine(`[console] "${dockerVal}" has no persistent udev symlink -- it'll enumerate as a plain /dev/ttyUSBx or /dev/ttyACMx.`);
   }
-  if (!cmds.length) return;
-  runCommand(envPrefix() + cmds.join(" && "), { title: "Install udev rules (host)" });
+  if (!handles.length) return;
+  // Each is an independent, idempotent step -- run them in turn.
+  for (const handle of handles) {
+    await new Promise((resolve) => runCommand({ handle }, { title: "Install udev rules (host)", onDone: resolve }));
+  }
 });
 
 const btnDockerServiceStart = document.getElementById("btn-docker-service-start");
@@ -1878,7 +1850,7 @@ async function ensureRosPackages(pkgs, label) {
   for (const d of fromSource) {
     logLine(`[console] '${d.package}' has no binary package on ${distro} -- building it from source.`);
     const built = await new Promise((resolve) => {
-      runCommand(d.install_cmd, {
+      runCommand({ action: "apt_install", args: { packages: d.apt_package || `ros-${distro}-${(d.package||"").replace(/_/g, "-")}` } }, {
         title: `Build ${d.package} from source`,
         action: `build ${d.package}`,
         onDone: (exitCode) => resolve(exitCode === 0),
@@ -1938,7 +1910,7 @@ async function ensureNav2Stack(label) {
   logLine("[console] Installing the published nav2 packages for this distro...");
   logLine("[console] -------------------------------------------------------------");
   const ok = await new Promise((resolve) => {
-    runCommand(data.command, {
+    runCommand({ action: "apt_install", args: { packages: (data.missing || []).join(" ") } }, {
       title: "Install nav2 stack",
       action: "install nav2 stack",
       onDone: (exitCode) => resolve(exitCode === 0),
@@ -2232,32 +2204,20 @@ async function checkAndBuildWorkspace() {
   logLine("[console] Automatically running Base Install & colcon build now...");
   logLine("[console] -------------------------------------------------------------");
 
-  let cmd = null;
+  let handle = null;
   try {
     const res = await fetch(`/api/workspace/build_cmd?ws=${encodeURIComponent(workspace)}&distro=${encodeURIComponent(getDistro())}`);
-    if (res.ok) {
-      const data = await res.json();
-      cmd = data.command;
-    }
+    if (res.ok) handle = (await res.json()).handle;
   } catch (_) {}
 
-  if (!cmd) {
-    cmd = [
-      `mkdir -p ${workspace}/src`,
-      `cd ${workspace}/src`,
-      gitCloneDistroSnippet("https://github.com/linorobot/linorobot2", "linorobot2"),
-      `touch linorobot2/linorobot2_gazebo/COLCON_IGNORE 2>/dev/null || true`,
-      `cd ${workspace}`,
-      `rosdep update 2>/dev/null || true`,
-      `rosdep install --from-paths src --ignore-src -y --skip-keys microxrcedds_agent 2>/dev/null || true`,
-      `colcon build --symlink-install`,
-    ].join(" && ");
+  if (!handle) {
+    logLine("[console] ✖ Base install: the server did not return a build command.");
+    return false;
   }
 
   const success = await new Promise((resolve) => {
-    runCommand(envPrefix() + cmd, {
+    runCommand({ handle }, {
       title: "Base Install & colcon build",
-      action: "base install",
       onDone: (exitCode) => {
         if (exitCode === 0) {
           logLine("[console] ✓ Base workspace installed and built successfully!");
@@ -2334,21 +2294,22 @@ async function checkAndInstallLidarDriver(laserSensor) {
     const res = await fetch(`/api/sensors/driver_status?sensor=${encodeURIComponent(laserSensor)}&ws=${encodeURIComponent(ws())}`);
     if (!res.ok) return true;
     const info = await res.json();
-    if (!info.installed && info.package && info.install_cmd) {
-      openTerminal(`Installing LiDAR Driver (${info.package})`);
+    if (!info.installed && info.pkg) {
+      openTerminal(`Installing LiDAR Driver (${info.pkg})`);
       logLine(`[console] -------------------------------------------------------------`);
-      logLine(`[console] LiDAR '${laserSensor}' requires ROS 2 package '${info.package}'.`);
+      logLine(`[console] LiDAR '${laserSensor}' requires ROS 2 package '${info.pkg}'.`);
       logLine(`[console] Driver package was not found in ROS 2 or workspace ${ws()}.`);
       logLine(`[console] Automatically installing and building driver before bringup...`);
       logLine(`[console] -------------------------------------------------------------`);
       
       const success = await new Promise((resolve) => {
-        runCommand(envPrefix() + `cd ${ws()} && ` + info.install_cmd, {
-          title: `Install LiDAR Driver: ${info.package}`,
-          action: `install driver ${info.package}`,
+        runCommand({ action: "apt_install", args: {
+          packages: `ros-${getDistro()}-${info.pkg.replace(/_/g, "-")}`,
+        } }, {
+          title: `Install LiDAR Driver: ${info.pkg}`,
           onDone: (exitCode) => {
             if (exitCode === 0) {
-              logLine(`[console] ✓ LiDAR driver '${info.package}' installed successfully!`);
+              logLine(`[console] ✓ LiDAR driver '${info.pkg}' installed successfully!`);
               resolve(true);
             } else {
               logLine(`[console] ⚠ LiDAR driver install returned exit code ${exitCode}.`);

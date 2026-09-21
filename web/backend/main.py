@@ -421,12 +421,11 @@ import actions  # noqa: E402  (web/backend/actions.py: named server-side command
 # refused unless COCKPIT_ALLOW_RAW_EXEC is set -- an escape hatch for a trusted
 # operator debugging, off by default.
 def _allow_raw_exec() -> bool:
-    # Default ON for now: the frontend is migrating from client-composed command
-    # strings to named server-side actions (actions.py) site by site, and a raw
-    # fallback keeps the un-migrated screens working during that migration. Flip
-    # the default to off (raw refused) once every runCommand caller sends an
-    # action or a prepared handle. Track: the exec-refactor migration.
-    return os.environ.get("COCKPIT_ALLOW_RAW_EXEC", "on").strip().lower() in ("1", "true", "yes", "on")
+    # Default OFF: every UI screen now names a server-side action (actions.py) or
+    # runs a prepared handle, so the browser never puts command text on the wire.
+    # The hole the reviews led with is closed. The env var is an escape hatch for
+    # a trusted operator debugging by hand, off unless explicitly set.
+    return os.environ.get("COCKPIT_ALLOW_RAW_EXEC", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def resolve_command(data: Dict[str, Any], default: str = "") -> str:
@@ -2552,7 +2551,12 @@ def api_sensor_driver_status(sensor: str = "", ws: str = ""):
 @app.get("/api/sensor_install_cmd")
 @app.post("/api/sensor_install_cmd")
 def api_sensor_install_cmd(sensor: str = "", distro: str = "jazzy", ws: str = ""):
-    return build_sensor_install_cmd(sensor, distro=distro, ws=ws)
+    # A plain apt install -- no ROS sourcing or cd needed, so the handle is the
+    # command as-is. The browser runs the handle instead of re-composing it.
+    result = build_sensor_install_cmd(sensor, distro=distro, ws=ws)
+    if result.get("command"):
+        result["handle"] = actions.prepare(result["command"])
+    return result
 
 
 @app.get("/api/package/check")
@@ -2562,8 +2566,11 @@ def api_package_check(pkg: str = "", distro: str = "jazzy", ws: str = ""):
 
 @app.get("/api/workspace/build_cmd")
 def api_workspace_build_cmd(ws: str = REPO_ROOT, distro: str = "jazzy"):
+    # colcon needs a sourced ROS, so the handle carries the sourcing the browser
+    # used to prepend -- the page runs the handle verbatim, adding nothing.
     base_cmd = build_base_install_cmd(ws, distro=distro)
-    return {"command": base_cmd, "handle": actions.prepare(base_cmd), "workspace": ws}
+    full = f"{ros_setup_shell(distro)}; {base_cmd}"
+    return {"command": base_cmd, "handle": actions.prepare(full), "workspace": ws}
 
 
 @app.get("/api/ros2/install_cmd")

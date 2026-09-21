@@ -124,3 +124,19 @@ def test_rviz_novnc_never_uses_pkill():
 def test_docker_down_builds_compose():
     cmd = actions.build("docker_down", {"engine": "docker", "docker_dir": "/w/docker"})
     assert 'COMPOSE="docker compose"' in cmd and "cd /w/docker" in cmd and "down" in cmd
+
+
+def test_docker_build_assembles_env_and_compose():
+    cmd = actions.build("docker_build", {"distro": "jazzy", "base_image": "linorobot2:jazzy",
+                                         "robot_base": "2wd", "serial_port": "/dev/ttyACM0",
+                                         "workspace": "/w", "docker_dir": "/w/docker",
+                                         "robot_name": "robbie", "engine": "docker"})
+    assert "git clone" in cmd and "linorobot2" in cmd
+    assert "cat > /w/docker/.env" in cmd and "ROBOT_NAME=robbie" in cmd
+    assert "$COMPOSE" in cmd and "build" in cmd
+
+
+def test_docker_build_rejects_a_bad_robot_name():
+    with pytest.raises(ValueError):
+        actions.build("docker_build", {"base_image": "img", "robot_name": "a; rm -rf /",
+                                       "workspace": "/w", "docker_dir": "/w/d"})

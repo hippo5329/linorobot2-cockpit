@@ -328,6 +328,61 @@ def _docker_service_up(a: Dict) -> str:
     return f"{compose}cd {shlex.quote(d)} && DISPLAY=:200 $COMPOSE {flags} up {service}"
 
 
+def _clone_distro(repo_url: str, target: str, distro: str) -> str:
+    """git clone with the same branch fallbacks the frontend used."""
+    return (f"[ -d {target} ] || git clone -b {distro} {repo_url} {target} 2>/dev/null || "
+            f"git clone -b main {repo_url} {target} 2>/dev/null || "
+            f"git clone -b jazzy {repo_url} {target} 2>/dev/null || "
+            f"git clone {repo_url} {target}")
+
+
+def _docker_build(a: Dict) -> str:
+    """Build the console's compose image: clone linorobot2, write the .env and
+    the device overlay, and run `$COMPOSE build`. The two files are heredocs, so
+    the steps are newline-joined (a heredoc terminator must stand alone) with
+    `set -e` for fail-fast."""
+    distro = _ident(a.get("distro"), "distro", "jazzy")
+    workspace = _path(a.get("workspace"), "workspace")
+    docker_dir = _path(a.get("docker_dir"), "docker_dir")
+    base_image = _ident(a.get("base_image"), "base_image")
+    robot_base = _ident(a.get("robot_base"), "robot_base", "2wd")
+    laser = _ident(a.get("laser"), "laser", "none") if a.get("laser") else ""
+    depth = _ident(a.get("depth"), "depth", "none") if a.get("depth") else ""
+    serial_port = _device(a.get("serial_port"), "serial_port", "/dev/ttyACM0")
+    domain_id = _int(a.get("domain_id"), "domain_id", 0, 232, 0)
+    gpu_id = _int(a.get("gpu_id"), "gpu_id", 0, 64, 0)
+    robot_name = _ident(a.get("robot_name"), "robot_name", "linorobot2")
+    engine = _enum(a.get("engine"), "engine", {"docker", "podman"}, "docker")
+
+    env_body = (
+        f"DOCKER_ROS_DISTRO={distro}\nBASE_IMAGE={base_image}\nROBOT_BASE={robot_base}\n"
+        f"LASER_SENSOR={laser}\nDEPTH_SENSOR={depth}\nBASE_SERIAL_PORT={serial_port}\n"
+        f"ODOM_TOPIC=/odom\nROBOT_NAME={robot_name}\nROS_DOMAIN_ID={domain_id}\n"
+        f"CUSTOM_ROBOT=false\nLAUNCH_EXTRA=false\nLAUNCH_JOYSTICK=false\n"
+        f"GPU_ID={gpu_id}\nVIRTUALGL_VER=3.1.4\n")
+
+    device_lines = [f"      - {serial_port}:{serial_port}"]
+    if a.get("laser_device"):
+        dev = _device(a.get("laser_device"), "laser_device", "/dev/ldlidar")
+        device_lines.append(f"      - {dev}:{dev}")
+    override_body = "services:\n  bringup:\n    devices:\n" + "\n".join(device_lines) + "\n"
+
+    compose = _compose_resolve({"engine": engine})
+    flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
+    ws_q = shlex.quote(workspace)
+    dir_q = shlex.quote(docker_dir)
+    return "set -e\n" + "\n".join([
+        f"mkdir -p {ws_q}/src",
+        f"cd {ws_q}/src",
+        _clone_distro("https://github.com/linorobot/linorobot2", "linorobot2", distro),
+        f"mkdir -p {dir_q}",
+        f"cat > {dir_q}/.env << 'CONSOLE_DOCKER_ENV_EOF'\n{env_body}CONSOLE_DOCKER_ENV_EOF",
+        f"cat > {dir_q}/devices.generated.yaml << 'CONSOLE_DOCKER_OVERRIDE_EOF'\n{override_body}CONSOLE_DOCKER_OVERRIDE_EOF",
+        f"cd {dir_q}",
+        f"{compose}HOST_UID=$(id -u) HOST_GID=$(id -g) $COMPOSE {flags} build",
+    ])
+
+
 def _docker_down(a: Dict) -> str:
     compose = _compose_resolve(a)
     flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
@@ -448,6 +503,7 @@ _ACTIONS: Dict[str, Callable[[Dict], str]] = {
     "nav2": _nav2,
     "teleop": _teleop,
     "map_save": _map_save,
+    "docker_build": _docker_build,
     "docker_service_up": _docker_service_up,
     "docker_down": _docker_down,
     "apt_install": _apt_install,
