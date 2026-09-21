@@ -244,7 +244,7 @@
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">🤖 1. Base Controller &amp; Kinematics Configuration</h2>
-        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
       <p class="hint">Configure the base controller, kinematics type (Differential, Skid Steer, Mecanum), physical dimensions, and rated motor speed. Automatically updates <code>&lt;robot&gt;_config.yaml</code> and generates C++ firmware headers.</p>
 
@@ -461,7 +461,7 @@
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 2: Configure Drive &amp; Motors ➔</button>
       </div>
     </div>
@@ -472,7 +472,7 @@
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">⚙️ 2. Motor Driver &amp; Inversion Controls</h2>
-        <button type="button" id="btn-save-drive-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+        <button type="button" id="btn-save-drive-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
       <p class="hint">Select your motor H-bridge driver architecture and configure PWM resolution, frequency, and motor/encoder spin directions.</p>
 
@@ -549,7 +549,7 @@
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base-mcu">⬅ Step 1: Base &amp; MCU</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 3: Configure Sensors ➔</button>
       </div>
     </div>
@@ -560,7 +560,7 @@
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">🧭 3. Sensors, IMU, Compass &amp; Battery Peripherals</h2>
-        <button type="button" id="btn-save-sensors-config" class="btn btn-primary btn-sm">💾 Save &amp; Regenerate Header</button>
+        <button type="button" id="btn-save-sensors-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
       <p class="hint">The <strong>IMU and magnetometer are detected by the firmware at boot</strong> and their
       drivers chosen at run time (<code>i2cProbeSelect</code>), so swapping either one needs no change here —
@@ -804,7 +804,7 @@
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 2: Drive &amp; Motors</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 4: Configure Pin Matrix ➔</button>
       </div>
     </div>
@@ -820,7 +820,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap; white-space:nowrap;">
           <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
           <button type="button" id="btn-wiring-table" class="btn btn-sm" title="The wiring chart for this robot, generated from the saved pins">🔌 Wiring Table</button>
-          <button type="button" id="btn-save-pins-config" class="btn btn-secondary btn-sm">💾 Save &amp; Regenerate Header</button>
+          <button type="button" id="btn-save-pins-config" class="btn btn-secondary btn-sm">💾 Save robot settings</button>
         </div>
       <div id="pin-findings" class="pin-findings" hidden></div>
       </div>
@@ -972,7 +972,7 @@
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 3: Sensors</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save &amp; Regenerate Header</button>
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 5: Step-by-Step Hardware Tests ➔</button>
       </div>
     </div>
