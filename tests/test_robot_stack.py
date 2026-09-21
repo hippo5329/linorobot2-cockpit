@@ -108,7 +108,15 @@ def test_the_pipeline_keeps_the_stack_by_default():
 
 
 def test_the_ui_pipeline_does_not_ask_for_shutdown():
-    src = open(os.path.join(REPO_ROOT, "web", "backend", "main.py")).read()
+    # The route handlers were split out of main.py into web/backend/routes_*.py;
+    # read whichever backend module now carries the one-click workflow.
+    import glob
+    src = ""
+    for f in sorted(glob.glob(os.path.join(REPO_ROOT, "web", "backend", "*.py"))):
+        if "pipeline_script = os.path.join" in (t := open(f).read()):
+            src = t
+            break
+    assert src, "no backend module builds the one-click pipeline command"
     i = src.index("pipeline_script = os.path.join")
     window = src[i:i + 2000]
     assert "--shutdown-when-done" not in window, (
