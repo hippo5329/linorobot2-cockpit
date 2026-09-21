@@ -315,9 +315,14 @@ python3 scripts/flash_mcu.py --env pico2w --port /dev/ttyACM0 --app i2c_detect -
 **What the board tells you.** Every boot starts with
 
 ```text
-[fw] linorobot2_hardware app=base distro=jazzy built=2026-09-18 git=1a2b3c4
+[fw] linorobot2_hardware app=base distro=jazzy built=2026-09-18 git=1a2b3c4 uid=C3AF89DC55525350
 [i2c] 0x68  imu      MPU6050
 ```
+
+The last field names the **board**, and the key says what was identified: `uid=` is the silicon's own
+id (RP2350 chip info, ESP32 eFuse MAC), `flashid=` the external flash chip's — all an RP2040 has, and
+it moves if the flash is replaced. They are never merged, so two identical boards on one bench are
+told apart without either claiming to be something it is not. See `docs/firmware.md`.
 
 `scripts/mcu_probe.py` reads that line and compares it with what the cockpit would flash:
 

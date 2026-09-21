@@ -69,6 +69,24 @@ whose `base_controller.name` matches. Two robots may legitimately declare the sa
 (`linorobot2` and `rover_pico2` both declare `pico2`), so the first by filename wins **and the run says
 which it picked**; `--robot` disambiguates.
 
+### A robot is what its file SAYS it is, and no file may be dropped
+`robot.name` inside the YAML is the identity; the filename is only where that content lives. Two
+files can therefore claim one name — and that is a conflict the user has to see, not one for the
+listing to resolve quietly. `get_robots_list()` keyed a `seen` set on the name and skipped a repeat
+with no log and no warning: on a bench box **three of nineteen configs were invisible in the
+cockpit**, because three files all declared `robot: {name: pico2_real}` and a fourth duplicated
+`bare_pico2`. One of the three was the real-hardware config being driven from the CLI at that very
+moment — and the CLI never lost it, because `robot_config_path()` resolves `<dir>/<robot>_config.yaml`
+by filename. The two halves of the product disagreed about which robots existed and only the UI came
+up short, which is the worst direction for that disagreement to run.
+
+Now there is one entry per **file**, named by its content, carrying `conflict` (the other files making
+the same claim) and `select` — the handle that unambiguously reaches *this* file: the declared name
+when it is unique, the filename stem when it is not, both of which `/api/robot/select` already
+accepts. The picker renders a colliding entry as `name (filename)`. A dotfile is never a robot: the
+cockpit keeps `.active_robot` and `.cockpit_token` in that directory, and one was being offered as
+selectable.
+
 Two UI-side corollaries, both of which produced the same silent mismatch:
 - **The base-controller select must follow the robot selector.** 1-Click reads its controller from
   `#cockpit-target-select`, not from the robot dropdown, and `selectRobot()` synced distro, install

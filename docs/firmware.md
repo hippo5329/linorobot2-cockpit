@@ -41,14 +41,46 @@ robot, needs the agent stopped and the bus free, and on an RP2350 can hang the b
 So `firmware/src/main.cpp:printBanner()` prints, before anything else:
 
 ```text
-[fw] linorobot2_hardware app=base distro=lyrical built=2026-09-16 git=6aa607f
+[fw] linorobot2_hardware app=base distro=lyrical built=2026-09-16 git=6aa607f uid=C3AF89DC55525350
 ```
 
 `app` is the sub-firmware this boot selected, `distro` the ROS 2 distro it links against, `built` the
 compile date, `git` the 7-character revision of the tree it came from — with a trailing `+` when that
-tree had uncommitted edits, so a dirty build never reads as a clean revision. The last three arrive as
+tree had uncommitted edits, so a dirty build never reads as a clean revision. Those four arrive as
 `-DFW_ROS_DISTRO` / `-DFW_GIT_REV` / `-DFW_BUILD_DATE` from **`firmware/common/build_stamp.py`**, a
 `pre:` extra_script in `common/platformio_base.ini`.
+
+### The last field names the BOARD, and the key says what it identified
+
+`git=` answers "which build is this?". It cannot answer "which board is this?" — and two identical
+boards on one bench are otherwise indistinguishable from their own output. So the banner ends with an
+identity field. Only two of the three families can name their own silicon, so **the key is the
+claim**, and the two are never merged:
+
+| key | identifies | where it comes from |
+|---|---|---|
+| `uid=` | the **silicon** | RP2350: chip info from ROM (`SYS_INFO_CHIP_INFO`). ESP32: the 48-bit eFuse MAC, burned per chip. |
+| `flashid=` | the external **flash chip** | RP2040 only, and it is all an RP2040 has: `pico_get_unique_board_id()` there returns `flash_get_unique_id()`. |
+
+An RP2040 has no chip id of its own. Its value still names that particular board, which is what a
+bench needs — but it moves if the flash is replaced, and two RP2040s cannot be told apart by silicon
+at all. Reporting it under `uid` would be a lie that looks exactly like the truth, and the trap is
+sharper than it sounds: **the Pico's USB serial number *is* that same flash id**
+(`usb-Raspberry_Pi_Pico_W_D665C007DA2A1336`), so the mistake would appear confirmed from two
+independent directions. Measured on all three families, each matching its USB descriptor:
+
+```text
+RP2350  Pico 2 W      uid=C3AF89DC55525350
+RP2040  Pico W        flashid=D665C007DA2A1336
+ESP32   bare WROOM    uid=E435A8286F24
+```
+
+The field is **appended after `git=`**, so a host parsing an older board still matches and a board
+running an image from before the field simply has neither key — absence means "older image", never
+"the read failed". `firmware/src/main.cpp:identityField()` is the one place that decides which key a
+family gets; `mcu_probe.py` parses both, `flash_mcu.py` reports and records them in the flash stamp,
+and the cockpit header shows `chip <id>` or `flash <id>` beside the detected MCU — different words,
+on purpose.
 
 **`distro` is in the banner because the revision alone cannot identify an image.** The release matrix
 is four boards x two distros (see *The ROS 2 distro is a BUILD property* below), the two halves are built from the *same* source at the *same*
@@ -155,6 +187,36 @@ the `i2c_detect` application, two flash pages away in the same image, could have
 answer in 30 ms. Every override is printed and syslogged, so a config that disagrees with the bus is
 visible rather than silently routed around. A chip this image has no driver for (a BNO055, say) gets
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
+
+### A diagnostic must read the env, not the macro it was compiled with
+`initBoard()` opens the bus with `envInt("i2c_sda", SDA_PIN)` — the env partition first, the header
+macro only as a fallback. `i2c_detect`'s banner printed `SDA_PIN` *alone*, so on a prebuilt release
+image — built from a generated bare config, where both pins are `-1` — it announced
+`Scanning I2C bus (SDA:-1, SCL:-1)...` and then found the chip anyway. Every user of the shipped
+image was told their wiring was unread while the scan was using it correctly. It now resolves the
+pins the same way the bus does and names the source:
+
+```text
+Scanning I2C bus (SDA:0, SCL:1, from the env)...
+```
+
+The general rule: **when a tool's output disagrees with its own behaviour, suspect the macro/env
+split before the wiring.** The code that acts and the code that reports must read the same source.
+
+### `adc_calibrate` exists only where there is a DAC, and the fallback is nearly silent
+It is compiled in only where `ADC_LUT_SUPPORTED` is 1 — the classic ESP32 and the ESP32-S2, the only
+parts with a hardware DAC to sweep into an ADC pin. Everywhere else the name is not in `TOOLS[]` at
+all, `toolSelect()` falls back to `APP_BASE`, and the entire explanation is one line printed at boot:
+
+```text
+[app] 'adc_calibrate' is not an application this image carries - starting the robot firmware instead.
+```
+
+Nobody is attached to the port during a 4 KB env write, so what an operator actually saw was a
+successful write and a board reporting `app=base`. `flash_mcu.py` now warns at the point of choice,
+from the same list of parts as the firmware's guard. Either way the rule is the same one the whole
+env mechanism rests on: **`Board reports: … app=<name>` is the only proof the switch took** — a
+successful write is not.
 
 ### PlatformIO Inheritance Rules
 Every env MUST inherit from `firmware/common/platformio_base.ini` via `extra_configs` + `extends`.
