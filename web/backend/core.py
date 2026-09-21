@@ -236,6 +236,7 @@ import mcu_identity
 import robot_stack  # noqa: E402
 import one_click_pipeline  # noqa: E402
 import mcu_identity  # noqa: E402
+import mcu_probe  # noqa: E402  (the boot-banner parser and the flash stamps)
 import pin_catalog  # noqa: E402
 import gen_robot_description  # the URDF, generated from the config (scripts/)
 
@@ -1036,57 +1037,123 @@ def pio_present() -> bool:
 
 
 
+def _read_robot_file(fpath: str):
+    """(declared_name, description, controller, mcu) from a config, or None."""
+    try:
+        with open(fpath, "r") as f:
+            yd = yaml.safe_load(f) or {}
+    except Exception:
+        return None
+    if not isinstance(yd, dict):
+        return None
+    r_info = yd.get("robot") or {}
+    if not isinstance(r_info, dict):
+        r_info = {}
+    ctrl = yd.get("base_controller") or {}
+    if not isinstance(ctrl, dict):
+        ctrl = {}
+    controller = ctrl.get("name") or "pico2"
+    return (r_info.get("name"), r_info.get("description"),
+            controller, ctrl.get("mcu", controller))
+
+
+def _robot_candidates(config_dir: str):
+    """Every file in the config dir that is a robot, in name order.
+
+    A dotfile is not a robot: the cockpit keeps its own state here
+    (.active_robot, .cockpit_token) and bench scripts leave things behind, and
+    offering one lets a click select a file that was never a config.
+    """
+    if not os.path.isdir(config_dir):
+        return []
+    out = []
+    for fname in sorted(os.listdir(config_dir)):
+        if not (fname.endswith(".yaml") or fname.endswith(".yml")):
+            continue
+        if fname.startswith(".") or fname in ("secrets.yaml", "secrets.yaml.example"):
+            continue
+        out.append(fname)
+    return out
+
+
 def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Every robot config in the directory, identified by its CONTENT.
+
+    A robot is what its file SAYS it is: `robot.name` inside the YAML is the
+    identity, and the filename is only where that content happens to live. The
+    stem is the fallback for a file that declares no name at all.
+
+    Two files can therefore claim one name, and that is a conflict the user has
+    to see -- not something for this function to resolve quietly. It used to key
+    a `seen` set on the name and `continue` past a repeat: no log, no warning,
+    the file simply was not in the list. Measured on a bench box 2026-09-21,
+    three of nineteen configs were invisible in the cockpit, including the
+    real-hardware config the CLI was driving at the time -- because
+    pico2_real_config.yaml, pico2_realhw_config.yaml and pico2w_real_config.yaml
+    all declared `robot: {name: pico2_real}`. The CLI resolves a path from
+    `--robot <stem>` and never lost them, so the two halves of the product
+    disagreed about which robots existed and only the UI came up short.
+
+    So: one entry per FILE, named by its content, with `conflict` listing the
+    other files making the same claim. `select` is the handle that unambiguously
+    reaches THIS file -- the declared name when it is unique, the filename stem
+    otherwise, both of which /api/robot/select accepts.
+    """
     config_dir = CONFIG_DIR
     active_path = get_active_params_path()
     active_robot_name = ACTIVE_ROBOT_NAME
     if params:
         active_robot_name = params.get("robot", {}).get("name", active_robot_name)
 
+    files = _robot_candidates(config_dir)
+    read = {}
+    for fname in files:
+        info = _read_robot_file(os.path.join(config_dir, fname))
+        if info is not None:
+            read[fname] = info
+
+    def stem_of(fname):
+        return re.sub(r"_config\.ya?ml$|\.ya?ml$", "", fname)
+
+    # Identity comes from the content; the stem only stands in for a file that
+    # declares no name.
+    identity = {f: (read[f][0] or stem_of(f)) for f in read}
+    claims = {}
+    for fname, name in identity.items():
+        claims.setdefault(name, []).append(fname)
+
     robot_list = []
-    seen = set()
+    for fname in files:
+        if fname not in read:
+            continue
+        declared, desc, controller_name, mcu = read[fname]
+        fpath = os.path.join(config_dir, fname)
+        r_name = identity[fname]
+        rivals = [f for f in claims[r_name] if f != fname]
 
-    if os.path.isdir(config_dir):
-        candidates = sorted(os.listdir(config_dir))
-        for fname in candidates:
-            if not (fname.endswith(".yaml") or fname.endswith(".yml")):
-                continue
-            if fname in ("secrets.yaml", "secrets.yaml.example"):
-                continue
-            fpath = os.path.join(config_dir, fname)
-            try:
-                with open(fpath, "r") as f:
-                    yd = yaml.safe_load(f) or {}
-            except Exception:
-                continue
+        # The file wins outright when it is the one actually open. Otherwise fall
+        # back to the name -- but only when that name is unambiguous, or the
+        # wrong file of a colliding pair would light up as active.
+        is_active = os.path.realpath(fpath) == os.path.realpath(active_path)
+        if not is_active and not rivals and active_robot_name:
+            is_active = (r_name == active_robot_name
+                         or stem_of(fname) == active_robot_name)
 
-            r_info = yd.get("robot", {})
-            r_name = r_info.get("name")
-            if not r_name:
-                r_name = fname.replace("_config.yaml", "").replace("_config.yml", "").replace(".yaml", "").replace(".yml", "")
-
-            if r_name in seen:
-                continue
-            seen.add(r_name)
-
-            desc = r_info.get("description", f"Robot {r_name}")
-            ctrl_info = yd.get("base_controller", {})
-            if not isinstance(ctrl_info, dict):
-                ctrl_info = {}
-            controller_name = ctrl_info.get("name") or "pico2"
-            mcu = ctrl_info.get("mcu", controller_name)
-
-            is_active = (os.path.realpath(fpath) == os.path.realpath(active_path)) or (r_name == active_robot_name)
-
-            robot_list.append({
-                "name": r_name,
-                "description": desc,
-                "mcu": mcu,
-                "controller": controller_name,
-                "active": is_active,
-                "path": display_path(fpath),
-                "filename": fname,
-            })
+        robot_list.append({
+            "name": r_name,
+            "description": desc or f"Robot {r_name}",
+            "mcu": mcu,
+            "controller": controller_name,
+            "active": is_active,
+            "path": display_path(fpath),
+            "filename": fname,
+            # The unambiguous handle for THIS file. Equal to `name` in the normal
+            # case; a colliding file is reachable only by its stem.
+            "select": r_name if not rivals else stem_of(fname),
+            # Present only when another file claims the same name, so the UI can
+            # show the clash instead of the user losing a robot to it.
+            "conflict": rivals or None,
+        })
 
     robot_list.sort(key=lambda r: (not r["active"], r["name"]))
     return robot_list

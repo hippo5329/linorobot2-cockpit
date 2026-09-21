@@ -16,6 +16,7 @@ hermetic. stdlib only: no new dependency for something CI has to install.
 """
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -182,3 +183,50 @@ def test_a_write_endpoint_answers_junk_with_a_refusal_not_a_crash():
         if status >= 500:
             bad.append((body, status, answer))
     assert not bad, f"5xx for a malformed body: {bad}"
+
+
+def test_every_config_file_on_the_box_is_offered():
+    """A robot whose file exists but is not listed cannot be reached from the UI.
+
+    `get_robots_list()` keyed on the declared `robot.name` and skipped a repeat
+    silently. On a bench box three of nineteen configs were missing -- two sets of
+    files each claiming one name -- including the real-hardware config the CLI was
+    driving at the time. The CLI resolves a path from the filename, so only the
+    listing lost entries.
+    """
+    status, body = call("GET", "/api/robots")
+    assert status == 200, body
+    robots = body["robots"]
+
+    files = [r["filename"] for r in robots]
+    assert len(files) == len(set(files)), f"the listing repeats a file: {files}"
+
+    # Names may legitimately repeat -- that is a conflict, and it must be REPORTED
+    # on every file that claims the name rather than costing one of them its place.
+    claims = {}
+    for r in robots:
+        claims.setdefault(r["name"], []).append(r["filename"])
+    for r in robots:
+        rivals = sorted(f for f in claims[r["name"]] if f != r["filename"])
+        assert sorted(r.get("conflict") or []) == rivals, (
+            f"{r['filename']} claims {r['name']!r} alongside {rivals} and must say so"
+        )
+        # Whatever the name situation, there is always one handle that reaches
+        # THIS file.
+        assert r.get("select"), f"{r['filename']} has no unambiguous handle"
+
+
+def test_a_listed_robot_can_actually_be_selected():
+    """Round-trip every offered handle through the selector, then restore."""
+    status, body = call("GET", "/api/robots")
+    assert status == 200, body
+    robots, original = body["robots"], body.get("active")
+    assert robots, "the box offers no robots at all"
+    try:
+        for r in robots:
+            handle = r["select"]
+            status, sel = call("POST", "/api/robot/select", {"robot": handle})
+            assert status == 200, f"{r['filename']} is offered as {handle!r}: {sel}"
+    finally:
+        if original:
+            call("POST", "/api/robot/select", {"robot": original})
