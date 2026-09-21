@@ -167,7 +167,7 @@ def test_a_global_does_not_read_the_env_in_its_constructor():
     assert "envFloatVec" not in ctor and "envFloat(" not in ctor, (
         "Odometry's constructor reads the env again -- it is a global, so this "
         "runs before the partition is readable and silently does nothing")
-    assert "odometry.applyEnvCovariance();" in _src("firmware/src/main.cpp"), (
+    assert "odometry->applyEnvCovariance();" in _src("firmware/src/main.cpp"), (
         "nothing calls applyEnvCovariance(), so the env values never load")
 
 

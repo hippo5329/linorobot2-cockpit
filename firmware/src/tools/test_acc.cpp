@@ -78,7 +78,7 @@ MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
 // Only imu_msg is used here. The other five came along from main.cpp when this
 // tool was split out and were never referenced -- 1056 bytes of .bss in an
 // image whose static segment is 124580 bytes total, carried on every board.
-sensor_msgs__msg__Imu imu_msg;
+sensor_msgs__msg__Imu *imu_msg = nullptr;
 
 
 
@@ -118,6 +118,13 @@ unsigned total_motors = 4;
 
 void setup_()
 {
+    // Allocated when this tool runs, not statically (see test_sensors).
+    if (!imu_msg) imu_msg = (sensor_msgs__msg__Imu *)calloc(1, sizeof(*imu_msg));
+    if (!imu_msg) {
+        Serial.println("[test_acc] out of memory for the IMU message buffer");
+        return;
+    }
+
     for (int i = 1; i <= 4; i++) {
         EncoderInterface **enc = (i == 1) ? &motor1_encoder : (i == 2) ? &motor2_encoder
                                : (i == 3) ? &motor3_encoder : &motor4_encoder;
@@ -194,8 +201,8 @@ void record(unsigned n, Kinematics::velocities *buf) {
         float rpm2 = motor2_encoder->getRPM();
         float rpm3 = motor3_encoder->getRPM();
         float rpm4 = motor4_encoder->getRPM();
-        imu_msg = imu->getData();
-        float imu_acc_x = imu_msg.linear_acceleration.x;
+        *imu_msg = imu->getData();
+        float imu_acc_x = imu_msg->linear_acceleration.x;
         if (imu_acc_x > imu_max_acc_x) imu_max_acc_x = imu_acc_x;
         if (imu_acc_x < imu_min_acc_x) imu_min_acc_x = imu_acc_x;
 
@@ -264,6 +271,8 @@ void dump_record(const Kinematics::velocities *buf) {
 }
 
 void loop_() {
+    if (!imu_msg) return;   // setup_ could not allocate; nothing to run
+
     // The velocity trace lives here, on the stack, for exactly as long as the
     // test runs. 2400 bytes of the loop task's 8192, and this tool is the only
     // thing on that task: selecting an app replaces the base loop, it does not

@@ -56,11 +56,20 @@
 // dispatcher's (see tools.h).
 namespace bno085_cal {
 
-BNO080 bno085;
+BNO080 *bno085 = nullptr;
 int nextPrintTime;
 
 void setup_()
 {
+    // The driver object is built when this tool runs, not statically: its
+    // constructor then runs after Arduino/Wire are up, and the 332 bytes are
+    // not charged to every app that never calibrates a BNO085.
+    if (!bno085) bno085 = new BNO080();
+    if (!bno085) {
+        Serial.println("[bno085_cal] out of memory for the BNO080 driver");
+        return;
+    }
+
 
     // I2C bus and boot-time output pins, from the env partition falling back to
     // the generated header -- see firmware/common/lib/board_init. This replaced
@@ -78,31 +87,31 @@ void setup_()
     Wire.begin();
     Wire.setClock(400000);
 
-    if (bno085.begin() == false) {
+    if (bno085->begin() == false) {
         Serial.println(F("[ERROR] BNO085 hardware not found."));
         while (1);
     }
 
     // 1. Wipe out any previous tare transformations to start fresh
     Serial.println(F("[ACTION] Clearing old orientation mappings..."));
-    bno085.clearTare(); 
+    bno085->clearTare(); 
     delay(1000); 
 
     // 2. Enable Game Rotation Vector (6-DOF, ignores magnetometer)
     // Stream data at 50Hz (20ms interval)
-    bno085.enableGameRotationVector(20); 
+    bno085->enableGameRotationVector(20); 
     Serial.println(F("[STATUS] Settle period: Let the mower sit still for 4 seconds..."));
     delay(4000); 
 
     // 3. Tare ALL axes using the Game Rotation Vector
     // The first argument 'false' forces the library to execute TARE_AXIS_ALL.
     Serial.println(F("[ACTION] Taring ALL axes (Roll, Pitch, and Yaw)..."));
-    bno085.tareNow(false, TARE_GAME_ROTATION_VECTOR); 
+    bno085->tareNow(false, TARE_GAME_ROTATION_VECTOR); 
     delay(500);
 
     // 4. Save this specific structural mounting position permanently to internal Flash
     Serial.println(F("[ACTION] Writing profile to non-volatile flash storage..."));
-    bno085.saveTare();
+    bno085->saveTare();
     delay(500);
 
     Serial.println(F("[SUCCESS] Mower physical alignment complete!"));
@@ -111,7 +120,7 @@ void setup_()
     Serial.println(F("==============================================\n"));
     
     // Freeze dynamic calibration to protect your newly tared baseline
-    bno085.endCalibration();
+    bno085->endCalibration();
 
     nextPrintTime = millis() + 200;
 
@@ -120,13 +129,15 @@ void setup_()
 }
 
 void loop_() {
+    if (!bno085) return;    // setup_ could not allocate; nothing to run
+
     float roll, pitch, yaw;
 
-    if (bno085.dataAvailable() == true) {
+    if (bno085->dataAvailable() == true) {
         // Read the tared 6-DOF values
-        roll  = bno085.getRoll()  * RAD_TO_DEG;
-        pitch = bno085.getPitch() * RAD_TO_DEG;
-        yaw   = bno085.getYaw()   * RAD_TO_DEG;
+        roll  = bno085->getRoll()  * RAD_TO_DEG;
+        pitch = bno085->getPitch() * RAD_TO_DEG;
+        yaw   = bno085->getYaw()   * RAD_TO_DEG;
     }
 
     if (millis() > nextPrintTime) {

@@ -52,10 +52,10 @@
 // dispatcher's job (see tools.h); everything below is only this tool's work.
 namespace test_sensors {
 
-sensor_msgs__msg__Imu imu_msg;
-sensor_msgs__msg__MagneticField mag_msg;
-sensor_msgs__msg__BatteryState battery_msg;
-sensor_msgs__msg__Range range_msg;
+sensor_msgs__msg__Imu *imu_msg = nullptr;
+sensor_msgs__msg__MagneticField *mag_msg = nullptr;
+sensor_msgs__msg__BatteryState *battery_msg = nullptr;
+sensor_msgs__msg__Range *range_msg = nullptr;
 
 // Pointers, built in setup() from what is on the bus -- not the macro types the
 // config header chose. A tool compiled against `IMU` reported the FAKE driver's
@@ -70,6 +70,17 @@ static unsigned long lastLogTime = 0;
 
 void setup_()
 {
+    // Allocated when this tool runs, not statically: every tool's buffers
+    // used to sit in .bss at once, paid by whichever app was actually booted.
+    if (!imu_msg)     imu_msg     = (sensor_msgs__msg__Imu *)calloc(1, sizeof(*imu_msg));
+    if (!mag_msg)     mag_msg     = (sensor_msgs__msg__MagneticField *)calloc(1, sizeof(*mag_msg));
+    if (!battery_msg) battery_msg = (sensor_msgs__msg__BatteryState *)calloc(1, sizeof(*battery_msg));
+    if (!range_msg)   range_msg   = (sensor_msgs__msg__Range *)calloc(1, sizeof(*range_msg));
+    if (!imu_msg || !mag_msg || !battery_msg || !range_msg) {
+        Serial.println("[test_sensors] out of memory for the message buffers");
+        return;
+    }
+
     delay(2000);
     Serial.println("\n==========================================");
     Serial.println("   Linorobot2 Hardware Sensor Diagnostics ");
@@ -130,20 +141,22 @@ void setup_()
 
 void loop_()
 {
+    if (!imu_msg) return;   // setup_ could not allocate; nothing to run
+
     // Poll sensors at 50 Hz (20ms interval) to keep IMU state machines (e.g. BNO085) running smoothly
     delay(20);
-    imu_msg = imu->getData();
-    mag_msg = mag->getData();
+    *imu_msg = imu->getData();
+    *mag_msg = mag->getData();
 
 #ifdef MAG_BIAS
     const float mag_bias[3] = MAG_BIAS;
-    mag_msg.magnetic_field.x -= mag_bias[0];
-    mag_msg.magnetic_field.y -= mag_bias[1];
-    mag_msg.magnetic_field.z -= mag_bias[2];
+    mag_msg->magnetic_field.x -= mag_bias[0];
+    mag_msg->magnetic_field.y -= mag_bias[1];
+    mag_msg->magnetic_field.z -= mag_bias[2];
 #endif
 
-    battery_msg = getBattery();
-    range_msg = getRange();
+    *battery_msg = getBattery();
+    *range_msg = getRange();
 
     unsigned long currentTime = millis();
     if (currentTime - lastLogTime >= 1000)
@@ -151,10 +164,10 @@ void loop_()
         lastLogTime = currentTime;
 
         // Convert quaternion to Euler angles (Roll, Pitch, Yaw) if orientation is available
-        float qx = imu_msg.orientation.x;
-        float qy = imu_msg.orientation.y;
-        float qz = imu_msg.orientation.z;
-        float qw = imu_msg.orientation.w;
+        float qx = imu_msg->orientation.x;
+        float qy = imu_msg->orientation.y;
+        float qz = imu_msg->orientation.z;
+        float qw = imu_msg->orientation.w;
         bool has_orientation = (qw != 0.0f || qx != 0.0f || qy != 0.0f || qz != 0.0f);
 
         float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
@@ -178,18 +191,18 @@ void loop_()
         if (has_orientation)
         {
             Serial.printf("ACC [m/s^2] X:%5.2f Y:%5.2f Z:%5.2f | GYR [rad/s] X:%5.2f Y:%5.2f Z:%5.2f | RPY [deg] R:%5.1f P:%5.1f Y:%5.1f\n",
-                imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z,
-                imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z,
+                imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
+                imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z,
                 roll, pitch, yaw
             );
         }
         else
         {
             Serial.printf("ACC [m/s^2] X:%5.2f Y:%5.2f Z:%5.2f | GYR [rad/s] X:%5.2f Y:%5.2f Z:%5.2f | MAG [uT] X:%5.2f Y:%5.2f Z:%5.2f\n",
-                imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z,
-                imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z,
-                mag_msg.magnetic_field.x * 1000000.0f, mag_msg.magnetic_field.y * 1000000.0f,
-                mag_msg.magnetic_field.z * 1000000.0f
+                imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
+                imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z,
+                mag_msg->magnetic_field.x * 1000000.0f, mag_msg->magnetic_field.y * 1000000.0f,
+                mag_msg->magnetic_field.z * 1000000.0f
             );
         }
 
@@ -199,7 +212,7 @@ void loop_()
         // no battery line at all, in the tool you run to check the battery.
         // BATTERY_PIN and TRIG_PIN are still genuine compile-time facts; a board
         // without them reads 0 here, which is what a diagnostic should show.
-        Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg.voltage, range_msg.range);
+        Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg->voltage, range_msg->range);
         // envOk() is false when nothing answered the probe, so this prints only
         // on a board that actually has the chip -- no macro needed.
         if (envOk())
@@ -214,11 +227,11 @@ void loop_()
         }
 
         syslog(LOG_INFO, "ACC %5.2f %5.2f %5.2f GYR %5.2f %5.2f %5.2f MAG %5.2f %5.2f %5.2f BAT %5.2fV",
-            imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z,
-            imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z,
-            mag_msg.magnetic_field.x * 1000000.0f, mag_msg.magnetic_field.y * 1000000.0f,
-            mag_msg.magnetic_field.z * 1000000.0f,
-            battery_msg.voltage
+            imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
+            imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z,
+            mag_msg->magnetic_field.x * 1000000.0f, mag_msg->magnetic_field.y * 1000000.0f,
+            mag_msg->magnetic_field.z * 1000000.0f,
+            battery_msg->voltage
         );
     }
 

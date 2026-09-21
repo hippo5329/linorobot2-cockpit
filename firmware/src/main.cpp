@@ -119,7 +119,15 @@ static const char *topicName(const char *suffix)
 {
     static const char *keys[TOPIC_PREFIX_SLOTS] = {nullptr};
     static const char *vals[TOPIC_PREFIX_SLOTS] = {nullptr};
-    static char arena[TOPIC_ARENA_BYTES];
+    // The arena is heap, allocated once on the first PREFIXED name. With no
+    // topic_prefix set -- the default, and every prebuilt image -- nothing is
+    // allocated, so the feature costs zero static DRAM. As a static array it
+    // was 640 bytes of .bss paid by every board whether or not it ever
+    // prefixed a topic, and on esp32_lyrical, which lives at the edge of
+    // dram0_0_seg, that is what pushed the link 96 bytes over (rc-20260922).
+    // The capacity is unchanged; one never-freed block from the ~300 KB heap
+    // at entity creation cannot fragment.
+    static char *arena = nullptr;
     static size_t used = 0;
 
     for (int i = 0; i < TOPIC_PREFIX_SLOTS && keys[i]; i++)
@@ -160,8 +168,20 @@ static const char *topicName(const char *suffix)
     int slot = 0;
     while (slot < TOPIC_PREFIX_SLOTS && keys[slot])
         slot++;
-    if (plen == 0 || slot >= TOPIC_PREFIX_SLOTS || used + total > sizeof(arena))
-        return suffix;          // nothing to add, or nowhere to put it
+    if (plen == 0)
+        return suffix;          // no prefix: the literal, and no allocation
+    if (!arena)
+        arena = (char *)malloc(TOPIC_ARENA_BYTES);
+    if (!arena || slot >= TOPIC_PREFIX_SLOTS || used + total > TOPIC_ARENA_BYTES)
+    {
+        // Dropping the prefix on one topic silently would split the robot's
+        // graph across two namespaces with nothing in the log to say why.
+        Serial.printf("[topic] no room to prefix \"%s\" (slots %d/%d, arena "
+                      "%u/%u) -- publishing it unprefixed\n",
+                      suffix, slot, TOPIC_PREFIX_SLOTS, (unsigned)used,
+                      (unsigned)TOPIC_ARENA_BYTES);
+        return suffix;
+    }
 
     char *out = arena + used;
     memcpy(out, prefix, plen);
@@ -283,14 +303,14 @@ static bool env_present = false;
 static bool publish_env = false;
 static bool publish_battery = false;
 
-nav_msgs__msg__Odometry odom_msg;
-sensor_msgs__msg__Imu imu_msg;
-sensor_msgs__msg__MagneticField mag_msg;
+nav_msgs__msg__Odometry *odom_msg = nullptr;
+sensor_msgs__msg__Imu *imu_msg = nullptr;
+sensor_msgs__msg__MagneticField *mag_msg = nullptr;
 geometry_msgs__msg__Twist twist_msg;
-sensor_msgs__msg__BatteryState battery_msg;
-sensor_msgs__msg__Range range_msg;
+sensor_msgs__msg__BatteryState *battery_msg = nullptr;
+sensor_msgs__msg__Range *range_msg = nullptr;
 
-rclc_executor_t executor;
+rclc_executor_t *executor = nullptr;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
@@ -344,7 +364,7 @@ FakeIMUFromWheels fake_imu;
 // wheelsAreFake() reads the env; it is read once in setup() and used from the
 // control loop, which runs on the other core on ESP32.
 static bool fake_wheels = false;
-FakeLD19 fake_ld19;
+FakeLD19 *fake_ld19 = nullptr;
 // Whether the emulator runs at all is a robot fact, not an image fact: a
 // prebuilt image is built from a fake-mode reference, and every real robot
 // that flashes it would otherwise raycast a room and stream it (env key
@@ -446,7 +466,7 @@ static void initDrivetrain(void)
     kinematics = createKinematics();
 }
 
-Odometry odometry;
+Odometry *odometry = nullptr;
 
 // Pointers, constructed in setup() rather than here. The concrete driver is
 // named by the env partition, and the flash partition API is not usable during
@@ -792,6 +812,28 @@ void setup()
     // and in a unified image that memory would otherwise be spent in every mode.
     app_mode = toolSelect();
     const bool micro_ros = (app_mode == APP_BASE);
+    // Base's message buffers, the executor and the odometry estimator are
+    // allocated only when the base app is the one booting. As statics they
+    // were ~2.3 KB of .bss charged to every app in the unified image -- a
+    // diagnostic tool that never publishes still paid for them -- and on
+    // esp32_lyrical that segment is at its limit. Built once, never freed.
+    // The Odometry constructor now also runs after the env partition is
+    // readable, which its static-init incarnation could not (see
+    // applyEnvCovariance). calloc reproduces the zeroed .bss they had.
+    if (micro_ros) {
+        odom_msg    = (nav_msgs__msg__Odometry *)calloc(1, sizeof(*odom_msg));
+        imu_msg     = (sensor_msgs__msg__Imu *)calloc(1, sizeof(*imu_msg));
+        mag_msg     = (sensor_msgs__msg__MagneticField *)calloc(1, sizeof(*mag_msg));
+        battery_msg = (sensor_msgs__msg__BatteryState *)calloc(1, sizeof(*battery_msg));
+        range_msg   = (sensor_msgs__msg__Range *)calloc(1, sizeof(*range_msg));
+        executor    = (rclc_executor_t *)calloc(1, sizeof(*executor));
+        odometry    = new Odometry();
+        if (!odom_msg || !imu_msg || !mag_msg || !battery_msg || !range_msg
+            || !executor || !odometry) {
+            Serial.println("[base] out of memory for the base app's buffers");
+            rclErrorLoop();
+        }
+    }
 #ifdef ESP32
     Serial.end();
     if (micro_ros) {
@@ -955,7 +997,7 @@ void setup()
         // simulated IMU and magnetometer are computed from the simulated wheels
         // anyway, and would overwrite whatever a real sensor returned -- so skip
         // the hardware entirely and just prepare the two messages.
-        fake_imu.initMsgs(imu_msg, mag_msg);
+        fake_imu.initMsgs(*imu_msg, *mag_msg);
     } else {
         if (!imu->init()) // take IMU failure as fatal
         {
@@ -1032,9 +1074,19 @@ void setup()
     }
     // The globals read their env here, not in their constructors: static
     // initialisation runs before the flash partition API is usable.
-    odometry.applyEnvCovariance();
+    odometry->applyEnvCovariance();
     initLidar(); // after wifi connected
     fake_lidar_on = envFlag("fake_ld19", true);
+    // The emulator is built only when fake mode asks for it. As a static
+    // object its 176 bytes sat in .bss on every board, real LiDAR or not; on
+    // esp32_lyrical that segment is at its limit. Built once, never freed.
+    if (fake_lidar_on && !fake_ld19)
+        fake_ld19 = new FakeLD19();
+    if (fake_lidar_on && !fake_ld19)
+    {
+        Serial.println("[lidar] out of memory for the LD19 emulator -- running without it");
+        fake_lidar_on = false;
+    }
     if (fake_lidar_on)
     {
         // The mode, before begin(): it decides whether a UART is opened, which
@@ -1042,7 +1094,7 @@ void setup()
         fake_lidar_comm = FakeLD19::parseCommMode(envGet("lidar_comm", NULL),
                                                   FakeLD19::parseCommMode(LIDAR_COMM_DEFAULT,
                                                                           FakeLD19::COMM_SERIAL));
-        fake_ld19.setCommMode(fake_lidar_comm);
+        fake_ld19->setCommMode(fake_lidar_comm);
         Serial.printf("[lidar] comm=%s (default %s)\n",
                       fake_lidar_comm == FakeLD19::COMM_SERIAL ? "serial"
                       : fake_lidar_comm == FakeLD19::COMM_UDP ? "udp" : "topic",
@@ -1050,14 +1102,14 @@ void setup()
         if (fake_lidar_comm == FakeLD19::COMM_TOPIC)
         {
             initRawScan();
-            fake_ld19.setPacketCallback(onRawScanPacket);
+            fake_ld19->setPacketCallback(onRawScanPacket);
         }
         // Where on the robot the scan is taken from: geometry.laser.x, the
         // same number the URDF puts the laser frame at.
         {
             const char *x_env = envGet("lidar_x", NULL);
             if (x_env && *x_env)
-                fake_ld19.setOffsetX((float)atof(x_env));
+                fake_ld19->setOffsetX((float)atof(x_env));
         }
         // Which pin the simulated scan goes out of, and how fast, are wiring
         // facts about one board -- so they come from the env with the generated
@@ -1065,9 +1117,9 @@ void setup()
         // scan then leaves over UDP or micro-ROS instead.
         const int rx = envInt("lidar_rx", LIDAR_RXD);
         if (rx >= 0)
-            fake_ld19.begin(rx, envU32("lidar_baud", LIDAR_BAUDRATE));
+            fake_ld19->begin(rx, envU32("lidar_baud", LIDAR_BAUDRATE));
         else
-            fake_ld19.begin();
+            fake_ld19->begin();
     }
     else
         Serial.println("[lidar] fake_ld19=0: the LiDAR emulator is off (a real LiDAR on this robot)");
@@ -1093,8 +1145,8 @@ void setup()
                   : range_fake ? "simulated (raycast from the fake LiDAR room)"
                                : "from the HC-SR04");
 
-    battery_msg = getBattery();
-    prev_voltage = battery_msg.voltage;
+    if (battery_msg) *battery_msg = getBattery();   // null for a tool app
+    prev_voltage = battery_msg->voltage;
 
     // One call for both transports. Which one is installed comes from the env
     // partition (`transport=serial|udp4`), not from how this was compiled --
@@ -1211,7 +1263,7 @@ void loop() {
                 // -- it gives the micro-ROS transport less time to drain, on a
                 // board where the radio path is already the scarce resource.
                 const uint32_t spin_t0 = micros();
-                const rcl_ret_t spin_rc = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+                const rcl_ret_t spin_rc = rclc_executor_spin_some(executor, RCL_MS_TO_NS(100));
                 diagSpin((int)spin_rc, micros() - spin_t0);
             }
             break;
@@ -1230,7 +1282,8 @@ void loop() {
 #ifdef BOARD_LOOP // board specific loop
     BOARD_LOOP
 #endif
-    fake_ld19.step();
+    if (fake_ld19)
+        fake_ld19->step();
     flushRawScan();
     // The emulator's own account of itself every 5 s, over syslog (verified to
     // arrive with the agent up). Cumulative counters; read the deltas. Not
@@ -1244,7 +1297,7 @@ void loop() {
     {
         EXECUTE_EVERY_N_MS(5000, {
             char stats[192];
-            fake_ld19.statsLine(stats, sizeof(stats));
+            fake_ld19->statsLine(stats, sizeof(stats));
             syslog(LOG_INFO, "fake_ld19 %s state=%d", stats, (int)state);
         });
     }
@@ -1427,11 +1480,11 @@ bool createEntities()
         (rcl_timer_callback_t) controlCallback,
         true
     ));
-    executor = rclc_executor_get_zero_initialized_executor();
-    RCCHECK(rclc_executor_init(&executor, &support.context, executor_handles, & allocator));
+    *executor = rclc_executor_get_zero_initialized_executor();
+    RCCHECK(rclc_executor_init(executor, &support.context, executor_handles, & allocator));
 #ifdef USE_STAMPED_CMD_VEL
     RCCHECK(rclc_executor_add_subscription(
-        &executor, 
+        executor, 
         &twist_stamped_subscriber, 
         &twist_stamped_msg, 
         &twistStampedCallback, 
@@ -1439,13 +1492,13 @@ bool createEntities()
     ));
 #endif
     RCCHECK(rclc_executor_add_subscription(
-        &executor, 
+        executor, 
         &twist_subscriber, 
         &twist_msg, 
         &twistCallback, 
         ON_NEW_DATA
     ));
-    RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
+    RCCHECK(rclc_executor_add_timer(executor, &control_timer));
 
     // synchronize time with the agent
     syncTime();
@@ -1464,8 +1517,9 @@ bool createEntities()
         // Real robots deliberately do not do this: odometry must stay continuous
         // across a reconnect, or the transform tree jumps under whatever is
         // localising against it.
-        odometry.reset();
-        fake_ld19.updatePose(0.0f, 0.0f, 0.0f);
+        odometry->reset();
+        if (fake_ld19)
+            fake_ld19->updatePose(0.0f, 0.0f, 0.0f);
         syslog(LOG_INFO, "%s simulated pose reset to origin %lu", __FUNCTION__, millis());
     }
 
@@ -1506,7 +1560,7 @@ bool destroyEntities()
 #endif
     RCSOFTCHECK(rcl_subscription_fini(&twist_subscriber, &node));
     RCSOFTCHECK(rcl_timer_fini(&control_timer));
-    RCSOFTCHECK(rclc_executor_fini(&executor));
+    RCSOFTCHECK(rclc_executor_fini(executor));
     RCSOFTCHECK(rcl_node_fini(&node))
     RCSOFTCHECK(rclc_support_fini(&support));
 
@@ -1559,7 +1613,7 @@ static inline float rangeAheadOrNegative()
     if (!publish_range)
         return -1.0f;
     if (range_fake)
-        return fake_lidar_on ? fake_ld19.rangeAheadM() : -1.0f;
+        return (fake_lidar_on && fake_ld19) ? fake_ld19->rangeAheadM() : -1.0f;
     const float r = getRange().range;
     return isfinite(r) ? r : -1.0f;
 }
@@ -1615,10 +1669,10 @@ void moveBase()
 
     // Track the speed ceiling against the live pack voltage, throttled -- the
     // battery read is I2C and the value moves slowly. Uses the smoothed voltage
-    // the publish path already maintains in battery_msg.
+    // the publish path already maintains in battery_msg->
     if (rpm_track_voltage && publish_battery) {
         EXECUTE_EVERY_N_MS(500, {
-            if (battery_msg.voltage > 1.0f) kinematics->setMeasuredVoltage(battery_msg.voltage);
+            if (battery_msg->voltage > 1.0f) kinematics->setMeasuredVoltage(battery_msg->voltage);
         });
     }
 
@@ -1684,7 +1738,7 @@ void moveBase()
     unsigned long now = millis();
     float vel_dt = (now - prev_odom_update) / 1000.0;
     prev_odom_update = now;
-    odometry.update(
+    odometry->update(
         vel_dt, 
         current_vel.linear_x, 
         current_vel.linear_y, 
@@ -1694,13 +1748,13 @@ void moveBase()
     // odometry to match, so /odom and /scan never disagree about where it is.
     // fake_lidar_on is the only gate: on a real robot the emulator is off and
     // clampToRoom() is never consulted, so the walls do not exist.
-    float fake_x = odometry.getX();
-    float fake_y = odometry.getY();
-    const bool hit_wall = fake_lidar_on && fake_ld19.clampToRoom(fake_x, fake_y);
+    float fake_x = odometry->getX();
+    float fake_y = odometry->getY();
+    const bool hit_wall = fake_lidar_on && fake_ld19->clampToRoom(fake_x, fake_y);
     if (hit_wall)
-        odometry.setPosition(fake_x, fake_y);
+        odometry->setPosition(fake_x, fake_y);
     if (fake_lidar_on)
-        fake_ld19.updatePose(fake_x, fake_y, odometry.getHeading());
+        fake_ld19->updatePose(fake_x, fake_y, odometry->getHeading());
     if (fake_wheels) {
         // The IMU rides on how the body actually moved, which is not what the
         // wheels claim once the robot is against a wall. Real hardware behaves
@@ -1715,7 +1769,7 @@ void moveBase()
             current_vel.angular_z,
             vel_dt
         );
-        fake_imu.setHeading(odometry.getHeading());
+        fake_imu.setHeading(odometry->getHeading());
     }
     // Announce the contact once, on the way in. Driving into a wall holds the
     // clamp active for as long as the command lasts, so logging every 20 ms
@@ -1736,7 +1790,7 @@ void publishData()
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
 #endif
-    odom_msg = odometry.getData();
+    *odom_msg = odometry->getData();
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
@@ -1745,15 +1799,15 @@ void publishData()
         // Every field these would return is overwritten just below, and on a bare
         // module the reads are two failing I2C transactions per publish, each one
         // stalling the loop for the bus timeout. Skip them.
-        fake_imu.apply(imu_msg);
+        fake_imu.apply(*imu_msg);
         // Simulated wheels mean a simulated heading, so the magnetometer has to
         // follow it: a real one left in the loop here would fight the fused yaw.
-        fake_imu.applyMag(mag_msg);
+        fake_imu.applyMag(*mag_msg);
     } else {
-        imu_msg = imu->getData();
+        *imu_msg = imu->getData();
         if (imu_is_fake)
-            imu_msg.angular_velocity.z = odom_msg.twist.twist.angular.z;
-        mag_msg = mag->getData();
+            imu_msg->angular_velocity.z = odom_msg->twist.twist.angular.z;
+        *mag_msg = mag->getData();
     }
     // Hard-iron offsets, from the env like everything else about this robot.
     // Read once -- this runs at the publish rate -- and applied only when the
@@ -1778,9 +1832,9 @@ void publishData()
         }
         if (mag_bias_set)
         {
-            mag_msg.magnetic_field.x -= mag_bias[0];
-            mag_msg.magnetic_field.y -= mag_bias[1];
-            mag_msg.magnetic_field.z -= mag_bias[2];
+            mag_msg->magnetic_field.x -= mag_bias[0];
+            mag_msg->magnetic_field.y -= mag_bias[1];
+            mag_msg->magnetic_field.z -= mag_bias[2];
         }
     }
 
@@ -1788,47 +1842,47 @@ void publishData()
     const uint32_t pub_t0 = micros();
     struct timespec time_stamp = getTime();
 
-    odom_msg.header.stamp.sec = time_stamp.tv_sec;
-    odom_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+    odom_msg->header.stamp.sec = time_stamp.tv_sec;
+    odom_msg->header.stamp.nanosec = time_stamp.tv_nsec;
 
-    imu_msg.header.stamp.sec = time_stamp.tv_sec;
-    imu_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+    imu_msg->header.stamp.sec = time_stamp.tv_sec;
+    imu_msg->header.stamp.nanosec = time_stamp.tv_nsec;
 
     if (publish_mag)
     {
-        mag_msg.header.stamp.sec = time_stamp.tv_sec;
-        mag_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+        mag_msg->header.stamp.sec = time_stamp.tv_sec;
+        mag_msg->header.stamp.nanosec = time_stamp.tv_nsec;
     }
 
-    RCSOFTCHECK(rcl_publish(&imu_publisher, &imu_msg, NULL));
+    RCSOFTCHECK(rcl_publish(&imu_publisher, imu_msg, NULL));
     if (publish_mag)
-        RCSOFTCHECK(rcl_publish(&mag_publisher, &mag_msg, NULL));
-    RCSOFTCHECK(rcl_publish(&odom_publisher, &odom_msg, NULL));
+        RCSOFTCHECK(rcl_publish(&mag_publisher, mag_msg, NULL));
+    RCSOFTCHECK(rcl_publish(&odom_publisher, odom_msg, NULL));
     if (publish_battery) {
 #ifdef BATTERY_DIP
-    battery_msg = getBattery();
-    battery_msg.header.stamp.sec = time_stamp.tv_sec;
-    battery_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-    if (!skip_dip && battery_msg.voltage > 1.0 && battery_msg.voltage < prev_voltage * BATTERY_DIP) {
-        RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
-        syslog(LOG_WARNING, "%s voltage dip %.2f", __FUNCTION__, battery_msg.voltage);
+    *battery_msg = getBattery();
+    battery_msg->header.stamp.sec = time_stamp.tv_sec;
+    battery_msg->header.stamp.nanosec = time_stamp.tv_nsec;
+    if (!skip_dip && battery_msg->voltage > 1.0 && battery_msg->voltage < prev_voltage * BATTERY_DIP) {
+        RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
+        syslog(LOG_WARNING, "%s voltage dip %.2f", __FUNCTION__, battery_msg->voltage);
         skip_dip = 5;
     }
     if (skip_dip) skip_dip--;
-    battery_msg.voltage = prev_voltage = battery_msg.voltage * 0.01 + prev_voltage * 0.99;
+    battery_msg->voltage = prev_voltage = battery_msg->voltage * 0.01 + prev_voltage * 0.99;
     // PHASE 40 ms — keep /battery off the cycle /sonar and /pressure ride on.
     EXECUTE_EVERY_N_MS_PHASED(BATTERY_TIMER, 40, {
-        getBatteryPercentage(&battery_msg);
-        RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
+        getBatteryPercentage(battery_msg);
+        RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
     });
 #else
     // Low sampling rate fallback: poll battery strictly within phased timer when BATTERY_DIP is disabled
     EXECUTE_EVERY_N_MS_PHASED(BATTERY_TIMER, 40, {
-        battery_msg = getBattery();
-        battery_msg.header.stamp.sec = time_stamp.tv_sec;
-        battery_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-        getBatteryPercentage(&battery_msg);
-        RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
+        *battery_msg = getBattery();
+        battery_msg->header.stamp.sec = time_stamp.tv_sec;
+        battery_msg->header.stamp.nanosec = time_stamp.tv_nsec;
+        getBatteryPercentage(battery_msg);
+        RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
     });
 #endif
     }
@@ -1847,19 +1901,19 @@ void publishData()
         EXECUTE_EVERY_N_MS(RANGE_TIMER, {
             if (range_fake)
             {
-                range_msg.range = fake_ld19.rangeAheadM();
-                range_msg.field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
-                range_msg.min_range = 0.02;
-                range_msg.max_range = 4.0;
-                range_msg.radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
+                range_msg->range = fake_ld19->rangeAheadM();
+                range_msg->field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
+                range_msg->min_range = 0.02;
+                range_msg->max_range = 4.0;
+                range_msg->radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
             }
             else
             {
-                range_msg = getRange();
+                *range_msg = getRange();
             }
-            range_msg.header.stamp.sec = time_stamp.tv_sec;
-            range_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-            RCSOFTCHECK(rcl_publish(&range_publisher, &range_msg, NULL)) });
+            range_msg->header.stamp.sec = time_stamp.tv_sec;
+            range_msg->header.stamp.nanosec = time_stamp.tv_nsec;
+            RCSOFTCHECK(rcl_publish(&range_publisher, range_msg, NULL)) });
     }
     // PHASE 60 ms — the barometer's 1 Hz burst lands between the /sonar (≈20 ms)
     // and /battery (40 ms) cycles, not on top of them.
