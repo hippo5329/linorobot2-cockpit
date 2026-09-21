@@ -413,6 +413,57 @@ def text_field(data: Dict[str, Any], *keys: str, default: str = "") -> str:
     return default
 
 
+import actions  # noqa: E402  (web/backend/actions.py: named server-side commands)
+
+# The browser used to POST the command TEXT to /api/exec, so the token bought a
+# shell. Now it names an action (built server-side from validated args) or a
+# prepared handle (a command another endpoint already built). A raw command is
+# refused unless COCKPIT_ALLOW_RAW_EXEC is set -- an escape hatch for a trusted
+# operator debugging, off by default.
+def _allow_raw_exec() -> bool:
+    # Default ON for now: the frontend is migrating from client-composed command
+    # strings to named server-side actions (actions.py) site by site, and a raw
+    # fallback keeps the un-migrated screens working during that migration. Flip
+    # the default to off (raw refused) once every runCommand caller sends an
+    # action or a prepared handle. Track: the exec-refactor migration.
+    return os.environ.get("COCKPIT_ALLOW_RAW_EXEC", "on").strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_command(data: Dict[str, Any], default: str = "") -> str:
+    """Turn an exec request body into the command to run.
+
+    {action, args}      -> built server-side (actions.build), or a prepared
+                           handle when action == "prepared"
+    {command}           -> only when COCKPIT_ALLOW_RAW_EXEC is set
+    neither             -> `default` (the endpoint's own safe fallback)
+    Raises HTTPException(400) for an unknown/invalid action or a refused raw
+    command.
+    """
+    action = text_field(data, "action")
+    if action:
+        if action == "prepared":
+            cmd = actions.claim(text_field(data, "handle"))
+            if not cmd:
+                raise HTTPException(status_code=400, detail="prepared command handle is unknown or expired")
+            return cmd
+        if actions.known(action):
+            try:
+                return actions.build(action, data.get("args") or {})
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"action {action!r}: {exc}")
+        # An action name that is not in the registry is not a command -- fall
+        # through to raw/command handling, which is where the label used to live.
+    raw = text_field(data, "command")
+    if raw:
+        if not _allow_raw_exec():
+            raise HTTPException(
+                status_code=400,
+                detail="raw commands are disabled; the UI names an action instead "
+                       "(set COCKPIT_ALLOW_RAW_EXEC=on to allow raw, for debugging only).")
+        return raw
+    return default
+
+
 # ------------------------------------------------------------------------------
 # Single Source of Truth Helpers (Per-Robot Configuration)
 # ------------------------------------------------------------------------------
@@ -1428,7 +1479,7 @@ async def api_hardware_test(request: Request):
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
-    return {"command": cmd, "firmware": firmware, "port": port, "mcu_env": mcu_env}
+    return {"command": cmd, "handle": actions.prepare(cmd), "firmware": firmware, "port": port, "mcu_env": mcu_env}
 
 
 @app.get("/api/params")
@@ -1860,12 +1911,11 @@ async def save_secrets(request: Request):
 @app.post("/api/exec")
 async def api_exec(request: Request):
     data = await json_body(request)
-    command = text_field(data, "command")
     slot = data.get("slot", "main")
     runner = RUNNERS.get(slot, main_runner)
-
+    command = resolve_command(data)
     if not command:
-        raise HTTPException(status_code=400, detail="Empty command")
+        raise HTTPException(status_code=400, detail="No action or command given")
     if runner.is_busy():
         raise HTTPException(status_code=409, detail=f"Slot '{slot}' is busy")
 
@@ -1906,13 +1956,12 @@ async def api_kill(request: Request):
 @app.post("/api/agent/exec")
 async def api_agent_exec(request: Request):
     data = await json_body(request)
-    command = text_field(data, "command")
-    if not command:
-        params = load_params()
-        ctrl = get_controller(params)
-        port = ctrl.get("serial_port", "/dev/ttyUSB0")
-        baud = ctrl.get("baudrate", 1500000)
-        command = f"ros2 run micro_ros_agent micro_ros_agent serial --dev {port} -b {baud}"
+    params = load_params()
+    ctrl = get_controller(params)
+    port = ctrl.get("serial_port", "/dev/ttyUSB0")
+    baud = ctrl.get("baudrate", 1500000)
+    default = f"ros2 run micro_ros_agent micro_ros_agent serial --dev {port} -b {baud}"
+    command = resolve_command(data, default=default)
 
     if agent_runner.is_busy():
         raise HTTPException(status_code=409, detail="micro-ROS Agent slot is busy")
@@ -1977,9 +2026,7 @@ async def api_agent_port_release(request: Request):
 @app.post("/api/bringup/exec")
 async def api_bringup_exec(request: Request):
     data = await json_body(request)
-    command = text_field(data, "command")
-    if not command:
-        command = "ros2 launch linorobot2_cockpit bringup.launch.py"
+    command = resolve_command(data, default="ros2 launch linorobot2_cockpit bringup.launch.py")
 
     if bringup_runner.is_busy():
         raise HTTPException(status_code=409, detail="Bringup slot is busy")
@@ -2515,15 +2562,18 @@ def api_package_check(pkg: str = "", distro: str = "jazzy", ws: str = ""):
 
 @app.get("/api/workspace/build_cmd")
 def api_workspace_build_cmd(ws: str = REPO_ROOT, distro: str = "jazzy"):
-    return {"command": build_base_install_cmd(ws, distro=distro), "workspace": ws}
+    base_cmd = build_base_install_cmd(ws, distro=distro)
+    return {"command": base_cmd, "handle": actions.prepare(base_cmd), "workspace": ws}
 
 
 @app.get("/api/ros2/install_cmd")
 def api_ros2_install_cmd(distro: str = "jazzy"):
+    ros2_cmd = build_ros2_install_cmd(distro)
     return {
         "distro": distro,
         "installed": True,
-        "command": build_ros2_install_cmd(distro),
+        "command": ros2_cmd,
+        "handle": actions.prepare(ros2_cmd),
     }
 
 

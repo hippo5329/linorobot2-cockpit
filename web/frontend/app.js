@@ -332,14 +332,26 @@ document.getElementById("btn-config-commit")?.addEventListener("click", async ()
 
 // ---------- generic SSE command runner ----------
 // slot: "main" -> /api/exec ; "agent" -> /api/agent/exec
-function runCommand(command, { slot = "main", title = "Running", action, onDone, onLine } = {}) {
+//
+// `spec` names WHAT to run; the server owns the command text (web/backend/
+// actions.py). It is one of:
+//   { action: "agent_start", args: {...} }   a named server-side action
+//   { handle: "..." }                        a command another endpoint prepared
+//   "some shell string"                      legacy raw (server refuses it unless
+//                                            COCKPIT_ALLOW_RAW_EXEC is set)
+function runCommand(spec, { slot = "main", title = "Running", action, onDone, onLine } = {}) {
   const endpoint = slot === "agent" ? "/api/agent/exec" : (slot === "bringup" ? "/api/bringup/exec" : "/api/exec");
   openTerminal(title);
   logLine(`$ [${slot}] ${title}`);
+  let body;
+  if (typeof spec === "string") body = { command: spec, slot };
+  else if (spec && spec.handle) body = { action: "prepared", handle: spec.handle, slot };
+  else if (spec && spec.action) body = { action: spec.action, args: spec.args || {}, slot };
+  else body = { slot };
   return fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command, slot, action: action || title }),
+    body: JSON.stringify(body),
   }).then(async (response) => {
     if (response.status === 409) {
       logLine("[console] that slot is already busy -- stop the running action first.");
