@@ -19,12 +19,23 @@ Kinematics::Kinematics(base robot_base, int motor_max_rpm, float max_rpm_ratio,
                        float motor_operating_voltage, float motor_power_max_voltage,
                        float wheel_diameter, float wheels_y_distance):
     base_platform_(robot_base),
+    motor_max_rpm_(motor_max_rpm),
+    max_rpm_ratio_(max_rpm_ratio),
+    motor_operating_voltage_(motor_operating_voltage),
     wheels_y_distance_(wheels_y_distance),
     wheel_circumference_(PI * wheel_diameter),
     total_wheels_(getTotalWheels(robot_base))
-{    
+{
     motor_power_max_voltage = constrain(motor_power_max_voltage, 0, motor_operating_voltage);
     max_rpm_ =  ((motor_power_max_voltage / motor_operating_voltage) * motor_max_rpm) * max_rpm_ratio;
+}
+
+void Kinematics::setMeasuredVoltage(float measured_voltage)
+{
+    if (motor_operating_voltage_ <= 0.0f)
+        return;
+    measured_voltage = constrain(measured_voltage, 0, motor_operating_voltage_);
+    max_rpm_ = ((measured_voltage / motor_operating_voltage_) * motor_max_rpm_) * max_rpm_ratio_;
 }
 
 Kinematics::rpm Kinematics::calculateRPM(float linear_x, float linear_y, float angular_z)

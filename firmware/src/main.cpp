@@ -260,6 +260,18 @@ std_msgs__msg__Bool safety_stop_msg;
 bool safety_stopped = false;
 static bool safety_stop_on = false;
 static float safety_stop_range = 0.25f;   // metres ahead before forward motion is cut
+// Track the top speed against the live pack voltage (INA219 / divider) rather
+// than the static config voltage. Off by default -- see Kinematics::setMeasuredVoltage.
+static bool rpm_track_voltage = false;
+// Per-motor stall / encoder-loss guard. A wheel that is COMMANDED but whose
+// encoder is not counting has stalled or lost its encoder; both are hazards the
+// forward-range stop cannot see. Off by default (needs real encoders to be
+// meaningful; a FakeEncoder always tracks the command, so it never trips).
+static bool stall_detect_on = false;
+static uint16_t stall_ms = 1500;          // sustained no-count-while-commanded before tripping
+static float stall_rpm_floor = 5.0f;      // |rpm| below this counts as "not turning"
+static uint32_t motor_last_ok_ms[4] = {0, 0, 0, 0};
+static bool stall_tripped = false;
 rcl_publisher_t range_publisher;
 rcl_publisher_t pressure_publisher;
 rcl_publisher_t temperature_publisher;
@@ -1066,6 +1078,10 @@ void setup()
     // conjure one without the emulator.
     safety_stop_on = envFlag("safety_stop", false);
     safety_stop_range = (float)atof(envGet("safety_stop_m", "0.25"));
+    rpm_track_voltage = envFlag("rpm_track_voltage", false);
+    stall_detect_on = envFlag("stall_detect", false);
+    stall_ms = (uint16_t)constrain(atoi(envGet("stall_ms", "1500")), 200, 10000);
+    stall_rpm_floor = (float)atof(envGet("stall_rpm_floor", "5.0"));
     // The simulated cone when anything is simulated, the real sensor only on a
     // robot that is entirely real. rangePresent() is already false in fake mode
     // -- initRange() dropped the pins -- so this cannot drive hardware either
@@ -1596,6 +1612,49 @@ void moveBase()
     float current_rpm2 = motor2_encoder.getRPM();
     float current_rpm3 = motor3_encoder.getRPM();
     float current_rpm4 = motor4_encoder.getRPM();
+
+    // Track the speed ceiling against the live pack voltage, throttled -- the
+    // battery read is I2C and the value moves slowly. Uses the smoothed voltage
+    // the publish path already maintains in battery_msg.
+    if (rpm_track_voltage && publish_battery) {
+        EXECUTE_EVERY_N_MS(500, {
+            if (battery_msg.voltage > 1.0f) kinematics->setMeasuredVoltage(battery_msg.voltage);
+        });
+    }
+
+    // Stall / encoder-loss guard. For each wheel that exists: if it is being
+    // commanded but its encoder is not counting, and that persists past
+    // stall_ms, the wheel has stalled or lost its encoder -- stop the base and
+    // say so. A FakeEncoder tracks the command, so this never trips in fake
+    // mode; it is a real-hardware guard.
+    if (stall_detect_on) {
+        // Unused motors (e.g. motor3/4 on a 2WD) get req≈0 from getRPM(), so
+        // they are never "commanded" and never trip -- no wheel count needed.
+        const float req[4]  = {req_rpm.motor1, req_rpm.motor2, req_rpm.motor3, req_rpm.motor4};
+        const float cur[4]  = {current_rpm1, current_rpm2, current_rpm3, current_rpm4};
+        const uint32_t now_ms = millis();
+        bool any_stalled = false;
+        for (int i = 0; i < 4; i++) {
+            const bool commanded = fabs(req[i]) > stall_rpm_floor;
+            const bool turning   = fabs(cur[i]) > stall_rpm_floor * 0.2f;
+            if (!commanded || turning) motor_last_ok_ms[i] = now_ms;
+            if (commanded && (now_ms - motor_last_ok_ms[i]) > stall_ms) any_stalled = true;
+        }
+        if (any_stalled) {
+            if (!stall_tripped) {
+                stall_tripped = true;
+                syslog(LOG_WARNING, "%s stall/encoder-loss: a commanded wheel is not counting -- stopping %lu",
+                       __FUNCTION__, (unsigned long)now_ms);
+            }
+            // Zero the REQUESTED rpm (already computed above) so the PID drives
+            // the motors to a stop, and clear the command it came from.
+            req_rpm.motor1 = req_rpm.motor2 = req_rpm.motor3 = req_rpm.motor4 = 0.0f;
+            twist_msg.linear.x = twist_msg.linear.y = twist_msg.angular.z = 0.0;
+        } else if (stall_tripped) {
+            stall_tripped = false;
+            syslog(LOG_INFO, "%s stall cleared %lu", __FUNCTION__, (unsigned long)millis());
+        }
+    }
 
     // the required rpm is capped at -/+ MAX_RPM to prevent the PID from having too much error
     // the PWM value sent to the motor driver is the calculated PID based on required RPM vs measured RPM

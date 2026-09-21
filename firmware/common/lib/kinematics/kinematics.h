@@ -54,11 +54,22 @@ class Kinematics
         velocities getVelocities(float rpm1, float rpm2, float rpm3, float rpm4);
         rpm getRPM(float linear_x, float linear_y, float angular_z);
         float getMaxRPM();
+        // Rescale the ceiling to the voltage the motors are ACTUALLY seeing.
+        // At construction max_rpm_ is derived from a static config voltage; a
+        // 3S pack sags several volts under load, so the real top speed drops
+        // with it. When the firmware is told the live bus voltage (INA219 or a
+        // divider), this recomputes the ceiling from it. Opt-in: nothing calls
+        // this unless `rpm_track_voltage` is set, so the default behaviour is
+        // unchanged.
+        void setMeasuredVoltage(float measured_voltage);
 
     private:
         rpm calculateRPM(float linear_x, float linear_y, float angular_z);
         int getTotalWheels(base robot_base);
 
+        int motor_max_rpm_;
+        float max_rpm_ratio_;
+        float motor_operating_voltage_;
         float max_rpm_;
         float wheels_y_distance_;
         float pwm_res_;

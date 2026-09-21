@@ -688,6 +688,24 @@ def hardware_env(params: dict) -> dict:
     else:
         env["safety_stop"] = _bool(safety) if safety is not None else "0"
         env["safety_stop_m"] = 0.25
+    # Track the speed ceiling against the live pack voltage (INA219 / divider)
+    # rather than the static config voltage. OFF by default: it changes how the
+    # robot feels as the battery sags, and wants a real load to be worth it.
+    rpm_track = tgt.get("rpm_track_voltage")
+    if rpm_track is not None:
+        env["rpm_track_voltage"] = _bool(rpm_track)
+    # Per-motor stall / encoder-loss guard. OFF by default: it needs real
+    # encoders (a FakeEncoder always tracks the command), and a mistuned floor
+    # could stop a slow-ramping robot. `stall_detect` enables it; `stall_ms` is
+    # how long a commanded-but-not-counting wheel is tolerated (200-10000 ms);
+    # `stall_rpm_floor` is the |rpm| below which a wheel counts as not turning.
+    stall = tgt.get("stall_detect")
+    if isinstance(stall, dict):
+        env["stall_detect"] = _bool(stall.get("enabled", False))
+        env["stall_ms"] = _num(stall.get("ms", 1500))
+        env["stall_rpm_floor"] = _num(stall.get("rpm_floor", 5.0))
+    elif stall is not None:
+        env["stall_detect"] = _bool(stall)
     # The LiDAR power-gate pin, -1 when the board has none. A pin, like every
     # other pin: the env carries it so one image serves boards that gate their
     # LiDAR's power and boards that do not.
