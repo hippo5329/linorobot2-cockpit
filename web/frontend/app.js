@@ -6336,11 +6336,20 @@ async function executeHardwareAction(action, customFirmware = null) {
       slot: "main",
       title: `${action === "upload" ? "Flashing" : action === "monitor" ? "Monitoring" : "Building"} ${firmwareName} (${mcuEnv})`,
       // adc_calibrate ends by printing one [ADC_JSON] line: the curve it just
-      // measured. Catch it as it streams past and draw it.
-      onLine: (line) => { adcCurveFromLine(line); },
+      // measured. Catch it as it streams past and draw it. flash_mcu also prints
+      // one "NEXT ACTION: ..." line when a flash fails -- surface it in a banner
+      // that outlives the (default-collapsed) console, so a beginner sees the one
+      // thing to do next instead of hunting grey monospace at the bottom.
+      onLine: (line) => {
+        adcCurveFromLine(line);
+        const na = /NEXT ACTION: (.+)$/.exec(line || "");
+        if (na) showActionBanner(`Flashing failed. Next: ${na[1].trim()}`,
+                                 "The full recovery steps are in the Output console.");
+      },
       onDone: (exitCode) => {
         if (btnStop) btnStop.style.display = "none";
         if (exitCode === 0) {
+          hideActionBanner();
           logLine(`✅ [Hardware Test] ${firmwareName} completed successfully.`);
           showToast(`✅ ${firmwareName} flashed successfully!`, 4000);
           // A diagnostic application exists to be READ. Flashing one and then
