@@ -282,8 +282,28 @@ jobs:
       - name: Tools the hosted image has and a container image may not
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
-            [ -n "${APT_PROXY:-}" ] && echo "Acquire::http::Proxy \"$APT_PROXY\";" | sudo tee /etc/apt/apt.conf.d/01proxy >/dev/null
-            sudo apt-get update -qq
+            # apt-cacher-ng accelerates http and must NOT be asked to carry https.
+            # `Acquire::http::Proxy` alone still routes https sources through the
+            # cache on a deb822 image that has any, and a firmware job sat for
+            # 11 minutes in apt-get update with its sockets to :3142 in
+            # CLOSE-WAIT -- the cache had closed its side and apt's https method
+            # never noticed. Send https direct, and give apt its own timeouts so
+            # a sick cache costs seconds, not the job's whole 30-minute ceiling.
+            if [ -n "${APT_PROXY:-}" ]; then
+              printf '%s\n' \
+                "Acquire::http::Proxy \"$APT_PROXY\";" \
+                'Acquire::https::Proxy "DIRECT";' \
+                'Acquire::Retries "2";' \
+                'Acquire::http::Timeout "20";' \
+                'Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/01proxy >/dev/null
+            fi
+            # One retry without the cache: a 503 or a half-closed connection from
+            # apt-cacher-ng should not be the reason a release cannot be built.
+            sudo apt-get update -qq || {
+              echo "::warning::apt-get update failed through ${APT_PROXY:-no proxy}; retrying direct"
+              sudo rm -f /etc/apt/apt.conf.d/01proxy
+              sudo apt-get update -qq
+            }
             sudo apt-get install -y -qq --no-install-recommends cmake
           fi
           cmake --version | head -1
@@ -367,8 +387,27 @@ jobs:
       - name: node for actions/checkout
         run: |
           if ! command -v node >/dev/null 2>&1; then
-            [ -n "${APT_PROXY:-}" ] && echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy
-            apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs
+            # apt-cacher-ng accelerates http and must NOT be asked to carry https.
+            # `Acquire::http::Proxy` alone still routes https sources through the
+            # cache on a deb822 image that has any, and a firmware job sat for
+            # 11 minutes in apt-get update with its sockets to :3142 in
+            # CLOSE-WAIT -- the cache had closed its side and apt's https method
+            # never noticed. Send https direct, and give apt its own timeouts so
+            # a sick cache costs seconds, not the job's whole 30-minute ceiling.
+            if [ -n "${APT_PROXY:-}" ]; then
+              printf '%s\n' \
+                "Acquire::http::Proxy \"$APT_PROXY\";" \
+                'Acquire::https::Proxy "DIRECT";' \
+                'Acquire::Retries "2";' \
+                'Acquire::http::Timeout "20";' \
+                'Acquire::https::Timeout "20";' > /etc/apt/apt.conf.d/01proxy
+            fi
+            apt-get update -qq || {
+              echo "::warning::apt-get update failed through ${APT_PROXY:-no proxy}; retrying direct"
+              rm -f /etc/apt/apt.conf.d/01proxy
+              apt-get update -qq
+            }
+            apt-get install -y -qq --no-install-recommends nodejs
           fi
           node --version
       - uses: actions/checkout@v4
