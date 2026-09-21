@@ -143,6 +143,15 @@ def _src(rel):
     return open(os.path.join(REPO_ROOT, rel)).read()
 
 
+def _frontend_js():
+    """The frontend is split into ordered classic scripts (app-*.js); read them
+    all so symbol checks don't care which file a function landed in."""
+    import glob
+    parts = sorted(glob.glob(os.path.join(REPO_ROOT, "web", "frontend", "app-*.js")))
+    assert parts, "no web/frontend/app-*.js files found"
+    return "\n".join(open(p).read() for p in parts)
+
+
 def test_a_global_does_not_read_the_env_in_its_constructor():
     """`Odometry odometry;` is a GLOBAL in main.cpp, so its constructor runs
     during static initialisation -- before the flash partition API is usable.
@@ -192,7 +201,7 @@ def test_the_panel_does_not_offer_calibration_without_a_dac():
     """The firmware's own comment says "the app list is supposed to exclude it
     there" -- nothing did, so flashing adc_calibrate to a Pico left the robot
     running a tool that can only print an apology and idle."""
-    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app.js")).read()
+    js = _frontend_js()
     assert "function mcuHasDac(" in js and "applyDacAvailability" in js
     assert 'e === "esp32" || e === "esp32s2"' in js, (
         "mcuHasDac must not claim a DAC on the S3 or the RP2 boards")
@@ -224,5 +233,5 @@ def test_the_calibration_tool_emits_the_curve_for_the_chart():
     # In C source the JSON keys are written as \"knots\" -- the quotes are
     # escaped -- so look for the tag and the key names, not quoted JSON.
     assert '[ADC_JSON]' in src and 'knots' in src and '\\"lut\\"' in src
-    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app.js")).read()
+    js = _frontend_js()
     assert "adcCurveFromLine" in js and "[ADC_JSON]" in js

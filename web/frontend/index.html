@@ -2576,7 +2576,17 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   </div>
 </div>
 
-<script src="app.js"></script>
+<!-- app.js split into ordered classic scripts sharing one global scope.
+     Load order matters (see app-core.js); keep app-core first and app-presets last. -->
+<script src="app-core.js"></script>
+<script src="app-setup.js"></script>
+<script src="app-agent-bringup.js"></script>
+<script src="app-nav-viz.js"></script>
+<script src="app-studio.js"></script>
+<script src="app-workflow.js"></script>
+<script src="app-hardware.js"></script>
+<script src="app-adc.js"></script>
+<script src="app-presets.js"></script>
 <script src="rosviz.js"></script>
 <script src="webserial.js"></script>
 <!-- micro-ROS Agent Port Conflict Modal -->
