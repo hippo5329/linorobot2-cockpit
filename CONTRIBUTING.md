@@ -34,7 +34,7 @@ Everything here runs on a workstation with no robot attached.
 ```bash
 python3 -m pytest tests                 # unit tests: env block, header, URDF, access, pins
 python3 -m py_compile scripts/*.py launchers/*.py web/backend/*.py
-node --check web/frontend/app.js && node --check web/frontend/rosviz.js
+for f in web/frontend/*.js; do node --check "$f" || break; done
 python3 scripts/migrate_config_schema.py --dry-run     # exits 1 if a shipped config would change
 for c in config/reference/*_config.yaml; do
     python3 scripts/gen_firmware_header.py --params "$c" --distro jazzy
@@ -83,6 +83,14 @@ images, so CI must be green before one is cut. See `docs/` and the release workf
 ## Where things are
 
 `README.md` has the quick start, the repository layout and the configuration reference.
+The web supervisor is split by area rather than by layer: `web/backend/core.py` owns the
+FastAPI app and the shared helpers, and each `web/backend/routes_*.py` registers its handlers
+on import — adding a route means adding it to the module that fits, not to a router that then
+has to be wired up. The frontend is the same idea without a bundler: `index.html` loads
+`web/frontend/app-*.js` in a fixed order as plain classic scripts, which share one global
+scope, so a function may only call *backwards* in that order unless the call is deferred to an
+event or a timer.
+
 `docs/firmware.md` covers the one-image-per-board design and the env partition,
 `docs/flashing.md` the flashing and BOOTSEL rules, and `docs/ros2-stack.md` the launch tree,
 QoS and the generated robot description. Each is written as lessons with the failure that

@@ -259,3 +259,55 @@ agent-synced epoch (`getTime()` after `syncTime()`, the same stamp `/odom` carri
 already trusts), so `constant_dt: 0.0` — the package default, "use the header stamps" — is the
 right setting on every board and at every baud rate. Do not put the constant back to make a
 bench number look steadier.
+
+### One `topic_prefix`, consumed on both sides, so two robots share a DDS domain
+`base_controller.topic_prefix` is a single key with two readers. The board prefixes every
+topic name it publishes (`topicName()` in the firmware, from the env block); the host stack
+joins the board by putting itself in the **same namespace** and prefixing its **TF frames** to
+match. `cockpit_paths.robot_namespace()` normalises the key exactly the way `scripts/mcu_env.py`
+does before writing it — letters, digits, underscore and `/`, no surrounding slashes, an
+invalid value read as unset — so neither side has to be told what the other did.
+
+Unset is the default and every branch is then a no-op, which is why the single-robot layout is
+byte-identical to what it was before the feature existed.
+
+Three things are worth knowing if you touch this:
+
+- **TF stays on the global `/tf`.** Namespacing a node would give it `/<prefix>/tf`, and then
+  no other robot — and no global RViz — could see the tree. The frames carry the prefix
+  instead (`robot_state_publisher`'s `frame_prefix`, the EKF's frame parameters, the LiDAR's
+  `frame_id`), and the usual `/tf` remap is dropped under a namespace so it resolves globally.
+- **Nav2's parameter file names frames and topics in full, and would ignore the namespace.**
+  `_prefix_nav2_namespace()` rewrites those values under `/<prefix>/` before the params are
+  handed over; a relative name would otherwise resolve against the node and a `/`-absolute one
+  would escape the namespace entirely.
+- **A lifecycle manager drives nodes by name.** Under a namespace the servers it manages have
+  full paths, and anything that is handed a node path — the SLAM node, the manager's
+  `node_names` — must be told the full one, not wrapped a second time by `PushRosNamespace`.
+
+### A bare module has no LiDAR tty, so the virtual room runs on the robot computer
+`use_fake_ld19` says a scan is simulated; it does not say *where*. Two benches want different
+answers, and picking the wrong one either bypasses the code under test or leaves the stack with
+no `/scan` at all:
+
+- **A board with a real serial bridge** (the GenDrv emits its emulated LD19 out `LIDAR_RXD`
+  into a USB-serial adapter) must be read by the **real `ldlidar` driver**. Routing that to a
+  host node would bypass the very driver path the bench exists to exercise.
+- **A bare module** has one USB, for micro-ROS, and nothing else. The LiDAR tty never appears,
+  the serial driver dies on the missing port, `/scan` never comes, and SLAM and Nav2 sit there
+  waiting — on the configuration that is supposed to be the easiest one to run.
+
+So the host emulator (`scripts/fake_laser_node.py`) takes over only when the scan is faked
+**and** either the mode is not serial or the configured port does not exist:
+
+```python
+use_host_fake_laser = (
+    controller.get("sensors", {}).get("use_fake_ld19", False)
+    and (effective_lidar_comm_mode != "serial" or not os.path.exists(lidar_port))
+)
+```
+
+Testing the port rather than the config is what keeps the bench-with-a-bridge case unchanged
+while letting a module with nothing soldered to it run the whole pipeline. Both emulators
+raycast the same room from `geometry.laser.x`, so the scan agrees with the transform either
+way.

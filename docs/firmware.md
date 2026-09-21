@@ -617,7 +617,96 @@ The simulated room is configuration because **fake mode is the default here**:
 a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 12 kg robot does not accelerate like a 3.5 kg one.
 
-Still compile-time: `TOPIC_PREFIX`. The firmware pastes it onto every topic
-name at compile time (`TOPIC_PREFIX "odom/unfiltered"`), so moving it to the
-env means building those strings at run time. Worth doing for multi-robot, and
-not done here.
+### `topic_prefix` is an env key too, so the names are built at run time
+
+It used to be the one remaining compile-time fact about a robot: `TOPIC_PREFIX`
+was pasted onto each topic literal by the preprocessor, so putting two robots on
+one DDS domain meant a build per robot -- and the published images, built from
+the generated bare config, could not do it at all. It is `topic_prefix` in the
+env now, which means the names themselves have to be assembled at run time.
+
+`topicName()` in `main.cpp` does that, and the two rules it follows are the
+interesting part:
+
+- **Cache by the suffix's address, not by its text.** Every caller passes a
+  string literal, so the pointer is stable and a reconnect
+  (`destroyEntities()` -> `createEntities()`) hands back the same buffer instead
+  of building a second copy. Twenty slots and a 640-byte arena cover every topic
+  the firmware publishes with room to spare.
+- **A prefix ROS 2 would reject is worse than no prefix.** rclc just fails the
+  entity, so an illegal character would leave the board with no topics at all
+  and nothing in the log to say why. Only `[A-Za-z0-9_/]` gets through; anything
+  else means no prefix and a line on the console. A missing trailing slash is
+  added, so `robot1` and `robot1/` mean the same thing -- the same rule
+  `scripts/mcu_env.py` and `cockpit_paths.robot_namespace()` apply on the host
+  side, which is what makes the board and the stack agree without either being
+  told about the other.
+
+The compiled-in macro is still the fallback, so a board with a blank env behaves
+exactly as it always did, and with no prefix set `topicName()` returns the
+literal and allocates nothing at all.
+
+### DRAM is the ESP32's scarce budget, and a static is paid by every board
+
+The `esp32_lyrical` release build failed to link with `dram0_0_seg overflowed by
+96 bytes`. Nothing in this repo had grown: the platform, framework and library
+SHAs were identical to the run before it. What changed was upstream -- the
+lyrical micro-ROS branches drifted and the precompiled library's own `.bss` grew
+into the space the firmware had been living in.
+
+Two lessons, and both were worth having:
+
+**The margin was never real.** `dram0_0_seg` is 124,580 bytes on the ESP32 and
+holds `.dram0.data` + `.dram0.bss`; PlatformIO's headline "RAM %" is a different
+number and will happily read 60% while the link is about to fail. The budget to
+watch is the segment, and the way to read it is
+`xtensa-esp32-elf-size -A .pio/build/esp32_lyrical/firmware.elf` after a build,
+not the percentage in the build summary.
+
+**Allocate when it is needed, not at file scope.** A static buffer is paid by
+every board in every application: an `esp32` robot that will never calibrate an
+ADC, never prefix a topic and never run `test_sensors` was still carrying all
+three working sets in `.bss`. Moving them to the heap is nearly free -- the
+allocation happens once, in `setup()` or on first use, out of the ~300 KB heap
+that the robot firmware barely touches, and a never-freed block taken at startup
+cannot fragment anything. What moved:
+
+| what | was | now |
+|---|---|---|
+| `topicName()` arena | 640 B of `.bss` | `malloc` on the first *prefixed* name; nothing when `topic_prefix` is unset |
+| `FakeLD19 fake_ld19` | a static instance | `new` only when `fake_lidar_on` |
+| the micro-ROS messages, executor and `Odometry` | static objects | allocated in `setup()` under `if (micro_ros)`, `rclErrorLoop()` if the allocation fails |
+| `test_sensors`, `test_acc`, `bno085_cal` working sets | file-scope buffers and driver objects | `calloc` / `new` in each tool's `setup_()`, with a null guard in `loop_()` |
+
+That took `esp32_lyrical` from **96 bytes over** to **4,148 bytes of margin**
+(120,432 of 124,580 used, as the `rc-20260922` release build reports it), and
+left `esp32-jazzy` at 19,692 bytes of margin (104,888 used) -- about 4.2 KB
+freed on every ESP32 profile. Every path was then re-run on the bench: the prefixed board published
+`/lino1/odom/unfiltered`, `/lino1/imu/data_raw`, `/lino1/raw_scan` and
+`/lino1/sonar` with no `[topic] no room` warning, and the tools were switched by
+env write and read back over serial.
+
+An allocation that can fail has to say so. `topicName()` prints `[topic] no room
+to prefix "<suffix>" -- publishing it unprefixed` rather than dropping the
+prefix silently, because a silent drop splits one robot's graph across two
+namespaces; the message allocations in `setup()` go to `rclErrorLoop()`, because
+a board that cannot build its publishers is not a robot.
+
+### Pin the fork's micro-ROS repos to the distro's own branch
+
+The build inputs came from `hippo5329/micro_ros_platformio`, whose
+`microros_utils/repositories.py` lists, per distro, the repositories the
+micro-ROS library is compiled from. The `lyrical` entry had four of them
+overridden to `rolling` -- `micro_ros_utilities`, `micro_ros_msgs`,
+`rmw-microxrcedds`, `rosidl_typesupport_microxrcedds` -- because those repos had
+no lyrical branch when the entry was written. They have one now, and `rolling`
+kept moving, so every build pulled whatever `rolling` happened to be that day.
+That is the drift that ate the 96 bytes.
+
+The rule: **a repository that has a branch for our distro is pinned to it; only
+one that genuinely has no such branch stays on `rolling`.** After the fix every
+micro-ROS repo in the lyrical set builds from `lyrical`; `ros2/rclc` stays on
+`rolling` because it has no lyrical branch, and the eProsima repos stay on their
+`ros2` branch, which is where they release from. Upstream is not developing this
+package any more, so the fork is ours to keep correct -- and unpinned branches
+in a build recipe are a failure waiting for a date, not a version.

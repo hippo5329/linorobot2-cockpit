@@ -166,6 +166,7 @@ base_controller:
   transport: serial      # or udp4 on an ESP32
   serial_port: /dev/ttyACM0
   baudrate: 921600
+  topic_prefix: ""       # set it, and this robot's topics and frames move under /<prefix>/
   sensors: {imu: FAKE, use_fake_imu: true, use_fake_mag: true, use_fake_wheel: true, use_fake_ld19: true}
   pins: {motor1: {pwm: -1, in_a: -1, in_b: -1}, ...}   # -1 = not connected
 kinematics: {base_type: 2wd, wheel_diameter: 0.152, lr_wheels_distance: 0.271, max_rpm: 140, ...}
@@ -349,6 +350,13 @@ The same binary is a bench simulator or a real robot depending on four bytes in 
 partition — demonstrated on the bench by turning `/raw_scan` off on a running board with
 `fake_ld19=0` and nothing else.
 
+**Where the scan is raycast follows the wiring, not the config.** A board whose emulated
+LD19 goes out a real serial bridge is read by the real LiDAR driver, because that is the path
+worth testing; a bare module has no such tty, so the room runs on the robot computer instead
+(`scripts/fake_laser_node.py`) and `/scan` arrives anyway. Both raycast from
+`geometry.laser.x`, so the scan and the transform agree either way — and a module with nothing
+soldered to it still reaches SLAM and Nav2.
+
 The Nav2 goal test sends the robot behind that interior wall, so a green run proves planning,
 not just motion.
 
@@ -366,6 +374,12 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `raw_scan` | `std_msgs/UInt8MultiArray` | fake LD19 on the MCU |
 | `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`) — they were compile-time until 2026-09-20 and no reference config carried them, so the interrupt-driven driver had never run in any released image; it does now, measured at 8.3 Hz on an RP2350. `safety_stop` is off unless `safety_stop=1` is in the env, because it brakes the robot.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
+**Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
+above moves under `/lino1/` — on the board, which builds the names at run time from the env
+key, *and* on the robot computer, where bringup, SLAM and Nav2 run in the matching namespace
+with their TF frames prefixed to suit. TF itself stays on the global `/tf`, so one RViz still
+sees every robot. Unset is the default and changes nothing.
+
 Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on lyrical
 (Nav2's own default per distro, compiled in from `kinematics.stamped_cmd_vel: auto`), plus
 `cmd_vel_unstamped` for keyboard teleop in stamped mode. The pipeline passes the same
@@ -379,9 +393,13 @@ Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on ly
   `/scan`), syslog receiver for Wi-Fi boards (UDP 5140), saved-map gallery.
 - **Config Studio**: base controller, pins, kinematics, body and sensor placement (the
   URDF), EKF, SLAM and Nav2 editors, YAML import/export, secrets. Pin errors from the
-  per-MCU catalogue and geometry warnings show next to the fields.
-- **Hardware Tests**: flash any diagnostic application, WebSerial monitor (Chromium browsers;
-  monitor only, never flashes).
+  per-MCU catalogue and geometry warnings show next to the fields, and the **wiring chart**
+  reads the saved pins back as function → GPIO and GPIO → functions — the sheet you take to
+  the bench. It is written beside the URDF at every bringup too, so it exists as a file and
+  not only behind a button.
+- **Hardware Tests**: switch to any diagnostic application (an env write, not a reflash),
+  WebSerial monitor (Chromium browsers; monitor only, never flashes), and the ESP32 ADC
+  calibration drawn as a curve so a bad channel is visible rather than inferred.
 - **Map Viewer**: `/map`, `/scan` and the robot pose drawn in the browser over rosbridge on
   port 9090, with 2D pose estimate and Nav goal tools — no RViz, nothing to install.
 - **Teleop**: virtual gamepad publishing `/cmd_vel`.
@@ -400,7 +418,9 @@ scripts/            one_click_pipeline.py · flash_mcu.py · mcu_probe.py · mcu
                     migrate_config_schema.py · fetch_prebuilt.py · build_prebuilt.py · …
 tests/              pytest: env block, header, URDF, access policy, pin catalogue, key contract
 tests/api/          the cockpit's HTTP API, against a running instance (see below)
-web/                backend/ (FastAPI supervisor) · frontend/ (static HTML/CSS/JS)
+web/backend/        FastAPI supervisor: core.py (the app, config and helpers) +
+                    routes_*.py, one module per area, registered by importing them
+web/frontend/       static HTML/CSS/JS: index.html loads app-*.js in order, no bundler
 docker/             Dockerfile (robot runtime) · Dockerfile.pio (build image) · entrypoint.sh
 docker-compose.yml  the robot runtime, plus the optional `pio` build service
 ```
