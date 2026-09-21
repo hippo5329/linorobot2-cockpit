@@ -130,7 +130,13 @@ def test_bare_config_has_no_real_pins(tmp_path):
         assert str(env["imu"]).lower() == "fake", mcu
         assert str(env["fake_ld19"]) == "1", mcu
         assert all(env[f"m{i}_pwm"] == -1 for i in range(1, 5)), mcu
-        assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (0, 0, 0), mcu
+        # No battery, no environmental sensor -- but the simulated magnetometer
+        # IS published. use_fake_mag rotates a world field to the room heading
+        # for one purpose, anchoring madgwick, and `mag: NONE` here means "no
+        # chip", not "silence the simulation of one". The old expectation of
+        # pub_mag == 0 was the bug: /imu/mag had no publisher, madgwick with a
+        # mag waited forever, /imu/data went to 0 Hz and the EKF lost its IMU.
+        assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 0, 0), mcu
 
 
 def test_mecanum_reference_has_four_motors():
