@@ -136,6 +136,11 @@
         <div class="hdr-field hdr-wf-field" title="Hardware USB Detected Microcontroller">
           <label>🔌 Detected MCU:</label>
           <span id="hdr-detected-mcu-badge" class="badge-pill badge-accent" style="font-size:0.75rem; padding:2px 8px; font-weight:700;">Scanning...</span>
+          <!-- The board's own id, hidden until a board has reported one. `chip` is
+               the silicon's (RP2350, ESP32); `flash` is the flash chip's, which is
+               all an RP2040 has. Distinct words on purpose: they are not the same
+               claim, and a replaced flash must not read as the same chip. -->
+          <span id="hdr-board-id-badge" class="badge-pill" style="font-size:0.7rem; padding:2px 7px; font-family:var(--mono,monospace); opacity:0.85; margin-left:4px;" hidden></span>
         </div>
         <div class="hdr-field hdr-wf-field" title="System Bringup, Agent & Workspace Status">
           <label>⚡ Agent:</label>

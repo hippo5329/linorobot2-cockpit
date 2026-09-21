@@ -602,11 +602,14 @@ static inline void wdtFeed()  {}
 //
 // So the board says it, unprompted, in one greppable line:
 //
-//     [fw] linorobot2_hardware app=base built=2026-09-16 git=6aa607f
+//     [fw] linorobot2_hardware app=base built=2026-09-16 git=6aa607f uid=E66138935F63A22A
 //
 // `app` is the sub-firmware this boot selected, `built` is the compile date and
 // `git` the 7-character revision of the tree it came from (a trailing '+' means
 // that tree had uncommitted edits, so the revision alone does not identify it).
+// The last field names the board: `uid=` where the SILICON can identify itself
+// (RP2350, ESP32), `flashid=` on an RP2040, whose only unique id belongs to the
+// external flash chip. See identityField() below -- the key is the claim.
 // The last two come from firmware/common/build_stamp.py through the build flags.
 // scripts/mcu_probe.py parses exactly this line -- keep the key=value shape.
 #ifndef FW_GIT_REV
@@ -618,6 +621,46 @@ static inline void wdtFeed()  {}
 #ifndef FW_BUILD_DATE
 #define FW_BUILD_DATE "unknown"
 #endif
+// A name for the board, so two identical ones on a bench are telling apart from
+// their own output. What can honestly answer differs by family, and the KEY says
+// which question was answered -- the two are not interchangeable:
+//
+//   uid=      identifies the SILICON.
+//             RP2350  a real chip id, read from ROM (`rom_func_lookup`,
+//                     SYS_INFO_CHIP_INFO), burned into the part.
+//             ESP32   the 48-bit eFuse MAC, burned per chip at the factory.
+//                     Every variant in the family has one.
+//
+//   flashid=  identifies the external FLASH chip, not the MCU.
+//             RP2040  has no chip id of its own; `pico_get_unique_board_id()`
+//                     there returns `flash_get_unique_id()`. It still names this
+//                     particular board uniquely, which is what a bench needs --
+//                     but it moves if the flash is replaced, and two RP2040s
+//                     cannot be told apart by silicon at all. Emitting it under
+//                     `uid` would be a lie that looks exactly like the truth, so
+//                     it gets its own key and every reader can see the difference.
+//
+// Writes " <key>=<hex>" into `buf`, or an empty string if the board can answer
+// neither. Appending to the banner rather than inserting keeps older parsers
+// working, and a reader can test for the key it actually trusts.
+static void identityField(char *buf, size_t n)
+{
+    if (!buf || !n)
+        return;
+    buf[0] = '\0';
+#if defined(ESP32)
+    const uint64_t mac = ESP.getEfuseMac();       // 48 bits, factory-burned
+    snprintf(buf, n, " uid=%04X%08X",
+             (unsigned)((mac >> 32) & 0xFFFF), (unsigned)(mac & 0xFFFFFFFF));
+#elif defined(ARDUINO_ARCH_RP2350) || defined(PICO_RP2350)
+    snprintf(buf, n, " uid=%s", rp2040.getChipID());      // ROM chip info
+#elif defined(ARDUINO_ARCH_RP2040) || defined(PICO_RP2040)
+    snprintf(buf, n, " flashid=%s", rp2040.getChipID());  // the FLASH's id, not the MCU's
+#else
+    (void)n;
+#endif
+}
+
 static void printBanner(void)
 {
     // distro is here and not in the env partition because it cannot be there:
@@ -625,8 +668,13 @@ static void printBanner(void)
     // the only field that distinguishes the two halves of the release matrix,
     // so mcu_probe.py needs it to avoid calling a jazzy board up_to_date on a
     // lyrical run.
-    Serial.printf("\n[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s\n",
-                  toolName(app_mode), FW_ROS_DISTRO, FW_BUILD_DATE, FW_GIT_REV,
+    // The identity field is appended, not inserted: scripts/mcu_probe.py parses
+    // this line as key=value pairs, and older hosts reading a newer board must
+    // keep working.
+    char ident[32];
+    identityField(ident, sizeof(ident));
+    Serial.printf("\n[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s\n",
+                  toolName(app_mode), FW_ROS_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident,
                   mcuEnvValid() ? "" : " (env blank or invalid - using header defaults)");
 }
 

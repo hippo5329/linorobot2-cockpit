@@ -1291,7 +1291,9 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     if banner:
         log(f"Board reports: linorobot2_hardware app={banner['app']} "
             f"distro={banner.get('distro') or 'unstated'} "
-            f"built={banner['built']} git={banner['git']}")
+            f"built={banner['built']} git={banner['git']}"
+            + (f" {banner['id_kind']}={banner['board_id']}"
+               if banner.get("board_id") else ""))
         # Everything else the board said while booting -- which sensors answered
         # on the bus, which drivers it enabled, why it last reset. This is the
         # operator's only view of it on a USB-CDC board: the port disappears on
@@ -1309,6 +1311,14 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
         # happens to build would be the one thing the banner exists to prevent.
         if banner.get("distro"):
             stamp["distro"] = banner["distro"]
+        # Which board this is, as the board itself says. Recorded under the key
+        # it used: `uid` is the silicon's own id, `flashid` only the external
+        # flash chip's (an RP2040 has nothing else). Keeping them apart is the
+        # point -- a flash swap must never read as the same chip, nor a chip
+        # swap as the same board. Absent when the image predates the field.
+        if banner.get("board_id"):
+            stamp["board_id"] = banner["board_id"]
+            stamp["id_kind"] = banner["id_kind"]
     else:
         stamp["banner_confirmed"] = False
         log("(the board did not print a boot banner in time — the stamp records "

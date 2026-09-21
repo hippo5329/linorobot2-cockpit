@@ -102,10 +102,16 @@ STAMP_DIR = os.environ.get("LINO_STAMP_DIR") or _default_stamp_dir()
 # one place it is written; keep the two together.
 # distro= is optional in the pattern on purpose: a board flashed before that
 # field existed must still parse, and report no distro rather than a guessed one.
+# The identity field is optional, and WHICH key appears is itself information
+# (firmware/src/main.cpp:identityField): `uid=` is the silicon's own id (RP2350
+# chip info, ESP32 eFuse MAC), `flashid=` is the external flash chip's, which is
+# all an RP2040 has. Both name one board on a bench; only `uid` names the part.
+# Neither key means an older image, so absence is never "the probe failed".
 BANNER_RE = re.compile(
     r"\[fw\]\s+linorobot2_hardware\s+app=(?P<app>\S+)"
     r"(?:\s+distro=(?P<distro>\S+))?"
-    r"\s+built=(?P<built>\S+)\s+git=(?P<git>\S+)")
+    r"\s+built=(?P<built>\S+)\s+git=(?P<git>\S+)"
+    r"(?:\s+(?P<id_kind>uid|flashid)=(?P<board_id>[0-9A-Fa-f]+))?")
 
 
 def distro_for_env(env: str) -> str:
@@ -432,6 +438,12 @@ def human(result: dict) -> str:
         lines.append(f"  installed      app={inst.get('app')} "
                      f"distro={inst.get('distro') or 'unstated'} "
                      f"git={inst.get('git')}   [{src}]")
+        # Only a board that answered carries one; a stamp from a previous flash
+        # never does. The label follows the key, because "chip" and "flash" are
+        # different claims about what is being identified.
+        if inst.get("board_id"):
+            label = "chip uid" if inst.get("id_kind") == "uid" else "flash id"
+            lines.append(f"  {label:<14} {inst['board_id']}")
     else:
         lines.append("  installed      unknown — the board has not said, and this "
                      "host has no record of flashing it")

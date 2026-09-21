@@ -574,10 +574,31 @@ async function refreshStatus() {
     if (s.detected_mcu || s.controller) {
       const detectedMcu = s.detected_mcu || s.controller;
       const detectedChip = s.detected_chip || detectedMcu;
+      // The board's own name for itself, when it has one. The VID:PID above says
+      // which KIND of part is plugged in; this says WHICH ONE, which is the only
+      // thing that tells two identical boards apart on one bench. The key is the
+      // claim and the two are never merged: `uid` is the silicon's own id (RP2350
+      // chip info, ESP32 eFuse MAC), `flashid` is the external flash chip's, all
+      // an RP2040 has to offer -- it moves with the flash, not the MCU.
+      const bid = s.board_id;
+      const idKind = bid && bid.kind === "flashid" ? "flash" : "chip";
+      const idLabel = bid ? `${idKind} ${bid.id}` : "";
       const mcuBadge = document.getElementById("hdr-detected-mcu-badge");
       if (mcuBadge) {
         mcuBadge.textContent = detectedChip;
-        mcuBadge.title = `Auto-detected MCU: ${detectedMcu} (${detectedChip})`;
+        mcuBadge.title = bid
+          ? `Auto-detected MCU: ${detectedMcu} (${detectedChip})\n` +
+            (bid.kind === "flashid"
+              ? `Flash chip id ${bid.id} — this RP2040 has no id of its own, so this names the board but moves if the flash is replaced.`
+              : `Chip uid ${bid.id} — burned into the silicon.`) +
+            (bid.confirmed ? "" : " (from a flash this host did not hear confirmed)")
+          : `Auto-detected MCU: ${detectedMcu} (${detectedChip})`;
+      }
+      const mcuIdBadge = document.getElementById("hdr-board-id-badge");
+      if (mcuIdBadge) {
+        mcuIdBadge.textContent = idLabel;
+        mcuIdBadge.hidden = !bid;
+        if (mcuBadge) mcuIdBadge.title = mcuBadge.title;
       }
       const baseMcuName = document.getElementById("base-detected-mcu-name");
       if (baseMcuName) {
@@ -1010,9 +1031,22 @@ function setupRobotBranchHeader() {
     emptyText: "No saved robot configs.",
     loadItems: async () => {
       await loadRobotList();
-      return { items: state.robots.map((r) => r.name), current: state.robot_name };
+      // A robot is named by its file's CONTENT (robot.name), so two files can
+      // claim one name. Every file still gets a row -- losing one to a name
+      // clash is how a robot disappears from the cockpit while the CLI can
+      // still see it -- and `select` is the handle that reaches THIS file: the
+      // name when it is unique, the filename stem when it is not. The clash is
+      // shown rather than resolved, because only the user can fix it.
+      return {
+        items: state.robots.map((r) => (r.conflict ? `${r.name} (${r.filename})` : r.name)),
+        current: state.robot_name,
+      };
     },
-    onPick: selectRobot,
+    onPick: (label) => {
+      const hit = state.robots.find(
+        (r) => label === r.name || label === `${r.name} (${r.filename})`);
+      return selectRobot(hit ? hit.select : label);
+    },
   });
 
   initHeaderPicker({

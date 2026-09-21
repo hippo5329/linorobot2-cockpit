@@ -4,6 +4,7 @@ Part of the main.py split: route handlers registered on the shared `app`
 as an import side effect (main.py imports this module). Shared state and
 helpers come from core.py. See core.py for the split's contract.
 """
+import glob
 import json
 import os
 import re
@@ -39,6 +40,7 @@ from core import (
     load_params,
     main_runner,
     mcu_identity,
+    mcu_probe,
     nav2_stack_status,
     one_click_pipeline,
     probe_stack_liveness,
@@ -47,6 +49,40 @@ from core import (
     syslog_manager,
     text_field,
 )
+
+
+def _board_id_for_port(port: str):
+    """What the board on `port` called itself at its last boot, or None.
+
+    Read from the flash stamp rather than the bus: the VID:PID says which KIND of
+    part is plugged in, the banner says WHICH ONE -- the difference that matters
+    when two identical boards sit on one bench. `kind` carries the claim: "uid" is
+    the silicon's own identifier (RP2350 chip info, ESP32 eFuse MAC), "flashid"
+    only the external flash chip's, which is all an RP2040 has. They are never
+    merged, so a replaced flash cannot read as the same chip.
+
+    The stamp is named <env>_<port>.json and one board can have stamps under more
+    than one env name (pico2 and pico2w are the same silicon), so match on the
+    port and take the most recently written.
+    """
+    if not port:
+        return None
+    base = os.path.basename(port)
+    try:
+        stamps = glob.glob(os.path.join(mcu_probe.STAMP_DIR, f"*_{base}.json"))
+    except Exception:
+        return None
+    for path in sorted(stamps, key=os.path.getmtime, reverse=True):
+        try:
+            with open(path) as fh:
+                stamp = json.load(fh)
+        except Exception:
+            continue
+        if stamp.get("board_id"):
+            return {"id": stamp["board_id"],
+                    "kind": stamp.get("id_kind") or "uid",
+                    "confirmed": bool(stamp.get("banner_confirmed"))}
+    return None
 
 
 @app.get("/api/status")
@@ -69,11 +105,13 @@ def get_status(controller: Optional[str] = None):
     mcu_detected = False
     detected_mcu = controller.get("name") or "pico2"
     detected_chip = "Controller: " + detected_mcu
+    detected_port = ""
     for lp in ports_info.get("local_ports", []):
         hint = lp.get("mcu_hint")
         if hint:
             detected_mcu = hint
             detected_chip = lp.get("chip", hint)
+            detected_port = lp.get("path", "") or lp.get("port", "")
             mcu_detected = True
             break
 
@@ -103,6 +141,15 @@ def get_status(controller: Optional[str] = None):
                         "chip": detected_chip,
                     }
                 break
+
+    # What the board called ITSELF at its last boot, as recorded by the flasher
+    # from the banner. This is not the VID:PID above: that says which kind of
+    # part is on the bus, this says WHICH ONE -- the difference that matters when
+    # two identical boards are on one bench. The key is the claim: `uid` is the
+    # silicon's own id (RP2350 chip info, ESP32 eFuse MAC), `flashid` is only the
+    # external flash chip's, which is all an RP2040 has to offer. Absent for a
+    # board this host has never flashed, or one running an image without the field.
+    board_id = _board_id_for_port(detected_port) if mcu_detected else None
 
     ctrl_sensors = controller.get("sensors", {}) or {}
     fake_mode_active = bool(
@@ -170,6 +217,7 @@ def get_status(controller: Optional[str] = None):
         "detected_chip": detected_chip,
         "mcu_detected": mcu_detected,
         "mcu_mismatch": mcu_mismatch,
+        "board_id": board_id,
         "host_ip": ports_info.get("host_ip", ""),
         "config_dir": display_path(CONFIG_DIR),
         "fake_mode_active": fake_mode_active,
