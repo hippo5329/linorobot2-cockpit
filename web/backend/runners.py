@@ -29,6 +29,15 @@ BRINGUP_HEALTH_TOPICS = [
     ("imu", "/imu/data", "IMU orientation & angular velocity", 20.0),
     ("scan", "/scan", "Laser scan", 5.0),
 ]
+# Message type per health topic, for the direct subscription in
+# check_bringup_health(). Keyed like BRINGUP_HEALTH_TOPICS; a topic missing
+# here is still listed as advertised, just never rated.
+BRINGUP_HEALTH_TYPES = {
+    "odom": "nav_msgs/msg/Odometry",
+    "odom_raw": "nav_msgs/msg/Odometry",
+    "imu": "sensor_msgs/msg/Imu",
+    "scan": "sensor_msgs/msg/LaserScan",
+}
 BRINGUP_TF_CHAIN = [
     ("odom", "base_link"),
     ("base_link", "laser"),
@@ -497,8 +506,50 @@ def release_agent_port(
     return res
 
 
+def rate_from_stamps(stamps: List[float]) -> Optional[float]:
+    """Messages per second over the span actually observed, or None for < 2."""
+    if len(stamps) < 2:
+        return None
+    span = stamps[-1] - stamps[0]
+    return (len(stamps) - 1) / span if span > 0 else None
+
+
+_HEALTH_PROBE_PY = r"""
+import sys, time, json, importlib
+import rclpy
+from rclpy.qos import qos_profile_sensor_data
+spec = json.loads(sys.argv[1]); window = float(sys.argv[2])
+rclpy.init(); node = rclpy.create_node("cockpit_bringup_health")
+stamps = {t: [] for t in spec}
+def sub(topic, typ):
+    mod, cls = typ.rsplit("/", 1)
+    msg_type = getattr(importlib.import_module(mod.replace("/", ".")), cls)
+    node.create_subscription(msg_type, topic, lambda m, t=topic: stamps[t].append(time.monotonic()),
+                             qos_profile_sensor_data)
+for t, typ in spec.items():
+    sub(t, typ)
+deadline = time.monotonic() + window
+while time.monotonic() < deadline:
+    rclpy.spin_once(node, timeout_sec=0.05)
+print(json.dumps({t: s for t, s in stamps.items()}))
+"""
+
+
 def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
-    """Queries the active ROS 2 graph on this machine."""
+    """Queries the active ROS 2 graph on this machine.
+
+    Rates come from a direct rclpy subscription with the sensor-data QoS, NOT
+    from shelling out to `ros2 topic hz`. That CLI first looks the publisher
+    up in the graph to copy its QoS, and under the cockpit's Fast DDS profile
+    (config/fastdds_service_qos.xml, type_propagation=registration_only) that
+    lookup does not find the micro-ROS agent's publishers: `ros2 topic list`
+    shows /odom/unfiltered and /imu/data, `ros2 topic hz` on either says
+    "does not appear to be published yet", and a 3 s `timeout` then killed it
+    with nothing parsed. The card showed two red rows on a robot whose own
+    1-Click gate had just measured both topics at 50 Hz -- through exactly the
+    subscription used here, which matches best-effort and reliable alike and
+    needs no graph lookup at all. Measured 2026-09-22 on a bare Pico 2.
+    """
     res: Dict[str, Any] = {
         "ready": False,
         "ros_available": False,
@@ -525,26 +576,31 @@ def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
         return res
 
     for key, topic, what, min_hz in BRINGUP_HEALTH_TOPICS:
-        entry = {
-            "topic": topic,
-            "what": what,
-            "min_hz": min_hz,
-            "advertised": topic in present,
-            "hz": None,
-            "ok": False,
+        res["topics"][key] = {
+            "topic": topic, "what": what, "min_hz": min_hz,
+            "advertised": topic in present, "hz": None, "ok": False,
         }
-        if entry["advertised"]:
-            hz_cmd = ["bash", "-lc",
-                      f"{ros_setup_shell()} && timeout 3 ros2 topic hz {shlex.quote(topic)}"]
-            try:
-                hz_out = subprocess.run(hz_cmd, capture_output=True, text=True, timeout=4)
-                m = re.search(r"average rate:\s*([0-9.]+)", hz_out.stdout)
-                if m:
-                    entry["hz"] = float(m.group(1))
-                    entry["ok"] = entry["hz"] >= min_hz
-            except Exception:
-                pass
-        res["topics"][key] = entry
+
+    # One process, every advertised topic at once, one window: cheaper than a
+    # CLI per topic and immune to the graph-lookup failure described above.
+    spec = {e["topic"]: BRINGUP_HEALTH_TYPES[k]
+            for k, e in res["topics"].items() if e["advertised"] and k in BRINGUP_HEALTH_TYPES}
+    if spec:
+        window = max(1.5, min(3.0, timeout - 1.0))
+        cmd = ["bash", "-lc",
+               f"{ros_setup_shell()} && python3 -c {shlex.quote(_HEALTH_PROBE_PY)} "
+               f"{shlex.quote(json.dumps(spec))} {window}"]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=window + timeout + 6)
+            line = [l for l in out.stdout.splitlines() if l.startswith("{")]
+            stamps = json.loads(line[-1]) if line else {}
+        except Exception:
+            stamps = {}
+        for key, entry in res["topics"].items():
+            hz = rate_from_stamps(stamps.get(entry["topic"], []))
+            if hz is not None:
+                entry["hz"] = round(hz, 1)
+                entry["ok"] = hz >= entry["min_hz"]
 
     odom_ok = res["topics"].get("odom", {}).get("ok") or res["topics"].get("odom_raw", {}).get("ok")
     res["ready"] = bool(odom_ok)
