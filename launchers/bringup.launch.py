@@ -266,7 +266,20 @@ def launch_setup(context, *args, **kwargs):
     if use_mag_arg != "":
         use_mag = (use_mag_arg.lower() in ("true", "1", "yes"))
     else:
-        use_mag = (mag_sensor != "NONE" and not use_fake_mag)
+        # The simulated magnetometer is fused, not just published. This used to
+        # read `mag_sensor != "NONE" and not use_fake_mag`, which excluded the
+        # fake mag on purpose -- from the era when it pointed along +X and gave
+        # madgwick a fixed 90-degree error (see FakeIMUFromWheels::applyMag).
+        # The mag now points North and is rotated by the wheel heading for
+        # exactly one reason: to anchor heading fusion to the simulated room.
+        # Left out of the fusion, madgwick integrates the gyro alone, the fake
+        # gyro's bias walks onto its +-0.004 rad/s clamp and stays there
+        # (13.7 deg/min), the EKF takes madgwick's yaw as absolute, and the
+        # body -- which follows the WHEEL yaw -- ends up 52 degrees from where
+        # Nav2 thinks it is pointing. Measured at rest on a bare Pico 2 after an
+        # hour: wheel yaw 59.4, EKF yaw 7.2. Every goal then veers, and with a
+        # wall in the room it eventually parks itself there.
+        use_mag = (mag_sensor != "NONE") or bool(use_fake_mag)
 
     madgwick_arg = context.launch_configurations.get("madgwick", "")
     if madgwick_arg != "":
