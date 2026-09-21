@@ -17,10 +17,10 @@ import sys
 import tempfile
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 from launch_ros.parameter_descriptions import ParameterValue
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -198,6 +198,16 @@ def launch_setup(context, *args, **kwargs):
         print(f"[bringup] could not write the wiring chart: {exc}")
     geometry = gen_robot_description.effective_geometry(params)
     laser_frame = str(geometry["laser"].get("frame") or gen_robot_description.DEFAULT_LASER_FRAME)
+
+    # Multi-robot: when the config sets topic_prefix, the board already publishes
+    # its topics under /<prefix>/… (firmware topicName()). The host stack joins
+    # it by running in the same namespace AND prefixing its TF frames, so two
+    # robots on one DDS domain never collide on a topic or a frame. Unset -> "" ->
+    # every branch below is a no-op and the single-robot layout is unchanged.
+    ns = cockpit_paths.robot_namespace(params)
+    frame_prefix = f"{ns}/" if ns else ""
+    if ns:
+        laser_frame = frame_prefix + laser_frame
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
     lidar_product, lidar_bins = LDLIDAR_MODELS.get(lidar_model, LDLIDAR_MODELS["ld19"])
 
@@ -208,6 +218,14 @@ def launch_setup(context, *args, **kwargs):
     ekf_data = params.get("ekf", {}) or {}
     if ekf_data and "ros__parameters" not in ekf_data and "ekf_filter_node" not in ekf_data:
         ekf_data = {"ekf_filter_node": {"ros__parameters": ekf_data}}
+    if ns:
+        # Prefix the EKF's own frame names so its odom->base TF lands in this
+        # robot's tree (frame_prefix on robot_state_publisher does the URDF
+        # frames; the EKF sets its frames itself, so it has to be told here).
+        rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
+        for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_footprint"),
+                             ("world_frame", "odom"), ("map_frame", "map")):
+            rp[key] = frame_prefix + str(rp.get(key, default))
     ekf_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     yaml.dump(ekf_data, ekf_temp)
     ekf_temp.flush()
@@ -289,7 +307,7 @@ def launch_setup(context, *args, **kwargs):
             executable="robot_state_publisher",
             name="robot_state_publisher",
             output="screen",
-            parameters=[{"robot_description": robot_description}],
+            parameters=[{"robot_description": robot_description, "frame_prefix": frame_prefix}],
         ),
         Node(
             condition=IfCondition(LaunchConfiguration("description")),
@@ -427,7 +445,15 @@ def launch_setup(context, *args, **kwargs):
 
     # `None` is the "this robot has no such node" placeholder above; launch
     # rejects it, so it never reaches the description.
-    return [n for n in nodes if n is not None]
+    live = [n for n in nodes if n is not None]
+    # Multi-robot: run the whole stack under /<prefix> so its relative topic
+    # names resolve to the same /<prefix>/… the board publishes. The agent is an
+    # ExecuteProcess (raw `ros2 run`), not a Node, so PushRosNamespace does not
+    # reach it -- but the board already prefixes its own topic names, so the
+    # agent needs no remap. Unset -> no group, byte-identical to before.
+    if ns:
+        return [GroupAction([PushRosNamespace(ns), *live])]
+    return live
 
 
 def generate_launch_description():

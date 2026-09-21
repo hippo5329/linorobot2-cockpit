@@ -69,11 +69,17 @@ def test_the_launcher_itself_recovers_a_missed_activation():
     recover it. The guard belongs in the launcher, where both paths get it.
     """
     text = open(os.path.join(REPO_ROOT, "launchers", "slam.launch.py")).read()
-    assert "ros2 lifecycle set --no-daemon /slam_toolbox activate" in text, (
+    # The node path is parameterised now (it carries the robot's namespace for
+    # multi-robot topic_prefix), so the guard activates "$NODE" rather than a
+    # hard-coded /slam_toolbox -- but the default node is still /slam_toolbox.
+    assert 'ros2 lifecycle set --no-daemon "$NODE" activate' in text, (
         "slam.launch.py no longer activates a slam_toolbox that its own launch "
         "file left in 'inactive'"
     )
-    assert "ros2 lifecycle get --no-daemon /slam_toolbox" in text, (
+    assert 'activation_guard("/slam_toolbox")' in text or 'def activation_guard(node="/slam_toolbox")' in text, (
+        "the default (no-namespace) activation target is no longer /slam_toolbox"
+    )
+    assert 'ros2 lifecycle get --no-daemon "$NODE"' in text, (
         "the guard must read the state first -- an unconditional activate hides "
         "whether the race happened at all"
     )

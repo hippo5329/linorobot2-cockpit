@@ -259,3 +259,20 @@ if __name__ == "__main__":
     ap.add_argument("--ensure", action="store_true", help="create and seed the directory if needed")
     a = ap.parse_args()
     print(ensure_config_dir() if a.ensure else config_dir())
+
+
+def robot_namespace(params: dict) -> str:
+    """The ROS namespace / frame prefix for a robot, from its base_controller's
+    `topic_prefix`, or "" when unset. Normalised the same way scripts/mcu_env.py
+    normalises it for the firmware, so the host and the board agree: letters,
+    digits, underscore and / only, no surrounding slashes. An invalid value is
+    treated as unset (the middleware would reject it and the robot would go
+    silent, which is worse than ignoring it)."""
+    bc = (params or {}).get("base_controller", {}) or {}
+    raw = bc.get("topic_prefix")
+    if raw is None:
+        return ""
+    s = str(raw).strip().strip('"').strip("/")
+    if s and all(c.isalnum() or c in "_/" for c in s):
+        return s
+    return ""

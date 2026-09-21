@@ -80,8 +80,12 @@ class FakeLaserNode(Node):
             durability=DurabilityPolicy.VOLATILE,
         )
 
-        self.scan_pub = self.create_publisher(LaserScan, "/scan", sensor_qos)
-        self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        # Relative topic names, so a namespaced launch (multi-robot topic_prefix)
+        # puts these under /<prefix>/. With no namespace they resolve to /scan
+        # and /odom exactly as before -- an absolute "/scan" would have ignored
+        # the namespace and published at the root, colliding between robots.
+        self.scan_pub = self.create_publisher(LaserScan, "scan", sensor_qos)
+        self.create_subscription(Odometry, "odom", self._odom_cb, 10)
         self.timer = self.create_timer(0.1, self._publish_scan)  # 10 Hz
 
         self.num_points = 456

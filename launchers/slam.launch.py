@@ -10,11 +10,12 @@ import sys
 import tempfile
 import yaml
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
                             IncludeLaunchDescription, LogInfo, OpaqueFunction,
                             TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import PushRosNamespace
 from launch_ros.substitutions import FindPackageShare
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,6 +112,16 @@ def launch_setup(context, *args, **kwargs):
     if "ros__parameters" not in slam_data.get("slam_toolbox", {}):
         slam_data = {"slam_toolbox": {"ros__parameters": slam_data}}
 
+    # Multi-robot: prefix SLAM's frames and scan topic so it maps THIS robot's
+    # namespace, matching bringup. Unset -> "" -> untouched.
+    ns = cockpit_paths.robot_namespace(params)
+    if ns:
+        rp = slam_data.setdefault("slam_toolbox", {}).setdefault("ros__parameters", {})
+        rp["odom_frame"] = f"{ns}/{str(rp.get('odom_frame', 'odom'))}"
+        rp["map_frame"] = f"{ns}/{str(rp.get('map_frame', 'map'))}"
+        rp["base_frame"] = f"{ns}/{str(rp.get('base_frame', 'base_footprint'))}"
+        rp["scan_topic"] = f"/{ns}/scan"
+
     slam_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     yaml.dump(slam_data, slam_temp)
     slam_temp.flush()
@@ -131,7 +142,14 @@ def launch_setup(context, *args, **kwargs):
         ),
     ]
     if autostart.lower() in ("true", "1", "yes"):
-        actions.append(activation_guard())
+        actions.append(activation_guard(f"/{ns}/slam_toolbox" if ns else "/slam_toolbox"))
+    # Run slam_toolbox under the robot's namespace so its /map and /scan
+    # subscription resolve to /<prefix>/…. The guard is a raw shell, so it is
+    # NOT namespaced -- it was handed the full node path above -- and stays
+    # outside the group.
+    if ns:
+        return [GroupAction([PushRosNamespace(ns), *[a for a in actions if not isinstance(a, TimerAction)]]),
+                *[a for a in actions if isinstance(a, TimerAction)]]
     return actions
 
 
@@ -169,14 +187,18 @@ def launch_setup(context, *args, **kwargs):
 # than no guard at all. `--no-daemon` answered "active [3]" immediately from
 # the same shell. Twelve short-lived participants over 36 s is a price worth
 # paying for an answer about the graph that comes from the graph.
-def activation_guard():
+def activation_guard(node="/slam_toolbox"):
+    # The node path carries the namespace: under a robot's topic_prefix the node
+    # is /<prefix>/slam_toolbox, and this shell (an ExecuteProcess) is not
+    # namespaced by PushRosNamespace, so it must be told the full path.
     script = """
+NODE="%s"
 for i in $(seq 1 12); do
-  s=$(ros2 lifecycle get --no-daemon /slam_toolbox 2>/dev/null)
+  s=$(ros2 lifecycle get --no-daemon "$NODE" 2>/dev/null)
   case "$s" in
     *inactive*)
       echo "[Linorobot2 Cockpit] slam_toolbox is still inactive -- its launch file missed the transition event. Activating it."
-      ros2 lifecycle set --no-daemon /slam_toolbox activate
+      ros2 lifecycle set --no-daemon "$NODE" activate
       exit 0 ;;
     *active*)
       exit 0 ;;
@@ -184,7 +206,7 @@ for i in $(seq 1 12); do
   sleep 3
 done
 echo "[Linorobot2 Cockpit] slam_toolbox never reported a lifecycle state (last answer: '${s:-nothing}'). It did not configure -- check the params file."
-"""
+""" % node
     return TimerAction(period=15.0, actions=[
         ExecuteProcess(cmd=["bash", "-c", script], output="screen"),
     ])
