@@ -106,92 +106,14 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 // The topic namespace, from the env. It used to be pasted on at COMPILE time
 // -- the macro was pasted onto each literal -- so putting two robots on one DDS
 // domain meant a rebuild per robot, and the published images (built from the
-// generated bare config) could not do it at all. Making it runtime means the
-// names have to be built at run time too, which is what topicName() is for.
+// generated bare config) could not do it at all.
 //
-// Cached by the suffix's ADDRESS: every caller passes a string literal, so the
-// pointer is stable, and a reconnect (destroyEntities -> createEntities) reuses
-// the same buffer instead of consuming the arena a second time.
-#define TOPIC_PREFIX_SLOTS 20
-#define TOPIC_ARENA_BYTES  640
-
-static const char *topicName(const char *suffix)
+// topicName() is envPrefixed() under its old name: the prefix now covers the
+// frame_ids the sensor libs stamp as well as the topic names here, so the arena
+// and the cache live in mcu_env beside the env reader they depend on.
+static inline const char *topicName(const char *suffix)
 {
-    static const char *keys[TOPIC_PREFIX_SLOTS] = {nullptr};
-    static const char *vals[TOPIC_PREFIX_SLOTS] = {nullptr};
-    // The arena is heap, allocated once on the first PREFIXED name. With no
-    // topic_prefix set -- the default, and every prebuilt image -- nothing is
-    // allocated, so the feature costs zero static DRAM. As a static array it
-    // was 640 bytes of .bss paid by every board whether or not it ever
-    // prefixed a topic, and on esp32_lyrical, which lives at the edge of
-    // dram0_0_seg, that is what pushed the link 96 bytes over (rc-20260922).
-    // The capacity is unchanged; one never-freed block from the ~300 KB heap
-    // at entity creation cannot fragment.
-    static char *arena = nullptr;
-    static size_t used = 0;
-
-    for (int i = 0; i < TOPIC_PREFIX_SLOTS && keys[i]; i++)
-        if (keys[i] == suffix)
-            return vals[i];
-
-    // The compiled-in macro is the fallback, so a board with a blank env
-    // behaves exactly as it always did. `TOPIC_PREFIX ""` is the empty string
-    // when the macro is empty and the prefix when it is a literal.
-    const char *prefix = envGet("topic_prefix", TOPIC_PREFIX "");
-    if (!prefix)
-        prefix = "";
-
-    // A prefix ROS 2 would reject leaves the robot with no topics at all and
-    // nothing in the log to say why, because rclc just fails the entity. Only
-    // the characters a topic name may contain get through; anything else means
-    // no prefix, and a line on the console.
-    for (const char *p = prefix; *p; p++)
-    {
-        const bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')
-                     || (*p >= '0' && *p <= '9') || *p == '_' || *p == '/';
-        if (!ok)
-        {
-            Serial.printf("[topic] ignoring topic_prefix \"%s\": '%c' is not "
-                          "valid in a ROS 2 topic name\n", prefix, *p);
-            prefix = "";
-            break;
-        }
-    }
-
-    const size_t plen = strlen(prefix);
-    const size_t slen = strlen(suffix);
-    // A trailing slash is added when it is missing, so `robot1` and `robot1/`
-    // both mean the same thing -- the config engine does the same.
-    const bool need_slash = (plen > 0 && prefix[plen - 1] != '/');
-    const size_t total = plen + (need_slash ? 1 : 0) + slen + 1;
-
-    int slot = 0;
-    while (slot < TOPIC_PREFIX_SLOTS && keys[slot])
-        slot++;
-    if (plen == 0)
-        return suffix;          // no prefix: the literal, and no allocation
-    if (!arena)
-        arena = (char *)malloc(TOPIC_ARENA_BYTES);
-    if (!arena || slot >= TOPIC_PREFIX_SLOTS || used + total > TOPIC_ARENA_BYTES)
-    {
-        // Dropping the prefix on one topic silently would split the robot's
-        // graph across two namespaces with nothing in the log to say why.
-        Serial.printf("[topic] no room to prefix \"%s\" (slots %d/%d, arena "
-                      "%u/%u) -- publishing it unprefixed\n",
-                      suffix, slot, TOPIC_PREFIX_SLOTS, (unsigned)used,
-                      (unsigned)TOPIC_ARENA_BYTES);
-        return suffix;
-    }
-
-    char *out = arena + used;
-    memcpy(out, prefix, plen);
-    if (need_slash)
-        out[plen] = '/';
-    memcpy(out + plen + (need_slash ? 1 : 0), suffix, slen + 1);
-    used += total;
-    keys[slot] = suffix;
-    vals[slot] = out;
-    return out;
+    return envPrefixed(suffix);
 }
 #ifndef CONTROL_TIMER
 #define CONTROL_TIMER 20 // 50Hz
@@ -940,6 +862,9 @@ void setup()
     // of the env, so initMcuEnv() runs here -- it is safe now and was not during
     // static initialisation.
     initMcuEnv();
+    // Before anything asks for a topic name or stamps a frame. The compiled-in
+    // TOPIC_PREFIX stays the fallback for a board with a blank env.
+    envPrefixInit(TOPIC_PREFIX "");
     const char *imu_name = envGet("imu", defaultIMUName());
     const char *mag_name = envGet("mag", defaultMAGName());
 
@@ -1043,9 +968,9 @@ void setup()
     best_effort = envFlag("best_effort", true);
     if (env_present)
     {
-        pressure_msg.header.frame_id = micro_ros_string_utilities_set(pressure_msg.header.frame_id, "base_link");
-        temperature_msg.header.frame_id = micro_ros_string_utilities_set(temperature_msg.header.frame_id, "base_link");
-        humidity_msg.header.frame_id = micro_ros_string_utilities_set(humidity_msg.header.frame_id, "base_link");
+        pressure_msg.header.frame_id = micro_ros_string_utilities_set(pressure_msg.header.frame_id, envPrefixed("base_link"));
+        temperature_msg.header.frame_id = micro_ros_string_utilities_set(temperature_msg.header.frame_id, envPrefixed("base_link"));
+        humidity_msg.header.frame_id = micro_ros_string_utilities_set(humidity_msg.header.frame_id, envPrefixed("base_link"));
         // { pressure Pa^2, temperature C^2, humidity (0..1)^2 }. The env wins;
         // the macro, where a build defines one, is the fallback.
         {
@@ -1073,8 +998,26 @@ void setup()
         syslog(LOG_WARNING, "%s BMP280/BME280 not found (0x76/0x77) %lu", __FUNCTION__, millis());
     }
     // The globals read their env here, not in their constructors: static
-    // initialisation runs before the flash partition API is usable.
+    // initialisation runs before the flash partition API is usable. The frames
+    // go on for the same reason, and must: under a topic_prefix a message
+    // stamped "odom" names a frame absent from this robot's own TF tree, and
+    // the EKF drops every one of them without a word (two-robot bench,
+    // 2026-09-21).
     odometry->applyEnvCovariance();
+    odometry->applyEnvFrames();
+    if (!fake_wheels) {
+        if (imu) imu->applyEnvFrames();
+        if (mag) mag->applyEnvFrames();
+    }
+    // The SIMULATED sonar fills range_msg field by field and never touches the
+    // header, so without this it published an empty frame_id -- a Range that no
+    // consumer can place anywhere. The real path overwrites the whole message
+    // from getRange(), which carries the same frame, so setting it here is
+    // right for both. (Empty on every fake-mode board until 2026-09-21; nothing
+    // in the pipeline subscribes to /sonar yet, which is why it went unseen.)
+    if (range_msg)
+        range_msg->header.frame_id =
+            micro_ros_string_utilities_set(range_msg->header.frame_id, envPrefixed("sonar_link"));
     initLidar(); // after wifi connected
     fake_lidar_on = envFlag("fake_ld19", true);
     // The emulator is built only when fake mode asks for it. As a static

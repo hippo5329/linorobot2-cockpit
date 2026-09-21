@@ -333,3 +333,81 @@ IPAddress envIP(const char *key, IPAddress fallback)
         return fallback;
     return parsed;
 }
+
+// ---------------------------------------------------------------------------
+// topic_prefix: one namespace for the topic names AND the frame_ids.
+// ---------------------------------------------------------------------------
+#define PREFIX_SLOTS 24
+#define PREFIX_ARENA_BYTES 768
+
+static const char *prefix_fallback = "";
+
+void envPrefixInit(const char *compiled_fallback)
+{
+    prefix_fallback = compiled_fallback ? compiled_fallback : "";
+}
+
+const char *envPrefixed(const char *suffix)
+{
+    static const char *keys[PREFIX_SLOTS] = {NULL};
+    static const char *vals[PREFIX_SLOTS] = {NULL};
+    static char *arena = NULL;
+    static size_t used = 0;
+
+    for (int i = 0; i < PREFIX_SLOTS && keys[i]; i++)
+        if (keys[i] == suffix)
+            return vals[i];
+
+    const char *prefix = envGet("topic_prefix", prefix_fallback);
+    if (!prefix)
+        prefix = "";
+
+    // A prefix ROS 2 would reject leaves the robot with no topics at all and
+    // nothing in the log to say why, because rclc just fails the entity.
+    for (const char *p = prefix; *p; p++)
+    {
+        const bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z')
+                     || (*p >= '0' && *p <= '9') || *p == '_' || *p == '/';
+        if (!ok)
+        {
+            Serial.printf("[topic] ignoring topic_prefix \"%s\": '%c' is not "
+                          "valid in a ROS 2 name\n", prefix, *p);
+            prefix = "";
+            break;
+        }
+    }
+
+    const size_t plen = strlen(prefix);
+    const size_t slen = strlen(suffix);
+    // `robot1` and `robot1/` mean the same thing, as they do config-side.
+    const bool need_slash = (plen > 0 && prefix[plen - 1] != '/');
+    const size_t total = plen + (need_slash ? 1 : 0) + slen + 1;
+
+    int slot = 0;
+    while (slot < PREFIX_SLOTS && keys[slot])
+        slot++;
+    if (plen == 0)
+        return suffix;          // no prefix: the literal, and no allocation
+    if (!arena)
+        arena = (char *)malloc(PREFIX_ARENA_BYTES);
+    if (!arena || slot >= PREFIX_SLOTS || used + total > PREFIX_ARENA_BYTES)
+    {
+        // Dropping the prefix on one name silently would split the robot's
+        // graph, or its TF tree, with nothing in the log to say why.
+        Serial.printf("[topic] no room to prefix \"%s\" (slots %d/%d, arena "
+                      "%u/%u) -- publishing it unprefixed\n",
+                      suffix, slot, PREFIX_SLOTS, (unsigned)used,
+                      (unsigned)PREFIX_ARENA_BYTES);
+        return suffix;
+    }
+
+    char *out = arena + used;
+    memcpy(out, prefix, plen);
+    if (need_slash)
+        out[plen] = '/';
+    memcpy(out + plen + (need_slash ? 1 : 0), suffix, slen + 1);
+    used += total;
+    keys[slot] = suffix;
+    vals[slot] = out;
+    return out;
+}

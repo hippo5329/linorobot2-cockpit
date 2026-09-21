@@ -643,8 +643,33 @@ interesting part:
   told about the other.
 
 The compiled-in macro is still the fallback, so a board with a blank env behaves
-exactly as it always did, and with no prefix set `topicName()` returns the
+exactly as it always did, and with no prefix set the prefixer returns the
 literal and allocates nothing at all.
+
+**The prefix covers the frame_ids too, and it has to.** Prefixing only the topic
+names gets you a robot that publishes `/lino1/odom/unfiltered` with
+`frame_id: odom` inside it -- naming a frame that does not exist in its own TF
+tree, where `robot_state_publisher` has published `lino1/odom`. The EKF finds
+nothing relating the two, ignores every message, and publishes nothing; the
+board looks perfect and the robot has no odometry. That is what the two-robot
+bench found on 2026-09-21, and it is invisible with one robot because a
+single-robot stack is usually run without a prefix at all.
+
+So `envPrefixed()` lives in `mcu_env`, beside the env reader it depends on, and
+every frame the firmware stamps goes through it: `odom` and `base_footprint` in
+the odometry, `imu_link` in the IMU, the magnetometer and the fake wheels,
+`sonar_link` in the range driver, `base_link` on the environmental sensors.
+`topicName()` is now just its old name.
+
+**When it is applied matters as much as that it is applied.** Several of those
+frames are stamped in constructors, and a constructor runs during static
+initialisation -- before the flash partition API is usable, where the env reads
+back empty. This is the same trap `initSyslog()` and `applyEnvCovariance()`
+document. The constructors keep stamping the plain name, which is a valid frame
+for an unprefixed robot, and `applyEnvFrames()` re-stamps it from `setup()` once
+the env is readable, next to where the covariances are read. A test
+(`tests/test_frame_prefix.py`) reads the firmware source and fails if a frame is
+ever stamped with a literal that nothing re-stamps.
 
 ### DRAM is the ESP32's scarce budget, and a static is paid by every board
 

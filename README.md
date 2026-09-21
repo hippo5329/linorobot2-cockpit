@@ -375,10 +375,15 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`) — they were compile-time until 2026-09-20 and no reference config carried them, so the interrupt-driven driver had never run in any released image; it does now, measured at 8.3 Hz on an RP2350. `safety_stop` is off unless `safety_stop=1` is in the env, because it brakes the robot.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
-above moves under `/lino1/` — on the board, which builds the names at run time from the env
-key, *and* on the robot computer, where bringup, SLAM and Nav2 run in the matching namespace
-with their TF frames prefixed to suit. TF itself stays on the global `/tf`, so one RViz still
-sees every robot. Unset is the default and changes nothing.
+above moves under `/lino1/` — on the board, which builds both its topic names *and* the
+frame_ids it stamps at run time from the env key, and on the robot computer, where bringup,
+SLAM and Nav2 run in the matching namespace with their TF frames prefixed to suit. TF itself
+stays on the global `/tf`, so one RViz still sees every robot. Unset is the default and
+changes nothing.
+
+Run on two boards — a Pico W and a Pico 2 W on one DDS domain: both robots' topics side by
+side at 50 Hz, frames `lino1/…` and `lino2/…` on one `/tf`, and driving one moved it 0.42 m
+while the other moved 0.0007 m.
 
 Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on lyrical
 (Nav2's own default per distro, compiled in from `kinematics.stamped_cmd_vel: auto`), plus

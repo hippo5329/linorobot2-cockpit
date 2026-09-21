@@ -38,6 +38,14 @@ class MAGInterface
             envFloatVec("mag_cov", mag_cov, 3);
         }
 
+        // The robot's namespace, applied after the env is readable -- see
+        // IMUInterface::applyEnvFrames().
+        void applyEnvFrames()
+        {
+            mag_msg_.header.frame_id =
+                micro_ros_string_utilities_set(mag_msg_.header.frame_id, envPrefixed("imu_link"));
+        }
+
         virtual geometry_msgs__msg__Vector3 readMagnetometer() = 0;
         virtual bool startSensor() = 0;
 

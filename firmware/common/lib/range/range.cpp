@@ -135,7 +135,9 @@ void initRange(bool allow_hardware)
         echo_pin = -1;
     }
 
-    range_msg_.header.frame_id = micro_ros_string_utilities_set(range_msg_.header.frame_id, "sonar_link");
+    // initRange() runs from setup(), so the env is readable here and the
+    // namespace can go straight on.
+    range_msg_.header.frame_id = micro_ros_string_utilities_set(range_msg_.header.frame_id, envPrefixed("sonar_link"));
     range_msg_.field_of_view = FOV;
     range_msg_.min_range = MIN_RANGE;
     range_msg_.max_range = MAX_RANGE;

@@ -336,10 +336,13 @@ public:
         envFloatVec("ori_cov", ori_cov, 3);
         envFloatVec("mag_cov", mag_cov, 3);
 
+        // initMsgs() runs from setup(), so the env is readable and the robot's
+        // namespace goes on here. Fake mode is the DEFAULT on a bare module,
+        // so this is the path a two-robot bench actually exercises.
         imu_msg.header.frame_id =
-            micro_ros_string_utilities_set(imu_msg.header.frame_id, "imu_link");
+            micro_ros_string_utilities_set(imu_msg.header.frame_id, envPrefixed("imu_link"));
         mag_msg.header.frame_id =
-            micro_ros_string_utilities_set(mag_msg.header.frame_id, "imu_link");
+            micro_ros_string_utilities_set(mag_msg.header.frame_id, envPrefixed("imu_link"));
 
         for (int i = 0; i < 3; i++)
         {

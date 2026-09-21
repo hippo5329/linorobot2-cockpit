@@ -23,11 +23,28 @@ Odometry::Odometry():
     odom_msg_.child_frame_id = micro_ros_string_utilities_set(odom_msg_.child_frame_id, "base_footprint");
 }
 
-// NOT the constructor. `Odometry odometry;` is a global in main.cpp, so it is
-// built during static initialisation -- which runs before the flash partition
-// API is usable, exactly as initSyslog() documents. Reading the env there
-// silently returned nothing, and the board published the compiled-in 1e-4
-// while its env said 0.011. Caught on a Pico 2, 2026-09-21.
+// Both of these are called from setup(), NOT from the constructor.
+// `Odometry odometry;` was a global in main.cpp, built during static
+// initialisation -- which runs before the flash partition API is usable,
+// exactly as initSyslog() documents. Reading the env there silently returned
+// nothing, and the board published the compiled-in 1e-4 while its env said
+// 0.011. Caught on a Pico 2, 2026-09-21.
+
+// The robot's namespace, onto the frames. The constructor stamps the plain
+// names, which are right for a robot without a prefix; this replaces them once
+// the env is readable. A namespaced robot that kept stamping "odom" would name
+// a frame absent from its own TF tree -- robot_state_publisher has published
+// "<prefix>/odom" -- and its EKF would ignore every message it sent, silently.
+// Found on the two-robot bench, 2026-09-21.
+void Odometry::applyEnvFrames()
+{
+    odom_msg_.header.frame_id =
+        micro_ros_string_utilities_set(odom_msg_.header.frame_id, envPrefixed("odom"));
+    odom_msg_.child_frame_id =
+        micro_ros_string_utilities_set(odom_msg_.child_frame_id, envPrefixed("base_footprint"));
+}
+
+// The covariances, for the same timing reason.
 void Odometry::applyEnvCovariance()
 {
     // Wheel odometry's uncertainty is a property of THIS robot's encoders,

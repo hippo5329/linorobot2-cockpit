@@ -44,4 +44,26 @@ float       envFloat(const char *key, float fallback);
 bool        envFloatVec(const char *key, float *out, int n);
 IPAddress   envIP(const char *key, IPAddress fallback);
 
+// ---------------------------------------------------------------------------
+// The robot's namespace, from the env's `topic_prefix`.
+//
+// It applies to BOTH the topic names the board publishes and the frame_ids it
+// stamps inside them, and it has to: a namespaced robot whose messages say
+// `frame_id: odom` describes a frame that does not exist in its own TF tree,
+// where robot_state_publisher has published `<prefix>/odom`. The EKF then finds
+// no transform relating the two, ignores the input, and publishes nothing --
+// while looking entirely healthy. Measured on the two-robot bench, 2026-09-21.
+//
+// Cached by the suffix's ADDRESS: every caller passes a string literal, so the
+// pointer is stable and a reconnect reuses the buffer instead of consuming the
+// arena again. The arena is heap and is allocated on the first PREFIXED name,
+// so an unprefixed board -- the default, and every prebuilt image -- pays no
+// DRAM for the feature at all (see docs/firmware.md on dram0_0_seg).
+//
+// envPrefixInit() supplies the compiled-in fallback for a board with a blank
+// env; call it once from setup(), before anything asks for a name. Reading the
+// env any earlier is the static-initialisation trap initSyslog() documents.
+void        envPrefixInit(const char *compiled_fallback);
+const char *envPrefixed(const char *suffix);
+
 #endif // MCU_ENV_H

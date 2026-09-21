@@ -147,6 +147,16 @@ class IMUInterface
             applyEnvCovariance();
         }
 
+        // Re-stamp the frame with the robot's namespace. Separate from the
+        // constructor for the reason applyEnvCovariance() documents: a global
+        // is built before the flash partition API is usable, and the env reads
+        // back empty there.
+        void applyEnvFrames()
+        {
+            imu_msg_.header.frame_id =
+                micro_ros_string_utilities_set(imu_msg_.header.frame_id, envPrefixed("imu_link"));
+        }
+
         // The env's values, if it carries any. Called from the constructor
         // rather than left to each concrete IMU: every one of them inherits
         // this, and a sensor that forgot the call would publish the firmware's

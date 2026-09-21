@@ -284,6 +284,43 @@ Three things are worth knowing if you touch this:
 - **A lifecycle manager drives nodes by name.** Under a namespace the servers it manages have
   full paths, and anything that is handed a node path — the SLAM node, the manager's
   `node_names` — must be told the full one, not wrapped a second time by `PushRosNamespace`.
+- **A params file is matched by the node's fully-qualified name**, and a section that matches
+  nothing is not an error. See below; it is the subtlest of the three by a distance.
+
+### A params file the node does not match is not an error — it is defaults, silently
+
+`launchers/*.launch.py` build their params files by hand, because the robot config holds these
+settings flat and a ROS 2 params file must be `<node>: ros__parameters: <keys>`. rcl matches
+each section against the node's **fully-qualified** name. Under a namespace the node is
+`/<prefix>/ekf_filter_node`, so a file keyed `ekf_filter_node:` matches nothing at all — and
+nothing is exactly what happens: no warning, no failure, no clue. The node starts with its own
+defaults and reports them as its configuration.
+
+For `robot_localization` that is close to the worst case, because its defaults include *no
+inputs*:
+
+```
+$ ros2 param get /lino1/ekf_filter_node frequency     # the config asked for 50.0
+Double value is: 30.0
+$ ros2 param get /lino1/ekf_filter_node odom0
+Parameter not set
+```
+
+So the EKF subscribed to nothing, published nothing, and produced no `odom -> base_footprint`
+transform, while `ros2 node list` showed it running and `/lino1/odom` showed an advertised
+publisher. Everything upstream of it — 50 Hz odometry from the board, prefixed topics, prefixed
+URDF frames — was perfect, which is what made it hard to see.
+
+`cockpit_paths.namespace_params()` re-keys every section to `/<ns>/<node>` before the file is
+written, which is the job nav2's own `RewrittenYaml(root_key=…)` does for the nav2 tree. All
+three launchers pass their file through it. `/**` would also match, and is the usual shorthand,
+but it hands **every** section's parameters to **every** node — wrong the moment the file
+describes more than one, as nav2's does. An unset prefix returns the dict unchanged, so the
+single-robot path is byte-identical to what it was.
+
+The general form is worth keeping in mind: **when you namespace a node, everything that refers
+to it by name has to be told.** Its params sections, its lifecycle manager's `node_names`, and
+any full topic or frame name written into a config file.
 
 ### A bare module has no LiDAR tty, so the virtual room runs on the robot computer
 `use_fake_ld19` says a scan is simulated; it does not say *where*. Two benches want different
