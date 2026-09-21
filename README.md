@@ -98,7 +98,10 @@ python3 web/backend/main.py             # supervisor on :8000
 ROS 2 (jazzy or lyrical), `micro_ros_agent`, `slam_toolbox`, `nav2_bringup`,
 `robot_localization`, `imu_tools`, `rosbridge_server`, `robot_state_publisher`,
 `joint_state_publisher` and the `ldlidar_stl_ros2` package must be installed and sourced; `esptool` and `picotool` are needed
-to flash. The Docker image carries all of that, which is why it is the recommended path.
+to flash. **Take `ldlidar_stl_ros2` from [our fork](https://github.com/hippo5329/ldlidar_stl_ros2),
+not from ldrobot** — see [Forks we maintain](#forks-we-maintain); with the upstream driver a
+non-serial LiDAR publishes no `/scan` at all. The Docker image carries all of that, which is
+why it is the recommended path.
 
 ### From the command line
 
@@ -470,13 +473,31 @@ and three images on Docker Hub:
 `docker-compose.yml` defaults to those images; `docker compose build` builds them from your
 checkout instead, and `COCKPIT_IMAGE` / `COCKPIT_PIO_IMAGE` point it at any other registry.
 
+## Forks we maintain
+
+Three dependencies are our own forks. None is a cosmetic patch — each one is load-bearing, and
+building against upstream instead gives you a robot that fails in a way the logs do not
+explain.
+
+| fork | why |
+|---|---|
+| **[hippo5329/micro_ros_platformio](https://github.com/hippo5329/micro_ros_platformio)** | Builds the micro-ROS library the firmware links against. Its per-distro recipe lists the repositories to clone, **by branch**, at build time. Upstream's `lyrical` entry still pinned four of them to `rolling` from when they had no lyrical branch; `rolling` kept moving, and the drift eventually overflowed the ESP32's `dram0_0_seg` by 96 bytes mid-release. Our rule: a repository with a branch for our distro is pinned to it, and only one that genuinely has none stays on `rolling`. Upstream is not developing this package, so it is ours to keep correct. |
+| **[hippo5329/ldlidar_stl_ros2](https://github.com/hippo5329/ldlidar_stl_ros2)** | The LD19/LD06 driver. ldrobot's node declares only the serial parameters; every non-serial path here needs the ones the fork adds — `comm_mode`, `server_ip`/`server_port` for a board streaming its scan over UDP, and `raw_scan_topic`/`bins`. With the upstream driver, `comm_mode: udp_server` reaches a node that has never heard of it, falls through to the serial path, dies on `input serial param error` with an empty port, and no `/scan` is ever published. |
+| **[hippo5329/arduino-pico](https://github.com/hippo5329/arduino-pico)** (branch `fix/rp2350-bootsel-touch-hang`) | The RP2 core. Fixes an RP2350 hang on the 1200-baud BOOTSEL touch — the mechanism the cockpit uses to put a board into the bootloader without anyone reaching for the button. See [docs/flashing.md](docs/flashing.md). |
+
+The reasons behind each are in [docs/firmware.md](docs/firmware.md) and
+[docs/flashing.md](docs/flashing.md); patches are upstreamed where upstream is still taking
+them.
+
 ## Credits and license
 
 Built on [linorobot2](https://github.com/linorobot/linorobot2),
 [linorobot2_hardware](https://github.com/linorobot/linorobot2_hardware),
-[micro-ROS](https://micro.ros.org/), [Nav2](https://nav2.org/) and
-[SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox). Apache License 2.0 — see
-[LICENSE](LICENSE).
+[micro-ROS](https://micro.ros.org/), [Nav2](https://nav2.org/),
+[SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox) and
+[ldlidar_stl_ros2](https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2). The LiDAR driver,
+the micro-ROS PlatformIO builder and the RP2 core each reach us through a fork — see
+[Forks we maintain](#forks-we-maintain). Apache License 2.0 — see [LICENSE](LICENSE).
 
 Patches are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the checks to run and the seven
 invariants that keep a change from bricking a board; it is one page.

@@ -671,6 +671,15 @@ the env is readable, next to where the covariances are read. A test
 (`tests/test_frame_prefix.py`) reads the firmware source and fails if a frame is
 ever stamped with a literal that nothing re-stamps.
 
+Auditing those sites turned up an older bug with nothing to do with namespaces.
+The **simulated** sonar fills `range_msg` field by field in `main.cpp` and never
+touched the header, so every fake-mode board -- which is the default -- published
+`/sonar` with an **empty** `frame_id`, a Range message no consumer can place
+anywhere. The real path assigns the whole message from `getRange()`, which
+carries the frame the range driver set, and was never affected. It went unseen
+because nothing in the pipeline subscribes to `/sonar` yet: a topic with no
+consumer is a topic with no one to notice it is malformed.
+
 ### DRAM is the ESP32's scarce budget, and a static is paid by every board
 
 The `esp32_lyrical` release build failed to link with `dram0_0_seg overflowed by
