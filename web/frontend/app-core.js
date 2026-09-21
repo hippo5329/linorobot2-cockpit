@@ -515,6 +515,25 @@ async function refreshStatus() {
     const s = await res.json();
     state.status = s;
     state.config = s.config;
+    // On first load the robot is already chosen server-side, so selectRobot()
+    // never runs and #cockpit-target-select keeps its hardcoded pico2 default --
+    // Start 1-Click would then run the wrong controller against the plugged
+    // board (a CP2102 ESP32 is not reliably told apart from an RP2 by VID:PID,
+    // so the MCU guard cannot always catch it, and the mismatch only surfaces at
+    // flash time). Sync the Operations select to the active robot's controller
+    // ONCE, then leave it alone so a deliberate later override still stands.
+    if (!state._ctrlSelSynced) {
+      const bcName = s.config && s.config.base_controller && s.config.base_controller.name;
+      const tsel = document.getElementById("cockpit-target-select");
+      if (tsel && bcName && [...tsel.options].some((o) => o.value === bcName)) {
+        state._ctrlSelSynced = true;
+        if (tsel.value !== bcName) {
+          tsel.value = bcName;
+          if (window.__syncControllerSelects) window.__syncControllerSelects(bcName, "cockpit-target-select");
+          logLine(`[console] base controller -> ${bcName} (synced to the active robot)`);
+        }
+      }
+    }
     applyLaserConfigToPanel();
     state.mainBusy = s.main_busy;
     state.agentBusy = s.agent_busy_console;
