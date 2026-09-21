@@ -122,8 +122,11 @@ def launch_setup(context, *args, **kwargs):
         rp["base_frame"] = f"{ns}/{str(rp.get('base_frame', 'base_footprint'))}"
         rp["scan_topic"] = f"/{ns}/scan"
 
+    # Fully-qualified section names: under a namespace slam_toolbox is
+    # /<ns>/slam_toolbox, and a file keyed by the bare name reaches it not at
+    # all (see cockpit_paths.namespace_params).
     slam_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.dump(slam_data, slam_temp)
+    yaml.dump(cockpit_paths.namespace_params(slam_data, ns), slam_temp)
     slam_temp.flush()
     slam_params_path = slam_temp.name
 

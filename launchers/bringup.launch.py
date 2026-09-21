@@ -248,8 +248,11 @@ def launch_setup(context, *args, **kwargs):
         for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_footprint"),
                              ("world_frame", "odom"), ("map_frame", "map")):
             rp[key] = frame_prefix + str(rp.get(key, default))
+    # rcl matches a params section against the node's FULLY-QUALIFIED name, so
+    # under a namespace `ekf_filter_node:` matches nothing and the EKF starts on
+    # its own defaults -- no odom0, no imu0, nothing published, no complaint.
     ekf_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.dump(ekf_data, ekf_temp)
+    yaml.dump(cockpit_paths.namespace_params(ekf_data, ns), ekf_temp)
     ekf_temp.flush()
     ekf_params_path = ekf_temp.name
 

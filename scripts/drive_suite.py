@@ -14,9 +14,19 @@ performance one (see scripts/test_nav2_goal.py for the same reasoning).
 
     python3 scripts/drive_suite.py                       # plain Twist
     python3 scripts/drive_suite.py geometry_msgs/msg/TwistStamped
+    python3 scripts/drive_suite.py --config ~/linorobot2-config/lino1_config.yaml
+    python3 scripts/drive_suite.py --prefix lino1
+
+A namespaced robot has to be addressed by its namespace or the suite drives
+nothing and then reports the silence as the board's fault. `--config` reads
+`base_controller.topic_prefix` through the same normaliser the launchers and
+mcu_env use, so the suite reaches the robot the config describes; `--prefix`
+says it outright. Neither given, the topics are the unprefixed ones and the
+behaviour is exactly what it always was.
 
 Exit status 0 when all six pass; the verdict line says how many did.
 """
+import os
 import sys
 import time
 
@@ -25,23 +35,51 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
-ODOM_TOPIC = "/odom/unfiltered"   # the board's own report, before the EKF
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cockpit_paths  # noqa: E402  -- the prefix rule lives in one place
+
+
+def _topics(prefix: str) -> tuple:
+    """(cmd_vel, odom) for a robot whose namespace is `prefix` ("" = plain)."""
+    ns = f"/{prefix}" if prefix else ""
+    return f"{ns}/cmd_vel", f"{ns}/odom/unfiltered"
 
 
 def main() -> int:
+    argv = sys.argv[1:]
+    prefix = ""
+    rest = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--prefix" and i + 1 < len(argv):
+            prefix = argv[i + 1].strip().strip("/")
+            i += 2
+        elif argv[i] == "--config" and i + 1 < len(argv):
+            import yaml
+            with open(os.path.expanduser(argv[i + 1])) as fh:
+                prefix = cockpit_paths.robot_namespace(yaml.safe_load(fh) or {})
+            i += 2
+        else:
+            rest.append(argv[i])
+            i += 1
+    cmd_topic, odom_topic = _topics(prefix)
+
     rclpy.init()
     node = Node("drive_suite")
-    tname = sys.argv[1].strip() if len(sys.argv) > 1 else "geometry_msgs/msg/Twist"
+    tname = rest[0].strip() if rest else "geometry_msgs/msg/Twist"
     stamped = "TwistStamped" in tname
     if stamped:
         from geometry_msgs.msg import TwistStamped as T
     else:
         from geometry_msgs.msg import Twist as T
-    pub = node.create_publisher(T, "/cmd_vel", 10)
+    if prefix:
+        print(f"[drive_suite] robot namespace /{prefix}: {cmd_topic} -> {odom_topic}",
+              flush=True)
+    pub = node.create_publisher(T, cmd_topic, 10)
 
     seen = {"vx": [], "wz": []}
     node.create_subscription(
-        Odometry, ODOM_TOPIC,
+        Odometry, odom_topic,
         lambda m: (seen["vx"].append(m.twist.twist.linear.x),
                    seen["wz"].append(m.twist.twist.angular.z)),
         qos_profile_sensor_data)
@@ -84,7 +122,7 @@ def main() -> int:
     while not seen["vx"] and time.time() - t0 < 10:
         rclpy.spin_once(node, timeout_sec=0.1)
     if not seen["vx"]:
-        print(f"VERDICT: nothing on {ODOM_TOPIC} in 10 s -- is the agent up?")
+        print(f"VERDICT: nothing on {odom_topic} in 10 s -- is the agent up?")
         return 2
 
     results = [

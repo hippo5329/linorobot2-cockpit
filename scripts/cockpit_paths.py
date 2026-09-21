@@ -276,3 +276,31 @@ def robot_namespace(params: dict) -> str:
     if s and all(c.isalnum() or c in "_/" for c in s):
         return s
     return ""
+
+
+def namespace_params(data: dict, ns: str) -> dict:
+    """Re-key a params file's node sections to their fully-qualified names.
+
+    A ROS 2 params file is `<node>: ros__parameters: <keys>`, and rcl matches
+    each section against the node's FULLY-QUALIFIED name. Under a namespace the
+    node is `/<ns>/<node>`, so a file keyed by the bare name matches nothing --
+    and a node that matches nothing does not fail. It starts with its own
+    defaults and says so nowhere, which for robot_localization means no `odom0`
+    and no `imu0`: it subscribes to nothing, publishes nothing, and leaves no
+    odom->base transform, while looking perfectly healthy. Found on the
+    two-robot bench, where the EKF reported `frequency: 30.0` against a config
+    asking for 50.
+
+    This is the same job nav2's `RewrittenYaml(root_key=...)` does for the nav2
+    tree. `/**` would also match, but it would hand EVERY section's parameters
+    to EVERY node, which is wrong for a multi-node file like nav2's.
+
+    Returns a new dict; `ns` empty returns `data` unchanged, so the
+    single-robot path is untouched. A key that is already a path is left alone.
+    """
+    if not ns:
+        return data
+    return {
+        (k if str(k).startswith("/") else f"/{ns}/{k}"): v
+        for k, v in (data or {}).items()
+    }

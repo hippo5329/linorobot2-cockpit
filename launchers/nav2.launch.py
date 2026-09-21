@@ -363,8 +363,12 @@ def launch_setup(context, *args, **kwargs):
     if ns:
         _prefix_nav2_namespace(nav2_data, ns)
 
+    # Fully-qualified section names, the job nav2's own RewrittenYaml(root_key)
+    # would do if this launch handed navigation_launch.py a namespace. A COPY is
+    # dumped: nav2_data is read again below for the lifecycle manager's params,
+    # and those lookups use the bare names.
     nav2_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.dump(nav2_data, nav2_temp)
+    yaml.dump(cockpit_paths.namespace_params(nav2_data, ns), nav2_temp)
     nav2_temp.flush()
     nav2_params_path = nav2_temp.name
 
