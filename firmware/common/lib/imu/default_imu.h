@@ -25,7 +25,6 @@
 #include "HMC5883L.h"
 #include "MPU6050.h"
 #include "MPU9250.h"
-#include "QMI8658.h"
 
 #include "syslog.h"
 
@@ -133,6 +132,19 @@ class MPU6050IMU: public IMUInterface
             // corrected the same error twice, and it is the slow half of the
             // two (15 sampling loops against the chip).
             accelgyro_.CalibrateAccel();
+            return true;
+        }
+
+        // The MPU6050's INT pin, as a data-ready strobe: active high, push-pull,
+        // a 50 us pulse per new sample, cleared by any register read so a slow
+        // reader cannot wedge it high. Register names are i2cdevlib's.
+        bool enableDataReadyInterrupt() override
+        {
+            accelgyro_.setInterruptMode(0);
+            accelgyro_.setInterruptDrive(0);
+            accelgyro_.setInterruptLatch(0);
+            accelgyro_.setInterruptLatchClear(1);
+            accelgyro_.setIntDataReadyEnabled(true);
             return true;
         }
 
@@ -245,77 +257,223 @@ class FakeIMU: public IMUInterface
         }
 };
 
-class QMI8658IMU: public IMUInterface 
+// ---------------------------------------------------------------------------
+// QMI8658 / QMI8658A / QMI8658C (QST 6-axis, I2C). Self-contained Wire driver.
+//
+// This replaced the 650-line QST/Waveshare reference driver that used to sit
+// beside this file. That one carried module-level globals, a 2.2 s on-demand
+// gyro calibration on every boot that calibrateGyro() then repeated, a
+// hard-coded 0x6B, three register transactions per sample, and a getData()
+// override that the IMUInterface* the sketch holds never reached -- so its
+// bias handling was dead code. What is left is what the base needs:
+//
+//   * WHO_AM_I (0x00) reads 0x05 at 0x6B (SA0 high: Yahboom YB-EET01, the
+//     GenDrv) or 0x6A (SA0 low); both are tried.
+//   * +/-8 g at 4096 LSB/g, +/-1024 dps at 32 LSB/dps, both at 224.2 Hz with
+//     the on-chip low-pass at 13.37 % of ODR (~30 Hz): the base publishes at
+//     50 Hz, so the filter sits at its Nyquist and each publish sees a
+//     settled, oversampled value rather than one raw 224 Hz sample.
+//   * ONE burst per sample, 0x2D..0x40: STATUSINT, STATUS0, STATUS1, the
+//     24-bit sample counter, temperature, AX..GZ. Reading STATUS0/STATUSINT
+//     is what clears the chip's DATA_RDY line, so the burst both fetches the
+//     sample and re-arms the interrupt for the next one. readGyroscope() does
+//     the burst; readAccelerometer() hands back the accel half of it, which
+//     is the order IMUInterface::getData() calls them in.
+//   * DATA_RDY on request (enableDataReadyInterrupt()): the chip drives DRDY
+//     on INT2 in its normal mode and on INT1 in SyncSample mode; a board that
+//     breaks out "INT" rarely says which, so both are enabled and both modes
+//     turned on. Whichever line the board routed rises once per sample.
+//     Neither pin is driven until asked -- a board with the line unwired (the
+//     GenDrv) keeps them high-impedance.
+//
+// Datasheet: QMI8658A rev 1.x, register map section 9. Field names below are
+// the datasheet's.
+// ---------------------------------------------------------------------------
+class QMI8658IMU : public IMUInterface
 {
     private:
-        QMI8658 qmi8658_;
+        static const uint8_t REG_WHO_AM_I  = 0x00;   // -> 0x05
+        static const uint8_t REG_REVISION  = 0x01;
+        static const uint8_t REG_CTRL1     = 0x02;   // SIM | ADDR_AI | BE | INT2_EN | INT1_EN | FIFO_INT_SEL | - | SensorDisable
+        static const uint8_t REG_CTRL2     = 0x03;   // aST | aFS[2:0] | aODR[3:0]
+        static const uint8_t REG_CTRL3     = 0x04;   // gST | gFS[2:0] | gODR[3:0]
+        static const uint8_t REG_CTRL5     = 0x06;   // - | gLPF_MODE[1:0] | gLPF_EN | - | aLPF_MODE[1:0] | aLPF_EN
+        static const uint8_t REG_CTRL7     = 0x08;   // syncSmpl | - | DRDY_DIS | gSN | - | - | gEN | aEN
+        static const uint8_t REG_STATUSINT = 0x2D;   // CmdDone | ... | Avail | Locked
+        static const uint8_t REG_STATUS0   = 0x2E;   // gDA | aDA
+        static const uint8_t REG_RESET     = 0x60;   // write 0xB0
 
-        geometry_msgs__msg__Vector3 accel_;
-        geometry_msgs__msg__Vector3 gyro_;
+        static const uint8_t CTRL1_ADDR_AI = 0x40;   // auto-increment the register address in a burst
+        static const uint8_t CTRL1_BE      = 0x20;   // "big endian" in QST's naming: L byte at the lower address
+        static const uint8_t CTRL1_INT2_EN = 0x10;
+        static const uint8_t CTRL1_INT1_EN = 0x08;
+        static const uint8_t CTRL7_SYNC    = 0x80;   // SyncSample: DRDY on INT1 as well
+        static const uint8_t CTRL7_GEN     = 0x02;
+        static const uint8_t CTRL7_AEN     = 0x01;
+
+        // CTRL2: aFS 010 (+/-8 g) | aODR 0101 (224.2 Hz)
+        static const uint8_t CTRL2_8G_224HZ      = 0x25;
+        // CTRL3: gFS 110 (+/-1024 dps) | gODR 0101 (224.2 Hz)
+        static const uint8_t CTRL3_1024DPS_224HZ = 0x65;
+        // CTRL5: gLPF mode 3 + enable, aLPF mode 3 + enable (13.37 % of ODR)
+        static const uint8_t CTRL5_LPF_BOTH      = 0x77;
+
+        static constexpr float ACCEL_LSB_PER_G   = 4096.0f;
+        static constexpr float GYRO_LSB_PER_DPS  = 32.0f;
+        static constexpr float DEG_TO_RAD_F      = 0.017453292519943295f;
+
+        // One burst: 0x2D .. 0x40 inclusive.
+        static const uint8_t BURST_FIRST = REG_STATUSINT;
+        static const uint8_t BURST_LEN   = 20;
+
+        uint8_t addr_ = 0x6B;
+        uint8_t revision_ = 0;
+        uint8_t ctrl1_ = CTRL1_ADDR_AI | CTRL1_BE;
+        uint8_t ctrl7_ = CTRL7_GEN | CTRL7_AEN;
+
+        geometry_msgs__msg__Vector3 accel_{};
+        geometry_msgs__msg__Vector3 gyro_{};
+        uint32_t sample_count_ = 0;       // the chip's 24-bit counter, last read
+        float temperature_c_ = 0.0f;
+        uint32_t bursts_ok_ = 0;
+        uint32_t bursts_failed_ = 0;
+
+        void writeReg(uint8_t reg, uint8_t val)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            Wire.write(val);
+            Wire.endTransmission();
+        }
+
+        // 0xFF on a NACK, so a missing chip never reads as WHO_AM_I 0x05
+        // (0x00 would be a plausible register value; 0xFF is what an idle
+        // bus reads as).
+        uint8_t readReg(uint8_t reg)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            if (Wire.endTransmission(false) != 0)
+                return 0xFF;
+            if (Wire.requestFrom((int)addr_, 1) != 1)
+                return 0xFF;
+            return Wire.read();
+        }
+
+        bool readBlock(uint8_t reg, uint8_t *buf, uint8_t len)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            if (Wire.endTransmission(false) != 0)
+                return false;
+            const uint8_t got = Wire.requestFrom((int)addr_, (int)len);
+            for (uint8_t i = 0; i < got; i++)
+            {
+                const uint8_t b = Wire.read();
+                if (i < len) buf[i] = b;
+            }
+            return got == len;
+        }
+
+        static int16_t le16(const uint8_t *p) { return (int16_t)((uint16_t)p[1] << 8 | p[0]); }
+
+        // The burst. Fills accel_, gyro_, the sample counter and the
+        // temperature; leaves the previous sample in place on a bus error so
+        // a single failed transaction does not publish zeros.
+        bool sample()
+        {
+            uint8_t b[BURST_LEN];
+            if (!readBlock(BURST_FIRST, b, BURST_LEN))
+            {
+                bursts_failed_++;
+                return false;
+            }
+            bursts_ok_++;
+            // b[0] STATUSINT, b[1] STATUS0, b[2] STATUS1,
+            // b[3..5] TIMESTAMP_L/M/H, b[6..7] TEMP_L/H,
+            // b[8..13] AX..AZ, b[14..19] GX..GZ
+            sample_count_ = (uint32_t)b[5] << 16 | (uint32_t)b[4] << 8 | b[3];
+            temperature_c_ = (float)le16(&b[6]) / 256.0f;
+
+            accel_.x = (float)le16(&b[8])  / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.y = (float)le16(&b[10]) / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.z = (float)le16(&b[12]) / ACCEL_LSB_PER_G * g_to_accel_;
+
+            gyro_.x = (float)le16(&b[14]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.y = (float)le16(&b[16]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.z = (float)le16(&b[18]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            return true;
+        }
+
+    protected:
+        // Both pins, both modes: see the header comment. The base attaches
+        // its ISR on RISING; the chip re-asserts the line after every sample
+        // once the previous one's status has been read, which the burst does.
+        bool enableDataReadyInterrupt() override
+        {
+            ctrl1_ |= CTRL1_INT1_EN | CTRL1_INT2_EN;
+            ctrl7_ |= CTRL7_SYNC;               // DRDY_DIS stays 0: INT2 too
+            writeReg(REG_CTRL1, ctrl1_);
+            writeReg(REG_CTRL7, ctrl7_);
+            return readReg(REG_CTRL7) == ctrl7_;
+        }
 
     public:
-        QMI8658IMU()
-        {
-        }
+        QMI8658IMU() {}
 
         bool startSensor() override
         {
             Wire.begin();
-	    if (qmi8658_.begin() == 0){
-	        // Serial.println("qmi8658_init fail");
-	        return false;
-	    }
-	    return true;
+
+            bool found = false;
+            const uint8_t cand[2] = { 0x6B, 0x6A };
+            for (uint8_t i = 0; i < 2 && !found; i++)
+            {
+                addr_ = cand[i];
+                found = readReg(REG_WHO_AM_I) == 0x05;
+            }
+            if (!found)
+                return false;
+
+            writeReg(REG_RESET, 0xB0);          // soft reset: every CTRL back to default
+            delay(20);
+            revision_ = readReg(REG_REVISION);
+
+            ctrl1_ = CTRL1_ADDR_AI | CTRL1_BE;  // INT pins stay high-Z until asked
+            ctrl7_ = CTRL7_GEN | CTRL7_AEN;
+            writeReg(REG_CTRL1, ctrl1_);
+            writeReg(REG_CTRL2, CTRL2_8G_224HZ);
+            writeReg(REG_CTRL3, CTRL3_1024DPS_224HZ);
+            writeReg(REG_CTRL5, CTRL5_LPF_BOTH);
+            writeReg(REG_CTRL7, ctrl7_);
+            delay(100);                         // filters settle; first samples land
+
+            // Prove the configuration took and the chip is producing data
+            // before init() starts averaging the gyro on it.
+            if (readReg(REG_CTRL7) != ctrl7_)
+                return false;
+            return sample();
         }
 
-        geometry_msgs__msg__Vector3 readAccelerometer() override
-        {
-	    float ac[3];
-            qmi8658_.read_acc(ac);
-            accel_.x = ac[0];
-            accel_.y = ac[1];
-            accel_.z = ac[2];
-            return accel_;
-        }
-
+        // getData() calls this first: it is the bus transaction.
         geometry_msgs__msg__Vector3 readGyroscope() override
         {
-	    float gy[3];
-            qmi8658_.read_gyro(gy);
-            gyro_.x = gy[0];
-            gyro_.y = gy[1];
-            gyro_.z = gy[2];
+            sample();
             return gyro_;
         }
 
-        sensor_msgs__msg__Imu getData()
+        // ... and this second, off the same burst.
+        geometry_msgs__msg__Vector3 readAccelerometer() override
         {
-            float ac[3], gy[3];
-            qmi8658_.read_sensor_data(ac, gy);
-            accel_.x = ac[0];
-            accel_.y = ac[1];
-            accel_.z = ac[2];
-
-            gyro_.x = gy[0] - gyro_cal_.x;
-            gyro_.y = gy[1] - gyro_cal_.y;
-            gyro_.z = gy[2] - gyro_cal_.z;
-
-            if (gyro_.x > -0.01 && gyro_.x < 0.01) gyro_.x = 0;
-            if (gyro_.y > -0.01 && gyro_.y < 0.01) gyro_.y = 0;
-            if (gyro_.z > -0.01 && gyro_.z < 0.01) gyro_.z = 0;
-
-            imu_msg_.angular_velocity = gyro_;
-            imu_msg_.angular_velocity_covariance[0] = gyro_cov[0];
-            imu_msg_.angular_velocity_covariance[4] = gyro_cov[1];
-            imu_msg_.angular_velocity_covariance[8] = gyro_cov[2];
-
-            imu_msg_.linear_acceleration = accel_;
-            imu_msg_.linear_acceleration_covariance[0] = accel_cov[0];
-            imu_msg_.linear_acceleration_covariance[4] = accel_cov[1];
-            imu_msg_.linear_acceleration_covariance[8] = accel_cov[2];
-
-            return imu_msg_;
+            return accel_;
         }
+
+        uint8_t address() const { return addr_; }
+        uint8_t revision() const { return revision_; }
+        uint32_t sampleCount() const { return sample_count_; }
+        float temperatureC() const { return temperature_c_; }
+        uint32_t burstsOk() const { return bursts_ok_; }
+        uint32_t burstsFailed() const { return bursts_failed_; }
 };
 
 // ---------------------------------------------------------------------------

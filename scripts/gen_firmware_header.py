@@ -462,6 +462,11 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             f"#define I2C_CLOCK {int(i2c.get('clock', 400000))}",
             "",
         ])
+    # The IMU's DATA_RDY line (env key imu_int). Emitted whether or not the
+    # bus pins are, so an image built from this header has a defined fallback.
+    imu_pins = pins.get("imu", {}) or {}
+    lines.append(f"#define IMU_INT_PIN {int(imu_pins.get('int', -1))}")
+    lines.append("")
 
     # Pins the board must drive at boot (enable lines, power rails, resets),
     # as "pin=level,pin=level". `late` is driven at the end of setup(), for a

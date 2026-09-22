@@ -377,6 +377,36 @@ const REFERENCE_DESIGNS = {
       }
     },
     {
+      id: "yahboom_esp32s3",
+      name: "Yahboom microROS Control Board (ESP32-S3, YB-EET01-V2.0)",
+      mcu: "esp32s3",
+      kinematics: "2wd",
+      driver: "BTS7960",
+      wheel_diameter: 0.065,
+      lr_wheels_distance: 0.17,
+      fr_wheels_distance: 0,
+      max_rpm: 200,
+      cpr: 1320,
+      operating_voltage: 8.4,
+      imu: "QMI8658",
+      mag: "NONE",
+      use_fake_imu: false,
+      use_fake_mag: true,
+      use_fake_wheel: false,
+      use_fake_ld19: true,
+      pins: {
+        led: 45,
+        motor1: { in_a: 4, in_b: 5, pwm: -1 },
+        motor2: { in_a: 15, in_b: 16, pwm: -1 },
+        encoder1: { a: 6, b: 7 },
+        encoder2: { a: 47, b: 48 },
+        i2c: { sda: 40, scl: 39 },
+        imu_int: 41,
+        battery: 3,
+        sonar: { trig: -1, echo: -1 },
+      }
+    },
+    {
       id: "crawler_esp32s3",
       name: "ESP32-S3 (4WD Skid + TB6612 + Sonar + ADC)",
       mcu: "esp32s3",
@@ -542,6 +572,7 @@ async function applyReferenceDesign(designId) {
 
     setVal("pin-i2c-sda", found.pins.i2c?.sda);
     setVal("pin-i2c-scl", found.pins.i2c?.scl);
+    setVal("pin-imu-int", found.pins.imu_int !== undefined ? found.pins.imu_int : -1);
     setVal("pin-battery", found.pins.battery);
     setVal("pin-sonar-trig", found.pins.sonar?.trig);
     setVal("pin-sonar-echo", found.pins.sonar?.echo);

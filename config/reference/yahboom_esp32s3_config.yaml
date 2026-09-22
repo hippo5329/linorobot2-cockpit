@@ -1,0 +1,527 @@
+# yahboom_esp32s3 — single source of truth for this robot.
+# One robot per file, one base controller per robot.
+#
+# Yahboom microROS Control Board, YB-EET01-V2.0 (ESP32-S3). Pins are the
+# board's own, from Yahboom's pinout: four motor channels each with two PWM
+# lines (M?A / M?B, a dual-PWM H-bridge -- BTS7960 scheme here, no enable
+# pin) and a quadrature encoder, the onboard 6-axis IMU on its own I2C pair
+# with its INT line broken out, a battery divider on an ADC pin, a status LED,
+# and a UART header for a LiDAR / host.
+#
+# Wired as 2WD on channels 1 (right) and 2 (left); channels 3 and 4 are listed
+# at -1 so a 4WD variant is a copy and four pin edits:
+#   M3  PWM 9/10   ENC 11/12
+#   M4  PWM 13/14  ENC 1/2
+# Also on the board and not in this config: servos S1 GPIO 8, S2 GPIO 21;
+# user key GPIO 42; boot key GPIO 0; buzzer GPIO 46; expansion I2C on the
+# IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
+# inspector will say so if you use them). The LiDAR header is UART1, TX GPIO 17
+# / RX GPIO 18, sold with an MS200, which the shipped LD-series driver does not
+# speak; the scan below is the fake one until a supported LiDAR is attached.
+#
+# Kinematics below are inherited placeholders from the esp32s3 reference --
+# set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
+# chassis this board is mounted on. The battery divider ratio (r1/r2) is
+# likewise unverified for this board.
+robot:
+  name: yahboom_esp32s3
+  description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), 2WD
+base_controller:
+  name: yahboom_esp32s3
+  description: Yahboom microROS Control Board YB-EET01-V2.0 (ESP32-S3)
+  mcu: esp32s3
+  board: esp32-s3-devkitc-1
+  pio_env: esp32s3
+  # Two PWM lines per motor (M?A / M?B), no enable pin: the BTS7960 scheme,
+  # RPWM on in_a and LPWM on in_b, pwm (the enable) at -1.
+  driver_type: BTS7960
+  transport: serial
+  # Yahboom documents "USB serial / debug on GPIO 43/44", which is UART0 -- a
+  # USB-serial bridge, so it enumerates as ttyUSB0, not the native-USB ttyACM0
+  # the S3 DevKit reference uses. To confirm on the bench: which node appears
+  # on plug-in, and whether the shipped esp32s3 image (built for native USB
+  # CDC) talks on it. Set the baud to match what the agent is started with.
+  serial_port: /dev/ttyUSB0
+  baudrate: 921600
+  use_dual_core: true
+  lidar:
+    model: ld19
+    comm_mode: topic
+    raw_scan_topic: raw_scan
+  sensors:
+    # Yahboom's own firmware names the part: a QST QMI8658 at 0x6B (0x6A with
+    # AD0/SDO grounded), 400 kHz. The bus is still probed at boot and wins over
+    # this name; naming it here just makes the fallback honest.
+    imu: QMI8658
+    mag: NONE
+    current: NONE
+    env: NONE
+    use_fake_imu: false
+    use_fake_mag: true
+    use_fake_wheel: false
+    use_fake_ld19: true
+    use_fake_env: true
+  pins:
+    motor1:            # channel 1, right
+      pwm: -1
+      in_a: 4          # PWM-M1A
+      in_b: 5          # PWM-M1B
+      invert: true     # Yahboom's own config inverts the right motor
+    motor2:            # channel 2, left
+      pwm: -1
+      in_a: 15         # PWM-M2A
+      in_b: 16         # PWM-M2B
+      invert: false
+    motor3:
+      pwm: -1
+      in_a: -1
+      in_b: -1
+      invert: false
+    motor4:
+      pwm: -1
+      in_a: -1
+      in_b: -1
+      invert: false
+    encoder1:
+      pin_a: 6         # Encoder-H1A
+      pin_b: 7         # Encoder-H1B
+      invert: false
+    encoder2:
+      pin_a: 47        # Encoder-H2A
+      pin_b: 48        # Encoder-H2B
+      invert: false
+    encoder3:
+      pin_a: -1
+      pin_b: -1
+      invert: false
+    encoder4:
+      pin_a: -1
+      pin_b: -1
+      invert: false
+    i2c:               # the onboard IMU's bus, 400 kHz
+      sda: 40
+      scl: 39
+      clock: 400000
+    imu:
+      int: 41          # IMU INT -> DATA_RDY interrupt (env key imu_int)
+    # GPIO 45 is a strapping pin (VDD_SPI); the board drives its status LED
+    # from it regardless, so the inspector's warning is expected.
+    led: 45
+    battery:
+      pin: 3           # BAT ADC; GPIO 3 is also a strapping pin (JTAG select)
+      # A 2S pack (7.4-8.4 V) through the board's own divider. r1/r2 are the
+      # generic placeholders until the ratio is measured on this board.
+      r1: 30000
+      r2: 7500
+      min_v: 6.4
+      max_v: 8.4
+      capacity_ah: 2.2
+    sonar:
+      trigger: -1
+      echo: -1
+kinematics:
+  base_type: 2wd
+  stamped_cmd_vel: auto
+  wheel_diameter: 0.152
+  lr_wheels_distance: 0.271
+  fr_wheels_distance: 0
+  max_rpm: 140
+  max_rpm_ratio: 0.85
+  counts_per_rev: 4000
+  pwm_bits: 10
+  pwm_frequency: 20000
+  motor_operating_voltage: 12
+  motor_power_max_voltage: 12
+  pid:
+    kp: 0.6
+    ki: 0.8
+    kd: 0.5
+# The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
+# (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
+# axle positions come from kinematics above; this block is what kinematics does not say.
+geometry:
+  body: {length: 0.228, width: 0.214, height: 0.0456, mass: 1.0}   # the base_link box, centred on the axle midpoint
+  wheel: {width: 0.038, mass: 0.304, z: 0.0}   # z: axle height relative to the base_link origin (negative = below)
+  casters: {front: true, rear: true}   # 2wd only: a ball caster at each end of the body
+  laser: {x: 0.12, y: 0.0, z: 0.0988, roll: 0.0, pitch: 0.0, yaw: 0.0, frame: laser}   # base_link -> laser; the LiDAR driver stamps /scan with `frame`
+  imu: {x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}   # base_link -> imu_link (the frame the firmware stamps)
+  mesh: {base: '', wheel: ''}   # optional file:// or package:// meshes instead of the box and cylinders
+ekf:
+  ekf_filter_node:
+    ros__parameters:
+      frequency: 50.0
+      two_d_mode: true
+      publish_tf: true
+      map_frame: map
+      odom_frame: odom
+      base_link_frame: base_footprint
+      world_frame: odom
+      odom0: odom/unfiltered
+      odom0_config:
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - true
+      - false
+      - false
+      - false
+      - false
+      - true
+      - false
+      - false
+      - false
+      imu0: imu/data
+      imu0_config:
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - true
+      - false
+      - false
+      - false
+slam:
+  slam_toolbox:
+    ros__parameters:
+      solver_plugin: solver_plugins::CeresSolver
+      ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+      ceres_preconditioner: SCHUR_JACOBI
+      ceres_trust_strategy: LEVENBERG_MARQUARDT
+      ceres_dogleg_type: TRADITIONAL_DOGLEG
+      ceres_loss_function: None
+      odom_frame: odom
+      map_frame: map
+      base_frame: base_footprint
+      scan_topic: /scan
+      mode: mapping
+      debug_logging: false
+      throttle_scans: 1
+      transform_publish_period: 0.02
+      map_update_interval: 5.0
+      resolution: 0.05
+      max_laser_range: 10.0
+      minimum_time_interval: 0.5
+      transform_timeout: 0.2
+      tf_buffer_duration: 30.0
+      stack_size_to_use: 40000000
+      enable_interactive_mode: true
+      use_scan_matching: true
+      use_scan_barycenter: true
+      minimum_travel_distance: 0.5
+      minimum_travel_heading: 0.5
+      scan_buffer_size: 10
+      scan_buffer_maximum_scan_distance: 10.0
+      link_match_minimum_response_fine: 0.1
+      link_scan_maximum_distance: 1.5
+      loop_search_maximum_distance: 3.0
+      do_loop_closing: true
+      loop_match_minimum_chain_size: 10
+      loop_match_maximum_variance_coarse: 3.0
+      loop_match_minimum_response_coarse: 0.35
+      loop_match_minimum_response_fine: 0.45
+      correlation_search_space_dimension: 0.5
+      correlation_search_space_resolution: 0.01
+      correlation_search_space_smear_deviation: 0.1
+      loop_search_space_dimension: 8.0
+      loop_search_space_resolution: 0.05
+      loop_search_space_smear_deviation: 0.03
+      distance_variance_penalty: 0.5
+      angle_variance_penalty: 1.0
+      fine_search_angle_offset: 0.00349
+      coarse_search_angle_offset: 0.349
+      coarse_angle_resolution: 0.0349
+      minimum_angle_penalty: 0.9
+      minimum_distance_penalty: 0.5
+      use_response_expansion: true
+nav2:
+  bt_navigator:
+    ros__parameters:
+      global_frame: map
+      robot_base_frame: base_link
+      odom_topic: /odom
+      bt_loop_duration: 10
+      default_server_timeout: 20
+      wait_for_service_timeout: 30000
+      action_server_result_timeout: 900.0
+      navigators:
+      - navigate_to_pose
+      - navigate_through_poses
+      navigate_to_pose:
+        plugin: nav2_bt_navigator::NavigateToPoseNavigator
+      navigate_through_poses:
+        plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
+      error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+  controller_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      controller_frequency: 20.0
+      costmap_update_timeout: 0.3
+      min_x_velocity_threshold: 0.001
+      min_y_velocity_threshold: 0.5
+      min_theta_velocity_threshold: 0.001
+      failure_tolerance: 0.3
+      progress_checker_plugins:
+      - progress_checker
+      goal_checker_plugins:
+      - general_goal_checker
+      controller_plugins:
+      - FollowPath
+      use_realtime_priority: false
+      progress_checker:
+        plugin: nav2_controller::SimpleProgressChecker
+        required_movement_radius: 0.5
+        movement_time_allowance: 10.0
+      general_goal_checker:
+        stateful: true
+        plugin: nav2_controller::SimpleGoalChecker
+        xy_goal_tolerance: 0.35
+        yaw_goal_tolerance: 0.35
+      FollowPath:
+        plugin: nav2_rotation_shim_controller::RotationShimController
+        primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+        angular_dist_threshold: 0.785
+        angular_disengage_threshold: 0.3925
+        forward_sampling_distance: 0.5
+        rotate_to_heading_angular_vel: 1.8
+        max_angular_accel: 3.2
+        simulate_ahead_time: 1.0
+        rotate_to_goal_heading: false
+        rotate_to_heading_once: true
+        use_path_orientations: false
+        desired_linear_vel: 0.4
+        lookahead_dist: 0.6
+        min_lookahead_dist: 0.3
+        max_lookahead_dist: 0.9
+  planner_server:
+    ros__parameters:
+      expected_planner_frequency: 20.0
+      planner_plugins:
+      - GridBased
+      costmap_update_timeout: 1.0
+      GridBased:
+        plugin: nav2_navfn_planner::NavfnPlanner
+        tolerance: 0.5
+        use_astar: false
+        allow_unknown: true
+  smoother_server:
+    ros__parameters:
+      smoother_plugins:
+      - simple_smoother
+      simple_smoother:
+        plugin: nav2_smoother::SimpleSmoother
+        tolerance: 1.0e-10
+        max_its: 1000
+        do_refinement: true
+  behavior_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      local_costmap_topic: local_costmap/costmap_raw
+      global_costmap_topic: global_costmap/costmap_raw
+      local_footprint_topic: local_costmap/published_footprint
+      global_footprint_topic: global_costmap/published_footprint
+      cycle_frequency: 10.0
+      behavior_plugins:
+      - spin
+      - backup
+      - drive_on_heading
+      - wait
+      spin:
+        plugin: nav2_behaviors::Spin
+      backup:
+        plugin: nav2_behaviors::BackUp
+      drive_on_heading:
+        plugin: nav2_behaviors::DriveOnHeading
+      wait:
+        plugin: nav2_behaviors::Wait
+      local_frame: odom
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.1
+      simulate_ahead_time: 2.0
+      max_rotational_vel: 1.0
+      min_rotational_vel: 0.4
+      rotational_acc_lim: 3.2
+  velocity_smoother:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      smoothing_frequency: 20.0
+      scale_velocities: false
+      feedback: OPEN_LOOP
+      max_velocity:
+      - 0.5
+      - 0.0
+      - 2.5
+      min_velocity:
+      - -0.5
+      - 0.0
+      - -2.5
+      max_accel:
+      - 2.5
+      - 0.0
+      - 3.2
+      max_decel:
+      - -2.5
+      - 0.0
+      - -3.2
+      odom_topic: odom
+      odom_duration: 0.1
+      deadband_velocity:
+      - 0.0
+      - 0.0
+      - 0.0
+      velocity_timeout: 1.0
+  collision_monitor:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      base_frame_id: base_footprint
+      odom_frame_id: odom
+      cmd_vel_in_topic: cmd_vel_smoothed
+      cmd_vel_out_topic: cmd_vel
+      state_topic: collision_monitor_state
+      transform_tolerance: 0.2
+      source_timeout: 1.0
+      base_shift_correction: true
+      stop_pub_timeout: 2.0
+      polygons:
+      - FootprintApproach
+      FootprintApproach:
+        type: polygon
+        action_type: approach
+        footprint_topic: /local_costmap/published_footprint
+        time_before_collision: 1.2
+        simulation_time_step: 0.1
+        min_points: 6
+        visualize: false
+        enabled: true
+      observation_sources:
+      - scan
+      scan:
+        type: scan
+        topic: scan
+        min_height: 0.15
+        max_height: 2.0
+        enabled: true
+  docking_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      controller_frequency: 20.0
+      initial_perception_timeout: 5.0
+      wait_charge_timeout: 5.0
+      dock_approach_timeout: 30.0
+      undock_linear_tolerance: 0.05
+      undock_angular_tolerance: 0.1
+      max_retries: 3
+      base_frame: base_link
+      fixed_frame: odom
+      dock_backwards: false
+      dock_prestaging_tolerance: 0.5
+      dock_plugins:
+      - simple_charging_dock
+      simple_charging_dock:
+        plugin: opennav_docking::SimpleChargingDock
+        docking_threshold: 0.05
+        staging_x_offset: -0.7
+        use_external_detection_pose: true
+        use_battery_status: false
+        use_stall_detection: false
+  waypoint_follower:
+    ros__parameters:
+      loop_rate: 20
+      stop_on_failure: false
+      action_server_result_timeout: 900.0
+      waypoint_task_executor_plugin: wait_at_waypoint
+      wait_at_waypoint:
+        plugin: nav2_waypoint_follower::WaitAtWaypoint
+        enabled: true
+        waypoint_pause_duration: 200
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        update_frequency: 5.0
+        publish_frequency: 2.0
+        global_frame: odom
+        robot_base_frame: base_link
+        rolling_window: true
+        width: 3
+        height: 3
+        resolution: 0.05
+        robot_radius: 0.22
+        plugins:
+        - voxel_layer
+        - inflation_layer
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.7
+        voxel_layer:
+          plugin: nav2_costmap_2d::VoxelLayer
+          enabled: true
+          publish_voxel_map: true
+          origin_z: 0.0
+          z_resolution: 0.05
+          z_voxels: 16
+          max_obstacle_height: 2.0
+          mark_threshold: 0
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        always_send_full_costmap: true
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        update_frequency: 1.0
+        publish_frequency: 1.0
+        global_frame: map
+        robot_base_frame: base_link
+        robot_radius: 0.22
+        resolution: 0.05
+        track_unknown_space: true
+        plugins:
+        - static_layer
+        - obstacle_layer
+        - inflation_layer
+        obstacle_layer:
+          plugin: nav2_costmap_2d::ObstacleLayer
+          enabled: true
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        static_layer:
+          plugin: nav2_costmap_2d::StaticLayer
+          map_subscribe_transient_local: true
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.7
+        always_send_full_costmap: true
+supervisor:
+  rosbridge_port: 9090
+  micro_ros_port: 8888

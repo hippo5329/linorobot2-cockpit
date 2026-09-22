@@ -113,6 +113,8 @@ def _collect(tgt: dict) -> List[Tuple[str, int, str]]:
     i2c = pins.get("i2c") or {}
     out.append(("i2c.sda", _pin(i2c.get("sda", -1)), "io"))
     out.append(("i2c.scl", _pin(i2c.get("scl", -1)), "io"))
+    imu = pins.get("imu") or {}
+    out.append(("imu.int", _pin(imu.get("int", -1)), "in"))
     out.append(("led", _pin(pins.get("led", -1)), "out"))
     bat = pins.get("battery") or {}
     out.append(("battery.pin", _pin(bat.get("pin", -1)), "adc"))

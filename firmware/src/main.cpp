@@ -612,6 +612,9 @@ static inline void wdtFeed()  {}
 // external flash chip. See identityField() below -- the key is the claim.
 // The last two come from firmware/common/build_stamp.py through the build flags.
 // scripts/mcu_probe.py parses exactly this line -- keep the key=value shape.
+#ifndef IMU_INT_PIN
+#define IMU_INT_PIN -1      // no DATA_RDY line wired; the env key imu_int overrides
+#endif
 #ifndef FW_GIT_REV
 #define FW_GIT_REV "unknown"      // built outside a git tree; say so rather than guess
 #endif
@@ -982,6 +985,17 @@ void setup()
                 runWifis();
                 runOta();
             }
+        }
+        // The data-ready line, if this board has one wired. -1 keeps polling.
+        {
+            const int imu_int = envInt("imu_int", IMU_INT_PIN);
+            imu->attachDataReady(imu_int);
+            if (imu_int >= 0)
+                Serial.printf("[imu] data-ready interrupt on GPIO %d (%s)\n", imu_int,
+                              imu->intConfigured() ? "driver enabled DATA_RDY"
+                                                   : "driver cannot enable DATA_RDY; polls if the pin stays quiet");
+            else
+                Serial.println("[imu] polling (set imu_int to use a DATA_RDY pin)");
         }
         if (!mag->init()) // take mag failure as fatal
         {

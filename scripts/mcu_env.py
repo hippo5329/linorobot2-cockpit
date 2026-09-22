@@ -411,6 +411,10 @@ def hardware_env(params: dict) -> dict:
         env["i2c_sda"] = i2c["sda"]
         env["i2c_scl"] = i2c["scl"]
         env["i2c_clock"] = i2c.get("clock", 400000)
+    # The IMU's DATA_RDY line, when the board breaks it out (Yahboom YB-EET01:
+    # GPIO 41). -1 keeps the firmware polling on every publish, as it always has.
+    imu_pins = pins.get("imu", {}) or {}
+    env["imu_int"] = int(imu_pins.get("int", -1))
     # The status LED. It is the only feedback an assembled robot gives before
     # micro-ROS is up -- boot, agent-waiting, IMU failure and the fake-wall
     # contact are all blink patterns -- so it must travel with the board rather

@@ -43,8 +43,40 @@
 #define GYRO_CAL_MAX_STDDEV 0.05f
 #endif
 
+#ifndef IMU_INT_STALE_MS
+#define IMU_INT_STALE_MS 200   // longer than this since the last read: read anyway
+#endif
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#define IMU_ISR_ATTR IRAM_ATTR
+#else
+#define IMU_ISR_ATTR
+#endif
+
 class IMUInterface
 {
+    private:
+        // One IMU per board, so one instance for the ISR to reach. Set by
+        // attachDataReady(); an ISR cannot carry a `this`.
+        inline static IMUInterface *instance_ = nullptr;
+        static void IMU_ISR_ATTR dataReadyISR()
+        {
+            if (instance_)
+                instance_->data_ready_ = true;
+        }
+        int int_pin_ = -1;
+        volatile bool data_ready_ = false;
+        bool int_ever_ = false;
+        bool int_configured_ = false;
+        bool poll_fallback_ = false;
+        uint32_t int_attached_ms_ = 0;
+        uint32_t last_read_ms_ = 0;
+
+    protected:
+        // Ask the chip to drive its DATA_RDY output. A driver that knows its
+        // chip overrides this; the default admits it cannot, and getData()
+        // then polls if the pin stays quiet.
+        virtual bool enableDataReadyInterrupt() { return false; }
+
     protected:
         // Value-initialised: these objects are heap-allocated (createIMU does
         // `new`), and the constructor hands frame_id to
@@ -187,8 +219,68 @@ class IMUInterface
         // than publishing a known-doubtful bias -- but the caller can say so.
         bool gyroCalSuspect() const { return gyro_cal_suspect_; }
 
+        // ---- optional data-ready interrupt -----------------------------------
+        //
+        // With no pin (-1, the default, and every config that predates the key)
+        // getData() reads the bus on every publish, exactly as before. With a
+        // pin, the chip's DATA_RDY line drives an ISR that sets a flag, and
+        // getData() only touches the bus when a fresh sample is actually there:
+        // no stale re-reads at the publish edge, and no I2C transaction spent
+        // to learn that nothing changed. Boards with the line broken out (the
+        // Yahboom YB-EET01 puts its IMU's INT on GPIO 41) set `imu_int` in the
+        // env; `pins.imu.int` in the config puts it there.
+        //
+        // Three things keep this from being worse than polling:
+        //   * a driver that cannot configure its chip's DATA_RDY output says so
+        //     (enableDataReadyInterrupt() returns false), and if the pin then
+        //     never fires within a second of attaching, getData() polls -- once
+        //     logged -- rather than returning the same sample forever;
+        //   * a line that fired once and then stops (a chip that lost power, a
+        //     wire that came off) is caught by a staleness ceiling: more than
+        //     IMU_INT_STALE_MS since the last read and the bus is read anyway;
+        //   * the ISR does one thing: set a flag. Everything else runs in the
+        //     publish context, where the I2C bus is safe to use.
+        void attachDataReady(int pin)
+        {
+            int_pin_ = pin;
+            if (pin < 0)
+                return;
+            instance_ = this;
+            pinMode(pin, INPUT);
+            attachInterrupt(digitalPinToInterrupt(pin), IMUInterface::dataReadyISR, RISING);
+            int_attached_ms_ = millis();
+            last_read_ms_ = int_attached_ms_;
+            int_configured_ = enableDataReadyInterrupt();
+        }
+        int intPin() const { return int_pin_; }
+        bool intConfigured() const { return int_configured_; }
+        bool intEverFired() const { return int_ever_; }
+
         sensor_msgs__msg__Imu getData()
         {
+            if (int_pin_ >= 0)
+            {
+                const uint32_t now = millis();
+                if (data_ready_)
+                {
+                    data_ready_ = false;
+                    int_ever_ = true;
+                }
+                else if (int_ever_ && (now - last_read_ms_) < IMU_INT_STALE_MS)
+                {
+                    return imu_msg_;        // nothing new: last sample, no bus traffic
+                }
+                else if (!int_ever_ && (now - int_attached_ms_) < 1000)
+                {
+                    return imu_msg_;        // give the line a second to show up
+                }
+                else if (!int_ever_ && !poll_fallback_)
+                {
+                    poll_fallback_ = true;
+                    Serial.printf("[imu] data-ready pin %d never fired in 1 s - polling instead\n", int_pin_);
+                }
+                last_read_ms_ = now;
+            }
             imu_msg_.angular_velocity = readGyroscope();
             // Gyro bias is removed HERE, for every driver, and nowhere else.
             //

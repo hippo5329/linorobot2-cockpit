@@ -41,7 +41,7 @@ MAXIMAL_CONFIG = {
                  "motor1": {"pwm": 8, "in_a": 9, "in_b": 10, "invert": False},
                  "encoder1": {"pin_a": 11, "pin_b": 12, "invert": True},
                  "dac": 25,
-                 "sonar": {"trigger": 13, "echo": 14}},
+                 "imu": {"int": 41}, "sonar": {"trigger": 13, "echo": 14}},
         # Optional blocks exist so that every key the firmware reads has a
         # writer SOMEWHERE. A key only a hand-edited YAML can produce is a key
         # nobody will ever set.
