@@ -52,12 +52,14 @@ def test_it_still_ignores_the_pins():
     assert "(void)pin1;" in body and "(void)pin2;" in body
 
 
-def test_the_bare_module_still_declares_the_mirrored_side():
-    """The config is not wrong -- a real differential base IS mirrored. The fix
-    belongs in the simulation, so the flags must stay."""
+def test_the_bare_module_declares_nothing_mirrored():
+    """The default is forward, for motors and encoders alike (user rule,
+    2026-09-22). A real differential base IS mirrored on one side, and that is
+    a measured fact about a chassis, never something a bare module inherits --
+    the simulated wheel ignores the flag anyway, so a default of `true` only
+    ever bit the first real robot. Nothing in a bare config is inverted."""
     from gen_bare_config import bare_pins
-    p = bare_pins()
-    assert p["motor2"]["invert"] is True
-    assert p["encoder2"]["invert"] is True
-    assert p["motor1"]["invert"] is False
-    assert p["encoder1"]["invert"] is False
+    p = bare_pins("pico")
+    for n in range(1, 5):
+        assert p[f"motor{n}"]["invert"] is False, f"motor{n}"
+        assert p[f"encoder{n}"]["invert"] is False, f"encoder{n}"

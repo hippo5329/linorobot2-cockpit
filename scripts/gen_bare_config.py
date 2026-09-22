@@ -48,24 +48,21 @@ BOARDS = {
     "esp32s3": ("esp32-s3-devkitc-1", "ESP32-S3"),
 }
 
-# A bare board has no wheels to measure, so these are placeholders that make the
-# kinematics maths well-formed rather than claims about hardware. They are the
-# values the bare design has always used.
-BARE_KINEMATICS = {
-    "base_type": "2wd",
-    "stamped_cmd_vel": "auto",
-    "wheel_diameter": 0.152,
-    "lr_wheels_distance": 0.271,
-    "fr_wheels_distance": 0,
-    "max_rpm": 140,
-    "max_rpm_ratio": 0.85,
-    "counts_per_rev": 4000,
-    "pwm_bits": 10,
-    "pwm_frequency": 20000,
-    "motor_operating_voltage": 12,
-    "motor_power_max_voltage": 12,
-    "pid": {"kp": 0.6, "ki": 0.8, "kd": 0.5},
-}
+# A bare board has no wheels to measure, so the kinematics are the ONE default
+# chassis every bare preset, reference config and release image share -- taken
+# from gen_firmware_header.bare_mcu_params so this file cannot drift from it
+# again (it did: 0.152 m wheels, inverted even-numbered motors, LED -1).
+import gen_firmware_header  # noqa: E402
+
+
+def bare_kinematics() -> dict:
+    kin = copy.deepcopy(gen_firmware_header.bare_mcu_params("esp32")["kinematics"])
+    kin.setdefault("stamped_cmd_vel", "auto")
+    kin.setdefault("fr_wheels_distance", 0)
+    kin.setdefault("motor_operating_voltage", 12)
+    kin.setdefault("motor_power_max_voltage", 12)
+    kin.setdefault("pid", {"kp": 0.6, "ki": 0.8, "kd": 0.5})
+    return kin
 
 
 def _bare_comm_mode(mcu: str) -> str:
@@ -88,20 +85,21 @@ def _bare_comm_mode(mcu: str) -> str:
     return "topic" if mcu.startswith("pico") else "serial"
 
 
-def bare_pins() -> dict:
-    """Every pin unconnected.
+def bare_pins(mcu: str = "esp32") -> dict:
+    """Every pin unconnected -- except the onboard LED.
 
-    Including the LED. A wired design names its LED because the blink pattern
-    is the only thing a board says before micro-ROS is up, but "all pins -1" is
-    what bare means, and an LED pin is still a pin being driven -- on a W board
-    GP25 is not even a GPIO. A user who wants the blink sets it in the Pins tab.
+    A bare module still has its LED, fake mode drives the real one, and a board
+    on a bench should blink out of the box (user rule, 2026-09-22): the pin is
+    the MCU's own, from the same table the release image uses. Invert flags are
+    OFF: the default is forward, for motors and encoders alike; a real chassis
+    gets its inversions measured, never inherited from a default.
     """
     pins = {}
     for n in range(1, 5):
-        pins[f"motor{n}"] = {"pwm": -1, "in_a": -1, "in_b": -1, "invert": n % 2 == 0}
-        pins[f"encoder{n}"] = {"pin_a": -1, "pin_b": -1, "invert": n % 2 == 0}
+        pins[f"motor{n}"] = {"pwm": -1, "in_a": -1, "in_b": -1, "invert": False}
+        pins[f"encoder{n}"] = {"pin_a": -1, "pin_b": -1, "invert": False}
     pins["i2c"] = {"sda": -1, "scl": -1}
-    pins["led"] = -1
+    pins["led"] = gen_firmware_header.bare_mcu_params(mcu)["base_controller"]["pins"]["led"]
     pins["battery"] = {"pin": -1, "r1": 30000, "r2": 7500}
     pins["sonar"] = {"trigger": -1, "echo": -1}
     return pins
@@ -158,9 +156,9 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
         "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
                   "raw_scan_topic": "raw_scan"},
         "sensors": bare_sensors(),
-        "pins": bare_pins(),
+        "pins": bare_pins(key),
     }
-    params["kinematics"] = copy.deepcopy(BARE_KINEMATICS)
+    params["kinematics"] = bare_kinematics()
     # Put the blocks back in the order every shipped config uses, so a generated
     # file and a hand-written one diff cleanly against each other.
     order = ["robot", "base_controller", "kinematics", "geometry", "ekf", "slam",

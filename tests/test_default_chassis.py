@@ -170,3 +170,26 @@ def test_the_simulated_pose_is_zeroed_before_slam_in_fake_mode():
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
     agent = launch[launch.index('name="micro_ros_agent"'):][:1400]
     assert "respawn=True" in agent, "an agent that dies mid-run still comes back"
+
+
+def test_the_generated_bare_config_is_the_default_chassis():
+    """gen_bare_config.py had its own kinematics table and drifted: 0.152 m wheels,
+    inverted even-numbered motors and encoders, LED -1. It now takes them from
+    gen_firmware_header.bare_mcu_params, and the pipeline regenerates the bare
+    config on every run, so a cell can no longer test a two-day-old file."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import gen_bare_config
+    leds = {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32, "esp32": 2, "esp32s3": 48}
+    for mcu in sorted(gen_bare_config.BOARDS):
+        cfg = gen_bare_config.bare_config(mcu)
+        for key, want in DEFAULT_KINEMATICS.items():
+            assert cfg["kinematics"][key] == want, f"bare_{mcu}: {key} {cfg['kinematics'][key]} != {want}"
+        pins = cfg["base_controller"]["pins"]
+        assert pins["led"] == leds[mcu], f"bare_{mcu}: LED {pins['led']} (rule: the onboard LED is on)"
+        for n in range(1, 5):
+            assert pins[f"motor{n}"]["invert"] is False and pins[f"encoder{n}"]["invert"] is False, \
+                f"bare_{mcu}: invert flags default OFF"
+        for key in ("use_fake_imu", "use_fake_wheel", "use_fake_ld19"):
+            assert cfg["base_controller"]["sensors"][key] is True
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "gen_bare_config.bare_config(bare_mcu.group(1))" in pipe, "bare configs are regenerated per run"

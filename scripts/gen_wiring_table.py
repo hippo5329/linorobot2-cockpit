@@ -99,10 +99,13 @@ def render(params: dict) -> str:
            f"MCU: **{label}**  ·  transport: `{tgt.get('transport', 'serial')}`"
            f"  ·  driver: `{tgt.get('driver_type', 'GENERIC_2_IN')}`", ""]
 
-    if not rows:
-        out += ["_No pins are wired: this is a bare module. Every function below is "
-                "simulated or absent._", ""]
-    else:
+    led_only = bool(rows) and all(fn == "Status LED" for fn, _, _, _ in rows)
+    if not rows or led_only:
+        out += [("_Only the onboard LED is wired: this is a bare module. Every other "
+                 "function is simulated or absent._" if led_only else
+                 "_No pins are wired: this is a bare module. Every function below is "
+                 "simulated or absent._"), ""]
+    if rows:
         out += ["## By function", "", "| Function | GPIO | Direction | Note |", "|---|---:|---|---|"]
         for fn, gpio, d, note in rows:
             out.append(f"| {fn} | {gpio} | {DIRECTION_WORD.get(d, d)} | {note} |")

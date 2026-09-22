@@ -31,6 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
+import gen_bare_config  # noqa: E402
 import mcu_identity  # noqa: E402
 import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
@@ -709,6 +710,19 @@ def main():
     if args.distro == "auto":
         args.distro = _default_distro
 
+
+    # A bare module is a rule, not a file (gen_bare_config.py), so its config is
+    # regenerated on every run. The cells had been testing bare_*_config.yaml
+    # files written by a release build two days earlier: 0.152 m wheels, inverted
+    # even-numbered motors, LED -1 and a different Nav2 template than the one
+    # every other default carries -- while the repo said otherwise.
+    bare_mcu = re.fullmatch(r"bare_([a-z0-9]+)", args.robot or "")
+    if bare_mcu and bare_mcu.group(1) in gen_bare_config.BOARDS:
+        bare_path = os.path.join(CONFIG_DIR, f"{args.robot}_config.yaml")
+        with open(bare_path, "w") as fh:
+            yaml.safe_dump(gen_bare_config.bare_config(bare_mcu.group(1)), fh, sort_keys=False)
+        print(f"[0/6] [CONFIG] {os.path.basename(bare_path)} regenerated from the bare rule "
+              f"(one default chassis, every sensor faked, LED on).")
 
     params_path = select_robot_config(args.robot, args.controller)
     with open(params_path, "r") as f:

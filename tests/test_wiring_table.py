@@ -21,9 +21,13 @@ MECANUM = os.path.join(REPO_ROOT, "config", "reference", "pico2_mecanum_config.y
 
 
 def test_a_bare_module_says_so_instead_of_printing_an_empty_table():
+    """A bare module's one wired pin is its onboard LED (the blink is on by
+    default); the table says so and lists only that pin."""
     md = gen_wiring_table.render(bare_config("pico2"))
     assert "bare module" in md
-    assert "| Function |" not in md, "an empty table is not a wiring chart"
+    rows = [l for l in md.splitlines() if l.startswith("| ") and "| Function |" not in l and "|---" not in l]
+    assert [r for r in rows if "Status LED" in r], "the LED row is the whole chart"
+    assert all("Status LED" in r or r.startswith("| 25 ") for r in rows), rows
 
 
 def test_every_wired_pin_appears_once_by_function():
