@@ -39,7 +39,7 @@ struct I2CDevice {
 // close; a 17th device is dropped rather than overflowing.
 #define I2C_PROBE_MAX 16
 
-// Scan addresses 1..126 and identify what answers. Wire must already be begun
+// Scan the assignable addresses 0x08..0x77 and identify what answers. Wire must already be begun
 // (initBoard(), or a tool's explicit pin override). Returns the count written.
 // Every address that ACKs appears in the result, identified or not -- an
 // unexpected device is exactly the thing worth seeing.

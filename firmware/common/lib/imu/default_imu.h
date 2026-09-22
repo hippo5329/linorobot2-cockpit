@@ -494,6 +494,7 @@ class QMI8658IMU : public IMUInterface
 class ICM42670IMU : public IMUInterface
 {
     private:
+        static const uint8_t REG_MCLK_RDY          = 0x00;  // bit3 MCLK_RDY
         static const uint8_t REG_SIGNAL_PATH_RESET = 0x02;  // bit4 SOFT_RESET_DEVICE_CONFIG
         static const uint8_t REG_INT_CONFIG        = 0x06;  // INT2[5:3] INT1[2:0]: mode|drive|polarity
         static const uint8_t REG_TEMP_DATA1        = 0x09;  // burst start
@@ -504,15 +505,24 @@ class ICM42670IMU : public IMUInterface
         static const uint8_t REG_ACCEL_CONFIG1     = 0x24;  // ACCEL_UI_FILT_BW[2:0]
         static const uint8_t REG_INT_SOURCE0       = 0x2B;  // INT1 sources: bit3 UI_DRDY_INT1_EN
         static const uint8_t REG_INT_SOURCE3       = 0x2D;  // INT2 sources: bit3 UI_DRDY_INT2_EN
+        static const uint8_t REG_INTF_CONFIG0      = 0x35;  // bit4 SENSOR_DATA_ENDIAN (1 = big)
+        static const uint8_t REG_INTF_CONFIG1      = 0x36;  // bit3 I3C_SDR_EN, bit2 I3C_DDR_EN
+        static const uint8_t REG_INT_STATUS        = 0x3A;  // bit4 RESET_DONE_INT (clears on read)
         static const uint8_t REG_WHO_AM_I          = 0x75;  // -> 0x67
+        static const uint8_t REG_BLK_SEL_W         = 0x79;  // MREG bank select, write side
+        static const uint8_t REG_BLK_SEL_R         = 0x7C;  // MREG bank select, read side
 
         static const uint8_t SOFT_RESET            = 0x10;
+        static const uint8_t I3C_EN_BITS           = 0x0C;  // INTF_CONFIG1: SDR | DDR
+        static const uint8_t RESET_DONE            = 0x10;
+        static const uint8_t DATA_BIG_ENDIAN       = 0x10;
         static const uint8_t PWR_LN_BOTH           = 0x0F;  // gyro LN, accel LN
         static const uint8_t GYRO_1000DPS_200HZ    = 0x28;  // FS 01 | ODR 1000 (200 Hz)
         static const uint8_t ACCEL_8G_200HZ        = 0x28;  // FS 01 | ODR 1000 (200 Hz)
         static const uint8_t FILT_BW_25HZ          = 0x06;
         static const uint8_t INT_PP_HIGH_PULSE_BOTH = 0x1B; // INT1 011, INT2 011
         static const uint8_t UI_DRDY_EN            = 0x08;
+        static const uint8_t WHO_TRIES             = 3;
 
         static constexpr float ACCEL_LSB_PER_G  = 4096.0f;
         static constexpr float GYRO_LSB_PER_DPS = 32.768f;
@@ -520,6 +530,8 @@ class ICM42670IMU : public IMUInterface
         static const uint8_t BURST_LEN = 14;    // 0x09..0x16
 
         uint8_t addr_ = 0x68;
+        bool big_endian_ = true;                // INTF_CONFIG0 says; the reset default
+        uint8_t who_try_ = 0;                   // which WHO_AM_I attempt answered
         geometry_msgs__msg__Vector3 accel_{};
         geometry_msgs__msg__Vector3 gyro_{};
         float temperature_c_ = 0.0f;
@@ -560,7 +572,48 @@ class ICM42670IMU : public IMUInterface
             return got == len;
         }
 
-        static int16_t be16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] << 8 | p[1]); }
+        int16_t rd16(const uint8_t *p) const
+        {
+            return big_endian_ ? (int16_t)((uint16_t)p[0] << 8 | p[1])
+                               : (int16_t)((uint16_t)p[1] << 8 | p[0]);
+        }
+
+        // The part answers WHO_AM_I at 0x68 or 0x69 (AP_AD0). One read is not
+        // enough to conclude it is absent: on the Yahboom the first transaction
+        // after the boot-time bus scan came back empty and every later one
+        // answered 0x67, so an absent chip is three silent tries, not one.
+        bool findChip()
+        {
+            const uint8_t cand[2] = { 0x68, 0x69 };
+            for (who_try_ = 1; who_try_ <= WHO_TRIES; who_try_++)
+            {
+                for (uint8_t i = 0; i < 2; i++)
+                {
+                    addr_ = cand[i];
+                    if (readReg(REG_WHO_AM_I) == 0x67)
+                        return true;
+                }
+                delay(1);
+            }
+            who_try_ = 0;
+            return false;
+        }
+
+        // Pure I2C, the way TDK's own driver starts: bank selects at 0, and
+        // the I3C SDR/DDR modes off. With I3C enabled (the reset default) the
+        // 50 ns I2C spike filter is not active, and the part listens for the
+        // I3C broadcast address 0x7E -- which a bus scan that runs past 0x77
+        // sends it. Done before the soft reset so the reset is delivered on a
+        // clean interface, and again after it because the reset restores the
+        // defaults.
+        void pureI2C()
+        {
+            writeReg(REG_BLK_SEL_W, 0);
+            writeReg(REG_BLK_SEL_R, 0);
+            const uint8_t v = readReg(REG_INTF_CONFIG1);
+            if (v != 0xFF && (v & I3C_EN_BITS))
+                writeReg(REG_INTF_CONFIG1, v & (uint8_t)~I3C_EN_BITS);
+        }
 
         bool sample()
         {
@@ -571,13 +624,13 @@ class ICM42670IMU : public IMUInterface
                 return false;
             }
             bursts_ok_++;
-            temperature_c_ = (float)be16(&b[0]) / 128.0f + 25.0f;
-            accel_.x = (float)be16(&b[2]) / ACCEL_LSB_PER_G * g_to_accel_;
-            accel_.y = (float)be16(&b[4]) / ACCEL_LSB_PER_G * g_to_accel_;
-            accel_.z = (float)be16(&b[6]) / ACCEL_LSB_PER_G * g_to_accel_;
-            gyro_.x = (float)be16(&b[8])  / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
-            gyro_.y = (float)be16(&b[10]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
-            gyro_.z = (float)be16(&b[12]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            temperature_c_ = (float)rd16(&b[0]) / 128.0f + 25.0f;
+            accel_.x = (float)rd16(&b[2]) / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.y = (float)rd16(&b[4]) / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.z = (float)rd16(&b[6]) / ACCEL_LSB_PER_G * g_to_accel_;
+            gyro_.x = (float)rd16(&b[8])  / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.y = (float)rd16(&b[10]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.z = (float)rd16(&b[12]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
             return true;
         }
 
@@ -593,29 +646,41 @@ class ICM42670IMU : public IMUInterface
     public:
         ICM42670IMU() {}
 
+        // initBoard() began the bus with the config's pins and clock before the
+        // probe ran; a bare Wire.begin() here would be a no-op on the ESP32 core
+        // and a pin reset on others, so the driver does not call it.
         bool startSensor() override
         {
-            Wire.begin();
-            bool found = false;
-            const uint8_t cand[2] = { 0x68, 0x69 };
-            for (uint8_t i = 0; i < 2 && !found; i++)
+            if (!findChip())
             {
-                addr_ = cand[i];
-                found = readReg(REG_WHO_AM_I) == 0x67;
-            }
-            if (!found)
-            {
-                Serial.println("[imu] icm42670: no WHO_AM_I 0x67 at 0x68/0x69");
+                Serial.println("[imu] icm42670: no WHO_AM_I 0x67 at 0x68/0x69 in 3 tries");
                 return false;
             }
 
+            pureI2C();
             writeReg(REG_SIGNAL_PATH_RESET, SOFT_RESET);
-            delay(50);                           // the datasheet's 1 ms, with margin
-            if (readReg(REG_WHO_AM_I) != 0x67)
+            delay(5);                            // the datasheet's 1 ms, with margin
+            bool back = false;
+            for (uint8_t i = 0; i < WHO_TRIES && !back; i++)
+            {
+                back = readReg(REG_WHO_AM_I) == 0x67;
+                if (!back) delay(1);
+            }
+            if (!back)
             {
                 Serial.printf("[imu] icm42670 @0x%02X: silent after soft reset\n", addr_);
                 return false;
             }
+            pureI2C();
+            const uint8_t st = readReg(REG_INT_STATUS);   // clears RESET_DONE
+            if (!(st & RESET_DONE))
+            {
+                Serial.printf("[imu] icm42670 @0x%02X: no RESET_DONE after soft reset (INT_STATUS 0x%02X)\n",
+                              addr_, st);
+                return false;
+            }
+            big_endian_ = (readReg(REG_INTF_CONFIG0) & DATA_BIG_ENDIAN) != 0;
+
             writeReg(REG_PWR_MGMT0, PWR_LN_BOTH);
             delay(2);                            // no register writes for 200 us after a mode change
             writeReg(REG_GYRO_CONFIG0, GYRO_1000DPS_200HZ);
@@ -636,7 +701,8 @@ class ICM42670IMU : public IMUInterface
                 Serial.printf("[imu] icm42670 @0x%02X: burst read failed\n", addr_);
                 return false;
             }
-            Serial.printf("[imu] icm42670 @0x%02X: running, %.1f C\n", addr_, temperature_c_);
+            Serial.printf("[imu] icm42670 @0x%02X: running, %.1f C, %s-endian data, WHO_AM_I answered on try %u\n",
+                          addr_, temperature_c_, big_endian_ ? "big" : "little", who_try_);
             return true;
         }
 
@@ -653,6 +719,8 @@ class ICM42670IMU : public IMUInterface
 
         uint8_t address() const { return addr_; }
         float temperatureC() const { return temperature_c_; }
+        bool bigEndian() const { return big_endian_; }
+        uint8_t whoTry() const { return who_try_; }
         uint32_t burstsOk() const { return bursts_ok_; }
         uint32_t burstsFailed() const { return bursts_failed_; }
 };

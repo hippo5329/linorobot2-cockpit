@@ -193,7 +193,13 @@ void identify(Sink &sink, uint8_t addr)
 int i2cProbe(I2CDevice *out, int max_devices)
 {
     Sink sink{out, max_devices, 0};
-    for (uint8_t addr = 1; addr < 127; addr++) {
+    // 0x08..0x77: the 7-bit addresses a device may own. 0x00-0x07 and
+    // 0x78-0x7F are reserved by the I2C specification (general call, start
+    // byte, CBUS, 10-bit addressing, device ID), and 0x7E in particular is
+    // the I3C broadcast address: an I3C-capable part on the bus -- the
+    // ICM-42670-P is one, with I3C on by default -- obeys a 0x7E+W and did
+    // not answer the I2C transaction that followed.
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
         Wire.beginTransmission(addr);
         if (Wire.endTransmission() == 0)
             identify(sink, addr);
