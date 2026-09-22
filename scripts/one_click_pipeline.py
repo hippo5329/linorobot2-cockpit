@@ -216,6 +216,12 @@ SENSOR_TOPICS = {
 }
 
 
+# How every config in this project spells "not fitted". Not a chip name:
+# read as one, `current: NONE` made a real-sensor run demand /battery from a
+# board with nothing wired to its battery input.
+NOT_FITTED = {"", "none", "null", "off", "false", "no"}
+
+
 def sensor_topics(controller_cfg: dict) -> list:
     """Auxiliary topics the fitted sensors must publish, in a stable order.
 
@@ -228,14 +234,13 @@ def sensor_topics(controller_cfg: dict) -> list:
     a chip name. Reading it as one made a real-sensor run demand /battery from a
     board whose battery input has nothing connected to it, and abort before SLAM.
     """
-    absent = {"", "none", "null", "off", "false", "no"}
     sensors = controller_cfg.get("sensors") or {}
     topics = []
     for key, tops in SENSOR_TOPICS.items():
         chip = sensors.get(key)
         if chip is None or chip is False:
             continue
-        if isinstance(chip, str) and chip.strip().lower() in absent:
+        if isinstance(chip, str) and chip.strip().lower() in NOT_FITTED:
             continue
         if sensors.get(f"use_fake_{key}"):
             continue
@@ -819,6 +824,15 @@ def main():
                            if fitted.get(k))
         print(f"   Sensors (must publish): {roster}")
         print(f"   Required topics: {', '.join(required_aux)}")
+        if fitted.get("imu") and str(fitted["imu"]).lower() not in NOT_FITTED \
+                and controller_cfg.get("sensors", {}).get("use_fake_wheel", False):
+            print("   ⚠️ A real IMU with simulated wheels: this EKF fuses vyaw from BOTH "
+                  "odom/unfiltered and imu/data, and a board on a bench reports "
+                  "gyro=(0, 0, 0) while the fake wheels report a turn. The filtered "
+                  "heading is then pulled toward zero on every IMU sample and lags the "
+                  "simulated one, so a Nav2 goal from this combination measures the "
+                  "bench, not the robot. Measured: the same board and config reach "
+                  "8/8 legs in fake mode and stall ~1.6 m short in auto, on both distros.")
     print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> SLAM -> Nav2 -> Map")
     print("==================================================================")
     os.makedirs(os.path.dirname(args.map_output), exist_ok=True)

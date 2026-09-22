@@ -255,3 +255,22 @@ def test_the_gate_never_asks_for_tighter_than_nav2_promises():
         d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
         checker = d["nav2"]["controller_server"]["ros__parameters"]["general_goal_checker"]
         assert checker["xy_goal_tolerance"] == 0.35, f"{name}: {checker['xy_goal_tolerance']}"
+
+
+def test_a_real_imu_on_simulated_wheels_is_called_out():
+    """The EKF fuses vyaw from odom AND imu. A board bolted to a bench reports
+    gyro=(0, 0, 0) while the fake wheels report a turn, so the filtered heading
+    is dragged toward zero on every IMU sample. Measured on the GenDrv: 8/8 legs
+    in fake mode, stalled 1.615 m (jazzy) and 1.625 m (lyrical) short of the same
+    goal in auto mode, both reporting "Failed to make progress". A run that mixes
+    them must say so, or the transcript reads like a navigation fault."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "NOT_FITTED = {" in pipe, "the not-fitted sentinel is named once"
+    assert 'use_fake_wheel' in pipe and "A real IMU with simulated wheels" in pipe
+    import yaml
+    for name in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum"):
+        d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
+        ekf = d["ekf"]["ekf_filter_node"]["ros__parameters"]
+        # index 11 is vyaw: both sources fuse it, which is what makes the mix bite
+        assert ekf["odom0_config"][11] is True, name
+        assert ekf["imu0_config"][11] is True, name
