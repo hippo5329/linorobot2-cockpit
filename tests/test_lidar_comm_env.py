@@ -250,3 +250,22 @@ def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_abse
     assert "if use_host_fake_laser" in text, (
         "fake_laser_node is no longer gated on use_host_fake_laser"
     )
+
+
+def test_scan_wait_follows_the_scan_source_not_the_transport():
+    """The pipeline's /scan gate must key on who PRODUCES the scan.
+
+    It keyed on the micro-ROS transport, so a board with micro-ROS on a cable and
+    fake_ld19 out a UART into a second bridge -- the GenDrv -- got 15 s while the
+    real ldlidar driver was still respawning against a board rebooting from the
+    flash the same run had just done. Both distros failed with /scan NO DATA on a
+    healthy board, while the udp leg beside it passed with 90 s.
+    """
+    src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "scan_wait = 15 if transport.startswith" not in src, \
+        "the scan gate must not key on the micro-ROS transport"
+    assert "scan_wait = 15 if host_room else 90" in src
+    # and it must decide host_room the same way bringup decides to launch the
+    # virtual room, or the gate and the stack disagree about what will publish.
+    assert 'use_fake_ld19' in src and 'lidar_mode != "serial"' in src
+    assert "os.path.exists(lidar_port_cfg)" in src

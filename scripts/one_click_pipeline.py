@@ -925,7 +925,24 @@ def main():
         # 10.0s)" and aborting a run whose robot was entirely healthy. The scan
         # needs its own wait, because it is not what the handshake measures.
         if has_lidar:
-            scan_wait = 15 if transport.startswith("serial") else 90
+            # WHO publishes /scan decides the wait, not which transport micro-ROS
+            # happens to use. This keyed on `transport` and cost the GenDrv's serial
+            # leg on both distros: micro-ROS on a cable, but the scan produced by the
+            # BOARD's fake_ld19 out GPIO 4 into a second USB bridge, where the real
+            # ldlidar driver gives the port ~3 s, dies, and respawns every 2 s while
+            # the board is still rebooting from the flash this run just did. 15 s is
+            # not enough for that, and the 90 s the udp path gets is not a property of
+            # Wi-Fi -- it is a property of the board being the source.
+            #
+            # The host's virtual room is the only fast case: fake_laser_node publishes
+            # as soon as it starts. Mirror bringup.launch.py's own choice of when it
+            # stands in, so the two cannot drift apart.
+            lidar_cfg = controller_cfg.get("lidar", {}) or {}
+            lidar_mode = str(lidar_cfg.get("comm_mode", "serial") or "serial").lower()
+            lidar_port_cfg = lidar_cfg.get("serial_port", "/dev/ttyUSB1")
+            host_room = (controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
+                         and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
+            scan_wait = 15 if host_room else 90
             print(f"  Waiting for the first /scan (up to {scan_wait} s)...")
             if wait_for_topic("/scan", timeout_sec=scan_wait, distro=args.distro,
                               require_message="header.frame_id"):

@@ -54,7 +54,7 @@ def test_the_transport_defaults_to_serial():
 
 def _scan_block():
     text = open(PIPELINE).read()
-    m = re.search(r"if has_lidar:\s*\n\s*scan_wait = .*?wait_for_topic\(\"/scan\".*?\)", text, re.S)
+    m = re.search(r"if has_lidar:.*?wait_for_topic\(\"/scan\".*?\)", text, re.S)
     assert m, "the /scan gate before the topic audit is gone"
     return m.group(0)
 
@@ -75,16 +75,29 @@ def test_the_scan_gets_its_own_wait_before_the_audit():
     )
 
 
-def test_the_scan_wait_covers_a_udp_lidar():
+def test_the_scan_wait_covers_any_scan_the_board_produces():
+    """The long wait belongs to a BOARD-produced scan, not to Wi-Fi.
+
+    Keying this on the micro-ROS transport was wrong in both directions, and the
+    GenDrv proved it: micro-ROS on a cable, but /scan raycast by the firmware and
+    sent out GPIO 4 into a second USB bridge, where ldlidar gives the port ~3 s,
+    exits and respawns every 2 s -- all while the board is rebooting from the
+    flash the same run performed. It got 15 s and failed on both distros, while
+    the udp leg beside it passed on 90. Only the host's virtual room is fast,
+    because fake_laser_node publishes the moment it starts.
+    """
     block = _scan_block()
-    m = re.search(r"scan_wait = (\d+) if transport\.startswith\(\"serial\"\) else (\d+)", block)
-    assert m, "the /scan wait is a constant again"
-    serial_s, udp_s = int(m.group(1)), int(m.group(2))
-    assert udp_s >= 60, (
-        f"udp /scan wait is {udp_s}s; the measured first scan was 31.8 s after bind, "
-        "so anything near that fails the run it is waiting for"
+    m = re.search(r"scan_wait = (\d+) if host_room else (\d+)", block)
+    assert m, "the /scan wait no longer splits on who produces the scan"
+    host_s, board_s = int(m.group(1)), int(m.group(2))
+    assert board_s >= 60, (
+        f"a board-produced /scan gets {board_s}s; the measured first scan over udp was "
+        "31.8 s after bind, and a serial one has to survive ldlidar's respawn loop"
     )
-    assert udp_s > serial_s
+    assert board_s > host_s
+    # host_room must be decided the way bringup decides to launch the virtual room.
+    assert "use_fake_ld19" in block and 'lidar_mode != "serial"' in block
+    assert "os.path.exists(lidar_port_cfg)" in block
 
 
 def test_a_robot_with_no_lidar_does_not_wait():
