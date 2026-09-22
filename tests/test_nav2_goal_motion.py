@@ -402,10 +402,10 @@ def test_round_trips_drive_out_and_home_that_many_times(monkeypatch, capsys):
     assert _run(monkeypatch, node, timeout=0.3, round_trips=4,
                 goal_x=3.0, goal_y=0.0) is True
     assert node.legs == [(3.0, 0.0), (0.0, 0.0)] * 4
-    # Every leg but the last is closed explicitly, so bt_navigator is idle when
-    # the next goal arrives: "another navigator is processing, rejecting request"
-    # ended a run at leg 3 of 8 before this.
-    assert node.cancelled == 7
+    # A goal Nav2 has already closed (status 4) needs no cancel: the gate asks
+    # only when the goal is still open. "another navigator is processing,
+    # rejecting request" ended a run at leg 3 of 8 before this.
+    assert getattr(node, "cancelled", 0) == 0
     out = capsys.readouterr().out
     assert "leg 8/8 -> (0.00, 0.00): reached" in out
     assert "NAV2 GOAL REACHED 8/8 legs: 4 round trip(s)" in out
@@ -610,3 +610,24 @@ def test_the_status_is_used_when_there_is_no_pose_at_all(monkeypatch):
     node.goal_dist_min = float("inf")
     assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=0,
                 goal_x=0.0, goal_y=0.0, goal_tolerance=0.40) is True
+
+
+def test_an_open_goal_is_cancelled_on_every_leg_including_the_last(monkeypatch, capsys):
+    """A goal Nav2 has not closed is cancelled at the end of EVERY leg.
+
+    The next goal need not come from this process. A soak that left its final
+    goal running had the next round's goal rejected by bt_navigator, and the
+    next, until Nav2 let go -- 38 of 60 rounds red on 2026-09-23, every burst
+    preceded by a round that printed "has not closed the goal".
+    """
+    monkeypatch.setattr(MOD, "GOAL_CLOSE_SEC", 0.4)
+    monkeypatch.setattr(MOD, "GOAL_CLOSE_EXIT_SEC", 0.4)
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=-1)
+    node.goal_completed = True          # the robot arrived; Nav2 has not said so
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1,
+                goal_x=3.0, goal_y=0.0) is True
+    # Two legs, and the run's own exit: the last leg is not exempt.
+    assert node.cancelled >= 2
+    out = capsys.readouterr().out
+    assert "has not closed the goal" in out
+    assert "may be rejected" in out

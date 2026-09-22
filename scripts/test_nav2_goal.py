@@ -89,6 +89,10 @@ WALL_END_MARGIN = 0.30
 STARTUP_ABORT_SEC = 5.0
 STARTUP_ABORT_DIST = 0.05
 STARTUP_SETTLE_SEC = 15.0
+# How long to wait for Nav2 to give a cancelled goal a terminal status: between
+# legs, and once more on the way out. Named so a test can shrink them.
+GOAL_CLOSE_SEC = 20.0
+GOAL_CLOSE_EXIT_SEC = 10.0
 
 
 class Nav2GoalTester(Node):
@@ -667,6 +671,28 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         """
         return node.odom_max_dist >= min_traverse
 
+    def close_goal(node, wait: float) -> bool:
+        """Cancel the goal in flight and spin until Nav2 gives it a terminal status.
+
+        A leg ends when the ROBOT is at the goal, which is routinely before
+        bt_navigator says so. Whoever sends the next goal -- this process or the
+        next invocation -- gets "another navigator is processing, rejecting
+        request" until the old one lets go. Returns True if the goal is closed.
+        """
+        if node.goal_status != -1:
+            return True
+        node.cancel_current_goal()
+        t = time.time()
+        asked_twice = False
+        while node.goal_status == -1 and time.time() - t < wait:
+            rclpy.spin_once(node, timeout_sec=0.2)
+            # One repeat halfway: a cancel sent while the server is blocked on a
+            # service call is dropped, and the second one lands.
+            if not asked_twice and time.time() - t > wait / 2:
+                node.cancel_current_goal()
+                asked_twice = True
+        return node.goal_status != -1
+
     def run_legs(legs) -> bool:
         """Drive every leg in turn; each must arrive, and each that crosses the
         wall must have planned around it. One failure ends the run -- the
@@ -786,14 +812,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             # Close the leg before opening the next one: cancel the goal in
             # flight and wait for a terminal status, so bt_navigator is idle
             # when the next goal arrives and this leg's status is its own.
-            if i < n:
-                node.cancel_current_goal()
-            t1 = time.time()
-            while node.goal_status == -1 and time.time() - t1 < 20.0:
-                rclpy.spin_once(node, timeout_sec=0.2)
-            if node.goal_status == -1:
-                print(f"   leg {i}/{n}: Nav2 has not closed the goal 20 s after the robot "
-                      f"arrived; continuing.")
+            # EVERY leg, including the last: the next goal need not come from
+            # this process. A soak that left its final goal open had the next
+            # round's goal rejected, and the next, until Nav2 let go -- 38 of 60
+            # rounds red, each one preceded by exactly this line (2026-09-23).
+            if not close_goal(node, GOAL_CLOSE_SEC):
+                print(f"   leg {i}/{n}: Nav2 has not closed the goal {GOAL_CLOSE_SEC:.0f} s after "
+                      f"the robot "
+                      f"arrived; continuing. The next goal sent to this stack may be "
+                      f"rejected while the old one is still running.")
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
                        f"the obstacle wall and back home (within {goal_tolerance:.2f} m)")
 
@@ -925,6 +952,14 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         return False
 
     finally:
+        # Never hand the stack back with a goal still running: the next process
+        # to send one gets rejected, and a soak reads that as a robot fault.
+        try:
+            if not close_goal(node, GOAL_CLOSE_EXIT_SEC):
+                print("   note: this run exited with a Nav2 goal still open; the next goal "
+                      "sent to this stack may be rejected until bt_navigator lets go.")
+        except Exception as exc:                  # a shutdown must not eat the verdict
+            print(f"   note: could not close the goal on exit: {exc}")
         node.destroy_node()
         rclpy.shutdown()
 
