@@ -568,13 +568,26 @@ def probe_board(pio_env: str, port: str, baud: int, params_path: str,
     return board
 
 
+def sensors_for_mode(mode: str):
+    """What --mode means for the env block's sensor flags.
+
+    fake forces every fake_* flag on and real forces them off, whatever the
+    config says; auto lets the YAML stand. This is the whole meaning of the
+    switch: a config that describes a real LD19 run in fake mode used to reach
+    the board with fake_ld19 0, and /scan then structurally could not arrive.
+    """
+    return {"fake": "fake", "real": "real"}.get(mode)
+
+
 def write_env_only(pio_env: str, port: str, baud: int, params_path: str,
-                   controller: str, timeout: int = 600) -> bool:
+                   controller: str, timeout: int = 600, sensors: str = None) -> bool:
     """The 4 KB write: the board's description, without touching its firmware."""
     argv = [sys.executable, "-u", os.path.join(REPO_ROOT, "scripts", "flash_mcu.py"), "--env-only",
             "--env", pio_env, "--port", port, "--baud", str(baud),
             "--params", params_path, "--firmware-name", controller,
             "--app", "base", "--total-timeout", str(timeout)]
+    if sensors:
+        argv += ["--sensors", sensors]
     return run_streamed(argv, timeout=timeout + 60, log_tag="flash", prefix="    | ").returncode == 0
 
 
@@ -589,6 +602,9 @@ def flash_firmware(pio_env: str, port: str, baud: int, params_path: str, control
         argv += ["--prebuilt", os.path.basename(prebuilt_dir)]
     else:
         argv += ["--firmware-dir", "firmware", "--env", pio_env]
+    sensors = sensors_for_mode(args.mode)
+    if sensors:
+        argv += ["--sensors", sensors]
     return run_streamed(argv, timeout=args.flash_timeout + 60, log_tag="flash", prefix="    | ").returncode == 0
 
 
@@ -876,7 +892,7 @@ def main():
             print(f"\n[3/6] [ENV] Writing the env block only — {why}. The firmware is not touched.")
             release_serial_port(serial_port)
             if not write_env_only(pio_env, serial_port, baudrate, params_path, controller,
-                                  timeout=args.flash_timeout):
+                                  timeout=args.flash_timeout, sensors=sensors_for_mode(args.mode)):
                 print("  ⚠️  The env block could not be written; the board keeps the one it has.")
                 failures.append("env block write")
             else:

@@ -166,3 +166,41 @@ def test_battery_fake_lidar_and_geometry_reach_the_env():
     assert fake["fake_ld19"] == "1"
     assert float(fake["lidar_x"]) == 0.12   # the emulator raycasts from the config's LiDAR pose
     assert "pwm_min" not in fake and "pwm_max" not in fake   # derived from pwm_bits on the board
+
+
+def test_fake_mode_overrides_a_config_that_names_real_hardware():
+    """--mode fake means simulate what the bench lacks, whatever the YAML says.
+
+    gendrv_config.yaml describes a real LD19 on GPIO 4 (use_fake_ld19: false).
+    Under --mode fake the env still carried fake_ld19 0, the board emitted
+    nothing on the LiDAR bridge, and /scan could never arrive -- both distros.
+    """
+    env = _env("gendrv")
+    assert env["fake_ld19"] == "0" and env["imu"] != "fake"      # the config, as written
+    changed = mcu_env.apply_sensor_mode(env, "fake")
+    assert env["fake_ld19"] == "1" and env["fake_wheel"] == "1" and env["fake_env"] == "1"
+    assert env["imu"] == "fake" and env["mag"] == "fake"
+    assert "fake_ld19" in changed and "imu" in changed
+    # the LED is not a sensor: fake mode drives the real one
+    assert env.get("led") == mcu_env.env_from_config(
+        os.path.join(REF, "gendrv_config.yaml"), SECRETS_EXAMPLE, "192.0.2.1").get("led")
+
+
+def test_real_mode_restores_the_named_drivers_and_config_mode_is_a_no_op():
+    env = _env("gendrv")
+    mcu_env.apply_sensor_mode(env, "fake")
+    mcu_env.apply_sensor_mode(env, "real", os.path.join(REF, "gendrv_config.yaml"))
+    assert env["fake_ld19"] == "0" and env["fake_wheel"] == "0"
+    assert env["imu"] == "qmi8658" and env["mag"] == "ak09918"
+    untouched = _env("gendrv")
+    assert mcu_env.apply_sensor_mode(dict(untouched), "config") == []
+    assert mcu_env.apply_sensor_mode(dict(untouched), None) == []
+
+
+def test_the_pipeline_and_the_flasher_carry_the_mode_to_the_env():
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'return {"fake": "fake", "real": "real"}.get(mode)' in pipe
+    assert pipe.count('argv += ["--sensors", sensors]') == 2, "both flash paths must forward it"
+    assert "sensors=sensors_for_mode(args.mode)" in pipe
+    flash = open(os.path.join(REPO_ROOT, "scripts", "flash_mcu.py")).read()
+    assert 'cmd += ["--sensors", sensors]' in flash

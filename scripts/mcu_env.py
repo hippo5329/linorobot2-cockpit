@@ -275,6 +275,54 @@ def _bool(value) -> str:
     return "1" if value else "0"
 
 
+SENSOR_MODES = ("config", "fake", "real")
+
+
+def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
+    """Force the env's sensor flags to a MODE, whatever the config said.
+
+    "fake" is what the pipeline's --mode fake means: simulate everything the
+    bench does not have. It used to leave the config's flags alone, so
+    gendrv_config.yaml -- a real LD19 on GPIO 4, use_fake_ld19: false -- went to
+    the board with fake_ld19 0 under --mode fake, emitted nothing on the LiDAR
+    bridge, and /scan structurally could not arrive, on both distros. A mode
+    called fake that waits for hardware the bench lacks is the config's mode
+    with a misleading label.
+
+    "real" is the opposite. "config" (or None) lets the YAML stand -- that is
+    --mode auto, and what the real-sensor legs use. The status LED is not a
+    sensor and is never touched: fake mode drives the real one.
+
+    Returns the keys it changed, so the caller can say so in the transcript.
+    """
+    if not mode or mode == "config":
+        return []
+    if mode not in SENSOR_MODES:
+        raise ValueError(f"sensor mode must be one of {SENSOR_MODES}, not {mode!r}")
+    before = dict(env)
+    if mode == "fake":
+        env["imu"] = "fake"
+        env["mag"] = "fake"
+        env["fake_wheel"] = "1"
+        env["fake_ld19"] = "1"
+        env["fake_env"] = "1"
+    else:
+        env["fake_wheel"] = "0"
+        env["fake_ld19"] = "0"
+        env["fake_env"] = "0"
+        # A driver can only be un-faked if the config names one.
+        sensors = {}
+        if params_path:
+            import yaml
+            with open(params_path) as fh:
+                sensors = (yaml.safe_load(fh) or {}).get("base_controller", {}).get("sensors", {}) or {}
+        for field in ("imu", "mag"):
+            name = str(sensors.get(field, "")).strip()
+            if name and name.upper() not in ("AUTO", "NONE", "OFF", "DISABLE", "FAKE"):
+                env[field] = name.lower()
+    return [k for k in env if env.get(k) != before.get(k)]
+
+
 def _num(value) -> str:
     """Compact, round-trippable text for a number in the env.
 
@@ -784,6 +832,10 @@ def main():
                         "syslog_ip and lidar_ip unless the config overrides them")
     b.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                    help="override or add a variable (repeatable)")
+    b.add_argument("--sensors", choices=SENSOR_MODES, default="config",
+                   help="fake: simulate every sensor whatever the config says (the "
+                        "pipeline's --mode fake); real: the opposite; config: let the "
+                        "YAML stand (--mode auto). The status LED is never touched.")
 
     p = sub.add_parser("print", help="decode an env image")
     p.add_argument("image")
@@ -797,6 +849,9 @@ def main():
 
     if a.cmd == "build":
         env = env_from_config(a.params, a.secrets, a.host_ip)
+        changed = apply_sensor_mode(env, a.sensors, a.params)
+        if changed:
+            print(f"[mcu_env] --sensors {a.sensors} overrode the config: {', '.join(changed)}")
         for item in a.set:
             key, _, value = item.partition("=")
             env[key] = value
