@@ -37,7 +37,28 @@ import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
-LOG_DIR = os.path.join(REPO_ROOT, "logs")
+# One directory per run, so a second run cannot erase the evidence of the first.
+# A Wi-Fi leg overwrote a serial leg's nav2.log on 2026-09-22 and the failure it
+# held could not be read again. `logs/<stamp>/`, plus `logs/latest` and a
+# top-level symlink per file so anything that knows `logs/nav2.log` still works.
+RUN_ID = time.strftime("%Y%m%d-%H%M%S")
+LOG_ROOT = os.path.join(REPO_ROOT, "logs")
+LOG_DIR = os.path.join(LOG_ROOT, RUN_ID)
+
+
+def run_log_path(tag: str) -> str:
+    """This run's log for `tag`, with the compatibility symlinks refreshed."""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    path = os.path.join(LOG_DIR, f"{tag}.log")
+    for link, target in ((os.path.join(LOG_ROOT, "latest"), LOG_DIR),
+                         (os.path.join(LOG_ROOT, f"{tag}.log"), path)):
+        try:
+            if os.path.islink(link) or os.path.exists(link):
+                os.remove(link)
+            os.symlink(target, link)
+        except OSError:
+            pass                      # a read-only or odd mount is not worth failing a run
+    return path
 
 
 # ------------------------------------------------------------------ robot config
@@ -339,7 +360,7 @@ def run_streamed(full_cmd: list, timeout: int, log_tag: str = None,
     if log_tag:
         os.makedirs(LOG_DIR, exist_ok=True)
         try:
-            sink = open(os.path.join(LOG_DIR, f"{log_tag}.log"), "w")
+            sink = open(run_log_path(log_tag), "w")
         except Exception:
             sink = None
     try:
@@ -416,8 +437,7 @@ open_log_files = []
 
 def launch_bg(cmd_str: str, log_tag: str = "launch", distro: str = "jazzy") -> subprocess.Popen:
     """A long step (bringup, SLAM, Nav2) in its own process group, logged to logs/<tag>.log."""
-    os.makedirs(LOG_DIR, exist_ok=True)
-    f = open(os.path.join(LOG_DIR, f"{log_tag}.log"), "w")
+    f = open(run_log_path(log_tag), "w")
     open_log_files.append(f)
     full_cmd = ["bash", "-c", f"{get_ros_env(distro)} && exec {cmd_str}"]
     return subprocess.Popen(full_cmd, stdout=f, stderr=subprocess.STDOUT, text=True, preexec_fn=os.setsid)
@@ -452,7 +472,7 @@ def wait_for_nav2_activation(timeout_sec: int = 90) -> tuple:
     clean configure. Returns (ok, detail); detail names the failed node when
     the log shows it.
     """
-    log_path = os.path.join(LOG_DIR, "nav2.log")
+    log_path = os.path.join(LOG_DIR, "nav2.log")   # this run's, never a previous one's
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:

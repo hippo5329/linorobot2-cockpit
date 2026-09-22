@@ -229,3 +229,12 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         allowed = lateral if name == "pico2_mecanum" else set()
         bad = [p for p in diffs if p not in allowed]
         assert not bad, f"{name} drifts from the template at {bad[:6]}"
+
+
+def test_every_run_writes_its_own_log_directory():
+    """A second run must not erase the first one's evidence: a Wi-Fi leg
+    overwrote a serial leg's nav2.log and the failure it held was gone."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'RUN_ID = time.strftime' in pipe and "LOG_DIR = os.path.join(LOG_ROOT, RUN_ID)" in pipe
+    assert pipe.count('open(run_log_path(') == 2, "both launchers write through run_log_path"
+    assert 'os.symlink(target, link)' in pipe, "logs/latest and logs/<tag>.log still resolve"
