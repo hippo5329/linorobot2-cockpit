@@ -301,8 +301,18 @@ object -- and it defines nothing on a board without CDC-on-boot. A bridge never 
 so `boot_serial_wait` is skipped on UART0. `tests/test_console_uart0.py` walks the tree for a
 translation unit that prints without the wrapper.
 
+**The Yahboom's IMU is a TDK ICM-42670-P, not the QMI8658 its documentation names.** The bus
+probe now prints reg 0x00 / 0x0F / 0x75 for a device it cannot name, and the V2.0 board on the
+bench answered at 0x68 with WHO_AM_I (0x75) = 0x67. `ICM42670IMU` in `default_imu.h` is the
+driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, one 14-byte big-endian
+burst (temperature, six axes), DATA_RDY routed to INT1 and INT2 as a push-pull active-high pulse
+when asked. Five seconds after a DATA_RDY pin is attached the base prints
+`[imu] data-ready line GPIO 41 fired N times in the first 5 s` -- about 1000 for a 200 Hz ODR,
+0 when the wire is on a pin the chip is not driving -- so the interrupt path is verified by a
+count in the boot log, not by faith.
+
 **The Yahboom microROS control board** (`config/reference/yahboom_esp32s3_config.yaml`,
-YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: QMI8658 at 0x6B on
+YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: ICM-42670-P at 0x68 on
 SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on M1 4/5 and M2 15/16 (the `pwm` enable
 is `-1`, tied high on the board), encoders 6/7 and 47/48, battery ADC on GPIO 3 for a 2S pack,
 LED on 45 -- a strapping pin, which the inspector warns about and nothing else. The board's own
