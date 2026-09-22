@@ -41,7 +41,7 @@ def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():
 
 def test_publish_reads_the_real_sensor_when_only_the_wheels_are_fake():
     m = _read(MAIN)
-    pub = m[m.index("void publishData()"):]
+    pub = m[m.index("void publishData()\n{"):]
     pub = pub[:pub.index("// Hard-iron offsets")]
     assert "if (sim_imu) {" in pub and "fake_imu.apply(*imu_msg);" in pub
     assert "if (sim_mag) {" in pub and "fake_imu.applyMag(*mag_msg);" in pub
