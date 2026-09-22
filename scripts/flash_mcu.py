@@ -233,7 +233,7 @@ def release_serial_port(serial_port: str):
     # resolves to the numbers of /dev/null, so `lsof -t /dev/ttyUSB0` lists
     # EVERY process with /dev/null open -- this one included -- and the SIGINT
     # meant for a stale agent landed on the flasher itself (a
-    # KeyboardInterrupt in release_serial_port, seen on the a21 bench host).
+    # KeyboardInterrupt in release_serial_port, seen on a bench host running rootless Docker).
     # /proc says which fds really point at the path, and our own ancestry is
     # never a holder worth signalling.
     try:
