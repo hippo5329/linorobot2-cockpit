@@ -58,11 +58,13 @@ class IMUInterface
         // One IMU per board, so one instance for the ISR to reach. Set by
         // attachDataReady(); an ISR cannot carry a `this`.
         inline static IMUInterface *instance_ = nullptr;
-        static void IMU_ISR_ATTR dataReadyISR()
-        {
-            if (instance_)
-                instance_->data_ready_ = true;
-        }
+        // Defined in imu_interface.cpp, not here: an IRAM_ATTR function that
+        // is inline (a member defined in its class is) lands in a COMDAT
+        // .iram1 section whose literal pool the Xtensa linker then places
+        // AFTER the code -- "dangerous relocation: l32r: literal placed after
+        // use", a link failure on every ESP32 image. Out of line it is an
+        // ordinary IRAM function.
+        static void IMU_ISR_ATTR dataReadyISR();
         int int_pin_ = -1;
         volatile bool data_ready_ = false;
         bool int_ever_ = false;
