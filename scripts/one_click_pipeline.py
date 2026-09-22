@@ -823,7 +823,14 @@ def main():
     stale_board = bool(board and board.get("verdict") in ("stale", "unknown") and not board.get("probe_failed"))
     auto_updating = bool(args.auto_update and stale_board)
     want_firmware = (args.flash or blank_board or auto_updating) and not args.skip_flash
-    want_env = bool(board and board.get("needs_env_write")) and not args.skip_flash
+    # Every run writes the env. It used to go only when the probe called it stale,
+    # which compares against what THIS host recorded -- so a board carrying an env
+    # from an older config, another host, or a --skip-flash run kept it, and the
+    # run silently tested a description nobody had chosen. That is exactly how a
+    # GenDrv leg "passed" with fake_ld19 off: it inherited an older env with the
+    # emulator on. The block is 4 KB and the application image is untouched, so
+    # the write is cheaper than the doubt.
+    want_env = bool(board) and not args.skip_flash
 
     if blank_board and not args.flash:
         print("  → No application is running on the board (BOOTSEL / nothing installed), "
@@ -888,7 +895,9 @@ def main():
             print(f"  ✅ Firmware flashed and verified for {controller}.")
         elif want_env:
             why = ("the config or the selected application changed" if board.get("verdict") == "env_stale"
-                   else "this machine has no record of the env block on the board")
+                   else "this machine has no record of the env block on the board"
+                   if board.get("needs_env_write")
+                   else "every run writes it, so the board cannot be running an env nobody chose")
             print(f"\n[3/6] [ENV] Writing the env block only — {why}. The firmware is not touched.")
             release_serial_port(serial_port)
             if not write_env_only(pio_env, serial_port, baudrate, params_path, controller,
@@ -898,9 +907,14 @@ def main():
             else:
                 print("  ✅ env block written.")
         elif not args.skip_flash:
-            print("\n[3/6] [FLASH] Nothing to write: the board already runs this build with this config.")
+            print("\n[3/6] [FLASH] The application is current; the env block was rewritten anyway.")
         else:
             print("\n[3/6] [FLASH] Skipping firmware flash per --skip-flash.")
+            print("  ⚠️  --skip-flash also skips the env block, so this run tests whatever")
+            print("      description the board is already carrying -- possibly written by an")
+            print("      older config, another host, or another run. A GenDrv leg passed this")
+            print("      way with fake_ld19 off, inheriting an env that had the emulator on.")
+            print("      A release leg must not use it.")
 
         # Step 4: bringup and the topic gate
         print(f"\n[4/6] [BRINGUP] Launching the bringup stack (controller={controller}, distro={args.distro})...")

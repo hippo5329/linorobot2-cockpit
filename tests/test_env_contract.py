@@ -118,3 +118,17 @@ def test_the_deploy_endpoint_writes_kinematics_keys_the_firmware_reads():
     design = system_utils.generate_custom_robot_specs("a 4wd rover")["design"]
     assert {"wheel_diameter", "lr_wheels_distance", "fr_wheels_distance"} <= set(design)
     assert not {"track_width", "wheelbase", "wheel_diameter_m"} & set(design)
+
+
+def test_every_run_writes_the_env_block():
+    """A test run must never inherit an env block it did not write.
+
+    want_env keyed on the probe calling it stale, and the probe compares against
+    what THIS host recorded -- so a board carrying an env from an older config,
+    another host, or a --skip-flash run kept it. A GenDrv leg "passed" that way
+    with fake_ld19 off, inheriting an older env that had the emulator on.
+    """
+    src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "want_env = bool(board) and not args.skip_flash" in src, \
+        "the env write must not be conditional on the probe's staleness verdict"
+    assert 'needs_env_write")) and not args.skip_flash' not in src
