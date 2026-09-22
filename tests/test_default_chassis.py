@@ -129,3 +129,20 @@ def test_bare_kinematics_are_the_same_in_the_presets_and_the_release_image():
     else:
         for key, want in DEFAULT_KINEMATICS.items():
             assert bare["kinematics"][key] == want
+
+
+def test_a_failed_goal_re_runs_the_drive_suite():
+    """A failed goal must say which half is at fault.
+
+    The six manoeuvres run before SLAM and Nav2, so by the time a goal fails
+    they are minutes and two lifecycle activations old. Asking the base again,
+    in the state the failure happened in, separates "Nav2 cannot navigate" from
+    "the base stopped answering" -- and those send the reader to opposite ends
+    of the stack.
+    """
+    src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    fail_branch = src[src.index('failures.append(f"Nav2: goal test exit'):]
+    assert "drive_suite.py" in fail_branch[:2000], "a failed goal does not re-run the manoeuvres"
+    # and it must not depend on a name the earlier drive block owns: --no-drive-test
+    # would otherwise turn the failure into a NameError inside its own diagnostic.
+    assert "post_tname" in fail_branch[:2000] and "{tname}" not in fail_branch[:2000]

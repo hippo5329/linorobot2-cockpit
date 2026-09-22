@@ -1109,6 +1109,37 @@ def main():
                     for line in test_res.stderr.strip().splitlines():
                         print(f"     {line}")
                 failures.append(f"Nav2: goal test exit {test_res.returncode}")
+
+                # The goal failed. Ask the base directly, right now, in this
+                # stack state: six manoeuvres against odometry. It already ran
+                # before SLAM/Nav2, but that was minutes and two lifecycle
+                # activations ago, and what a reader needs here is which half is
+                # at fault. A base that still does 6/6 after a failed goal says
+                # the firmware, the transport, the agent and the cmd_vel contract
+                # are all fine and the fault is above them -- planner, costmap,
+                # footprint, TF. A base that now fails says the opposite, and the
+                # goal failure was a symptom.
+                # tname only exists when the earlier drive block ran; derive it
+                # here so --no-drive-test cannot turn a Nav2 failure into a
+                # NameError inside the diagnostic meant to explain it.
+                post_tname = ("geometry_msgs/msg/TwistStamped"
+                              if wants_stamped_cmd_vel(args.distro, controller_cfg, params)
+                              else "geometry_msgs/msg/Twist")
+                print("  [DRIVE] The goal failed -- re-running the six manoeuvres to "
+                      "see whether the base is still answering...")
+                post_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {post_tname}",
+                                   timeout=90, distro=args.distro)
+                if post_res.stdout:
+                    print(post_res.stdout)
+                if post_res.returncode == 0:
+                    print("  ↳ The base still drives 6/6 after the failed goal: the base, the "
+                          "transport and the /cmd_vel contract are fine, so the fault is in "
+                          "the navigation layer above them.")
+                else:
+                    print(f"  ↳ The base ALSO fails the manoeuvres now (exit {post_res.returncode}): "
+                          f"the goal failure is a symptom, not the cause. Look at the board and "
+                          f"the agent before looking at Nav2.")
+                    failures.append(f"Drive suite after the failed goal: exit {post_res.returncode}")
                 drive = launch_bg(drive_cmd, log_tag="drive", distro=args.distro)
                 bg_processes.append(drive)
                 time.sleep(args.explore_sec)
