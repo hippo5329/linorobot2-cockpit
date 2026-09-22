@@ -205,6 +205,29 @@ def _holders_of(path: str) -> list:
             continue
     return holders
 
+
+# What in the ROM's 115200 chatter is worth an operator's eye. The reset lines
+# and load addresses repeat every boot; the errors, asserts, panics and the
+# "Rebooting..." that follows them are the diagnosis.
+ROM_KEEP = ("E (", "assert failed", "Guru Meditation", "Rebooting", "Probe failed",
+            "invalid header", "rst:", "boot:", "abort()", "Backtrace", "panic")
+
+
+def rom_boot_lines(text: str, limit: int = 8) -> list:
+    seen, out = set(), []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or not any(k in line for k in ROM_KEEP):
+            continue
+        if line in seen:
+            continue
+        seen.add(line)
+        out.append(line[:160])
+        if len(out) >= limit:
+            break
+    return out
+
+
 def release_serial_port(serial_port: str):
     """Safely release the serial port from micro_ros_agent or other holders (Directive 6)."""
     if not serial_port or not os.path.exists(serial_port):
@@ -1335,6 +1358,23 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
         if esp32_reset_into_app(port, baud):
             captured = mcu_probe.listen_for_banner(port, baud, 8.0)
             banner = mcu_probe.parse_banner(captured)
+    # Still nothing at the application's baud. An ESP32 that never reaches
+    # setup() says why at the ROM's 115200 -- a flash-size mismatch, a panic
+    # backtrace, a bootloader that cannot find the app -- and a listener at
+    # 921600 hears that as silence. Listen there once, after one more reset,
+    # and put the ROM's own words in the log instead of "no banner". This is
+    # exactly what the Yahboom S3 said while the 8 MB-header image rebooted on
+    # its 4 MB module: nothing at 921600, the whole story at 115200.
+    rom_lines = []
+    if not banner and app_written and is_esp_family(env) and os.path.exists(port) and int(baud) != 115200:
+        rom = mcu_probe.listen_for_banner(port, 115200, 3.0, reset=True)
+        rom_lines = rom_boot_lines(rom)
+        if rom_lines:
+            log("no application banner; the ROM/bootloader at 115200 says:")
+            for line in rom_lines:
+                log(f"   | {line}")
+            if any("Rebooting" in l or "assert failed" in l or "Guru Meditation" in l or "Probe failed" in l for l in rom_lines):
+                log("   The board is in a boot loop: the image was written but the application does not start.")
     if banner:
         log(f"Board reports: linorobot2_hardware app={banner['app']} "
             f"distro={banner.get('distro') or 'unstated'} "
