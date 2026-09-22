@@ -419,6 +419,18 @@ document.getElementById("btn-lidar-start").addEventListener("click", async () =>
   // EventSource cannot carry the access-token header, so it carries a one-shot
   // ticket instead -- the token itself never goes into a URL.
   const ticket = await streamTicket();
+  // No ticket means the cockpit has no token yet: streamTicket() swallows that
+  // and returns "". Opening the stream anyway gets a 401 that EventSource
+  // reports as a bare `error`, and the viewer used to blame the supervisor for
+  // it -- "is the supervisor still running?" while the supervisor was serving
+  // this very page. Say the one thing that fixes it instead.
+  if (!ticket) {
+    setLidarViewerStatus(
+      "Not authorised: this cockpit needs its access token before it will stream. " +
+      "Paste it in the banner at the top, or open the ?token= URL the supervisor printed.",
+      "err");
+    return;
+  }
   lidarSource = new EventSource(`/api/lidar_stream?${qs}&ticket=${encodeURIComponent(ticket)}`);
   setLidarViewerStatus(`Connecting to ${topic}...`, "info");
 
@@ -443,7 +455,12 @@ document.getElementById("btn-lidar-start").addEventListener("click", async () =>
     } catch {}
   });
   lidarSource.onerror = () => {
-    setLidarViewerStatus("Stream disconnected — is the supervisor still running?", "err");
+    // Do not name a cause this has not checked. The stream drops for a stopped
+    // supervisor, a rejected ticket, and a network that went away, and only one
+    // of those is worth restarting anything over.
+    setLidarViewerStatus(
+      "Stream disconnected. Check the supervisor is up, and that this cockpit is "
+      + "still authorised — a ticket is good once and expires.", "err");
   };
 
   document.getElementById("btn-lidar-start").disabled = true;
