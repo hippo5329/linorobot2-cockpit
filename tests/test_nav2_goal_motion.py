@@ -497,3 +497,13 @@ def test_the_goal_distance_is_measured_in_the_frame_the_goal_was_sent_in():
     assert "self.goal_dist_now = math.hypot(self.goal_x - wx, self.goal_y - wy)" in body
     assert "gap = math.hypot(wx - prev[0], wy - prev[1])" in body, "the wall crossing too"
     assert 'frame = "map" if getattr(node, "tf_ok", False) else "odom' in src
+
+
+def test_clipping_the_corner_is_not_driving_through_the_wall(monkeypatch, capsys):
+    """A disc robot rounds a corner wide, and the clamp that keeps it a radius
+    clear of the wall puts the crossing just inside the span: y = -1.40 against
+    a span of 1.5 was reported as driving through a solid wall."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    node.wall_cross_y = [(-1.40, 0.01)]
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is True
+    assert "DROVE INTO THE WALL" not in capsys.readouterr().out

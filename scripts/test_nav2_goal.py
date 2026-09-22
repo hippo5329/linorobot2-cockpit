@@ -78,6 +78,11 @@ def _status_name(status: int) -> str:
 # The obstacle wall of the simulated room (fake_ld19.h defaults).
 WALL_X = 2.0
 WALL_HALF_SPAN = 1.5
+# How close to an end a crossing may be and still be a robot rounding the
+# corner rather than one driving through the face. A disc of FAKE_ROBOT_RADIUS
+# cannot pass nearer than that to the endpoint, and a board that clipped it at
+# y = -1.40 was reported as driving through a solid wall.
+WALL_END_MARGIN = 0.30
 
 
 class Nav2GoalTester(Node):
@@ -506,8 +511,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         return abs(sy + t * (gy - sy)) <= WALL_HALF_SPAN
 
     def went_around() -> bool:
-        """Crossed beyond a wall end, further out than the measurement's error bar."""
-        return any(abs(y) - gap > WALL_HALF_SPAN for y, gap in getattr(node, "wall_cross_y", ()))
+        """Crossed at or beyond a wall end, further out than the error bar.
+
+        "Beyond" includes the corner: a disc robot rounds it wide, and the clamp
+        that keeps it one radius clear puts a crossing near the end at
+        |y| a little under the span rather than over it."""
+        return any(abs(y) + gap > WALL_HALF_SPAN - WALL_END_MARGIN
+                   for y, gap in getattr(node, "wall_cross_y", ()))
 
     def went_through() -> bool:
         """Crossed where the wall actually is, by more than the error bar.
@@ -517,7 +527,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         this should be impossible; if it is ever true the room, not the
         navigation, is what failed. Anything within a sample gap of the wall's
         end is not a measurement of either answer."""
-        return any(abs(y) + gap < WALL_HALF_SPAN for y, gap in getattr(node, "wall_cross_y", ()))
+        return any(abs(y) + gap < WALL_HALF_SPAN - WALL_END_MARGIN
+                   for y, gap in getattr(node, "wall_cross_y", ()))
 
     def wall_path_ok() -> bool:
         if not leg_crosses_wall():

@@ -489,16 +489,24 @@ public:
             // the room, and the scan then shows that wall *behind* it -- which
             // quietly makes any obstacle-avoidance test meaningless, because
             // nothing stops a plan that goes through it.
-            pushOffSegment(x, y, wall_x1_, wall_y1_, wall_x2_, wall_y2_);
+            pushOffSegment(x, y, wall_x1_, wall_y1_, wall_x2_, wall_y2_,
+                           pose_x_, pose_y_);
         }
         return (x != in_x) || (y != in_y);
     }
 
-    // Push a point out to FAKE_ROBOT_RADIUS from a segment, along the shortest
-    // way out, if it is inside. Approach direction does not matter: the robot
-    // leaves by the side it came in on.
+    // Push a point out to FAKE_ROBOT_RADIUS from a segment, if it is inside.
+    // `px, py` is where the robot was last cycle, and it decides WHICH SIDE it
+    // leaves by: taking that from the current position instead ejects a robot
+    // whose centre has just crossed the line out of the FAR side -- through the
+    // wall. Measured: a board rounding the wall's end at y = -1.40 was put down
+    // at x = 2.83, behind it, and Nav2 then drove to a goal it should not have
+    // been able to reach. Beyond an end there is no side to speak of, so the
+    // push stays radial from the endpoint, which is what a disc robot does when
+    // it rounds a corner.
     static void pushOffSegment(float &x, float &y,
-                               float x1, float y1, float x2, float y2)
+                               float x1, float y1, float x2, float y2,
+                               float px, float py)
     {
         const float r = (float)FAKE_ROBOT_RADIUS;
         const float sx = x2 - x1, sy = y2 - y1;
@@ -506,6 +514,7 @@ public:
 
         // closest point on the segment, with the parameter clamped to its ends
         float t = (len2 > 1e-9f) ? ((x - x1) * sx + (y - y1) * sy) / len2 : 0.0f;
+        const bool interior = (t > 0.0f && t < 1.0f);
         if (t < 0.0f) t = 0.0f;
         if (t > 1.0f) t = 1.0f;
         const float cx = x1 + t * sx, cy = y1 + t * sy;
@@ -513,6 +522,22 @@ public:
         float nx = x - cx, ny = y - cy;
         float d = sqrtf(nx * nx + ny * ny);
         if (d >= r) return;             // already clear
+
+        if (interior && len2 > 1e-9f)
+        {
+            // Against the face of the wall: leave by the side the robot was on
+            // last cycle, whatever side its centre is on now.
+            const float ux = -sy, uy = sx;                  // a normal to the segment
+            const float prev_side = (px - x1) * ux + (py - y1) * uy;
+            if (fabsf(prev_side) > 1e-6f)
+            {
+                const float s = (prev_side > 0.0f) ? 1.0f : -1.0f;
+                const float ulen = sqrtf(len2);
+                x = cx + ux / ulen * s * r;
+                y = cy + uy / ulen * s * r;
+                return;
+            }
+        }
 
         if (d < 1e-6f)
         {
