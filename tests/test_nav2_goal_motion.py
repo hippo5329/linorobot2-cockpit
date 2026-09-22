@@ -201,3 +201,39 @@ def test_a_tiny_command_does_not_lower_the_bar(monkeypatch):
     a noise-floor reading count as a response."""
     assert _run(monkeypatch, FakeNode(odom_lin=0.006, odom_ang=0.036,
                                       cmd_lin=0.004, cmd_ang=0.01)) is False
+
+
+def test_the_path_verified_pass_needs_a_real_traverse(monkeypatch):
+    """The success branch must not fire on the in-place rotation at the start.
+
+    It exited as soon as the plan was verified, five commands had gone out and
+    moved() was true -- which on a quick machine is the rotation before the robot
+    has driven any of the path. Measured on the Yahboom: 5 cmd_vel peaking at
+    0.025 m/s, a green line with the robot standing still, while the same board
+    over Wi-Fi did 161 commands at 0.400 m/s. The wildly varying counts across
+    boards (5, 20, 41, 61, 120, 161) were that race, not the boards.
+    """
+    rotating = FakeNode(odom_lin=0.0, odom_ang=0.55, dist=0.002, yaw=0.9, cmds=40)
+    assert _run(monkeypatch, rotating, timeout=0.3) is True   # the timeout branch still judges by moved()
+    # ...but it must not have SHORT-CIRCUITED: a driving base returns in-window.
+    driving = FakeNode(odom_lin=0.22, odom_ang=0.1, dist=0.8, yaw=0.2, cmds=40)
+    assert _run(monkeypatch, driving, timeout=30.0) is True
+
+
+def test_a_rotating_base_does_not_end_the_window_early(monkeypatch):
+    """A long window plus a base that only spins must run to the timeout.
+
+    If the path-verified branch still accepted rotation, this would return almost
+    at once; with the traverse requirement it has to wait, which is what gives a
+    robot still turning to face its path the chance to actually drive it.
+    """
+    import time as _t
+    node = FakeNode(odom_lin=0.0, odom_ang=0.55, dist=0.002, yaw=0.9, cmds=40)
+    t0 = _t.time()
+    _run(monkeypatch, node, timeout=1.0)
+    assert _t.time() - t0 >= 0.9, "the success branch short-circuited on rotation again"
+
+
+def test_min_traverse_is_reachable_from_the_command_line():
+    src = open(os.path.join(REPO_ROOT, "scripts", "test_nav2_goal.py")).read()
+    assert '"--min-traverse"' in src and "min_traverse=args.min_traverse" in src

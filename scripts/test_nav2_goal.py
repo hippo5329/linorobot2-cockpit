@@ -235,7 +235,8 @@ class Nav2GoalTester(Node):
 
 def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, min_cmds: int = 5,
              cmd_vel_type: str = "auto", noise_lin: float = 0.03,
-             noise_ang: float = 0.10, require_motion: bool = True) -> bool:
+             noise_ang: float = 0.10, require_motion: bool = True,
+             min_traverse: float = 0.10) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
@@ -259,6 +260,26 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         the floor catches exactly that.
         """
         return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
+
+    def traversed() -> bool:
+        """Did it actually GO somewhere, as opposed to answering the command?
+
+        moved() is a floor for "the base heard us", and angular motion satisfies
+        it -- correctly, because a base that only rotates has still heard. But the
+        headline says the path around the obstacle wall was driven, and a robot
+        rotating on the spot has driven none of it. The success branch used to
+        exit as soon as the plan was verified, five commands had gone out and
+        moved() was true, which on a quick machine is the in-place rotation at the
+        very start: measured 5 cmd_vel peaking at 0.025 m/s on the Yahboom, a pass
+        with the robot standing still, while the same board over Wi-Fi did 161
+        commands at 0.400 m/s. The wildly varying counts across boards -- 5, 20,
+        41, 61, 120, 161 -- were that race, not a property of the boards.
+
+        This is displacement from the start pose (max hypot in _odom_cb), not
+        integrated velocity, so a threshold means something: the noise argument
+        that rules displacement out for moved() does not apply to a pose delta.
+        """
+        return node.odom_max_dist >= min_traverse
 
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one
@@ -303,7 +324,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             # planner and the count from the controller's own publications, so a
             # board that is unplugged satisfies both.
             if node.path_avoids_wall and node.cmd_vel_count >= min_cmds and \
-                    (moved() or not require_motion):
+                    ((moved() and traversed()) or not require_motion):
                 return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
 
             if node.goal_completed and (moved() or not require_motion):
@@ -339,6 +360,10 @@ def main():
                         help="Type published on /cmd_vel; 'auto' reads it off the graph")
     parser.add_argument("--noise-lin", type=float, default=0.03,
                         help="Linear speed (m/s) at or below which /odom is considered at rest")
+    parser.add_argument("--min-traverse", type=float, default=0.10,
+                        help="metres the base must actually cover before the path-verified "
+                             "headline is allowed; displacement from the start pose, not "
+                             "integrated velocity")
     parser.add_argument("--noise-ang", type=float, default=0.10,
                         help="Angular speed (rad/s) at or below which /odom is considered at rest; "
                              "a fake-mode board at rest has been seen reporting 0.036")
@@ -352,7 +377,8 @@ def main():
     success = run_test(goal_x=args.goal_x, goal_y=args.goal_y, timeout=args.timeout,
                        min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type,
                        noise_lin=args.noise_lin, noise_ang=args.noise_ang,
-                       require_motion=not args.no_require_motion)
+                       require_motion=not args.no_require_motion,
+                       min_traverse=args.min_traverse)
     sys.exit(0 if success else 1)
 
 
