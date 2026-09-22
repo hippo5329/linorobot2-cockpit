@@ -241,3 +241,17 @@ def test_none_is_not_a_chip_name():
     for absent in ("NONE", "none", " None ", "", "off"):
         assert m.sensor_topics({"sensors": {"current": absent}}) == [], absent
     assert m.sensor_topics({"sensors": {"current": "INA219", "use_fake_current": True}}) == []
+
+
+def test_the_gate_never_asks_for_tighter_than_nav2_promises():
+    """Nav2 stops when ITS goal checker is satisfied. A leg ended 0.340 m from
+    home inside a 0.35 m checker, was failed by a 0.30 m gate, and the next leg
+    then started on top of its goal: "Resulting plan has 0 poses in it"."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'parser.add_argument("--goal-tolerance", type=float, default=None' in pipe
+    assert 'checker.get("xy_goal_tolerance", 0.25)) + 0.05' in pipe
+    import yaml
+    for name in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum"):
+        d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
+        checker = d["nav2"]["controller_server"]["ros__parameters"]["general_goal_checker"]
+        assert checker["xy_goal_tolerance"] == 0.35, f"{name}: {checker['xy_goal_tolerance']}"

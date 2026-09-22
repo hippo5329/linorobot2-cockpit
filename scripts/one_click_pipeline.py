@@ -743,8 +743,12 @@ def main():
                         help="the Nav2 goal must actually be reached -- judged by the "
                              "displacement from the goal pose, with Nav2's error_code "
                              "reported when it is not. A verified plan is not enough.")
-    parser.add_argument("--goal-tolerance", type=float, default=0.30,
-                        help="metres from the goal pose that count as reached (--require-goal)")
+    parser.add_argument("--goal-tolerance", type=float, default=None,
+                        help="metres from the goal pose that count as reached (--require-goal). "
+                             "Default: the robot's own Nav2 goal checker plus 5 cm -- asking "
+                             "for tighter than Nav2's xy_goal_tolerance asks for something "
+                             "Nav2 never promised, and a leg that ends inside its checker but "
+                             "outside the gate leaves the next leg starting on top of its goal.")
     parser.add_argument("--goal-timeout", type=int, default=25,
                         help="seconds the Nav2 goal test waits. 25 suits the default check, "
                              "which asks whether the planner routed around the wall. "
@@ -779,6 +783,14 @@ def main():
     with open(params_path, "r") as f:
         params = yaml.safe_load(f) or {}
     controller_cfg = params.get("base_controller") or {}
+    if args.goal_tolerance is None:
+        # Nav2 stops when ITS goal checker is satisfied. A Yahboom leg ended
+        # 0.340 m from home inside a 0.35 m checker and was failed by a 0.30 m
+        # gate; the next leg then started 0.35 m from its goal and the planner
+        # returned "Resulting plan has 0 poses in it".
+        checker = ((((params.get("nav2") or {}).get("controller_server") or {})
+                    .get("ros__parameters") or {}).get("general_goal_checker") or {})
+        args.goal_tolerance = round(float(checker.get("xy_goal_tolerance", 0.25)) + 0.05, 3)
     if not controller_cfg:
         raise SystemExit(f"{os.path.basename(params_path)} has no base_controller: block. "
                          "Run scripts/migrate_config_schema.py to convert it.")
