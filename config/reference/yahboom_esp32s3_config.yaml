@@ -21,8 +21,8 @@
 #
 # Kinematics below are inherited placeholders from the esp32s3 reference --
 # set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
-# chassis this board is mounted on. The battery divider ratio (r1/r2) is
-# likewise unverified for this board.
+# chassis this board is mounted on. The battery divider ratio (r1/r2) is now
+# the board's own 10 k/3.3 k, taken from Yahboom's battery-detection source.
 robot:
   name: yahboom_esp32s3
   description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), 2WD
@@ -118,10 +118,20 @@ base_controller:
     led: 45
     battery:
       pin: 3           # BAT ADC; GPIO 3 is also a strapping pin (JTAG select)
-      # A 2S pack (7.4-8.4 V) through the board's own divider. r1/r2 are the
-      # generic placeholders until the ratio is measured on this board.
-      r1: 30000
-      r2: 7500
+      # A 2S pack (7.4-8.4 V) through the board's own divider, which Yahboom's
+      # firmware documents as 10 k high-side / 3.3 k low-side:
+      #
+      #   // battery_voltage = gpio_voltage*(10+3.3)/3.3;
+      #   battery_voltage = gpio_voltage_mV / 1000.0 * 4.03;
+      #
+      # and 13.3/3.3 = 4.0303 is that 4.03, so the comment and the shipped
+      # constant agree. Ratio 0.2481: a full 8.4 V pack puts 2.084 V on GPIO 3,
+      # inside the S3's range, and 3S would reach 3.13 V -- which is why this
+      # board is 2S. The generic 30 k/7.5 k placeholder that sat here reads
+      # 5.0x instead of 4.03x and reports a full pack as 10.42 V, 24 % high,
+      # so `min_v` never trips and the pack looks permanently over-full.
+      r1: 10000
+      r2: 3300
       min_v: 6.4
       max_v: 8.4
       capacity_ah: 2.2
