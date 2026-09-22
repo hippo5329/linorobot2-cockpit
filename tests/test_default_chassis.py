@@ -10,6 +10,7 @@ base_footprint for EKF/SLAM against base_link in the costmaps) and a motor inver
 copied from the vendor's firmware. 2026-09-22.
 """
 import glob
+import math
 import os
 import re
 import sys
@@ -77,6 +78,39 @@ def test_every_reference_agrees_on_the_base_frame():
             for v in _walk(params, key):
                 assert {v} == costmap_base, \
                     f"{name}: {key}={v} but the costmaps use {costmap_base}"
+
+
+def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
+    """One default wheel diameter, one motor, one encoder -- everywhere.
+
+    A reference design on this bench is a bare module with extra pins: nothing
+    has ever run on a real chassis, so a wheel diameter or an rpm that differs
+    per preset is an unmeasured guess that makes two Nav2 results incomparable.
+    A robot gets its measured numbers when the robot exists.
+    """
+    presets = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js")).read()
+    for key, want in (("wheel_diameter", 0.152), ("lr_wheels_distance", 0.271),
+                      ("max_rpm", 140), ("cpr", 4000)):
+        values = {float(v) for v in re.findall(rf"\n      {key}: ([0-9.]+)", presets)}
+        assert values == {float(want)}, f"presets disagree on {key}: {sorted(values)}"
+    for name, params in _refs():
+        k = params.get("kinematics", {})
+        for key, want in DEFAULT_KINEMATICS.items():
+            assert k.get(key) == want, f"{name}: {key}={k.get(key)}, not the default {want}"
+
+
+def test_the_footprint_contains_every_default_body():
+    """robot_radius must actually contain the body it is given.
+
+    Pulling the mecanum reference onto the 2WD wheelbase once made its body
+    0.499 m long, whose half-diagonal is 0.293 m -- larger than the shared
+    robot_radius of 0.26, so no plan could start from inside its own footprint.
+    """
+    for name, params in _refs():
+        b = gen_robot_description.effective_geometry(params)["body"]
+        half = math.hypot(float(b["length"]), float(b["width"])) / 2
+        assert half <= ROBOT_RADIUS + 1e-9, \
+            f"{name}: body {b['length']}x{b['width']} has half-diagonal {half:.3f} > robot_radius {ROBOT_RADIUS}"
 
 
 def test_bare_kinematics_are_the_same_in_the_presets_and_the_release_image():

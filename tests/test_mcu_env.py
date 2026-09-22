@@ -144,7 +144,7 @@ def test_mecanum_reference_has_four_motors():
     assert env["base"] == "mecanum"
     for i in range(1, 5):
         assert env[f"m{i}_in_a"] >= 0 and env[f"m{i}_enc_a"] >= 0
-    assert env["m1_cpr"] == 1320
+    assert env["m1_cpr"] == 4000
 
 
 def test_redact_hides_the_psk():

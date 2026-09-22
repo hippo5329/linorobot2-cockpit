@@ -65,8 +65,11 @@ def test_mecanum_four_motors_and_geometry(reference):
     m = _header(reference, "pico2_mecanum")
     assert m["LINO_BASE"] == "MECANUM"
     assert m["MOTOR4_IN_A"] == "10" and m["MOTOR4_ENCODER_A"] == "18"
-    assert m["FR_WHEELS_DISTANCE"] == "0.24"
-    assert m["COUNTS_PER_REV1"] == "1320"
+    # The shared default 4WD wheelbase. 0.24 put the body's half-diagonal --
+    # which includes the wheels sticking out past it -- at 0.280 m, wider than
+    # the robot_radius every default shares, so no plan could start.
+    assert m["FR_WHEELS_DISTANCE"] == "0.18"
+    assert m["COUNTS_PER_REV1"] == "4000"
     # The IMU is a NAME now, not a macro. `USE_MPU6050_IMU` selected a driver
     # at compile time; sensor_factory dispatches on this string at boot and the
     # I2C probe overrides it when the bus disagrees.
