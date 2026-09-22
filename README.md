@@ -28,6 +28,28 @@ into — and you drive it from any browser on the network.
 
 ---
 
+## Documentation
+
+The **[wiki](https://github.com/hippo5329/linorobot2-cockpit/wiki)** is the place to read
+first — installation, the one-click flow tab by tab, wiring, and what to do when something
+breaks:
+
+| | |
+|---|---|
+| [Installation & Docker](https://github.com/hippo5329/linorobot2-cockpit/wiki/Installation-and-Docker) | get it running |
+| [The One-Click Pipeline](https://github.com/hippo5329/linorobot2-cockpit/wiki/The-One-Click-Pipeline) | what the button actually does |
+| [Fake Mode & the Bare Module](https://github.com/hippo5329/linorobot2-cockpit/wiki/Fake-Mode-and-the-Bare-Module) | the whole stack on an unwired board |
+| [Web UI Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide) | every tab |
+| [Pin Matrix & Wiring](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring) | wire a real board |
+| [The Env Partition & Prebuilt Images](https://github.com/hippo5329/linorobot2-cockpit/wiki/The-Env-Partition-and-Prebuilt-Images) | how config reaches the board |
+| [Heading & Magnetometer Calibration](https://github.com/hippo5329/linorobot2-cockpit/wiki/Heading-and-Magnetometer-Calibration) | stop the heading drifting |
+| [Troubleshooting](https://github.com/hippo5329/linorobot2-cockpit/wiki/Troubleshooting) | when it goes wrong |
+
+`docs/` in this repository is the other half: the design notes and the reasons behind the
+rules, written for someone changing the code rather than using it.
+
+---
+
 ## Quick start
 
 You need: a Linux computer with USB (the **robot computer**) and a supported board on a USB
@@ -438,7 +460,8 @@ docker-compose.yml  the robot runtime, plus the optional `pio` build service
 
 `docs/` holds the design notes and the reasons behind the rules: `firmware.md` for the
 board side, `flashing.md` for how images get written and what to do when a board stops
-accepting them, `ros2-stack.md` for the launch trees, `docker.md` for the images.
+accepting them, `ros2-stack.md` for the launch trees, `docker.md` for the images. The
+[wiki](https://github.com/hippo5329/linorobot2-cockpit/wiki) is the user-facing half.
 
 ### Running the tests
 
