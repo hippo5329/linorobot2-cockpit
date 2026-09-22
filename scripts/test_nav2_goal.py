@@ -84,6 +84,12 @@ WALL_HALF_SPAN = 1.5
 # y = -1.40 was reported as driving through a solid wall.
 WALL_END_MARGIN = 0.30
 
+# An abort inside this window, having moved less than this far and planned
+# nothing, is read as the stack still coming up and is retried once per run.
+STARTUP_ABORT_SEC = 5.0
+STARTUP_ABORT_DIST = 0.05
+STARTUP_SETTLE_SEC = 15.0
+
 
 class Nav2GoalTester(Node):
     def __init__(self, goal_x: float = 3.0, goal_y: float = 0.0, timeout_sec: float = 30.0,
@@ -653,6 +659,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         wall must have planned around it. One failure ends the run -- the
         pipeline then asks the base directly whether it still drives."""
         n = len(legs)
+        retried_startup = False
         for i, (gx, gy) in enumerate(legs, 1):
             node.begin_leg(gx, gy)
             if not node.send_goal():
@@ -685,6 +692,38 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
                     break                # Nav2 gave up; waiting out the window adds nothing
             took = time.time() - t0
+            # An abort in the first seconds, with no plan and no motion, is the
+            # stack still coming up -- not a navigation failure. The lifecycle
+            # says "active" once every node has configured, which is before the
+            # costmaps have a scan to build from, so the first goal can be
+            # accepted and dropped with nothing attempted. Measured on the
+            # GenDrv (2026-09-22, jazzy): ABORTED after 0 s, 0.000 m traversed,
+            # planned_around_wall=False, on a stack whose /scan was 8.8 Hz and
+            # whose /map was publishing. A real abort takes time and shows
+            # movement, so this costs nothing when the failure is genuine.
+            if (not arrived and node.goal_status == 6 and took < STARTUP_ABORT_SEC
+                    and node.leg_max_dist < STARTUP_ABORT_DIST
+                    and not node.path_avoids_wall and not retried_startup):
+                retried_startup = True
+                print(f"   leg {i}/{n}: aborted after {took:.1f} s having moved "
+                      f"{node.leg_max_dist:.3f} m and planned nothing — the stack was still "
+                      f"settling. Waiting {STARTUP_SETTLE_SEC} s and asking once more.")
+                t_w = time.time()
+                while time.time() - t_w < STARTUP_SETTLE_SEC:
+                    rclpy.spin_once(node, timeout_sec=0.2)
+                node.begin_leg(gx, gy)
+                if not node.send_goal():
+                    return False
+                t0 = time.time()
+                while time.time() - t0 < timeout:
+                    rclpy.spin_once(node, timeout_sec=0.2)
+                    if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
+                            and (moved() or not require_motion):
+                        arrived = True
+                        break
+                    if node.goal_status in (5, 6) and not reached_goal():
+                        break
+                took = time.time() - t0
             if not arrived:
                 if not start_gap_is_meaningful():
                     print(f"❌ NAV2 LEG {i}/{n} IS VACUOUS: began {node.goal_dist_start:.3f} m "

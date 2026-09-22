@@ -549,3 +549,43 @@ def test_without_unfiltered_odom_the_filtered_pose_is_all_there_is(monkeypatch, 
     node.raw_max_x = float("-inf")
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
     assert "no /odom/unfiltered" in capsys.readouterr().out
+
+
+def test_an_instant_abort_with_no_plan_is_the_stack_still_settling(monkeypatch, capsys):
+    """Nav2's lifecycle reports "active" once every node has configured, which
+    is before the costmaps have a scan to build a plan from. Measured on the
+    GenDrv 2026-09-22 (jazzy): the first goal ABORTED after 0 s with 0.000 m
+    traversed and planned_around_wall=False, on a stack whose /scan was 8.8 Hz
+    and whose /map was publishing. That is startup, not navigation, so it is
+    retried once per run -- and a real abort takes time and shows movement, so
+    the retry costs nothing when the failure is genuine."""
+    class AbortsOnceThenDrives(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self._sends = 0
+        def send_goal(self):
+            self._sends += 1
+            if self._sends == 1:
+                self.goal_status = 6          # ABORTED, having done nothing
+                self.leg_max_dist = 0.0
+                self.path_avoids_wall = False
+                self.goal_dist_now = self.goal_dist_min = 2.997
+            else:
+                self.goal_status = 4
+                self.goal_dist_now = self.goal_dist_min = 0.1
+                self.leg_max_dist = 3.0
+                self.path_avoids_wall = True
+            return True
+    node = AbortsOnceThenDrives(odom_lin=0.25, dist=3.1, goal_dist=0.1, goal_status=6)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=1,
+                goal_x=3.0, goal_y=0.0) is True
+    assert "the stack was still settling" in capsys.readouterr().out
+
+
+def test_the_startup_retry_happens_once_per_run_not_once_per_leg(monkeypatch):
+    """Otherwise a stack that aborts everything retries eight times and the run
+    takes an hour to say what it knew after the first leg."""
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py")).read()
+    assert "retried_startup = False" in src
+    assert src.index("retried_startup = False") < src.index("for i, (gx, gy) in enumerate(legs, 1):")
+    assert "and not retried_startup" in src
