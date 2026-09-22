@@ -431,6 +431,7 @@ nav2:
         publish_frequency: 2.0
         global_frame: odom
         robot_base_frame: base_link
+        transform_tolerance: 0.5   # a throttled robot PC delivers TF late; the planner aborted a goal with 'Failed to transform end pose to global frame'
         rolling_window: true
         width: 3
         height: 3
@@ -471,6 +472,7 @@ nav2:
         publish_frequency: 1.0
         global_frame: map
         robot_base_frame: base_link
+        transform_tolerance: 0.5   # a throttled robot PC delivers TF late; the planner aborted a goal with 'Failed to transform end pose to global frame'
         robot_radius: 0.26
         resolution: 0.05
         track_unknown_space: true
