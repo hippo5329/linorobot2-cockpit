@@ -350,3 +350,25 @@ def test_a_real_gap_still_passes(monkeypatch):
             self.goal_dist_start = 3.0
     node = FarEnough(odom_lin=0.25, dist=2.9, goal_dist=0.12, completed=True)
     assert _run(monkeypatch, node, timeout=30.0, require_goal=True) is True
+
+
+def test_a_goal_behind_the_wall_needs_a_plan_around_it(monkeypatch, capsys):
+    """The test was written for a goal behind the wall, and a near-side goal was
+    briefly used to dodge a wedge: it "passed" with planned_around_wall=False,
+    proving nothing about the planner. Behind the wall, reached AND no detour in
+    /plan is not a pass -- the robot either started past the wall or went through it.
+    """
+    reached = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False)
+    assert _run(monkeypatch, reached, timeout=0.3, require_goal=True,
+                goal_x=3.0, goal_y=0.0) is False
+    assert "WITHOUT A PATH AROUND THE WALL" in capsys.readouterr().out
+    reached = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True)
+    assert _run(monkeypatch, reached, timeout=0.3, require_goal=True,
+                goal_x=3.0, goal_y=0.0) is True
+
+
+def test_a_near_side_goal_does_not_pretend_to_test_the_wall(monkeypatch):
+    """A goal that never needed the detour is judged on arrival alone."""
+    reached = FakeNode(odom_lin=0.25, dist=1.1, goal_dist=0.2, planned=False)
+    assert _run(monkeypatch, reached, timeout=0.3, require_goal=True,
+                goal_x=0.5, goal_y=1.0) is True

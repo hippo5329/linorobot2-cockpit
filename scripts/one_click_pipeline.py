@@ -474,6 +474,14 @@ def wait_for_nav2_activation(timeout_sec: int = 90) -> tuple:
     return False, f"lifecycle_manager reported neither success nor failure within {timeout_sec}s"
 
 
+def _odom_xy(distro: str):
+    """The base's current (x, y) from one /odom/unfiltered message, or None."""
+    res = run_ros("ros2 topic echo --once --field pose.pose.position /odom/unfiltered",
+                  timeout=15, distro=distro)
+    m = re.search(r"x:\s*(-?[0-9.eE+-]+)\s*y:\s*(-?[0-9.eE+-]+)", res.stdout or "")
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
 def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bool = False,
                    distro: str = "jazzy", require_message: str = None) -> bool:
     """Wait for a topic to exist, to have a publisher, or to actually carry data.
@@ -663,6 +671,9 @@ def main():
                              "(default: leave them running until they are stopped)")
     parser.add_argument("--build-timeout", type=int, default=900,
                         help="Seconds allowed for the PlatformIO build (a first build downloads the toolchain)")
+    parser.add_argument("--no-pose-reset", dest="pose_reset", action="store_false",
+                        help="do not return the simulated robot to the origin between the "
+                             "drive suite and SLAM (fake mode only; a real base is never touched)")
     parser.add_argument("--require-goal", action="store_true",
                         help="the Nav2 goal must actually be reached -- judged by the "
                              "displacement from the goal pose, with Nav2's error_code "
@@ -1034,6 +1045,44 @@ def main():
             else:
                 print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
                 failures.append(f"Drive suite: exit {drive_res.returncode}")
+
+        # Step 4.7: put the simulated robot back at the origin.
+        #
+        # The flash zeroes the pose, and the six manoeuvres then move it inside
+        # that same micro-ROS session: two arcs do not cancel, and the residual
+        # was measured at 0.46 m on the bare ESP32 and 0.48 m on an RP2350. SLAM
+        # then anchors its map wherever the robot happens to be, and a goal at
+        # fixed coordinates is either already under the robot (a vacuous pass)
+        # or on the far side of the wall (the documented wedge). The firmware
+        # resets a simulated pose on every NEW session (createEntities), and
+        # bringup respawns the agent, so ending the agent process is a clean
+        # "pick the robot up and put it back at the start". Real robots keep
+        # their odometry continuous across a reconnect and are not touched.
+        if not is_real and args.pose_reset and not args.skip_flash:
+            print("\n[4.7/6] [POSE] Returning the simulated robot to the origin (new agent session)...")
+            before = _odom_xy(args.distro)
+            agent_pids = run_ros("pgrep -f '[m]icro_ros_agent'", timeout=10, distro=args.distro).stdout.split()
+            if not agent_pids:
+                print("  ⚠️ no micro_ros_agent process found; the pose keeps the drive suite's residual.")
+            else:
+                for pid in agent_pids:
+                    if pid.isdigit():
+                        os.kill(int(pid), signal.SIGTERM)      # this PID, inspected, nothing name-matched
+                time.sleep(2.0)
+                if not wait_for_topic("/odom/unfiltered", timeout_sec=45, require_publisher=True,
+                                      distro=args.distro):
+                    print("  ⚠️ the agent did not come back within 45 s; the pose is unverified.")
+                    failures.append("pose reset: agent did not respawn")
+                else:
+                    time.sleep(1.5)                                  # let the new session publish
+                    after = _odom_xy(args.distro)
+                    fmt = lambda p: "(%.3f, %.3f)" % p if p else "unknown"
+                    if after and max(abs(after[0]), abs(after[1])) < 0.05:
+                        print(f"  ✅ pose {fmt(before)} -> {fmt(after)}: back at the origin.")
+                    else:
+                        print(f"  ⚠️ pose {fmt(before)} -> {fmt(after)}: NOT at the origin. "
+                              f"Is this really a simulated base? A real one keeps its odometry.")
+                        failures.append("pose reset: robot not at the origin")
 
         # Step 5: SLAM. A robot with no scan source has nothing to map.
         if has_lidar:

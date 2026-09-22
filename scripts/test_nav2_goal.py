@@ -69,6 +69,11 @@ def _status_name(status: int) -> str:
     return _STATUS_NAMES.get(int(status), f"status {status}")
 
 
+# The obstacle wall of the simulated room (fake_ld19.h defaults).
+WALL_X = 2.0
+WALL_HALF_SPAN = 1.5
+
+
 class Nav2GoalTester(Node):
     def __init__(self, goal_x: float = 3.0, goal_y: float = 0.0, timeout_sec: float = 30.0,
                  cmd_vel_type: str = "auto"):
@@ -342,6 +347,17 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         """
         return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
 
+    # The room's one obstacle (fake_ld19.h): a wall at x = 2.0 spanning y = -1.5..1.5.
+    # A goal on its far side is what this test was written for, and "reached" is
+    # only worth anything there if the plan went AROUND the wall: a goal reached
+    # with no such plan means either the robot was already past the wall or the
+    # world let it drive through. A goal on the near side asks nothing of the
+    # plan, and this gate then says so rather than pretending it did.
+    goal_behind_wall = goal_x > WALL_X and abs(goal_y) <= WALL_HALF_SPAN
+
+    def wall_path_ok() -> bool:
+        return node.path_avoids_wall or not goal_behind_wall
+
     def start_gap_is_meaningful() -> bool:
         """Was the robot far enough away for arriving to mean anything?
 
@@ -435,7 +451,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
 
             if require_goal and start_gap_is_meaningful() and reached_goal() \
-                    and (moved() or not require_motion):
+                    and wall_path_ok() and (moved() or not require_motion):
                 return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
 
             if node.goal_rejected:
@@ -478,6 +494,12 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                   f"{_why(node)}{_gap(node)}; needed within {goal_tolerance:.2f} m; "
                   f"planned_around_wall={node.path_avoids_wall}, "
                   f"traversed {node.odom_max_dist:.3f} m")
+            return False
+        if require_goal and not wall_path_ok():
+            print(f"❌ NAV2 GOAL REACHED WITHOUT A PATH AROUND THE WALL: the goal "
+                  f"({goal_x:.2f}, {goal_y:.2f}) is behind the obstacle wall at x={WALL_X:.1f}, "
+                  f"yet no /plan detoured around it{_gap(node)}. Either the robot did not start "
+                  f"on the near side or it went through the wall; neither is a pass.")
             return False
         if require_goal:
             return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")

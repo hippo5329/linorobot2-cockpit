@@ -146,3 +146,23 @@ def test_a_failed_goal_re_runs_the_drive_suite():
     # and it must not depend on a name the earlier drive block owns: --no-drive-test
     # would otherwise turn the failure into a NameError inside its own diagnostic.
     assert "post_tname" in fail_branch[:2000] and "{tname}" not in fail_branch[:2000]
+
+
+def test_the_simulated_pose_is_zeroed_before_slam_in_fake_mode():
+    """A goal at fixed coordinates only means something from a known start.
+
+    The flash zeroes the simulated pose and the six manoeuvres then move it
+    (measured residual 0.46-0.48 m), so SLAM anchored its map wherever the robot
+    stood and the goal was either already under it or beyond the wall. The
+    firmware resets the pose on a new agent session; bringup now respawns the
+    agent; so the pipeline ends the agent between the drive suite and SLAM.
+    """
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    step = pipe[pipe.index("[4.7/6] [POSE]"):pipe.index("# Step 5: SLAM")]
+    assert "pgrep -f '[m]icro_ros_agent'" in step, "find the agent by inspected PID, never name-kill"
+    assert "os.kill(int(pid), signal.SIGTERM)" in step
+    assert 'wait_for_topic("/odom/unfiltered"' in step and "_odom_xy" in step
+    assert "if not is_real and args.pose_reset" in pipe, "a real base must never be touched"
+    launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
+    agent = launch[launch.index('name="micro_ros_agent"'):][:1400]
+    assert "respawn=True" in agent, "the agent must come back after it is ended"

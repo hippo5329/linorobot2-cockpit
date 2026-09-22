@@ -335,6 +335,16 @@ def launch_setup(context, *args, **kwargs):
             cmd=["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
+            # Respawn, for two reasons. An agent that dies mid-run -- a yanked
+            # tty, a crash -- otherwise leaves the whole stack headless with no
+            # error beyond one "process has died" line. And a simulated robot
+            # resets its pose to the origin on every NEW session (main.cpp,
+            # createEntities), so the pipeline can zero the pose between the
+            # drive suite and SLAM by ending this process: launch brings it
+            # back, the board opens a fresh session, and Nav2 starts from (0,0)
+            # instead of wherever six manoeuvres parked it.
+            respawn=True,
+            respawn_delay=1.0,
         ),
         # 4. Robot State Publisher & Description (URDF / TF tree), from the
         # generated file above. joint_state_publisher gives the continuous
