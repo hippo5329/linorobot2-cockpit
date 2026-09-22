@@ -24,6 +24,16 @@ mcu_env use, so the suite reaches the robot the config describes; `--prefix`
 says it outright. Neither given, the topics are the unprefixed ones and the
 behaviour is exactly what it always was.
 
+Each line also says WHERE the robot was, because the suite now runs after the
+Nav2 legs and its position is therefore uncontrolled. The simulated room clamps
+the pose at its walls and at the obstacle wall (x = 2.0, |y| <= 1.5), and a
+clamp acting during a manoeuvre is differentiated into a velocity the base was
+never commanded: measured 2026-09-22 on the GenDrv, both spins reported
+vx ~ +0.15 m/s while commanded (0.00, +/-1.50), and both were positive. Without
+the pose that reads as a base fault; with it, a "near obstacle wall" note says
+what it is. The room's geometry is mirrored here from firmware/common/lib/lidar/
+fake_ld19.h -- if it changes there, change it here.
+
 Exit status 0 when all six pass; the verdict line says how many did.
 """
 import os
@@ -37,6 +47,28 @@ from rclpy.qos import qos_profile_sensor_data
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402  -- the prefix rule lives in one place
+
+
+# The simulated room, mirrored from fake_ld19.h so a manoeuvre can say whether
+# the pose it reports was being clamped.
+ROOM_W, ROOM_H = 10.0, 6.0
+ROBOT_R = 0.30
+WALL_X, WALL_HALF_SPAN = 2.0, 1.5
+NEAR = 0.05          # "against" a surface: within this of where the clamp holds
+
+
+def _where(x: float, y: float) -> str:
+    """Which surface, if any, the robot is being held against."""
+    if x != x or y != y:                       # NaN: no pose seen
+        return "pose unknown"
+    notes = []
+    if abs(abs(x) - (ROOM_W / 2 - ROBOT_R)) < NEAR:
+        notes.append("room wall x")
+    if abs(abs(y) - (ROOM_H / 2 - ROBOT_R)) < NEAR:
+        notes.append("room wall y")
+    if abs(y) <= WALL_HALF_SPAN + ROBOT_R and abs(abs(x - WALL_X) - ROBOT_R) < NEAR:
+        notes.append("OBSTACLE WALL")
+    return ", ".join(notes) if notes else "clear"
 
 
 def _topics(prefix: str) -> tuple:
@@ -77,12 +109,15 @@ def main() -> int:
               flush=True)
     pub = node.create_publisher(T, cmd_topic, 10)
 
-    seen = {"vx": [], "wz": []}
-    node.create_subscription(
-        Odometry, odom_topic,
-        lambda m: (seen["vx"].append(m.twist.twist.linear.x),
-                   seen["wz"].append(m.twist.twist.angular.z)),
-        qos_profile_sensor_data)
+    seen = {"vx": [], "wz": [], "x": float("nan"), "y": float("nan")}
+
+    def _odom(m):
+        seen["vx"].append(m.twist.twist.linear.x)
+        seen["wz"].append(m.twist.twist.angular.z)
+        seen["x"] = m.pose.pose.position.x
+        seen["y"] = m.pose.pose.position.y
+
+    node.create_subscription(Odometry, odom_topic, _odom, qos_profile_sensor_data)
 
     def command(lin: float, ang: float, secs: float) -> None:
         m = T()
@@ -102,6 +137,7 @@ def main() -> int:
 
     def run(label: str, lin: float, ang: float, secs: float = 5.0) -> bool:
         command(0.0, 0.0, 2.5)
+        x0, y0 = seen["x"], seen["y"]
         seen["vx"].clear()
         seen["wz"].clear()
         command(lin, ang, secs)
@@ -112,9 +148,16 @@ def main() -> int:
         got_wz = max(wz) if ang >= 0 else min(wz)
         ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)
         ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)
+        x1, y1 = seen["x"], seen["y"]
+        where = _where(x1, y1)
         print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (want %+.2f) %s   wz %+.3f (want %+.2f) %s"
+              "   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
               % (label, lin, ang, got_vx, lin, "ok" if ok_vx else "BAD",
-                 got_wz, ang, "ok" if ok_wz else "BAD"), flush=True)
+                 got_wz, ang, "ok" if ok_wz else "BAD", x0, y0, x1, y1, where), flush=True)
+        if not (ok_vx and ok_wz) and where not in ("clear", "pose unknown"):
+            print("             ^ held against %s: the clamp moves the pose every cycle and "
+                  "that shows up as a velocity nobody commanded. Not a base fault." % where,
+                  flush=True)
         return ok_vx and ok_wz
 
     # Wait for the board before judging it: no odom in 10 s is its own failure.

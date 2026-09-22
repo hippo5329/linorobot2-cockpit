@@ -39,3 +39,58 @@ def test_a_dead_still_base_fails_a_move_command():
 def test_a_tiny_command_has_a_floor_so_noise_does_not_fail_it():
     # forward 0.0 is not commanded here; this is the turn's small linear part
     assert judge(0.20, 0.80, 0.20, 0.80)
+
+
+# The room-geometry note, mirrored the same way and for the same reason: it is
+# pure, and if it drifts from the suite (or from fake_ld19.h) it stops telling
+# a clamped pose from a base fault. Keep these numbers identical to both.
+ROOM_W, ROOM_H, ROBOT_R = 10.0, 6.0, 0.30
+WALL_X, WALL_HALF_SPAN, NEAR = 2.0, 1.5, 0.05
+
+
+def where(x, y):
+    if x != x or y != y:
+        return "pose unknown"
+    notes = []
+    if abs(abs(x) - (ROOM_W / 2 - ROBOT_R)) < NEAR:
+        notes.append("room wall x")
+    if abs(abs(y) - (ROOM_H / 2 - ROBOT_R)) < NEAR:
+        notes.append("room wall y")
+    if abs(y) <= WALL_HALF_SPAN + ROBOT_R and abs(abs(x - WALL_X) - ROBOT_R) < NEAR:
+        notes.append("OBSTACLE WALL")
+    return ", ".join(notes) if notes else "clear"
+
+
+def test_the_middle_of_the_room_is_clear():
+    assert where(0.0, 0.0) == "clear"
+    assert where(1.0, -0.5) == "clear"
+
+
+def test_being_held_against_the_obstacle_wall_is_named():
+    """Measured 2026-09-22 on the GenDrv: both spins reported vx ~ +0.15 m/s
+    while commanded (0.00, +/-1.50), both positive. A clamp moves the pose every
+    cycle and that differentiates into a velocity nobody commanded -- which
+    without the pose reads as a base fault."""
+    assert where(WALL_X - ROBOT_R, 0.0) == "OBSTACLE WALL"      # held on the near side
+    assert where(WALL_X + ROBOT_R, -1.0) == "OBSTACLE WALL"     # and the far side
+    # past the wall's end there is nothing to be held against
+    assert where(WALL_X - ROBOT_R, 2.5) == "clear"
+
+
+def test_the_rooms_own_walls_are_named():
+    assert where(ROOM_W / 2 - ROBOT_R, 0.0) == "room wall x"
+    assert where(0.0, -(ROOM_H / 2 - ROBOT_R)) == "room wall y"
+
+
+def test_no_pose_says_so_rather_than_guessing():
+    assert where(float("nan"), 0.0) == "pose unknown"
+
+
+def test_the_note_matches_the_suite_verbatim():
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "drive_suite.py")).read()
+    for needle in ("ROOM_W, ROOM_H = 10.0, 6.0", "ROBOT_R = 0.30",
+                   "WALL_X, WALL_HALF_SPAN = 2.0, 1.5", "NEAR = 0.05",
+                   'notes.append("OBSTACLE WALL")', "pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"):
+        assert needle in src, needle
