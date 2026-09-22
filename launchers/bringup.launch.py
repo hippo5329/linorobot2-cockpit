@@ -245,7 +245,7 @@ def launch_setup(context, *args, **kwargs):
         # robot's tree (frame_prefix on robot_state_publisher does the URDF
         # frames; the EKF sets its frames itself, so it has to be told here).
         rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
-        for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_footprint"),
+        for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_link"),
                              ("world_frame", "odom"), ("map_frame", "map")):
             rp[key] = frame_prefix + str(rp.get(key, default))
     # rcl matches a params section against the node's FULLY-QUALIFIED name, so

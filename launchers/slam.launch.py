@@ -119,7 +119,7 @@ def launch_setup(context, *args, **kwargs):
         rp = slam_data.setdefault("slam_toolbox", {}).setdefault("ros__parameters", {})
         rp["odom_frame"] = f"{ns}/{str(rp.get('odom_frame', 'odom'))}"
         rp["map_frame"] = f"{ns}/{str(rp.get('map_frame', 'map'))}"
-        rp["base_frame"] = f"{ns}/{str(rp.get('base_frame', 'base_footprint'))}"
+        rp["base_frame"] = f"{ns}/{str(rp.get('base_frame', 'base_link'))}"
         rp["scan_topic"] = f"/{ns}/scan"
 
     # Fully-qualified section names: under a namespace slam_toolbox is
