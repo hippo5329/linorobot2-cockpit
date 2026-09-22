@@ -58,7 +58,7 @@ base_controller:
       pwm: 22
       in_a: 6
       in_b: 7
-      invert: true
+      invert: false
     motor3:
       pwm: 22
       in_a: 8
@@ -68,7 +68,7 @@ base_controller:
       pwm: 22
       in_a: 10
       in_b: 11
-      invert: true
+      invert: false
     encoder1:
       pin_a: 12
       pin_b: 13
@@ -76,7 +76,7 @@ base_controller:
     encoder2:
       pin_a: 14
       pin_b: 15
-      invert: true
+      invert: false
     encoder3:
       pin_a: 16
       pin_b: 17
@@ -84,7 +84,7 @@ base_controller:
     encoder4:
       pin_a: 18
       pin_b: 19
-      invert: true
+      invert: false
     # I2C0 on GP20/GP21 (a valid SDA0/SCL0 pair on the RP2350).
     i2c:
       sda: 20

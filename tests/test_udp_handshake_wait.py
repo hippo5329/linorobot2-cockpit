@@ -98,6 +98,9 @@ def test_the_scan_wait_covers_any_scan_the_board_produces():
     # host_room must be decided the way bringup decides to launch the virtual room.
     assert "use_fake_ld19" in block and 'lidar_mode != "serial"' in block
     assert "os.path.exists(lidar_port_cfg)" in block
+    # and udp/udp_server is the real driver in server mode, decided BEFORE the
+    # host-room test, as bringup does -- the GenDrv's udp leg got 15 s otherwise.
+    assert 'lidar_mode not in ("udp", "udp_server")' in block
 
 
 def test_a_robot_with_no_lidar_does_not_wait():

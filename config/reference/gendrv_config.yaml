@@ -120,13 +120,9 @@ kinematics:
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-geometry:
-  body: {length: 0.228, width: 0.214, height: 0.0456, mass: 1.0}   # the base_link box, centred on the axle midpoint
-  wheel: {width: 0.038, mass: 0.304, z: 0.0}   # z: axle height relative to the base_link origin (negative = below)
-  casters: {front: true, rear: true}   # 2wd only: a ball caster at each end of the body
-  laser: {x: 0.12, y: 0.0, z: 0.0988, roll: 0.0, pitch: 0.0, yaw: 0.0, frame: laser}   # base_link -> laser; the LiDAR driver stamps /scan with `frame`
-  imu: {x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}   # base_link -> imu_link (the frame the firmware stamps)
-  mesh: {base: '', wheel: ''}   # optional file:// or package:// meshes instead of the box and cylinders
+geometry: {}   # the default chassis: derived by gen_robot_description.effective_geometry()
+               # from the kinematics above -- same body and mounts as every bare module,
+               # laser at the base origin. A real chassis gets measured values in October.
 ekf:
   ekf_filter_node:
     ros__parameters:
@@ -135,7 +131,7 @@ ekf:
       publish_tf: true
       map_frame: map
       odom_frame: odom
-      base_link_frame: base_footprint
+      base_link_frame: base_link
       world_frame: odom
       odom0: odom/unfiltered
       odom0_config:
@@ -182,7 +178,7 @@ slam:
       ceres_loss_function: None
       odom_frame: odom
       map_frame: map
-      base_frame: base_footprint
+      base_frame: base_link
       scan_topic: /scan
       mode: mapping
       debug_logging: false
@@ -366,7 +362,7 @@ nav2:
   collision_monitor:
     ros__parameters:
       enable_stamped_cmd_vel: false
-      base_frame_id: base_footprint
+      base_frame_id: base_link
       odom_frame_id: odom
       cmd_vel_in_topic: cmd_vel_smoothed
       cmd_vel_out_topic: cmd_vel
@@ -438,14 +434,14 @@ nav2:
         width: 3
         height: 3
         resolution: 0.05
-        robot_radius: 0.22
+        robot_radius: 0.26
         plugins:
         - voxel_layer
         - inflation_layer
         inflation_layer:
           plugin: nav2_costmap_2d::InflationLayer
           cost_scaling_factor: 3.0
-          inflation_radius: 0.7
+          inflation_radius: 0.55
         voxel_layer:
           plugin: nav2_costmap_2d::VoxelLayer
           enabled: true
@@ -474,7 +470,7 @@ nav2:
         publish_frequency: 1.0
         global_frame: map
         robot_base_frame: base_link
-        robot_radius: 0.22
+        robot_radius: 0.26
         resolution: 0.05
         track_unknown_space: true
         plugins:
@@ -501,7 +497,7 @@ nav2:
         inflation_layer:
           plugin: nav2_costmap_2d::InflationLayer
           cost_scaling_factor: 3.0
-          inflation_radius: 0.7
+          inflation_radius: 0.55
         always_send_full_costmap: true
 supervisor:
   rosbridge_port: 9090

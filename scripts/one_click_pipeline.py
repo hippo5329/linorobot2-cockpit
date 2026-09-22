@@ -956,7 +956,11 @@ def main():
             lidar_cfg = controller_cfg.get("lidar", {}) or {}
             lidar_mode = str(lidar_cfg.get("comm_mode", "serial") or "serial").lower()
             lidar_port_cfg = lidar_cfg.get("serial_port", "/dev/ttyUSB1")
-            host_room = (controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
+            # Same order as bringup.launch.py: udp/udp_server is the real driver in
+            # server mode, whoever produces the frames, and is decided FIRST; only
+            # then can the host room stand in for an absent serial port.
+            host_room = (lidar_mode not in ("udp", "udp_server")
+                         and controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
                          and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
             scan_wait = 15 if host_room else 90
             print(f"  Waiting for the first /scan (up to {scan_wait} s)...")

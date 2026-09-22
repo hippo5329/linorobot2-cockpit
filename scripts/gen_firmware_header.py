@@ -999,9 +999,11 @@ def bare_mcu_params(mcu: str) -> dict:
             },
         },
         "kinematics": {
+            # The same default chassis as every bare preset (app-presets.js):
+            # one body, one set of mounts, whatever the MCU or the drive type.
             "base_type": "2wd",
-            "wheel_diameter": 0.1,
-            "lr_wheels_distance": 0.2,
+            "wheel_diameter": 0.152,
+            "lr_wheels_distance": 0.271,
             "max_rpm": 140,
             "max_rpm_ratio": 0.85,
             "counts_per_rev": 4000,
