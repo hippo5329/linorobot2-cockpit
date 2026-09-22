@@ -439,7 +439,7 @@ def wait_for_bootsel(timeout_s: float = BOOTSEL_WAIT_S) -> bool:
 _USBDEVFS_RESET = ord("U") << 8 | 20
 
 
-def usb_reset_target(port: str, settle_s: float = 6.0) -> bool:
+def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
     """Reset the target board's USB device, then wait for its tty to return.
 
     A board whose port was only just released does not reliably answer the
@@ -469,13 +469,37 @@ def usb_reset_target(port: str, settle_s: float = 6.0) -> bool:
         log(f"(usb reset of {node} not possible: {exc})")
         return False
     log(f"usb reset {node}")
+    # Measured from inside a container on 2026-09-22, 0.2 s samples after the
+    # reset: the tty is still PRESENT at +0.1 s but opens with ENXIO (the old
+    # node, not yet torn down), is absent at +0.3 s, and is back and openable at
+    # +1.3 s. Polling os.path.exists() saw the stale node, returned True, and
+    # the 1200-baud touch then ran against a path that had just vanished. So:
+    # wait for the old node to go, then for a node that actually OPENS.
+    if not port:
+        time.sleep(1.0)
+        return True
     deadline = time.time() + settle_s
+    gone = False
     while time.time() < deadline:
-        if port and os.path.exists(port):
-            time.sleep(0.5)
-            return True
-        time.sleep(0.2)
-    return True
+        try:
+            fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            os.close(fd)
+            if gone:
+                time.sleep(0.3)      # let the CDC driver finish its line setup
+                return True
+        except OSError:
+            gone = True              # absent, or present-but-dead: either way, the old one
+        time.sleep(0.1)
+    if not gone:
+        # It never went away: the reset did not re-enumerate the board (or the
+        # node we can see is not the board's). Nothing to wait for.
+        return True
+    # It went and did not come back. Inside a container that is the normal
+    # case: incus attaches a unix-char device once and does not restore it.
+    # Returning True here used to let the touch run against nothing, and the
+    # failure was then reported as the BOARD refusing BOOTSEL.
+    log(f"usb reset done but {port} did not come back openable within {settle_s:.0f}s")
+    return False
 
 
 def pulse_1200_baud(port: str) -> bool:
@@ -486,19 +510,37 @@ def pulse_1200_baud(port: str) -> bool:
     if not port or not os.path.exists(port):
         return False
     usb_reset_target(port)
+    if not os.path.exists(port):
+        # No tty, no touch. Measured on the bench 2026-09-22: after the reset the
+        # node was gone from the container, pyserial logged "No such file", the
+        # stty fallback failed on the same missing node without raising, and this
+        # function still returned True -- so the caller printed "the board
+        # answered the 1200-baud touch and did NOT reach BOOTSEL" about a touch
+        # that never left the host. From the host, the same board reached
+        # BOOTSEL 0.3 s after a real touch.
+        log(f"{port} is gone after the usb reset; cannot send the 1200-baud touch")
+        return False
     log(f"Attempting 1200-baud CDC pulse on {port} to trigger BOOTSEL mode...")
     touched = False
     try:
         import serial
+        # The core reboots on baud == 1200 with DTR deasserted. pyserial raises
+        # DTR on open, so drop it explicitly before closing rather than relying
+        # on HUPCL to do it -- both readings of the touch are then satisfied.
         s = serial.Serial(port, baudrate=1200, timeout=1)
-        time.sleep(0.3)
+        time.sleep(0.2)
+        s.dtr = False
+        time.sleep(0.2)
         s.close()
         touched = True
     except Exception as e:
         log(f"pyserial 1200 baud notice: {e}")
         try:
-            subprocess.run(["stty", "-F", port, "1200"], capture_output=True, timeout=3)
-            touched = True
+            r = subprocess.run(["stty", "-F", port, "1200", "hupcl"],
+                               capture_output=True, timeout=3)
+            touched = (r.returncode == 0)
+            if not touched:
+                log(f"stty could not touch {port}: {r.stderr.decode(errors='replace').strip()}")
         except Exception:
             return False
     if not touched:

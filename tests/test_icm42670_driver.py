@@ -98,3 +98,27 @@ def test_the_interrupt_edge_count_is_reported_once():
     assert "volatile uint32_t int_edges_" in h and "uint32_t intEdges() const" in h
     c = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.cpp"))
     assert "instance_->int_edges_++;" in c
+
+
+def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
+    """flash_mcu must not report a touch it never sent.
+
+    Inside a container the USB reset that precedes the touch takes the tty away
+    (incus attaches a unix-char device once). pyserial then failed to open it,
+    the stty fallback failed silently on the same missing node, and the pulse
+    still returned True -- so the flasher printed "the board answered the
+    1200-baud touch and did NOT reach BOOTSEL" about a board that had heard
+    nothing. From the host the same board reached BOOTSEL in 0.3 s.
+    """
+    src = _read(os.path.join(ROOT, "scripts", "flash_mcu.py"))
+    reset = src[src.index("def usb_reset_target"):src.index("def pulse_1200_baud")]
+    assert "did not come back openable within" in reset and reset.rstrip().endswith("return False"), \
+        "usb_reset_target must say when the tty never came back, not return True"
+    # And "came back" means OPENS: 0.1 s after the reset the old node still
+    # exists but opens with ENXIO, then it vanishes, then the new one appears.
+    assert "os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)" in reset
+    assert "gone = True" in reset, "wait for the old node to go before trusting a new one"
+    pulse = src[src.index("def pulse_1200_baud"):src.index("# USB interface classes")]
+    assert "is gone after the usb reset; cannot send the 1200-baud touch" in pulse
+    assert "touched = (r.returncode == 0)" in pulse, "a failed stty is not a touch"
+    assert "s.dtr = False" in pulse, "drop DTR explicitly; the core wants 1200 baud AND DTR low"
