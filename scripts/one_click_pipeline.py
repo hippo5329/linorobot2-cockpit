@@ -663,6 +663,16 @@ def main():
                              "(default: leave them running until they are stopped)")
     parser.add_argument("--build-timeout", type=int, default=900,
                         help="Seconds allowed for the PlatformIO build (a first build downloads the toolchain)")
+    parser.add_argument("--require-goal", action="store_true",
+                        help="the Nav2 goal must actually be reached -- judged by the "
+                             "displacement from the goal pose, with Nav2's error_code "
+                             "reported when it is not. A verified plan is not enough.")
+    parser.add_argument("--goal-tolerance", type=float, default=0.30,
+                        help="metres from the goal pose that count as reached (--require-goal)")
+    parser.add_argument("--goal-timeout", type=int, default=25,
+                        help="seconds the Nav2 goal test waits. A goal 3 m away at 0.26 m/s "
+                             "needs ~12 s of driving plus planning and the turn to face it, "
+                             "so 25 is tight for --require-goal.")
     parser.add_argument("--flash-timeout", type=int, default=600,
                         help="Seconds allowed for the whole flash, including every recovery stage")
     parser.add_argument("--flash-attempt-timeout", type=int, default=90,
@@ -1083,9 +1093,12 @@ def main():
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
             cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
             print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
+            goal_args = (f"--goal-x {args.goal_x} --goal-y {args.goal_y} "
+                         f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type}")
+            if args.require_goal:
+                goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
             test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
-                               f"--goal-x {args.goal_x} --goal-y {args.goal_y} --timeout 25 "
-                               f"--cmd-vel-type {cmd_vel_type}", timeout=30, distro=args.distro)
+                               + goal_args, timeout=args.goal_timeout + 15, distro=args.distro)
             print(test_res.stdout)
             if test_res.returncode == 0:
                 print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
