@@ -472,7 +472,7 @@ nav2:
         publish_frequency: 1.0
         global_frame: map
         robot_base_frame: base_link
-        transform_tolerance: 0.5   # a throttled robot PC delivers TF late; the planner aborted a goal with 'Failed to transform end pose to global frame'
+        transform_tolerance: 1.0   # the PLANNER transforms the goal with this one, and 0.5 still lost a goal to 'Failed to transform end pose to global frame'; the global costmap updates at 1 Hz, so a second of slack is consistent with it
         robot_radius: 0.26
         resolution: 0.05
         track_unknown_space: true
