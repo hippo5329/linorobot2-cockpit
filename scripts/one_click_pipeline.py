@@ -219,15 +219,23 @@ SENSOR_TOPICS = {
 def sensor_topics(controller_cfg: dict) -> list:
     """Auxiliary topics the fitted sensors must publish, in a stable order.
 
-    A sensor counts as fitted when the config names a chip for it AND does not
+    A sensor counts as fitted when the config NAMES A CHIP for it AND does not
     ask for the fake version -- `use_fake_mag: true` means the driver is
     synthesising values, which is a different thing to verify and never a real
     chip on the bus.
+
+    "NONE" is how every config in this project spells "not fitted", so it is not
+    a chip name. Reading it as one made a real-sensor run demand /battery from a
+    board whose battery input has nothing connected to it, and abort before SLAM.
     """
+    absent = {"", "none", "null", "off", "false", "no"}
     sensors = controller_cfg.get("sensors") or {}
     topics = []
     for key, tops in SENSOR_TOPICS.items():
-        if not sensors.get(key):
+        chip = sensors.get(key)
+        if chip is None or chip is False:
+            continue
+        if isinstance(chip, str) and chip.strip().lower() in absent:
             continue
         if sensors.get(f"use_fake_{key}"):
             continue

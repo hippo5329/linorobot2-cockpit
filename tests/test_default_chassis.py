@@ -226,3 +226,18 @@ def test_every_run_writes_its_own_log_directory():
     assert 'RUN_ID = time.strftime' in pipe and "LOG_DIR = os.path.join(LOG_ROOT, RUN_ID)" in pipe
     assert pipe.count('open(run_log_path(') == 2, "both launchers write through run_log_path"
     assert 'os.symlink(target, link)' in pipe, "logs/latest and logs/<tag>.log still resolve"
+
+
+def test_none_is_not_a_chip_name():
+    """Every config in this project spells "not fitted" as NONE. Read as a chip
+    name it made a real-sensor run demand /battery from a board whose battery
+    input has nothing connected, and abort before SLAM."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ocp_sensor_topics", os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.sensor_topics({"sensors": {"current": "INA219"}}) == ["/battery"]
+    for absent in ("NONE", "none", " None ", "", "off"):
+        assert m.sensor_topics({"sensors": {"current": absent}}) == [], absent
+    assert m.sensor_topics({"sensors": {"current": "INA219", "use_fake_current": True}}) == []
