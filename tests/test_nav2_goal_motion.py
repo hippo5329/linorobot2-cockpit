@@ -470,4 +470,4 @@ def test_a_crossing_measured_from_distant_samples_claims_nothing(monkeypatch, ca
                 goal_x=3.0, goal_y=0.0) is False
     out = capsys.readouterr().out
     assert "DROVE THROUGH THE WALL" not in out
-    assert "WITHOUT GOING AROUND THE WALL" in out
+    assert "WITHOUT A PATH AROUND THE WALL" in out, out[-200:]
