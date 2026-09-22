@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import gen_robot_description  # noqa: E402
 import gen_firmware_header    # noqa: E402
 
-DEFAULT_KINEMATICS = {"wheel_diameter": 0.152, "lr_wheels_distance": 0.271,
+DEFAULT_KINEMATICS = {"wheel_diameter": 0.1, "lr_wheels_distance": 0.271,
                       "max_rpm": 140, "counts_per_rev": 4000}
 ROBOT_RADIUS, INFLATION = 0.26, 0.55
 
@@ -89,7 +89,7 @@ def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
     A robot gets its measured numbers when the robot exists.
     """
     presets = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js")).read()
-    for key, want in (("wheel_diameter", 0.152), ("lr_wheels_distance", 0.271),
+    for key, want in (("wheel_diameter", 0.1), ("lr_wheels_distance", 0.271),
                       ("max_rpm", 140), ("cpr", 4000)):
         values = {float(v) for v in re.findall(rf"\n      {key}: ([0-9.]+)", presets)}
         assert values == {float(want)}, f"presets disagree on {key}: {sorted(values)}"
@@ -117,7 +117,7 @@ def test_bare_kinematics_are_the_same_in_the_presets_and_the_release_image():
     presets = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js")).read()
     for m in re.finditer(r'id: "(bare_[a-z0-9]+)"(.*?)pins:', presets, re.S):
         block = m.group(2)
-        for key, want in (("wheel_diameter", 0.152), ("lr_wheels_distance", 0.271),
+        for key, want in (("wheel_diameter", 0.1), ("lr_wheels_distance", 0.271),
                           ("max_rpm", 140), ("cpr", 4000)):
             got = re.search(rf"\b{key}: ([0-9.]+)", block)
             assert got and float(got.group(1)) == want, f"{m.group(1)}: {key} {got and got.group(1)}"

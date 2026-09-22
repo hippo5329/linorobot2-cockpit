@@ -103,7 +103,7 @@ base_controller:
 kinematics:
   base_type: 2wd
   stamped_cmd_vel: auto
-  wheel_diameter: 0.152
+  wheel_diameter: 0.1
   lr_wheels_distance: 0.271
   fr_wheels_distance: 0
   max_rpm: 140

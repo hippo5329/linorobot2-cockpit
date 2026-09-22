@@ -317,7 +317,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         base_macro = "MECANUM"
 
     # Kinematics & specs
-    wheel_diam = float(kine.get("wheel_diameter", 0.152))
+    wheel_diam = float(kine.get("wheel_diameter", 0.1))
     lr_dist = float(kine.get("lr_wheels_distance", 0.271))
     fr_dist = float(kine.get("fr_wheels_distance", 0.0))
     max_rpm = int(kine.get("max_rpm", 140))
@@ -1002,7 +1002,7 @@ def bare_mcu_params(mcu: str) -> dict:
             # The same default chassis as every bare preset (app-presets.js):
             # one body, one set of mounts, whatever the MCU or the drive type.
             "base_type": "2wd",
-            "wheel_diameter": 0.152,
+            "wheel_diameter": 0.1,
             "lr_wheels_distance": 0.271,
             "max_rpm": 140,
             "max_rpm_ratio": 0.85,

@@ -115,10 +115,11 @@ kinematics:
   # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
   # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
   # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
-  wheel_diameter: 0.152
+  wheel_diameter: 0.1
   lr_wheels_distance: 0.271
   fr_wheels_distance: 0.18   # the shared footprint (robot_radius 0.26) has to contain the body
-                          # AND the wheels that stick out past it; 0.24 gave 0.280 m
+                          # AND the wheels, which stick out past it -- see
+                          # gen_robot_description.config_warnings()
   max_rpm: 140
   counts_per_rev: 4000
   max_rpm_ratio: 0.85
