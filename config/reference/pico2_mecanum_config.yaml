@@ -137,12 +137,11 @@ kinematics:
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-geometry:
-  body: {length: 0.3855, width: 0.2636, height: 0.0291, mass: 1.0}   # the base_link box, centred on the axle midpoint
-  wheel: {width: 0.0243, mass: 0.194, z: 0.0}   # z: axle height relative to the base_link origin (negative = below)
-  laser: {x: 0.0, y: 0.0, z: 0.063, roll: 0.0, pitch: 0.0, yaw: 0.0, frame: laser}   # base_link -> laser; the LiDAR driver stamps /scan with `frame`
-  imu: {x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}   # base_link -> imu_link (the frame the firmware stamps)
-  mesh: {base: '', wheel: ''}   # optional file:// or package:// meshes instead of the box and cylinders
+geometry: {}   # Derived from the kinematics above. This is a REAL robot design --
+               # a 97 mm-wheel mecanum AMR -- so it keeps its own measured wheels and
+               # wheelbase; what it shares with every other config is the MOUNT (laser
+               # at the base origin) and the Nav2 template. A default/bare module is
+               # the thing that must be identical on every MCU and drive type.
 ekf:
   frequency: 50.0
   sensor_timeout: 0.1
