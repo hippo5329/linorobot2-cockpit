@@ -702,6 +702,12 @@ def main():
     parser.add_argument("--map-output", default=os.path.join(REPO_ROOT, "maps", "one_click_map"),
                         help="Output path prefix for the map saver")
     parser.add_argument("--no-nav2", action="store_true", help="Skip Nav2 (run SLAM only)")
+    parser.add_argument("--topics-only", action="store_true",
+                        help="Stop after the topics: bringup, topic verification and the six "
+                             "manoeuvres, with no SLAM, no Nav2 and no map. What a REAL-sensor "
+                             "run is for -- the chips answer on the bus and publish at rate. "
+                             "Navigation on a bench mixes a real IMU with simulated wheels and "
+                             "measures the bench, so it is not asked for here.")
     parser.add_argument("--flash", action="store_true",
                         help="Write the application even when the probe says the board already runs this build.")
     # Auto-update, ON by default: a stale board is brought to this tree's build
@@ -833,7 +839,10 @@ def main():
                   "simulated one, so a Nav2 goal from this combination measures the "
                   "bench, not the robot. Measured: the same board and config reach "
                   "8/8 legs in fake mode and stall ~1.6 m short in auto, on both distros.")
-    print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> SLAM -> Nav2 -> Map")
+    if args.topics_only:
+        print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> Drive")
+    else:
+        print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> SLAM -> Nav2 -> Map")
     print("==================================================================")
     os.makedirs(os.path.dirname(args.map_output), exist_ok=True)
 
@@ -1186,8 +1195,11 @@ def main():
                             wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
                                            distro=args.distro, require_message="header.frame_id")
 
-        # Step 5: SLAM. A robot with no scan source has nothing to map.
-        if has_lidar:
+        # Step 5: SLAM. A robot with no scan source has nothing to map, and
+        # --topics-only has nothing to map it for.
+        if args.topics_only:
+            print("\n[5/6] [SLAM] Skipped per --topics-only: this run verifies the topics.")
+        elif has_lidar:
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
             bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
                                           log_tag="slam", distro=args.distro))
@@ -1233,7 +1245,9 @@ def main():
             drive_cmd = "ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{angular: {z: 0.4}}'"
 
         # Step 6: Nav2, or a plain exploration spin
-        if not args.no_nav2 and has_lidar:
+        if args.topics_only:
+            print("\n[6/6] [NAV2] Skipped per --topics-only.")
+        elif not args.no_nav2 and has_lidar:
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
                                           f"distro:={args.distro} config_file:={params_path}",
@@ -1332,6 +1346,19 @@ def main():
             bg_processes.append(drive)
             time.sleep(args.explore_sec)
             stop_bg(drive)
+
+        if args.topics_only:
+            print("\n[MAP] Skipped per --topics-only: no SLAM ran, so there is no map.")
+            print("\n==================================================================")
+            if failures:
+                print("⚠️ 1-Click Pipeline finished with problems:")
+                for f in failures:
+                    print(f"   • {f}")
+                print("==================================================================")
+                return 1
+            print("✅ Topics verified and the base drove: the run did what --topics-only asks.")
+            print("==================================================================")
+            return 0
 
         print(f"\n[MAP] Saving the map to '{args.map_output}'...")
         # save_map_timeout=15: /map is transient-local and the saver has to get

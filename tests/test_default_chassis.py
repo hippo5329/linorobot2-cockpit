@@ -257,6 +257,19 @@ def test_the_gate_never_asks_for_tighter_than_nav2_promises():
         assert checker["xy_goal_tolerance"] == 0.35, f"{name}: {checker['xy_goal_tolerance']}"
 
 
+def test_topics_only_runs_no_slam_no_nav2_no_map():
+    """A real-sensor run verifies topics. It does not navigate, map or SLAM:
+    those need the wheels to be real, and on this bench they are not."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'parser.add_argument("--topics-only", action="store_true"' in pipe
+    for guard in ('if args.topics_only:\n            print("\\n[5/6] [SLAM] Skipped per --topics-only',
+                  'if args.topics_only:\n            print("\\n[6/6] [NAV2] Skipped per --topics-only',
+                  'if args.topics_only:\n            print("\\n[MAP] Skipped per --topics-only'):
+        assert guard in pipe, guard
+    # the six manoeuvres are topics too -- rates prove it talks, driving proves it moves
+    assert 'parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True' in pipe
+
+
 def test_a_real_imu_on_simulated_wheels_is_called_out():
     """The EKF fuses vyaw from odom AND imu. A board bolted to a bench reports
     gyro=(0, 0, 0) while the fake wheels report a turn, so the filtered heading
