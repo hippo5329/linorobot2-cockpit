@@ -67,7 +67,9 @@ class FakeNode:
     """
     def __init__(self, odom_lin=0.006, odom_ang=0.036, dist=0.0, yaw=0.0,
                  cmds=40, planned=True, completed=False,
-                 cmd_lin=0.20, cmd_ang=0.60):
+                 cmd_lin=0.20, cmd_ang=0.60,
+                 goal_status=6, goal_error_code=0, goal_error_msg="",
+                 goal_rejected=False, goal_dist=float("inf")):
         self.odom_peak_lin, self.odom_peak_ang = odom_lin, odom_ang
         self.cmd_peak_lin, self.cmd_peak_ang = cmd_lin, cmd_ang
         self.odom_max_dist, self.odom_max_yaw = dist, yaw
@@ -75,6 +77,16 @@ class FakeNode:
         self.path_avoids_wall, self.goal_completed = planned, completed
         self.goal_accepted = True
         self.cmd_vel_type = "twist_stamped"
+        # How the goal ended, and why. 6 is ABORTED -- the common case for a run
+        # that times out; a completed run is SUCCEEDED.
+        self.goal_status = 4 if completed else goal_status
+        self.goal_error_code, self.goal_error_msg = goal_error_code, goal_error_msg
+        self.goal_rejected = goal_rejected
+        self.distance_remaining = float("nan")
+        # Displacement from the goal: inf unless a test says otherwise, so a
+        # double that says nothing about position cannot accidentally "arrive".
+        self.goal_dist_now = self.goal_dist_min = goal_dist
+        self.goal_dist_start = 3.0
         self.destroyed = False
 
     def send_goal(self):
@@ -237,3 +249,77 @@ def test_a_rotating_base_does_not_end_the_window_early(monkeypatch):
 def test_min_traverse_is_reachable_from_the_command_line():
     src = open(os.path.join(REPO_ROOT, "scripts", "test_nav2_goal.py")).read()
     assert '"--min-traverse"' in src and "min_traverse=args.min_traverse" in src
+
+
+def test_a_rejected_goal_fails_and_is_not_a_timeout(monkeypatch):
+    """bt_navigator saying no is not the same as never answering.
+
+    Both used to leave goal_accepted False and let the run time out, so a stack
+    that refused the pose read exactly like one that was not there.
+    """
+    rejected = FakeNode(goal_rejected=True, planned=False, cmds=0)
+    assert _run(monkeypatch, rejected, timeout=0.3) is False
+
+
+def test_require_goal_fails_a_verified_plan_that_never_arrived(monkeypatch):
+    """--require-goal verifies the goal, not the plan.
+
+    The default contract accepts a plan around the wall plus a responding base.
+    When the goal itself is what must be verified, a plan is not a substitute:
+    the Yahboom planned around the wall on every leg and reached the goal on
+    none of them.
+    """
+    planned_only = FakeNode(odom_lin=0.25, dist=1.2, planned=True, completed=False,
+                            goal_status=6, goal_error_code=105,
+                            goal_error_msg="Failed to make progress")
+    assert _run(monkeypatch, planned_only, timeout=0.3) is True                     # default
+    assert _run(monkeypatch, planned_only, timeout=0.3, require_goal=True) is False  # verified
+
+
+def test_a_reached_goal_passes_under_require_goal(monkeypatch):
+    reached = FakeNode(odom_lin=0.25, dist=2.4, completed=True)
+    assert _run(monkeypatch, reached, timeout=30.0, require_goal=True) is True
+
+
+def test_the_error_code_and_message_reach_the_output(monkeypatch, capsys):
+    """An abort without its error_code is a dead end for whoever reads the log.
+    105 / 'Failed to make progress' and 102 / 'no valid path' are different
+    faults with different fixes; the gate saw both and printed neither.
+    """
+    aborted = FakeNode(odom_lin=0.25, dist=1.2, goal_status=6, goal_error_code=105,
+                       goal_error_msg="Failed to make progress")
+    _run(monkeypatch, aborted, timeout=0.3, require_goal=True)
+    out = capsys.readouterr().out
+    assert "ABORTED" in out and "error_code=105" in out and "Failed to make progress" in out
+
+
+def test_the_goal_is_judged_by_displacement_not_by_the_status(monkeypatch):
+    """A status is not a position.
+
+    A controller can stop short and report SUCCEEDED, and can equally be aborted
+    by a behaviour-tree timeout while sitting on top of the goal. Aborting 0.2 m
+    short and aborting 2.8 m short are both ABORTED and are not the same result.
+    """
+    nearly = FakeNode(odom_lin=0.25, dist=2.8, goal_status=6, goal_dist=0.21,
+                      goal_error_code=105, goal_error_msg="Failed to make progress")
+    assert _run(monkeypatch, nearly, timeout=30.0, require_goal=True) is True
+    nowhere = FakeNode(odom_lin=0.25, dist=0.4, goal_status=6, goal_dist=2.83,
+                       goal_error_code=105, goal_error_msg="Failed to make progress")
+    assert _run(monkeypatch, nowhere, timeout=0.3, require_goal=True) is False
+
+
+def test_the_gap_and_the_error_both_reach_the_output(monkeypatch, capsys):
+    aborted = FakeNode(odom_lin=0.25, dist=0.4, goal_status=6, goal_dist=2.83,
+                       goal_error_code=105, goal_error_msg="Failed to make progress")
+    _run(monkeypatch, aborted, timeout=0.3, require_goal=True)
+    out = capsys.readouterr().out
+    assert "ABORTED" in out, out
+    assert "error_code=105" in out and "Failed to make progress" in out, out
+    assert "2.830 m from the goal" in out and "from 3.000 m at the start" in out, out
+
+
+def test_a_tighter_tolerance_is_honoured(monkeypatch):
+    close = FakeNode(odom_lin=0.25, dist=2.8, goal_status=6, goal_dist=0.21)
+    assert _run(monkeypatch, close, timeout=30.0, require_goal=True) is True
+    assert _run(monkeypatch, close, timeout=0.3, require_goal=True,
+                goal_tolerance=0.10) is False

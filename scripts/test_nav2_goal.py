@@ -61,6 +61,14 @@ def _yaw(q) -> float:
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
+_STATUS_NAMES = {0: "UNKNOWN", 1: "ACCEPTED", 2: "EXECUTING", 3: "CANCELING",
+                 4: "SUCCEEDED", 5: "CANCELED", 6: "ABORTED"}
+
+
+def _status_name(status: int) -> str:
+    return _STATUS_NAMES.get(int(status), f"status {status}")
+
+
 class Nav2GoalTester(Node):
     def __init__(self, goal_x: float = 3.0, goal_y: float = 0.0, timeout_sec: float = 30.0,
                  cmd_vel_type: str = "auto"):
@@ -85,6 +93,24 @@ class Nav2GoalTester(Node):
         self.odom_peak_ang: float = 0.0
         self.goal_accepted: bool = False
         self.goal_completed: bool = False
+        # What the goal ACTUALLY ended as. A run that only asks "did it succeed"
+        # throws away the one field that says why it did not: Nav2 aborts carry an
+        # error_code and error_msg (105 / "Failed to make progress" on the bench),
+        # and a gate that does not read them reports a silent red.
+        self.goal_status: int = -1
+        self.goal_error_code: int = 0
+        self.goal_error_msg: str = ""
+        self.goal_rejected: bool = False
+        self.distance_remaining: float = float("nan")
+        # How far the base ended from the GOAL, and the closest it ever came.
+        # This is what "did it get there" means: the action status says how Nav2
+        # decided to stop, and a status is not a position. A run that aborts 0.2 m
+        # short and one that aborts 2.8 m short are the same ABORTED and are not
+        # the same result. Measured from /odom against the goal pose, which share
+        # a frame here because the goal is sent in the odom frame.
+        self.goal_dist_start: float = float("nan")
+        self.goal_dist_now: float = float("nan")
+        self.goal_dist_min: float = float("inf")
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -188,6 +214,13 @@ class Nav2GoalTester(Node):
         # base responded -- see the note on `responded()` in run_test().
         self.odom_peak_lin = max(self.odom_peak_lin, abs(msg.twist.twist.linear.x))
         self.odom_peak_ang = max(self.odom_peak_ang, abs(msg.twist.twist.angular.z))
+        # Displacement FROM THE GOAL: the distance still to close, and the best
+        # it managed. goal_dist_start is taken from the first sample so the line
+        # can say how much of the gap was closed rather than just where it ended.
+        self.goal_dist_now = math.hypot(self.goal_x - p1.x, self.goal_y - p1.y)
+        if math.isnan(self.goal_dist_start):
+            self.goal_dist_start = math.hypot(self.goal_x - p0.x, self.goal_y - p0.y)
+        self.goal_dist_min = min(self.goal_dist_min, self.goal_dist_now)
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -213,7 +246,11 @@ class Nav2GoalTester(Node):
     def _goal_response_cb(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().error("Nav2 goal rejected!")
+            # Distinct from "never answered": bt_navigator was there and said no.
+            # Both used to leave goal_accepted False and the run then timed out
+            # with nothing to tell them apart.
+            self.goal_rejected = True
+            self.get_logger().error("Nav2 REJECTED the goal: bt_navigator would not accept it.")
             return
         self.goal_accepted = True
         self.get_logger().info("✅ Nav2 goal accepted by bt_navigator.")
@@ -222,21 +259,65 @@ class Nav2GoalTester(Node):
 
     def _feedback_cb(self, feedback_msg):
         fb = feedback_msg.feedback
-        self.get_logger().debug(f"Nav2 feedback: distance_remaining={fb.distance_remaining:.2f}m")
+        self.distance_remaining = float(getattr(fb, "distance_remaining", float("nan")))
+        self.get_logger().debug(f"Nav2 feedback: distance_remaining={self.distance_remaining:.2f}m")
 
     def _result_cb(self, future):
-        status = future.result().status
-        if status == GoalStatus.STATUS_SUCCEEDED:
+        outcome = future.result()
+        self.goal_status = int(outcome.status)
+        result = getattr(outcome, "result", None)
+        # nav2 >= jazzy puts an error_code on the result; older ones do not, and a
+        # missing field is not an error, so read it defensively.
+        self.goal_error_code = int(getattr(result, "error_code", 0) or 0)
+        self.goal_error_msg = str(getattr(result, "error_msg", "") or "")
+        if self.goal_status == GoalStatus.STATUS_SUCCEEDED:
             self.goal_completed = True
             self.get_logger().info("🎉 Nav2 goal SUCCEEDED! Robot reached target behind obstacle wall.")
         else:
-            self.get_logger().info(f"Nav2 goal finished with status code: {status}")
+            self.get_logger().info(
+                f"Nav2 goal finished as {_status_name(self.goal_status)}"
+                + (f", error_code={self.goal_error_code}" if self.goal_error_code else "")
+                + (f", error_msg={self.goal_error_msg!r}" if self.goal_error_msg else ""))
+
+
+def _gap(node) -> str:
+    """How far it ended from the goal, and the closest it came.
+
+    A status is not a position: aborting 0.2 m short and aborting 2.8 m short are
+    both ABORTED and are not the same result. Reporting the gap is what lets a
+    reader tell "nearly there, tolerance too tight" from "never left".
+    """
+    now = getattr(node, "goal_dist_now", float("nan"))
+    if now != now:                       # NaN: no odom sample, nothing to say
+        return ""
+    best = getattr(node, "goal_dist_min", float("inf"))
+    start = getattr(node, "goal_dist_start", float("nan"))
+    out = f"; {now:.3f} m from the goal (closest {best:.3f} m"
+    if start == start and start > 0:
+        out += f", from {start:.3f} m at the start"
+    return out + ")"
+
+
+def _why(node) -> str:
+    """The error Nav2 gave, when it gave one.
+
+    An abort without its error_code is a dead end for whoever reads the log:
+    105 / "Failed to make progress" and 102 / "no valid path" are different
+    faults with different fixes, and the gate saw both and printed neither.
+    """
+    bits = []
+    if getattr(node, "goal_error_code", 0):
+        bits.append(f"error_code={node.goal_error_code}")
+    if getattr(node, "goal_error_msg", ""):
+        bits.append(f"error_msg={node.goal_error_msg!r}")
+    return (" (" + ", ".join(bits) + ")") if bits else ""
 
 
 def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, min_cmds: int = 5,
              cmd_vel_type: str = "auto", noise_lin: float = 0.03,
              noise_ang: float = 0.10, require_motion: bool = True,
-             min_traverse: float = 0.10) -> bool:
+             min_traverse: float = 0.10, require_goal: bool = False,
+             goal_tolerance: float = 0.30) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
@@ -260,6 +341,16 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         the floor catches exactly that.
         """
         return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
+
+    def reached_goal() -> bool:
+        """Did it actually get there?
+
+        Either Nav2 said SUCCEEDED, or the base is inside the tolerance of the
+        goal pose -- because a controller can stop short and report success, and
+        can equally be aborted by a behaviour-tree timeout while sitting on top
+        of the goal. The position is the fact; the status is the explanation.
+        """
+        return node.goal_completed or getattr(node, "goal_dist_min", float("inf")) <= goal_tolerance
 
     def traversed() -> bool:
         """Did it actually GO somewhere, as opposed to answering the command?
@@ -290,7 +381,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                   f"peaking at {node.cmd_peak_lin:.3f} m/s / {node.cmd_peak_ang:.3f} rad/s; "
                   f"odom reported up to {node.odom_peak_lin:.3f} m/s / "
                   f"{node.odom_peak_ang:.3f} rad/s and moved "
-                  f"{node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad")
+                  f"{node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad; "
+                  f"goal {_status_name(node.goal_status)}" + _why(node) + _gap(node))
         if not require_motion or moved():
             print(f"✅ {headline}: {detail}")
             return True
@@ -323,9 +415,21 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             # first two are measured entirely host-side: the plan comes from the
             # planner and the count from the controller's own publications, so a
             # board that is unplugged satisfies both.
-            if node.path_avoids_wall and node.cmd_vel_count >= min_cmds and \
+            # A verified plan is not a reached goal. When the goal is what must be
+            # verified this branch must not end the run -- otherwise the answer
+            # arrives before the robot has had a chance to get there.
+            if not require_goal and node.path_avoids_wall and node.cmd_vel_count >= min_cmds and \
                     ((moved() and traversed()) or not require_motion):
                 return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
+
+            if require_goal and reached_goal() and (moved() or not require_motion):
+                return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
+
+            if node.goal_rejected:
+                print(f"❌ NAV2 GOAL REJECTED by bt_navigator{_why(node)}: it was reachable "
+                      f"on the action interface and refused the pose. Nothing downstream of "
+                      f"this can be judged.")
+                return False
 
             if node.goal_completed and (moved() or not require_motion):
                 return verdict("NAV2 GOAL COMPLETED SUCCESSFULLY")
@@ -341,6 +445,20 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
               f"odom_moved={node.odom_max_dist:.3f}m,{node.odom_max_yaw:.3f}rad")
         if node.goal_completed:
             return verdict("NAV2 GOAL COMPLETED (after the window)")
+        if node.goal_rejected:
+            print(f"❌ NAV2 GOAL REJECTED by bt_navigator{_why(node)}.")
+            return False
+        if require_goal and not reached_goal():
+            # Asked to verify the goal, not merely the plan. The gap is the
+            # verdict and the status is the reason: "aborted 0.21 m short" and
+            # "aborted 2.83 m short" send the reader to different places.
+            print(f"❌ NAV2 GOAL NOT REACHED: ended as {_status_name(node.goal_status)}"
+                  f"{_why(node)}{_gap(node)}; needed within {goal_tolerance:.2f} m; "
+                  f"planned_around_wall={node.path_avoids_wall}, "
+                  f"traversed {node.odom_max_dist:.3f} m")
+            return False
+        if require_goal:
+            return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
         if node.goal_accepted and node.path_avoids_wall:
             return verdict("NAV2 PATH PLANNING AROUND THE OBSTACLE WALL VERIFIED")
         return False
@@ -360,6 +478,13 @@ def main():
                         help="Type published on /cmd_vel; 'auto' reads it off the graph")
     parser.add_argument("--noise-lin", type=float, default=0.03,
                         help="Linear speed (m/s) at or below which /odom is considered at rest")
+    parser.add_argument("--goal-tolerance", type=float, default=0.30,
+                        help="metres from the goal pose that count as reached, when "
+                             "--require-goal is given")
+    parser.add_argument("--require-goal", action="store_true",
+                        help="the goal itself must reach STATUS_SUCCEEDED; a verified plan "
+                             "is not enough. Reports the status and Nav2's error_code/"
+                             "error_msg when it does not.")
     parser.add_argument("--min-traverse", type=float, default=0.10,
                         help="metres the base must actually cover before the path-verified "
                              "headline is allowed; displacement from the start pose, not "
@@ -378,7 +503,8 @@ def main():
                        min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type,
                        noise_lin=args.noise_lin, noise_ang=args.noise_ang,
                        require_motion=not args.no_require_motion,
-                       min_traverse=args.min_traverse)
+                       min_traverse=args.min_traverse, require_goal=args.require_goal,
+                       goal_tolerance=args.goal_tolerance)
     sys.exit(0 if success else 1)
 
 
