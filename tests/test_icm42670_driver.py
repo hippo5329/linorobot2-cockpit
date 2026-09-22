@@ -103,8 +103,8 @@ def test_the_interrupt_edge_count_is_reported_once():
 def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
     """flash_mcu must not report a touch it never sent.
 
+    Inside a container the USB reset that precedes the touch takes the tty away
     (a container runtime attaches a device node once). pyserial then failed to open it,
-    (incus attaches a unix-char device once). pyserial then failed to open it,
     the stty fallback failed silently on the same missing node, and the pulse
     still returned True -- so the flasher printed "the board answered the
     1200-baud touch and did NOT reach BOOTSEL" about a board that had heard
