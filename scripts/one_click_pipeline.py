@@ -670,9 +670,13 @@ def main():
     parser.add_argument("--goal-tolerance", type=float, default=0.30,
                         help="metres from the goal pose that count as reached (--require-goal)")
     parser.add_argument("--goal-timeout", type=int, default=25,
-                        help="seconds the Nav2 goal test waits. A goal 3 m away at 0.26 m/s "
-                             "needs ~12 s of driving plus planning and the turn to face it, "
-                             "so 25 is tight for --require-goal.")
+                        help="seconds the Nav2 goal test waits. 25 suits the default check, "
+                             "which asks whether the planner routed around the wall. "
+                             "--require-goal needs far more: the goal sits BEHIND the wall "
+                             "(x=2, y=-1.5..1.5), so the path around it is 7-8 m, or ~30 s "
+                             "of driving at the 0.26 m/s these configs cap at, before any "
+                             "rotation or recovery. Measured at 45 s: 899 commands at a full "
+                             "0.260 m/s, the base tracking at 0.262, and still short. Use 120.")
     parser.add_argument("--flash-timeout", type=int, default=600,
                         help="Seconds allowed for the whole flash, including every recovery stage")
     parser.add_argument("--flash-attempt-timeout", type=int, default=90,
