@@ -198,6 +198,8 @@ Two separate decisions then silenced it: `bringup.launch.py` excluded the fake m
 `pub_mag` from `mag: NONE` so the firmware never published it. Madgwick therefore integrated the
 gyro alone, the fake gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
 and the EKF, which takes Madgwick's yaw as *absolute* and only the wheels' yaw *rate*, inherited it.
+(That last clause described the intent, not the code: `imu0_config` did not fuse absolute yaw in any
+shipped config until 2026-09-23. It does now — `docs/ros2-stack.md`, "The heading needs an anchor".)
 Measured at rest, read from inside the stack's own DDS environment: wheel yaw 59.4°, EKF 7.2° after
 an hour. The body follows the wheels and Nav2 steers by the EKF, so goals veer (a held heading of
 0.2° moved at 67°) and the robot eventually finds the wall. Both halves now agree: `use_mag` is true

@@ -344,8 +344,8 @@ Fake mode is what makes a bare board useful. Under `base_controller.sensors`:
 | key | emulates | how |
 |---|---|---|
 | `use_fake_wheel` | motors and encoders | software kinematics with motor inertia, responds to `/cmd_vel`, resets pose on every agent connection |
-| `use_fake_imu` | 6-DoF IMU | synthetic acceleration, angular rate from the simulated heading; no I2C traffic |
-| `use_fake_mag` | magnetometer | field vector tracking the simulated heading |
+| `use_fake_imu` | 6-DoF IMU | synthetic acceleration, angular rate from the simulated heading; no I2C traffic. Bias, drift, scale error and noise are those of a typical real chip, and the covariance it publishes is derived from that noise rather than declared separately |
+| `use_fake_mag` | magnetometer | field vector tracking the simulated heading, sized and noised like a typical real part, with a hard-iron offset so a calibration has something to find. Removed by default, so the simulated robot starts where a real one does after `robot_calibration`; `mag_bias 0,0,0` in the env puts it back to uncalibrated |
 | `use_fake_ld19` | 360° LD19 LiDAR | raycast of a 10 m × 6 m room with an interior wall, on the MCU (`raw_scan`, a UART, or UDP) or on the robot computer (`scripts/fake_laser_node.py`); both raycast from `geometry.laser.x`. On the MCU it is also the env key `fake_ld19`, so a prebuilt image built with the emulator in is silent on a real robot |
 | `use_fake_env` | barometer | sea-level pressure and 25 °C |
 | `use_fake_sonar` | ultrasonic range | raycast ahead from the same room, drives the firmware's safety stop |

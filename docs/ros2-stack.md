@@ -286,6 +286,44 @@ the fresh image was proven on the GenDrv bench first (generated description publ
 `base_link`->`laser` transform equal to `geometry.laser`) before either was removed.
 
 
+### The heading needs an anchor, and the EKF has to be told to use it
+The chain is: magnetometer -> `imu_filter_madgwick` -> `/imu/data` orientation -> the EKF's
+**absolute yaw**. Every link has to be on, and each one is set in a different file.
+
+* `bringup.launch.py` runs Madgwick with `use_mag` true whenever a magnetometer is fitted *or*
+  simulated, and pins `world_frame: enu` — x east, **y north**, z up, which is the frame the
+  firmware's simulated field points along. The package's default is `enu` today and used to be
+  `nwu`; a silent change of convention would turn every fused heading a quarter turn with nothing
+  in the log to say so, so it is set rather than inherited.
+* The robot config's `ekf.imu0_config` must fuse index **5**, absolute yaw — the 15-element vector
+  is `[x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]`. Every shipped
+  config now fuses `yaw, vyaw, ax, ay` from the IMU and `vx, vy, vyaw` from the wheels, which is
+  what the upstream linorobot2_hardware wiki specifies.
+
+Without index 5 nothing looks broken. The robot drives, the map builds, and the heading error is
+absorbed into `map -> odom` — a transform nothing prints. It reaches you as a map view drawing the
+live scan at an angle to the walls it has just built, and it grows all run, because this EKF fuses
+velocities and has no absolute reference of its own. `gen_firmware_header.py`'s `config_warnings()`
+now says so when an IMU is fitted and index 5 is false, and when two sources both claim absolute
+yaw — two headings that disagree make the filter split the difference.
+
+`odom0_config` fuses **vy** as well as vx. On a differential base the firmware publishes vy as an
+exact zero with a real covariance, which is the non-holonomic constraint stated as a measurement,
+not missing data; on a mecanum base it is a velocity in its own right.
+
+Madgwick also runs with `remove_gravity_vector: true`, because the EKF fuses `ax` and `ay` and
+`two_d_mode` forces the filter level: on any real slope gravity would otherwise leak into the
+horizontal axes and be read as acceleration. It is removed once, at the filter that already holds
+the orientation — `robot_localization`'s own `imu0_remove_gravitational_acceleration` stays at its
+default of false, so nothing subtracts it twice.
+
+Both the IMU and the magnetometer must be **calibrated** or the pose rotates. The simulated
+magnetometer carries a hard-iron offset on purpose, so `robot_calibration`'s
+`magnetometer_calibration` has something to find, and the firmware removes it by default — a
+simulated robot starts where a real one does after the routine has been run. Uncorrected that
+offset is worth about 7.4 deg of heading at rest.
+
+
 ### The IMU filter's `dt` comes from the stamps, not from a constant copied out of the firmware
 Running `imu_filter_madgwick` with `constant_dt: 0.02` to mirror the firmware's `CONTROL_TIMER`
 (20 ms) is wrong. The firmware does publish `/imu/data_raw` once per control period,
