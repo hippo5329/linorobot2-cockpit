@@ -508,6 +508,9 @@ def _odom_xy(distro: str):
 # count as "at the origin". The goal is 3 m away and the start gap the gate
 # needs is 1 m, so a few cm change nothing; 0.05 argued with a healthy GenDrv.
 ORIGIN_TOL = 0.10
+# How far from the origin the robot may be when SLAM starts. The goal is 3 m
+# away and the gate needs a 1 m start gap, so a few cm are immaterial.
+POSE_START_TOL = 0.25
 
 
 def _odom_speed(distro: str):
@@ -1085,120 +1088,63 @@ def main():
             return 1
         print("  ✅ Topic verification passed.")
 
-        # Step 4.5: the drive test. Rates prove the board TALKS; only driving
-        # proves it MOVES, and moves the way it was told -- the FakeEncoder
-        # invert and the PID windup each shipped perfect 50 Hz topics on a base
-        # that spun in place or pinned a rail. The six manoeuvres run every pass
-        # unless --no-drive-test, and a failure is recorded but not fatal: a base
-        # that talks but drives wrong is worth knowing about without throwing the
-        # map away. See scripts/drive_suite.py and docs memory "always flash and
-        # drive".
-        if args.drive_test:
-            print("\n[4.5/6] [DRIVE] Six manoeuvres, checked against odometry...")
-            stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
-            tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
-            drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {tname}",
-                                timeout=90, distro=args.distro)
-            if drive_res.stdout:
-                print(drive_res.stdout)
-            if drive_res.returncode == 0:
-                print("  ✅ All six manoeuvres correct.")
-            else:
-                print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
-                failures.append(f"Drive suite: exit {drive_res.returncode}")
-
-        # Step 4.7: put the simulated robot back at the origin, with a clean EKF.
+        # Step 4.7: SLAM and Nav2 must start from a known pose.
         #
-        # The flash zeroes the pose, and the six manoeuvres then move it inside
-        # that same micro-ROS session: two arcs do not cancel, and the residual
-        # was measured at 0.46 m on the bare ESP32 and 0.48 m on an RP2350. SLAM
-        # then anchors its map wherever the robot happens to be, and a goal at
-        # fixed coordinates is either already under the robot (a vacuous pass)
-        # or on the far side of the wall (the documented wedge).
+        # The flash zeroes the simulated pose, so on an ordinary run there is
+        # nothing to do -- which is why the six manoeuvres now run AFTER the goal
+        # instead of before it. They used to run here and leave a 0.46-0.48 m
+        # residual inside the same micro-ROS session; SLAM then anchored its map
+        # wherever the robot stood, and a goal at fixed coordinates was either
+        # already under the robot or beyond the wall from a bad start.
         #
-        # The firmware resets a simulated pose on every NEW session
-        # (createEntities). Ending only the agent gets that session -- and was
-        # measured to wreck the EKF: robot_localization keeps predicting through
-        # the ~12 s the board takes to reconnect (x ran to -5.5 m on an RP2040
-        # from a stale acceleration state), then wobbles for 15 s after the pose
-        # snaps back, and SLAM started its map in the middle of that. So the
-        # WHOLE bringup is restarted: agent, EKF, state publisher, LiDAR driver.
-        # The EKF then meets its first measurement at the origin and there is
-        # nothing to settle. Real robots keep their odometry across a restart
-        # and are not touched.
-        if not is_real and args.pose_reset and not args.skip_flash:
-            print("\n[4.7/6] [POSE] Restarting the bringup so the simulated robot starts from the origin...")
-            before_raw, before_ekf = _odom_xy(args.distro), _ekf_xy(args.distro)
+        # If something did move the robot (a kept-running stack, --skip-flash, a
+        # hand-driven console), the firmware only zeroes a simulated pose on a NEW
+        # session, so the whole bringup is restarted to get one. That is a last
+        # resort, not the normal path: a udp4 board loses its agent with it, and
+        # one GenDrv Wi-Fi leg never got its session back inside 120 s. Real
+        # robots keep their odometry and are never touched.
+        if not is_real and args.pose_reset:
+            start_xy = _odom_xy(args.distro)
             fmt = lambda q: "(%.3f, %.3f)" % q if q else "unknown"
-            print(f"  after the drive suite: base odometry {fmt(before_raw)}, EKF {fmt(before_ekf)}")
-            # The drive suite proved the BASE moved (/odom/unfiltered). Nav2 never
-            # reads that topic: it steers by the EKF's /odom and the TF it
-            # publishes. An EKF that did not follow the base is the exact fault
-            # a goal then reports as "Failed to make progress" with the robot
-            # visibly driving -- measured on the GenDrv, EKF pinned at (0, 0)
-            # while the base drove 4 m. Catch it here, where the cause is plain.
-            if before_raw and before_ekf and math.hypot(*before_raw) > 0.2 \
-                    and math.hypot(*before_ekf) < 0.05:
-                print(f"  ❌ the EKF did not follow the base: /odom/unfiltered moved "
-                      f"{math.hypot(*before_raw):.2f} m, /odom stayed at {fmt(before_ekf)}. "
-                      f"Nav2 steers by /odom, so every goal will fail. Check the ekf block "
-                      f"(odom0_config, frames) before anything downstream.")
-                failures.append("EKF does not follow /odom/unfiltered")
-            # Let the base come to rest first. The drive suite ends with a stop,
-            # but the simulated wheels decelerate through their acceleration
-            # clamp; a new session that zeroes the pose while they still coast
-            # leaves the robot a few cm out (measured 0.079 m on the GenDrv) and
-            # the origin check below then argues with a robot that is fine.
-            t_still = time.time()
-            while time.time() - t_still < 10:
-                v = _odom_speed(args.distro)
-                if v is not None and v < 0.01:
-                    break
-                time.sleep(0.5)
-            bringup_proc = next((proc for tag, proc in stack_processes if tag == "bringup"), None)
-            if bringup_proc is None:
-                print("  ⚠️ no bringup process to restart; the pose keeps the drive suite's residual.")
+            if start_xy is None:
+                print("\n[4.7/6] [POSE] No /odom/unfiltered sample; the start pose is unverified.")
+            elif math.hypot(*start_xy) <= POSE_START_TOL:
+                print(f"\n[4.7/6] [POSE] Starting from {fmt(start_xy)}: the flash zeroed the "
+                      f"simulated pose and nothing has moved it.")
             else:
-                stop_bg(bringup_proc)
-                stack_processes[:] = [(t, q) for t, q in stack_processes if q is not bringup_proc]
-                bg_processes[:] = [q for q in bg_processes if q is not bringup_proc]
-                # The new session is only new once the old publishers are gone.
-                t_gone = time.time()
-                while time.time() - t_gone < 20 and wait_for_topic("/odom/unfiltered", timeout_sec=1,
-                                                                    require_publisher=True,
-                                                                    distro=args.distro):
-                    time.sleep(1.0)
-                bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup2", distro=args.distro))
-                stack_processes.append(("bringup", bg_processes[-1]))
-                if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
-                                      require_publisher=True, distro=args.distro) \
-                        or not wait_for_topic("/odom", timeout_sec=30, require_publisher=True,
-                                              distro=args.distro):
-                    print(f"  ⚠️ the bringup did not come back within {handshake_wait} s; the pose is unverified.")
-                    failures.append("pose reset: bringup did not come back")
+                print(f"\n[4.7/6] [POSE] The robot is at {fmt(start_xy)}, not the origin — "
+                      f"restarting the bringup for a new session that zeroes it...")
+                bringup_proc = next((proc for tag, proc in stack_processes if tag == "bringup"), None)
+                if bringup_proc is None:
+                    print("  ⚠️ no bringup process to restart; SLAM will anchor its map here.")
+                    failures.append("pose: not at the origin and no bringup to restart")
                 else:
-                    # Settled: base and EKF both at the origin, and staying there.
-                    after_raw = after_ekf = None
-                    t_settle = time.time()
-                    while time.time() - t_settle < 30:
-                        after_raw, after_ekf = _odom_xy(args.distro), _ekf_xy(args.distro)
-                        if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
-                                                           abs(after_ekf[0]), abs(after_ekf[1])) < ORIGIN_TOL:
-                            break
+                    stop_bg(bringup_proc)
+                    stack_processes[:] = [(t, q) for t, q in stack_processes if q is not bringup_proc]
+                    bg_processes[:] = [q for q in bg_processes if q is not bringup_proc]
+                    t_gone = time.time()
+                    while time.time() - t_gone < 20 and wait_for_topic("/odom/unfiltered", timeout_sec=1,
+                                                                        require_publisher=True,
+                                                                        distro=args.distro):
                         time.sleep(1.0)
-                    if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
-                                                       abs(after_ekf[0]), abs(after_ekf[1])) < ORIGIN_TOL:
-                        print(f"  ✅ pose {fmt(before_raw)} -> base {fmt(after_raw)}, EKF {fmt(after_ekf)}: "
-                              f"back at the origin, EKF fresh.")
+                    bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup2", distro=args.distro))
+                    stack_processes.append(("bringup", bg_processes[-1]))
+                    if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
+                                          require_publisher=True, distro=args.distro):
+                        print(f"  ❌ the bringup did not come back within {handshake_wait} s. On udp4 the "
+                              f"board has to find the agent again; it may need a power cycle.")
+                        failures.append("pose reset: bringup did not come back")
                     else:
-                        print(f"  ⚠️ pose {fmt(before_raw)} -> base {fmt(after_raw)}, EKF {fmt(after_ekf)}: "
-                              f"NOT at the origin. Is this really a simulated base? A real one keeps "
-                              f"its odometry.")
-                        failures.append("pose reset: robot not at the origin")
-                    # The scan has to come back too before SLAM is asked to map it.
-                    if has_lidar:
-                        wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
-                                       distro=args.distro, require_message="header.frame_id")
+                        after = _odom_xy(args.distro)
+                        if after and math.hypot(*after) < POSE_START_TOL:
+                            print(f"  ✅ pose {fmt(start_xy)} -> {fmt(after)}: back at the origin.")
+                        else:
+                            print(f"  ⚠️ pose {fmt(start_xy)} -> {fmt(after)}: still not at the origin. "
+                                  f"Is this really a simulated base?")
+                            failures.append("pose reset: robot not at the origin")
+                        if has_lidar:
+                            wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
+                                           distro=args.distro, require_message="header.frame_id")
 
         # Step 5: SLAM. A robot with no scan source has nothing to map.
         if has_lidar:
@@ -1297,36 +1243,45 @@ def main():
                         print(f"     {line}")
                 failures.append(f"Nav2: goal test exit {test_res.returncode}")
 
-                # The goal failed. Ask the base directly, right now, in this
-                # stack state: six manoeuvres against odometry. It already ran
-                # before SLAM/Nav2, but that was minutes and two lifecycle
-                # activations ago, and what a reader needs here is which half is
-                # at fault. A base that still does 6/6 after a failed goal says
-                # the firmware, the transport, the agent and the cmd_vel contract
-                # are all fine and the fault is above them -- planner, costmap,
-                # footprint, TF. A base that now fails says the opposite, and the
-                # goal failure was a symptom.
-                # tname only exists when the earlier drive block ran; derive it
-                # here so --no-drive-test cannot turn a Nav2 failure into a
-                # NameError inside the diagnostic meant to explain it.
-                post_tname = ("geometry_msgs/msg/TwistStamped"
-                              if wants_stamped_cmd_vel(args.distro, controller_cfg, params)
-                              else "geometry_msgs/msg/Twist")
-                print("  [DRIVE] The goal failed -- re-running the six manoeuvres to "
-                      "see whether the base is still answering...")
-                post_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {post_tname}",
-                                   timeout=90, distro=args.distro)
-                if post_res.stdout:
-                    print(post_res.stdout)
-                if post_res.returncode == 0:
-                    print("  ↳ The base still drives 6/6 after the failed goal: the base, the "
-                          "transport and the /cmd_vel contract are fine, so the fault is in "
-                          "the navigation layer above them.")
-                else:
-                    print(f"  ↳ The base ALSO fails the manoeuvres now (exit {post_res.returncode}): "
-                          f"the goal failure is a symptom, not the cause. Look at the board and "
-                          f"the agent before looking at Nav2.")
-                    failures.append(f"Drive suite after the failed goal: exit {post_res.returncode}")
+                # Why it failed is the drive suite's job, below: it runs on every
+                # pass now, right after this, and a base that still does 6/6
+                # puts the fault above the base.
+        if args.drive_test:
+            # Rates prove the board TALKS; only driving proves it MOVES, and moves
+            # the way it was told -- the FakeEncoder invert and the PID windup each
+            # shipped perfect 50 Hz topics on a base that spun in place or pinned a
+            # rail. Every pass runs the six manoeuvres unless --no-drive-test, and a
+            # failure is recorded but not fatal. They run HERE, after the goal,
+            # because running them before SLAM left a 0.46-0.48 m residual in the
+            # pose that SLAM then anchored its map to. When the goal has just
+            # failed they are also the diagnostic: a base that still does 6/6 puts
+            # the fault above the base. See docs memory "always flash and drive".
+            print("\n[6.5/6] [DRIVE] Six manoeuvres, checked against odometry...")
+            stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
+            tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
+            drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {tname}",
+                                timeout=90, distro=args.distro)
+            if drive_res.stdout:
+                print(drive_res.stdout)
+            raw_after, ekf_after = _odom_xy(args.distro), _ekf_xy(args.distro)
+            if raw_after and ekf_after and math.hypot(*raw_after) > 0.2 \
+                    and math.hypot(*ekf_after) < 0.05:
+                # The suite reads /odom/unfiltered; Nav2 steers by the EKF's
+                # /odom. An EKF that did not follow the base is what a goal
+                # reports as "Failed to make progress" with the robot visibly
+                # driving -- measured on the GenDrv, EKF pinned at (0, 0) while
+                # the base drove 4 m, and the cause was a split TF tree.
+                print(f"  ❌ the EKF did not follow the base: /odom/unfiltered is "
+                      f"{math.hypot(*raw_after):.2f} m out, /odom reads "
+                      f"({ekf_after[0]:.3f}, {ekf_after[1]:.3f}). Nav2 steers by /odom, so every "
+                      f"goal fails while the base drives. Check the ekf block and the TF tree.")
+                failures.append("EKF does not follow /odom/unfiltered")
+            if drive_res.returncode == 0:
+                print("  ✅ All six manoeuvres correct.")
+            else:
+                print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
+                failures.append(f"Drive suite: exit {drive_res.returncode}")
+
                 drive = launch_bg(drive_cmd, log_tag="drive", distro=args.distro)
                 bg_processes.append(drive)
                 time.sleep(args.explore_sec)

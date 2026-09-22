@@ -131,40 +131,28 @@ def test_bare_kinematics_are_the_same_in_the_presets_and_the_release_image():
             assert bare["kinematics"][key] == want
 
 
-def test_a_failed_goal_re_runs_the_drive_suite():
-    """A failed goal must say which half is at fault.
-
-    The six manoeuvres run before SLAM and Nav2, so by the time a goal fails
-    they are minutes and two lifecycle activations old. Asking the base again,
-    in the state the failure happened in, separates "Nav2 cannot navigate" from
-    "the base stopped answering" -- and those send the reader to opposite ends
-    of the stack.
-    """
-    src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
-    fail_branch = src[src.index('failures.append(f"Nav2: goal test exit'):]
-    assert "drive_suite.py" in fail_branch[:2000], "a failed goal does not re-run the manoeuvres"
-    # and it must not depend on a name the earlier drive block owns: --no-drive-test
-    # would otherwise turn the failure into a NameError inside its own diagnostic.
-    assert "post_tname" in fail_branch[:2000] and "{tname}" not in fail_branch[:2000]
+def test_the_drive_suite_runs_after_the_goal_not_before_it():
+    """The six manoeuvres used to run between the flash and SLAM and left a
+    0.46-0.48 m residual that SLAM then anchored its map to. They run after the
+    Nav2 goal instead: the flash has already zeroed the pose, so nothing has to
+    be reset, and a udp4 board never loses its agent to a bringup restart."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "[4.5/6] [DRIVE]" not in pipe, "the drive suite no longer runs before SLAM"
+    assert pipe.index("[6/6] [NAV2]") < pipe.index("[6.5/6] [DRIVE]"), "drive comes after the goal"
+    assert pipe.count("drive_suite.py") == 2, "one call plus the comment pointing at it"
+    drive = pipe[pipe.index("[6.5/6] [DRIVE]"):]
+    assert "EKF does not follow /odom/unfiltered" in drive, \
+        "the suite reads /odom/unfiltered; Nav2 steers by /odom, so compare them here"
 
 
-def test_the_simulated_pose_is_zeroed_before_slam_in_fake_mode():
-    """A goal at fixed coordinates only means something from a known start.
-
-    The flash zeroes the simulated pose and the six manoeuvres then move it
-    (measured residual 0.46-0.48 m). The firmware resets the pose on a new agent
-    session -- and bouncing only the agent was measured to wreck the EKF (it
-    predicts through the reconnect gap, then wobbles for 15 s), so the pipeline
-    restarts the whole bringup between the drive suite and SLAM and waits for
-    base AND EKF to sit at the origin. It also catches an EKF that never
-    followed the base at all, before Nav2 is asked to steer by it.
-    """
+def test_slam_starts_from_a_known_pose():
+    """A goal at fixed coordinates only means something from a known start, so
+    the pose is checked before SLAM and the bringup is restarted (a new session
+    zeroes a simulated pose) only if something actually moved the robot."""
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     step = pipe[pipe.index("[4.7/6] [POSE]"):pipe.index("# Step 5: SLAM")]
-    assert "stop_bg(bringup_proc)" in step, "the bringup is restarted, not the agent alone"
-    assert 'launch_bg(bringup_cmd, log_tag="bringup2"' in step
-    assert "_ekf_xy" in step and "_odom_xy" in step, "both the base and the EKF are read"
-    assert "EKF does not follow /odom/unfiltered" in step, "an EKF that ignores the base fails here"
+    assert "math.hypot(*start_xy) <= POSE_START_TOL" in step, "no restart when already at the origin"
+    assert "stop_bg(bringup_proc)" in step and 'log_tag="bringup2"' in step
     assert "pgrep" not in step and "os.kill" not in step, "no process is killed by name or pid"
     assert "if not is_real and args.pose_reset" in pipe, "a real base must never be touched"
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
