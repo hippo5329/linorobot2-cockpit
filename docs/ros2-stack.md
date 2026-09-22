@@ -69,6 +69,26 @@ whose `base_controller.name` matches. Two robots may legitimately declare the sa
 (`linorobot2` and `rover_pico2` both declare `pico2`), so the first by filename wins **and the run says
 which it picked**; `--robot` disambiguates.
 
+### The bringup health card measures by subscribing, not by `ros2 topic hz`
+The card drew two red rows — `/odom/unfiltered` and `/imu/data`, "no messages" — on a robot whose
+own 1-Click gate had just measured both at 50 Hz. The probe shelled out to `timeout 3 ros2 topic hz`
+per topic. That CLI first looks the publisher up in the graph to copy its QoS, and under
+`config/fastdds_service_qos.xml` (`type_propagation=registration_only`, the Fast DDS 3.x TypeLookup
+fix) that lookup does not find the micro-ROS agent's publishers: `ros2 topic list` shows them,
+`ros2 topic hz` says "does not appear to be published yet", and the 3 s kill left nothing to parse.
+Isolated one variable at a time as the backend's own user: profile exported → "does not appear";
+profile unset → 40 Hz. The pipeline's gate never had the problem because `verify_topics.py`
+subscribes directly with the sensor-data QoS, which matches best-effort and reliable alike and
+needs no graph lookup. The probe now does the same in one rclpy process for every advertised
+topic, and waits up to 8 s but returns the moment every topic has rated — the agent's endpoints
+take several seconds to match a new participant under this profile where host nodes match at once.
+
+Two bench facts that came out of the same investigation, both easy to mistake for product bugs:
+a stack launched as **root** (a `docker exec` without `-u`) leaves root-owned `/dev/shm` segments
+the backend's user cannot read, and the card then shows *everything* red; and a reader without the
+profile exported cannot see a stack that has it, and vice versa. Measure from inside the stack's
+own environment or the numbers are about your shell, not the robot.
+
 ### A robot is what its file SAYS it is, and no file may be dropped
 `robot.name` inside the YAML is the identity; the filename is only where that content lives. Two
 files can therefore claim one name — and that is a conflict the user has to see, not one for the

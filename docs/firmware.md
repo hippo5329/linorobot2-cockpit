@@ -173,6 +173,40 @@ fallback digest hashed `config/secrets.yaml` **inside the repo**, a file that do
 clean tree, instead of `cockpit_paths.secrets_path()`. Every path to the user's config goes through
 `cockpit_paths`, with no exceptions for a fallback branch.
 
+### The simulated robot stops OUTSIDE Nav2's footprint, and its magnetometer is fused
+A soak found two defects that a single-goal gate structurally cannot see, both in the bare-module
+simulation, both with the same shape: two numbers describing one robot were set independently and
+disagreed.
+
+**The wall clamp.** `fake_ld19.h:clampToRoom()` holds the simulated robot's centre
+`FAKE_ROBOT_RADIUS` from any wall — it has always collided, and corrects odometry to match. But that
+radius was a hardcoded `0.20f` while the shipped configs plan with `robot_radius` 0.22–0.26 m, so
+the clamp parked the robot **inside Nav2's own footprint**: a lethal costmap cell the planner will
+not plan out of. Measured: the planner replans 48 times in 80 s, every plan a clean route away from
+the wall, and the controller executes none — 1.2 mm of travel; one board sat there for 154
+consecutive goals. `Spin` cannot help because rotating does not change which cell the robot
+occupies, and the base itself was fine — commanded directly it rotated and reversed out.
+`scripts/gen_firmware_header.py` now derives `FAKE_ROBOT_RADIUS` from the largest `robot_radius`
+either costmap plans with, plus 5 cm so the robot never stops exactly on the boundary; the firmware
+fallback is 0.30f, above every shipped radius. Verified by driving into the room boundary: it stops
+at exactly `5.0 − 0.31` and `3.0 − 0.31`.
+
+**The heading.** `FakeIMUFromWheels::applyMag` rotates a world field into the body frame by the
+wheel heading for one purpose — to give Madgwick an absolute heading that agrees with the room.
+Two separate decisions then silenced it: `bringup.launch.py` excluded the fake mag from fusion
+(`... and not use_fake_mag`, a leftover from when the field pointed +X), and `mcu_env.py` derived
+`pub_mag` from `mag: NONE` so the firmware never published it. Madgwick therefore integrated the
+gyro alone, the fake gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
+and the EKF, which takes Madgwick's yaw as *absolute* and only the wheels' yaw *rate*, inherited it.
+Measured at rest, read from inside the stack's own DDS environment: wheel yaw 59.4°, EKF 7.2° after
+an hour. The body follows the wheels and Nav2 steers by the EKF, so goals veer (a held heading of
+0.2° moved at 67°) and the robot eventually finds the wall. Both halves now agree: `use_mag` is true
+for a real mag *or* the fake one, and `use_fake_mag` sets `pub_mag=1`. `NONE` means "no chip"; it
+must not also mean "silence the simulation of one". Fixing only the launcher half made it *worse* —
+Madgwick with a magnetometer waits for `imu/data_raw` and `imu/mag` as a synchronised pair, so with
+nothing on `/imu/mag` it published nothing and `/imu/data` went to 0 Hz — which is why the two ship
+together and why the fix was measured before it was cut.
+
 ### `base` reads the I2C bus before it believes the config
 The scan and the WHO_AM_I table live in **`firmware/common/lib/i2c_probe`**, not inside the
 `i2c_detect` tool, because both need them. On a real robot (`app=base`, wheels not fake — override
