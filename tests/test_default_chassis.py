@@ -152,17 +152,21 @@ def test_the_simulated_pose_is_zeroed_before_slam_in_fake_mode():
     """A goal at fixed coordinates only means something from a known start.
 
     The flash zeroes the simulated pose and the six manoeuvres then move it
-    (measured residual 0.46-0.48 m), so SLAM anchored its map wherever the robot
-    stood and the goal was either already under it or beyond the wall. The
-    firmware resets the pose on a new agent session; bringup now respawns the
-    agent; so the pipeline ends the agent between the drive suite and SLAM.
+    (measured residual 0.46-0.48 m). The firmware resets the pose on a new agent
+    session -- and bouncing only the agent was measured to wreck the EKF (it
+    predicts through the reconnect gap, then wobbles for 15 s), so the pipeline
+    restarts the whole bringup between the drive suite and SLAM and waits for
+    base AND EKF to sit at the origin. It also catches an EKF that never
+    followed the base at all, before Nav2 is asked to steer by it.
     """
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     step = pipe[pipe.index("[4.7/6] [POSE]"):pipe.index("# Step 5: SLAM")]
-    assert "pgrep -f '[m]icro_ros_agent'" in step, "find the agent by inspected PID, never name-kill"
-    assert "os.kill(int(pid), signal.SIGTERM)" in step
-    assert 'wait_for_topic("/odom/unfiltered"' in step and "_odom_xy" in step
+    assert "stop_bg(bringup_proc)" in step, "the bringup is restarted, not the agent alone"
+    assert 'launch_bg(bringup_cmd, log_tag="bringup2"' in step
+    assert "_ekf_xy" in step and "_odom_xy" in step, "both the base and the EKF are read"
+    assert "EKF does not follow /odom/unfiltered" in step, "an EKF that ignores the base fails here"
+    assert "pgrep" not in step and "os.kill" not in step, "no process is killed by name or pid"
     assert "if not is_real and args.pose_reset" in pipe, "a real base must never be touched"
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
     agent = launch[launch.index('name="micro_ros_agent"'):][:1400]
-    assert "respawn=True" in agent, "the agent must come back after it is ended"
+    assert "respawn=True" in agent, "an agent that dies mid-run still comes back"

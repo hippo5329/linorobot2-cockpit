@@ -16,6 +16,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -477,6 +478,14 @@ def wait_for_nav2_activation(timeout_sec: int = 90) -> tuple:
 def _odom_xy(distro: str):
     """The base's current (x, y) from one /odom/unfiltered message, or None."""
     res = run_ros("ros2 topic echo --once --field pose.pose.position /odom/unfiltered",
+                  timeout=15, distro=distro)
+    m = re.search(r"x:\s*(-?[0-9.eE+-]+)\s*y:\s*(-?[0-9.eE+-]+)", res.stdout or "")
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+def _ekf_xy(distro: str):
+    """The EKF's current (x, y) from one /odom message -- what Nav2 steers by -- or None."""
+    res = run_ros("ros2 topic echo --once --field pose.pose.position /odom",
                   timeout=15, distro=distro)
     m = re.search(r"x:\s*(-?[0-9.eE+-]+)\s*y:\s*(-?[0-9.eE+-]+)", res.stdout or "")
     return (float(m.group(1)), float(m.group(2))) if m else None
@@ -1050,43 +1059,87 @@ def main():
                 print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
                 failures.append(f"Drive suite: exit {drive_res.returncode}")
 
-        # Step 4.7: put the simulated robot back at the origin.
+        # Step 4.7: put the simulated robot back at the origin, with a clean EKF.
         #
         # The flash zeroes the pose, and the six manoeuvres then move it inside
         # that same micro-ROS session: two arcs do not cancel, and the residual
         # was measured at 0.46 m on the bare ESP32 and 0.48 m on an RP2350. SLAM
         # then anchors its map wherever the robot happens to be, and a goal at
         # fixed coordinates is either already under the robot (a vacuous pass)
-        # or on the far side of the wall (the documented wedge). The firmware
-        # resets a simulated pose on every NEW session (createEntities), and
-        # bringup respawns the agent, so ending the agent process is a clean
-        # "pick the robot up and put it back at the start". Real robots keep
-        # their odometry continuous across a reconnect and are not touched.
+        # or on the far side of the wall (the documented wedge).
+        #
+        # The firmware resets a simulated pose on every NEW session
+        # (createEntities). Ending only the agent gets that session -- and was
+        # measured to wreck the EKF: robot_localization keeps predicting through
+        # the ~12 s the board takes to reconnect (x ran to -5.5 m on an RP2040
+        # from a stale acceleration state), then wobbles for 15 s after the pose
+        # snaps back, and SLAM started its map in the middle of that. So the
+        # WHOLE bringup is restarted: agent, EKF, state publisher, LiDAR driver.
+        # The EKF then meets its first measurement at the origin and there is
+        # nothing to settle. Real robots keep their odometry across a restart
+        # and are not touched.
         if not is_real and args.pose_reset and not args.skip_flash:
-            print("\n[4.7/6] [POSE] Returning the simulated robot to the origin (new agent session)...")
-            before = _odom_xy(args.distro)
-            agent_pids = run_ros("pgrep -f '[m]icro_ros_agent'", timeout=10, distro=args.distro).stdout.split()
-            if not agent_pids:
-                print("  ⚠️ no micro_ros_agent process found; the pose keeps the drive suite's residual.")
+            print("\n[4.7/6] [POSE] Restarting the bringup so the simulated robot starts from the origin...")
+            before_raw, before_ekf = _odom_xy(args.distro), _ekf_xy(args.distro)
+            fmt = lambda q: "(%.3f, %.3f)" % q if q else "unknown"
+            print(f"  after the drive suite: base odometry {fmt(before_raw)}, EKF {fmt(before_ekf)}")
+            # The drive suite proved the BASE moved (/odom/unfiltered). Nav2 never
+            # reads that topic: it steers by the EKF's /odom and the TF it
+            # publishes. An EKF that did not follow the base is the exact fault
+            # a goal then reports as "Failed to make progress" with the robot
+            # visibly driving -- measured on the GenDrv, EKF pinned at (0, 0)
+            # while the base drove 4 m. Catch it here, where the cause is plain.
+            if before_raw and before_ekf and math.hypot(*before_raw) > 0.2 \
+                    and math.hypot(*before_ekf) < 0.05:
+                print(f"  ❌ the EKF did not follow the base: /odom/unfiltered moved "
+                      f"{math.hypot(*before_raw):.2f} m, /odom stayed at {fmt(before_ekf)}. "
+                      f"Nav2 steers by /odom, so every goal will fail. Check the ekf block "
+                      f"(odom0_config, frames) before anything downstream.")
+                failures.append("EKF does not follow /odom/unfiltered")
+            bringup_proc = next((proc for tag, proc in stack_processes if tag == "bringup"), None)
+            if bringup_proc is None:
+                print("  ⚠️ no bringup process to restart; the pose keeps the drive suite's residual.")
             else:
-                for pid in agent_pids:
-                    if pid.isdigit():
-                        os.kill(int(pid), signal.SIGTERM)      # this PID, inspected, nothing name-matched
-                time.sleep(2.0)
-                if not wait_for_topic("/odom/unfiltered", timeout_sec=45, require_publisher=True,
-                                      distro=args.distro):
-                    print("  ⚠️ the agent did not come back within 45 s; the pose is unverified.")
-                    failures.append("pose reset: agent did not respawn")
+                stop_bg(bringup_proc)
+                stack_processes[:] = [(t, q) for t, q in stack_processes if q is not bringup_proc]
+                bg_processes[:] = [q for q in bg_processes if q is not bringup_proc]
+                # The new session is only new once the old publishers are gone.
+                t_gone = time.time()
+                while time.time() - t_gone < 20 and wait_for_topic("/odom/unfiltered", timeout_sec=1,
+                                                                    require_publisher=True,
+                                                                    distro=args.distro):
+                    time.sleep(1.0)
+                bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup2", distro=args.distro))
+                stack_processes.append(("bringup", bg_processes[-1]))
+                if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
+                                      require_publisher=True, distro=args.distro) \
+                        or not wait_for_topic("/odom", timeout_sec=30, require_publisher=True,
+                                              distro=args.distro):
+                    print(f"  ⚠️ the bringup did not come back within {handshake_wait} s; the pose is unverified.")
+                    failures.append("pose reset: bringup did not come back")
                 else:
-                    time.sleep(1.5)                                  # let the new session publish
-                    after = _odom_xy(args.distro)
-                    fmt = lambda p: "(%.3f, %.3f)" % p if p else "unknown"
-                    if after and max(abs(after[0]), abs(after[1])) < 0.05:
-                        print(f"  ✅ pose {fmt(before)} -> {fmt(after)}: back at the origin.")
+                    # Settled: base and EKF both at the origin, and staying there.
+                    after_raw = after_ekf = None
+                    t_settle = time.time()
+                    while time.time() - t_settle < 30:
+                        after_raw, after_ekf = _odom_xy(args.distro), _ekf_xy(args.distro)
+                        if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
+                                                           abs(after_ekf[0]), abs(after_ekf[1])) < 0.05:
+                            break
+                        time.sleep(1.0)
+                    if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
+                                                       abs(after_ekf[0]), abs(after_ekf[1])) < 0.05:
+                        print(f"  ✅ pose {fmt(before_raw)} -> base {fmt(after_raw)}, EKF {fmt(after_ekf)}: "
+                              f"back at the origin, EKF fresh.")
                     else:
-                        print(f"  ⚠️ pose {fmt(before)} -> {fmt(after)}: NOT at the origin. "
-                              f"Is this really a simulated base? A real one keeps its odometry.")
+                        print(f"  ⚠️ pose {fmt(before_raw)} -> base {fmt(after_raw)}, EKF {fmt(after_ekf)}: "
+                              f"NOT at the origin. Is this really a simulated base? A real one keeps "
+                              f"its odometry.")
                         failures.append("pose reset: robot not at the origin")
+                    # The scan has to come back too before SLAM is asked to map it.
+                    if has_lidar:
+                        wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
+                                       distro=args.distro, require_message=True)
 
         # Step 5: SLAM. A robot with no scan source has nothing to map.
         if has_lidar:
