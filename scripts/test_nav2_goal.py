@@ -161,6 +161,15 @@ class Nav2GoalTester(Node):
         else:
             self.create_subscription(Twist, "/cmd_vel", self._cmd_vel_cb, 10)
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        # The base's OWN pose, beside the filtered one. The firmware clamps a
+        # simulated robot to the wall and corrects its odometry; this EKF fuses
+        # velocities only, and on contact the fake wheels keep reporting speed
+        # (they slip, by design -- main.cpp), so the filtered pose walks through
+        # a wall the base is pinned against. Reading both is what lets a verdict
+        # say which of the two happened.
+        self.raw_max_x: float = float("-inf")
+        self.create_subscription(Odometry, "/odom/unfiltered",
+                                 self._raw_odom_cb, sensor_qos)
 
         self.get_logger().info(
             f"Nav2 Goal Tester initialized for target ({goal_x:.2f}, {goal_y:.2f}) behind "
@@ -192,6 +201,7 @@ class Nav2GoalTester(Node):
         self.leg_id += 1
         self._goal_handle = None
         self.wall_cross_y = []
+        self.raw_max_x = float("-inf")
         self.goal_x, self.goal_y = goal_x, goal_y
         self.path_received = None
         self.path_avoids_wall = False
@@ -260,6 +270,9 @@ class Nav2GoalTester(Node):
         self.cmd_vel_count += 1
         self.cmd_vel_stamped_count += 1
         self._note_command(msg.twist)
+
+    def _raw_odom_cb(self, msg: Odometry):
+        self.raw_max_x = max(self.raw_max_x, msg.pose.pose.position.x)
 
     def _odom_cb(self, msg: Odometry):
         if self.initial_odom is None:
@@ -589,11 +602,20 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 elif reached_goal() and not wall_path_ok():
                     if went_through():
                         ys = ", ".join(f"{y:+.2f} ±{gap:.2f}" for y, gap in node.wall_cross_y)
-                        print(f"❌ NAV2 LEG {i}/{n} DROVE THROUGH THE WALL: it crossed x={WALL_X:.1f} "
-                              f"at y={ys}, inside the wall's span (±{WALL_HALF_SPAN:.1f} m)"
-                              f"{_gap(node)}. The simulated robot is supposed to be pushed off that "
-                              f"segment, so this is the room, not the navigation: check that "
-                              f"fake_ld19 is enabled and clampToRoom is reached.")
+                        raw_x = getattr(node, "raw_max_x", float("-inf"))
+                        if raw_x < WALL_X - 0.15:
+                            why = (f"The base itself never got past x={raw_x:.2f} -- it is pinned "
+                                   f"against the wall, and the filtered pose walked through it: on "
+                                   f"contact the wheels keep reporting speed (they slip, by design) "
+                                   f"and this EKF fuses velocity, not position. So the robot drove "
+                                   f"INTO the obstacle instead of round it.")
+                        else:
+                            why = (f"The base's own odometry reached x={raw_x:.2f} too, so the clamp "
+                                   f"that should push a simulated robot off the wall did not act: "
+                                   f"check that fake_ld19 is enabled and clampToRoom is reached.")
+                        print(f"❌ NAV2 LEG {i}/{n} DROVE INTO THE WALL: the pose Nav2 steers by "
+                              f"crossed x={WALL_X:.1f} at y={ys}, inside the wall's span "
+                              f"(±{WALL_HALF_SPAN:.1f} m){_gap(node)}. {why}")
                     else:
                         print(f"❌ NAV2 LEG {i}/{n} REACHED ({gx:.2f}, {gy:.2f}) WITHOUT GOING AROUND "
                               f"THE WALL{_gap(node)}: no /plan detoured around x={WALL_X:.1f} and the "

@@ -436,7 +436,7 @@ def test_the_return_leg_is_judged_on_the_wall_too(monkeypatch, capsys):
             self.wall_cross_y = [] if gx != 0.0 else [(-0.31, 0.01)]
     node = ThroughOnTheWayHome(odom_lin=0.25, dist=3.1, goal_dist=0.2, goal_status=4)
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1) is False
-    assert "LEG 2/2 DROVE THROUGH THE WALL" in capsys.readouterr().out
+    assert "LEG 2/2 DROVE INTO THE WALL" in capsys.readouterr().out
 
 
 def test_round_trips_zero_is_the_classic_one_way_goal(monkeypatch):
@@ -461,7 +461,7 @@ def test_driving_through_the_wall_is_not_an_arrival(monkeypatch, capsys):
     node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
     node.wall_cross_y = [(0.04, 0.01)]
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
-    assert "DROVE THROUGH THE WALL" in capsys.readouterr().out
+    assert "DROVE INTO THE WALL" in capsys.readouterr().out
 
 
 def test_a_crossing_within_its_own_error_bar_of_the_end_claims_nothing(monkeypatch, capsys):
@@ -474,5 +474,5 @@ def test_a_crossing_within_its_own_error_bar_of_the_end_claims_nothing(monkeypat
     assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=1,
                 goal_x=3.0, goal_y=0.0) is True
     out = capsys.readouterr().out
-    assert "DROVE THROUGH THE WALL" not in out
+    assert "DROVE INTO THE WALL" not in out
     assert "unproven" in out, out[-200:]
