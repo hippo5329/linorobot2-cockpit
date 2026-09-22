@@ -26,7 +26,7 @@ const REFERENCE_DESIGNS = {
       use_fake_wheel: true,
       use_fake_ld19: true,
       pins: {
-        led: -1,
+        led: 25,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
         motor2: { in_a: -1, in_b: -1, pwm: -1 },
         motor3: { in_a: -1, in_b: -1, pwm: -1 },
@@ -193,7 +193,7 @@ const REFERENCE_DESIGNS = {
       use_fake_wheel: true,
       use_fake_ld19: true,
       pins: {
-        led: -1,
+        led: 25,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
         motor2: { in_a: -1, in_b: -1, pwm: -1 },
         motor3: { in_a: -1, in_b: -1, pwm: -1 },

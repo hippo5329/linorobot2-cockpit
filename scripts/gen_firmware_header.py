@@ -991,7 +991,11 @@ def bare_mcu_params(mcu: str) -> dict:
                 "encoder1": dict(unset_enc), "encoder2": dict(unset_enc),
                 "encoder3": dict(unset_enc), "encoder4": dict(unset_enc),
                 "i2c": {"sda": -1, "scl": -1},
-                "led": -1,
+                # A bare module still has its onboard LED, and fake mode drives
+                # the real one: a board on a bench should blink out of the box.
+                # Everything else stays N/C.
+                "led": {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32,
+                        "esp32": 2, "esp32s3": 48}.get(mcu, -1),
             },
         },
         "kinematics": {
