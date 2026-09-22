@@ -34,9 +34,10 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
 import pin_catalog  # noqa: E402
 
-# The reference that donates the non-hardware scaffolding. Any shipped config
-# would do; this is the one the RP2 release images are built from.
-DONOR = os.path.join(REPO_ROOT, "config", "reference", "pico2_mecanum_config.yaml")
+# The reference that donates the non-hardware scaffolding. Every reference
+# carries the same ekf/slam/nav2 template (tests/test_default_chassis.py), so any
+# would do; the GenDrv is the differential one, which a bare 2WD module is.
+DONOR = os.path.join(REPO_ROOT, "config", "reference", "gendrv_config.yaml")
 
 # PlatformIO env / mcu -> the board string and a human label.
 BOARDS = {

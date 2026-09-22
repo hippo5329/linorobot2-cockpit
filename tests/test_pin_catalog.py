@@ -102,8 +102,8 @@ def test_counts_per_rev_from_parts():
 def test_mecanum_config_warnings(reference):
     assert gh.config_warnings(reference("pico2_mecanum")) == []
     params = copy.deepcopy(reference("pico2_mecanum"))
-    # mecanum-derived configs mix the shapes: a flat ekf, a wrapped nav2.
-    params["ekf"]["odom0_config"][7] = False
+    # the one template is nested (ekf_filter_node / ros__parameters), like nav2.
+    params["ekf"]["ekf_filter_node"]["ros__parameters"]["odom0_config"][7] = False
     params["nav2"]["controller_server"]["ros__parameters"]["min_y_velocity_threshold"] = 0.5
     w = gh.config_warnings(params)
     assert any("vy" in m for m in w) and any("min_y_velocity_threshold" in m for m in w)

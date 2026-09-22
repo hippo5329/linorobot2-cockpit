@@ -193,3 +193,39 @@ def test_the_generated_bare_config_is_the_default_chassis():
             assert cfg["base_controller"]["sensors"][key] is True
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "gen_bare_config.bare_config(bare_mcu.group(1))" in pipe, "bare configs are regenerated per run"
+
+
+def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
+    """Two lineages had grown: a flat DWB template (mecanum, and the bare configs
+    generated from it) and a nested RotationShim/RPP one (GenDrv, ESP32-S3,
+    Yahboom). Both stalled a metre from the wall on 2026-09-22 for different
+    reasons, and a failure could not be compared across boards. One template now,
+    keyed the same way; the mecanum may differ only in its lateral-velocity keys."""
+    import yaml
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import gen_bare_config
+    refs = {n: yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{n}_config.yaml")))
+            for n in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum")}
+    refs["bare_pico"] = gen_bare_config.bare_config("pico")
+    base = refs["gendrv"]
+    lateral = {  # the mecanum's only allowed differences
+        ("ekf", "ekf_filter_node", "ros__parameters", "odom0_config"),
+        ("nav2", "controller_server", "ros__parameters", "min_y_velocity_threshold"),
+        ("nav2", "velocity_smoother", "ros__parameters", "max_velocity"),
+        ("nav2", "velocity_smoother", "ros__parameters", "min_velocity"),
+        ("nav2", "velocity_smoother", "ros__parameters", "max_accel"),
+        ("nav2", "velocity_smoother", "ros__parameters", "max_decel"),
+    }
+    def walk(a, b, path, out):
+        if isinstance(a, dict) and isinstance(b, dict):
+            for k in set(a) | set(b):
+                walk(a.get(k), b.get(k), path + (k,), out)
+        elif a != b:
+            out.append(path)
+    for name, d in refs.items():
+        diffs = []
+        for sec in ("ekf", "slam", "nav2"):
+            walk(base.get(sec), d.get(sec), (sec,), diffs)
+        allowed = lateral if name == "pico2_mecanum" else set()
+        bad = [p for p in diffs if p not in allowed]
+        assert not bad, f"{name} drifts from the template at {bad[:6]}"
