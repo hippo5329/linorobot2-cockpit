@@ -89,6 +89,18 @@ class FakeNode:
         self.goal_dist_start = 3.0
         self.destroyed = False
 
+        self.leg_id = 0
+        self.leg_start_xy = (0.0, 0.0)
+        self.leg_max_dist = dist
+        self.legs = []                      # (x, y) of every goal begun
+
+    def begin_leg(self, goal_x, goal_y):
+        """A perfect simulated robot: every leg is reached at the same quality."""
+        self.leg_id += 1
+        self.legs.append((goal_x, goal_y))
+        self.goal_x, self.goal_y = goal_x, goal_y
+        self.goal_dist_start = 3.0
+
     def send_goal(self):
         return True
 
@@ -372,3 +384,49 @@ def test_a_near_side_goal_does_not_pretend_to_test_the_wall(monkeypatch):
     reached = FakeNode(odom_lin=0.25, dist=1.1, goal_dist=0.2, planned=False)
     assert _run(monkeypatch, reached, timeout=0.3, require_goal=True,
                 goal_x=0.5, goal_y=1.0) is True
+
+
+def test_round_trips_drive_out_and_home_that_many_times(monkeypatch, capsys):
+    """'run back and forth goal 4 times each run': out to (3, 0) behind the wall,
+    home to (0, 0), four times -- eight legs, every one of which must arrive."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=4,
+                goal_x=3.0, goal_y=0.0) is True
+    assert node.legs == [(3.0, 0.0), (0.0, 0.0)] * 4
+    out = capsys.readouterr().out
+    assert "leg 8/8 -> (0.00, 0.00): reached" in out
+    assert "NAV2 GOAL REACHED 8/8 legs: 4 round trip(s)" in out
+
+
+def test_a_round_trip_fails_on_the_first_leg_that_does_not_arrive(monkeypatch, capsys):
+    class WedgesOnTheWayHome(FakeNode):
+        def begin_leg(self, gx, gy):
+            super().begin_leg(gx, gy)
+            if self.leg_id == 2:            # the first return leg never gets there
+                self.goal_dist_min = self.goal_dist_now = 1.7
+                self.goal_completed, self.goal_status = False, 6
+                self.goal_error_code, self.goal_error_msg = 105, "Failed to make progress"
+    node = WedgesOnTheWayHome(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=4) is False
+    out = capsys.readouterr().out
+    assert "leg 1/8 -> (3.00, 0.00): reached" in out
+    assert "NAV2 LEG 2/8 NOT REACHED" in out and "Failed to make progress" in out
+    assert len(node.legs) == 2, "one failed leg ends the run"
+
+
+def test_the_return_leg_must_also_plan_around_the_wall(monkeypatch, capsys):
+    """Home from (3, 0) crosses the wall just as the outbound leg did."""
+    class NoDetourHome(FakeNode):
+        def begin_leg(self, gx, gy):
+            super().begin_leg(gx, gy)
+            self.leg_start_xy = (3.0, 0.0) if gx == 0.0 else (0.0, 0.0)
+            self.path_avoids_wall = gx != 0.0
+    node = NoDetourHome(odom_lin=0.25, dist=3.1, goal_dist=0.2, goal_status=4)
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1) is False
+    assert "LEG 2/2 REACHED (0.00, 0.00) WITHOUT A PATH AROUND THE WALL" in capsys.readouterr().out
+
+
+def test_round_trips_zero_is_the_classic_one_way_goal(monkeypatch):
+    reached = FakeNode(odom_lin=0.25, dist=2.4, completed=True)
+    assert _run(monkeypatch, reached, timeout=30.0, require_goal=True, round_trips=0) is True
+    assert reached.legs == []

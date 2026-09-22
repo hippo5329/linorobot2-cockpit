@@ -5,7 +5,9 @@
 # Directives Compliance:
 # - Validates Nav2 planning and execution in virtual room with obstacle wall.
 # - Obstacle wall geometry: x = 2.0m, y from -1.5m to +1.5m (fake_ld19.h).
-# - Goal behind obstacle wall: (x=3.0m, y=0.0m).
+# - Goal behind obstacle wall: (x=3.0m, y=0.0m), and with --round-trips N the
+#   robot then drives back to home (0, 0) and out again, N times: every leg must
+#   arrive, and every leg that crosses the wall must have planned around it.
 # - Verifies:
 #   1. /navigate_to_pose action server availability.
 #   2. Planned path (/plan) circumvents the obstacle wall (|y| > 1.3m near x=2.0m).
@@ -116,6 +118,14 @@ class Nav2GoalTester(Node):
         self.goal_dist_start: float = float("nan")
         self.goal_dist_now: float = float("nan")
         self.goal_dist_min: float = float("inf")
+        # Per-leg bookkeeping for a back-and-forth run. A leg is one goal; the
+        # counters above that describe THE GOAL are reset by begin_leg(), the
+        # ones that describe the run (cmd_vel counts, peaks, odom_max_dist) are
+        # not. leg_id tags the action callbacks so a result arriving late from a
+        # preempted goal cannot overwrite the next leg's status.
+        self.leg_id: int = 0
+        self.leg_start_xy = None
+        self.leg_max_dist: float = 0.0
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -148,6 +158,25 @@ class Nav2GoalTester(Node):
             f"Nav2 Goal Tester initialized for target ({goal_x:.2f}, {goal_y:.2f}) behind "
             f"obstacle wall, /cmd_vel as {self.cmd_vel_type}."
         )
+
+    def begin_leg(self, goal_x: float, goal_y: float) -> None:
+        """Point the tester at the next goal and forget the previous goal's outcome."""
+        self.leg_id += 1
+        self.goal_x, self.goal_y = goal_x, goal_y
+        self.path_received = None
+        self.path_avoids_wall = False
+        self.goal_accepted = self.goal_completed = self.goal_rejected = False
+        self.goal_status, self.goal_error_code, self.goal_error_msg = -1, 0, ""
+        self.distance_remaining = float("nan")
+        self.goal_dist_start = self.goal_dist_now = float("nan")
+        self.goal_dist_min = float("inf")
+        self.leg_max_dist = 0.0
+        if self.latest_odom is not None:
+            p = self.latest_odom.pose.pose.position
+            self.leg_start_xy = (p.x, p.y)
+            self.goal_dist_start = math.hypot(goal_x - p.x, goal_y - p.y)
+        else:
+            self.leg_start_xy = None
 
     def _resolve_cmd_vel_type(self, requested: str) -> str:
         """Pick the single /cmd_vel type to subscribe with.
@@ -223,9 +252,14 @@ class Nav2GoalTester(Node):
         # it managed. goal_dist_start is taken from the first sample so the line
         # can say how much of the gap was closed rather than just where it ended.
         self.goal_dist_now = math.hypot(self.goal_x - p1.x, self.goal_y - p1.y)
+        if self.leg_start_xy is None:
+            self.leg_start_xy = (p1.x, p1.y)
         if math.isnan(self.goal_dist_start):
-            self.goal_dist_start = math.hypot(self.goal_x - p0.x, self.goal_y - p0.y)
+            self.goal_dist_start = math.hypot(self.goal_x - self.leg_start_xy[0],
+                                              self.goal_y - self.leg_start_xy[1])
         self.goal_dist_min = min(self.goal_dist_min, self.goal_dist_now)
+        self.leg_max_dist = max(self.leg_max_dist, math.hypot(p1.x - self.leg_start_xy[0],
+                                                              p1.y - self.leg_start_xy[1]))
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -242,13 +276,16 @@ class Nav2GoalTester(Node):
         goal_msg.pose.pose.position.z = 0.0
         goal_msg.pose.pose.orientation.w = 1.0
 
+        leg = self.leg_id
         send_goal_future = self.action_client.send_goal_async(
             goal_msg, feedback_callback=self._feedback_cb
         )
-        send_goal_future.add_done_callback(self._goal_response_cb)
+        send_goal_future.add_done_callback(lambda f: self._goal_response_cb(f, leg))
         return True
 
-    def _goal_response_cb(self, future):
+    def _goal_response_cb(self, future, leg: int = 0):
+        if leg != self.leg_id:
+            return                       # a previous leg's goal; this one has moved on
         goal_handle = future.result()
         if not goal_handle.accepted:
             # Distinct from "never answered": bt_navigator was there and said no.
@@ -260,14 +297,16 @@ class Nav2GoalTester(Node):
         self.goal_accepted = True
         self.get_logger().info("✅ Nav2 goal accepted by bt_navigator.")
         result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._result_cb)
+        result_future.add_done_callback(lambda f: self._result_cb(f, leg))
 
     def _feedback_cb(self, feedback_msg):
         fb = feedback_msg.feedback
         self.distance_remaining = float(getattr(fb, "distance_remaining", float("nan")))
         self.get_logger().debug(f"Nav2 feedback: distance_remaining={self.distance_remaining:.2f}m")
 
-    def _result_cb(self, future):
+    def _result_cb(self, future, leg: int = 0):
+        if leg != self.leg_id:
+            return                       # the preempted goal of an earlier leg
         outcome = future.result()
         self.goal_status = int(outcome.status)
         result = getattr(outcome, "result", None)
@@ -322,7 +361,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
              cmd_vel_type: str = "auto", noise_lin: float = 0.03,
              noise_ang: float = 0.10, require_motion: bool = True,
              min_traverse: float = 0.10, require_goal: bool = False,
-             goal_tolerance: float = 0.30, min_start_gap: float = 1.0) -> bool:
+             goal_tolerance: float = 0.30, min_start_gap: float = 1.0,
+             round_trips: int = 0, home_x: float = 0.0, home_y: float = 0.0) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
@@ -353,10 +393,22 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
     # with no such plan means either the robot was already past the wall or the
     # world let it drive through. A goal on the near side asks nothing of the
     # plan, and this gate then says so rather than pretending it did.
-    goal_behind_wall = goal_x > WALL_X and abs(goal_y) <= WALL_HALF_SPAN
+    def leg_crosses_wall() -> bool:
+        """Does the straight line from where this leg began to its goal cut the wall?
+
+        Out to (3, 0) from the origin does; back home from (3, 0) does too, and
+        the detour is required in both directions. A leg that starts with no
+        odom sample yet is assumed to begin at home.
+        """
+        sx, sy = getattr(node, "leg_start_xy", None) or (home_x, home_y)
+        gx, gy = getattr(node, "goal_x", goal_x), getattr(node, "goal_y", goal_y)
+        if (sx - WALL_X) * (gx - WALL_X) >= 0:
+            return False                 # both on the same side, or one on the line
+        t = (WALL_X - sx) / (gx - sx)
+        return abs(sy + t * (gy - sy)) <= WALL_HALF_SPAN
 
     def wall_path_ok() -> bool:
-        return node.path_avoids_wall or not goal_behind_wall
+        return node.path_avoids_wall or not leg_crosses_wall()
 
     def start_gap_is_meaningful() -> bool:
         """Was the robot far enough away for arriving to mean anything?
@@ -400,6 +452,56 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         """
         return node.odom_max_dist >= min_traverse
 
+    def run_legs(legs) -> bool:
+        """Drive every leg in turn; each must arrive, and each that crosses the
+        wall must have planned around it. One failure ends the run -- the
+        pipeline then asks the base directly whether it still drives."""
+        n = len(legs)
+        for i, (gx, gy) in enumerate(legs, 1):
+            node.begin_leg(gx, gy)
+            if not node.send_goal():
+                return False
+            t0 = time.time()
+            arrived = False
+            while time.time() - t0 < timeout:
+                rclpy.spin_once(node, timeout_sec=0.2)
+                if node.goal_rejected:
+                    print(f"❌ NAV2 GOAL REJECTED by bt_navigator on leg {i}/{n} "
+                          f"({gx:.2f}, {gy:.2f}){_why(node)}.")
+                    return False
+                if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
+                        and (moved() or not require_motion):
+                    arrived = True
+                    break
+            took = time.time() - t0
+            if not arrived:
+                if not start_gap_is_meaningful():
+                    print(f"❌ NAV2 LEG {i}/{n} IS VACUOUS: began {node.goal_dist_start:.3f} m "
+                          f"from ({gx:.2f}, {gy:.2f}), inside the {min_start_gap:.2f} m this gate "
+                          f"needs before arriving proves anything.")
+                elif reached_goal() and not wall_path_ok():
+                    print(f"❌ NAV2 LEG {i}/{n} REACHED ({gx:.2f}, {gy:.2f}) WITHOUT A PATH AROUND "
+                          f"THE WALL{_gap(node)}: the leg crosses the wall at x={WALL_X:.1f} and "
+                          f"no /plan detoured around it.")
+                else:
+                    print(f"❌ NAV2 LEG {i}/{n} NOT REACHED: ({gx:.2f}, {gy:.2f}) ended as "
+                          f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)} after "
+                          f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
+                          f"planned_around_wall={node.path_avoids_wall}, "
+                          f"traversed {node.leg_max_dist:.3f} m this leg")
+                return False
+            print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
+                  f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
+                  f"planned around the wall: {'yes' if node.path_avoids_wall else 'not needed'}; "
+                  f"{node.cmd_vel_count} cmd_vel so far")
+            # Let Nav2 finish the goal it is on before the next one preempts it,
+            # so the leg's status is its own and the next leg starts from rest.
+            t1 = time.time()
+            while node.goal_status == -1 and time.time() - t1 < 15.0:
+                rclpy.spin_once(node, timeout_sec=0.2)
+        return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
+                       f"the obstacle wall and back home (within {goal_tolerance:.2f} m)")
+
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one
         branch -- which is how the old version passed. It computed this same odom
@@ -432,6 +534,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         return False
 
     try:
+        if round_trips >= 1:
+            # Back and forth: out to the goal, home again, round_trips times.
+            # Arrival is required on every leg -- a round trip that only plans
+            # is not a round trip -- so this implies --require-goal.
+            legs = [(goal_x, goal_y), (home_x, home_y)] * round_trips
+            return run_legs(legs)
+
         if not node.send_goal():
             return False
 
@@ -533,6 +642,13 @@ def main():
                         help="the goal itself must reach STATUS_SUCCEEDED; a verified plan "
                              "is not enough. Reports the status and Nav2's error_code/"
                              "error_msg when it does not.")
+    parser.add_argument("--round-trips", type=int, default=0,
+                        help="drive to the goal and back home this many times (0 = one "
+                             "one-way goal, the classic test). Every leg must arrive and "
+                             "every leg that crosses the wall must have planned around it; "
+                             "implies --require-goal.")
+    parser.add_argument("--home-x", type=float, default=0.0, help="home X for the return legs (m)")
+    parser.add_argument("--home-y", type=float, default=0.0, help="home Y for the return legs (m)")
     parser.add_argument("--min-traverse", type=float, default=0.10,
                         help="metres the base must actually cover before the path-verified "
                              "headline is allowed; displacement from the start pose, not "
@@ -553,7 +669,8 @@ def main():
                        require_motion=not args.no_require_motion,
                        min_traverse=args.min_traverse, require_goal=args.require_goal,
                        goal_tolerance=args.goal_tolerance,
-                       min_start_gap=args.min_start_gap)
+                       min_start_gap=args.min_start_gap,
+                       round_trips=args.round_trips, home_x=args.home_x, home_y=args.home_y)
     sys.exit(0 if success else 1)
 
 

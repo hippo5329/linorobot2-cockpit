@@ -671,6 +671,10 @@ def main():
                              "(default: leave them running until they are stopped)")
     parser.add_argument("--build-timeout", type=int, default=900,
                         help="Seconds allowed for the PlatformIO build (a first build downloads the toolchain)")
+    parser.add_argument("--goal-round-trips", type=int, default=4,
+                        help="drive to the goal behind the wall and back home this many times "
+                             "(default 4); every leg must arrive and plan around the wall. "
+                             "0 = a single one-way goal.")
     parser.add_argument("--no-pose-reset", dest="pose_reset", action="store_false",
                         help="do not return the simulated robot to the origin between the "
                              "drive suite and SLAM (fake mode only; a real base is never touched)")
@@ -1145,13 +1149,21 @@ def main():
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/nav2.log.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
             cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
-            print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
+            n_legs = 2 * args.goal_round_trips if args.goal_round_trips else 1
+            if args.goal_round_trips:
+                print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y}) and back "
+                      f"home, {args.goal_round_trips} round trips ({n_legs} legs, "
+                      f"{args.goal_timeout} s each)...")
+            else:
+                print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
             goal_args = (f"--goal-x {args.goal_x} --goal-y {args.goal_y} "
-                         f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type}")
-            if args.require_goal:
+                         f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type} "
+                         f"--round-trips {args.goal_round_trips}")
+            if args.require_goal or args.goal_round_trips:
                 goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
             test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
-                               + goal_args, timeout=args.goal_timeout + 15, distro=args.distro)
+                               + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
+                               distro=args.distro)
             print(test_res.stdout)
             if test_res.returncode == 0:
                 print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
