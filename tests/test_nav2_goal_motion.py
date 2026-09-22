@@ -94,6 +94,10 @@ class FakeNode:
         self.leg_max_dist = dist
         self.legs = []                      # (x, y) of every goal begun
 
+    def cancel_current_goal(self):
+        self.cancelled = getattr(self, "cancelled", 0) + 1
+        return True
+
     def begin_leg(self, goal_x, goal_y):
         """A perfect simulated robot: every leg is reached at the same quality."""
         self.leg_id += 1
@@ -393,6 +397,10 @@ def test_round_trips_drive_out_and_home_that_many_times(monkeypatch, capsys):
     assert _run(monkeypatch, node, timeout=0.3, round_trips=4,
                 goal_x=3.0, goal_y=0.0) is True
     assert node.legs == [(3.0, 0.0), (0.0, 0.0)] * 4
+    # Every leg but the last is closed explicitly, so bt_navigator is idle when
+    # the next goal arrives: "another navigator is processing, rejecting request"
+    # ended a run at leg 3 of 8 before this.
+    assert node.cancelled == 7
     out = capsys.readouterr().out
     assert "leg 8/8 -> (0.00, 0.00): reached" in out
     assert "NAV2 GOAL REACHED 8/8 legs: 4 round trip(s)" in out
@@ -423,10 +431,29 @@ def test_the_return_leg_must_also_plan_around_the_wall(monkeypatch, capsys):
             self.path_avoids_wall = gx != 0.0
     node = NoDetourHome(odom_lin=0.25, dist=3.1, goal_dist=0.2, goal_status=4)
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1) is False
-    assert "LEG 2/2 REACHED (0.00, 0.00) WITHOUT A PATH AROUND THE WALL" in capsys.readouterr().out
+    assert "LEG 2/2 REACHED (0.00, 0.00) WITHOUT GOING AROUND THE WALL" in capsys.readouterr().out
 
 
 def test_round_trips_zero_is_the_classic_one_way_goal(monkeypatch):
     reached = FakeNode(odom_lin=0.25, dist=2.4, completed=True)
     assert _run(monkeypatch, reached, timeout=30.0, require_goal=True, round_trips=0) is True
     assert reached.legs == []
+
+
+def test_a_leg_driven_around_the_wall_passes_without_the_plan(monkeypatch, capsys):
+    """The /plan is what Nav2 intended; where the robot crossed x=2 is what it did.
+    A tester that subscribes after the first plans are published would otherwise
+    fail a leg the robot demonstrably drove around (GenDrv, 2026-09-22)."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False, goal_status=4)
+    node.wall_cross_y = [1.72]
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=0, require_goal=True,
+                goal_x=3.0, goal_y=0.0) is True
+
+
+def test_driving_through_the_wall_is_not_an_arrival(monkeypatch, capsys):
+    """The simulated robot is pushed off the wall segment, so a crossing inside
+    the wall's span means the room failed, not the navigation."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    node.wall_cross_y = [0.04]
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
+    assert "DROVE THROUGH THE WALL" in capsys.readouterr().out

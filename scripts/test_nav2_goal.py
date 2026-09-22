@@ -123,9 +123,17 @@ class Nav2GoalTester(Node):
         # ones that describe the run (cmd_vel counts, peaks, odom_max_dist) are
         # not. leg_id tags the action callbacks so a result arriving late from a
         # preempted goal cannot overwrite the next leg's status.
+        self._goal_handle = None
         self.leg_id: int = 0
         self.leg_start_xy = None
         self.leg_max_dist: float = 0.0
+        # Where the robot ITSELF crossed the wall's line (x = WALL_X), per leg.
+        # The /plan is what Nav2 intended; this is what the robot did, and it is
+        # the fact that settles "did it go around": crossing beyond the wall's
+        # ends is going around, crossing between them is going THROUGH a wall
+        # that only the LiDAR believes in. A plan can also simply be missed --
+        # the tester subscribes after the first plans are published.
+        self.wall_cross_y = []
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -159,9 +167,31 @@ class Nav2GoalTester(Node):
             f"obstacle wall, /cmd_vel as {self.cmd_vel_type}."
         )
 
+    def cancel_current_goal(self):
+        """Ask Nav2 to end the goal in flight, and say whether it was asked.
+
+        A leg ends when the ROBOT is at the goal, which is usually before
+        bt_navigator says so. Sending the next goal then gets "Requested
+        navigation from navigate_to_pose while another navigator is processing,
+        rejecting request" -- measured on leg 3 of 8, RP2350 lyrical, where the
+        previous goal was still running behind an is_path_valid service timeout.
+        So the leg is closed explicitly instead of hoped to have closed.
+        """
+        h = self._goal_handle
+        if h is None:
+            return False
+        try:
+            h.cancel_goal_async()
+            return True
+        except Exception as exc:                 # already terminal: nothing to cancel
+            self.get_logger().debug(f"cancel_goal_async: {exc}")
+            return False
+
     def begin_leg(self, goal_x: float, goal_y: float) -> None:
         """Point the tester at the next goal and forget the previous goal's outcome."""
         self.leg_id += 1
+        self._goal_handle = None
+        self.wall_cross_y = []
         self.goal_x, self.goal_y = goal_x, goal_y
         self.path_received = None
         self.path_avoids_wall = False
@@ -260,6 +290,13 @@ class Nav2GoalTester(Node):
         self.goal_dist_min = min(self.goal_dist_min, self.goal_dist_now)
         self.leg_max_dist = max(self.leg_max_dist, math.hypot(p1.x - self.leg_start_xy[0],
                                                               p1.y - self.leg_start_xy[1]))
+        prev = getattr(self, "_last_xy", None)
+        self._last_xy = (p1.x, p1.y)
+        if prev is not None and (prev[0] - WALL_X) * (p1.x - WALL_X) < 0:
+            # Linear interpolation is plenty: /odom is 50 Hz and the robot does
+            # 0.4 m/s, so consecutive samples are ~8 mm apart.
+            t = (WALL_X - prev[0]) / (p1.x - prev[0])
+            self.wall_cross_y.append(prev[1] + t * (p1.y - prev[1]))
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -295,6 +332,7 @@ class Nav2GoalTester(Node):
             self.get_logger().error("Nav2 REJECTED the goal: bt_navigator would not accept it.")
             return
         self.goal_accepted = True
+        self._goal_handle = goal_handle
         self.get_logger().info("✅ Nav2 goal accepted by bt_navigator.")
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(lambda f: self._result_cb(f, leg))
@@ -407,8 +445,25 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         t = (WALL_X - sx) / (gx - sx)
         return abs(sy + t * (gy - sy)) <= WALL_HALF_SPAN
 
+    def went_around() -> bool:
+        """Did the robot cross the wall's line beyond one of its ends?"""
+        return any(abs(y) > WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+
+    def went_through() -> bool:
+        """Did it cross where the wall actually is? The simulated robot is pushed
+        off the segment (fake_ld19.h clampToRoom), so this should be impossible;
+        if it happens the room, not the navigation, is what failed."""
+        return any(abs(y) <= WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+
     def wall_path_ok() -> bool:
-        return node.path_avoids_wall or not leg_crosses_wall()
+        if not leg_crosses_wall():
+            return True
+        if went_through():
+            return False
+        # Either the plan showed the detour or the robot's own trajectory did.
+        # The trajectory is the stronger fact and also covers a /plan the tester
+        # subscribed too late to see.
+        return node.path_avoids_wall or went_around()
 
     def start_gap_is_meaningful() -> bool:
         """Was the robot far enough away for arriving to mean anything?
@@ -461,6 +516,19 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             node.begin_leg(gx, gy)
             if not node.send_goal():
                 return False
+            # A rejection right after the previous leg is the handshake, not the
+            # navigation: give bt_navigator a moment and ask once more.
+            t_acc = time.time()
+            while time.time() - t_acc < 5 and not (node.goal_accepted or node.goal_rejected):
+                rclpy.spin_once(node, timeout_sec=0.2)
+            if node.goal_rejected:
+                print(f"   leg {i}/{n}: bt_navigator rejected the goal; waiting 5 s and asking once more.")
+                t_w = time.time()
+                while time.time() - t_w < 5:
+                    rclpy.spin_once(node, timeout_sec=0.2)
+                node.begin_leg(gx, gy)
+                if not node.send_goal():
+                    return False
             t0 = time.time()
             arrived = False
             while time.time() - t0 < timeout:
@@ -482,9 +550,18 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"from ({gx:.2f}, {gy:.2f}), inside the {min_start_gap:.2f} m this gate "
                           f"needs before arriving proves anything.")
                 elif reached_goal() and not wall_path_ok():
-                    print(f"❌ NAV2 LEG {i}/{n} REACHED ({gx:.2f}, {gy:.2f}) WITHOUT A PATH AROUND "
-                          f"THE WALL{_gap(node)}: the leg crosses the wall at x={WALL_X:.1f} and "
-                          f"no /plan detoured around it.")
+                    if went_through():
+                        ys = ", ".join(f"{y:+.2f}" for y in node.wall_cross_y)
+                        print(f"❌ NAV2 LEG {i}/{n} DROVE THROUGH THE WALL: it crossed x={WALL_X:.1f} "
+                              f"at y={ys}, inside the wall's span (±{WALL_HALF_SPAN:.1f} m)"
+                              f"{_gap(node)}. The simulated robot is supposed to be pushed off that "
+                              f"segment, so this is the room, not the navigation: check that "
+                              f"fake_ld19 is enabled and clampToRoom is reached.")
+                    else:
+                        print(f"❌ NAV2 LEG {i}/{n} REACHED ({gx:.2f}, {gy:.2f}) WITHOUT GOING AROUND "
+                              f"THE WALL{_gap(node)}: no /plan detoured around x={WALL_X:.1f} and the "
+                              f"robot never crossed it beyond ±{WALL_HALF_SPAN:.1f} m. It cannot have "
+                              f"got there; check the frames (a goal in map, a pose read from odom).")
                 else:
                     print(f"❌ NAV2 LEG {i}/{n} NOT REACHED: ({gx:.2f}, {gy:.2f}) ended as "
                           f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)} after "
@@ -492,15 +569,26 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg")
                 return False
+            if not leg_crosses_wall():
+                around = "not needed"
+            elif node.path_avoids_wall:
+                around = "yes, planned and driven" if went_around() else "yes, in the plan"
+            else:
+                around = f"yes, driven (crossed at y={max(node.wall_cross_y, key=abs):+.2f})"
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
                   f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
-                  f"planned around the wall: {'yes' if node.path_avoids_wall else 'not needed'}; "
-                  f"{node.cmd_vel_count} cmd_vel so far")
-            # Let Nav2 finish the goal it is on before the next one preempts it,
-            # so the leg's status is its own and the next leg starts from rest.
+                  f"around the wall: {around}; {node.cmd_vel_count} cmd_vel so far")
+            # Close the leg before opening the next one: cancel the goal in
+            # flight and wait for a terminal status, so bt_navigator is idle
+            # when the next goal arrives and this leg's status is its own.
+            if i < n:
+                node.cancel_current_goal()
             t1 = time.time()
-            while node.goal_status == -1 and time.time() - t1 < 15.0:
+            while node.goal_status == -1 and time.time() - t1 < 20.0:
                 rclpy.spin_once(node, timeout_sec=0.2)
+            if node.goal_status == -1:
+                print(f"   leg {i}/{n}: Nav2 has not closed the goal 20 s after the robot "
+                      f"arrived; continuing.")
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
                        f"the obstacle wall and back home (within {goal_tolerance:.2f} m)")
 
