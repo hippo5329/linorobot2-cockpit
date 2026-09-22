@@ -29,8 +29,11 @@ def test_s3_base_declares_4mb_flash():
 def test_the_partition_table_fits_in_4mb_with_the_env_sector_last():
     with open(os.path.join(ROOT, "firmware", "common", "partitions_lino.csv")) as fh:
         rows = [l.split(",") for l in fh if l.strip() and not l.startswith("#")]
-    end = 0
+    end, env = 0, None
     for r in rows:
         off, size = int(r[3].strip(), 0), int(r[4].strip(), 0)
         end = max(end, off + size)
-    assert end <= 0x3FF000, f"partitions reach {end:#x}; the env sector is 0x3FF000-0x400000"
+        if r[0].strip() == "env":
+            env = (off, size)
+    assert end <= 0x400000, f"partitions reach {end:#x}; a 4 MB flash ends at 0x400000"
+    assert env == (0x3FF000, 0x1000), f"the env sector must be the last one of 4 MB, got {env}"
