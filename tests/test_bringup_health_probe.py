@@ -70,7 +70,10 @@ def test_every_health_topic_has_a_message_type():
 def test_rate_from_stamps():
     sys.path.insert(0, os.path.join(REPO_ROOT, "web", "backend"))
     src = _func("rate_from_stamps")
-    ns = {"List": list, "Optional": object}
+    # Real typing objects: Python 3.14 defers annotations, but 3.12 (CI) evaluates
+    # `Optional[float]` at def time, and a stand-in `object` is not subscriptable.
+    from typing import List, Optional
+    ns = {"List": List, "Optional": Optional}
     exec(src, ns)
     f = ns["rate_from_stamps"]
     assert f([]) is None and f([1.0]) is None
