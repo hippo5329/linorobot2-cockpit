@@ -311,6 +311,7 @@ nav2:
         yaw_goal_tolerance: 0.35
       FollowPath:
         plugin: nav2_rotation_shim_controller::RotationShimController
+        transform_tolerance: 0.3   # a throttled robot PC runs this loop at 7-8 Hz; 0.1 s aborted a goal mid-route
         primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
@@ -369,7 +370,7 @@ nav2:
       local_frame: odom
       global_frame: map
       robot_base_frame: base_link
-      transform_tolerance: 0.1
+      transform_tolerance: 0.3
       simulate_ahead_time: 2.0
       max_rotational_vel: 1.0
       min_rotational_vel: 0.4

@@ -484,6 +484,20 @@ def _odom_xy(distro: str):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
+# How far from (0, 0) the base and the EKF may sit after the reset and still
+# count as "at the origin". The goal is 3 m away and the start gap the gate
+# needs is 1 m, so a few cm change nothing; 0.05 argued with a healthy GenDrv.
+ORIGIN_TOL = 0.10
+
+
+def _odom_speed(distro: str):
+    """|v| of the base from one /odom/unfiltered message, or None."""
+    res = run_ros("ros2 topic echo --once --field twist.twist.linear /odom/unfiltered",
+                  timeout=15, distro=distro)
+    m = re.search(r"x:\s*(-?[0-9.eE+-]+)\s*y:\s*(-?[0-9.eE+-]+)", res.stdout or "")
+    return math.hypot(float(m.group(1)), float(m.group(2))) if m else None
+
+
 def _ekf_xy(distro: str):
     """The EKF's current (x, y) from one /odom message -- what Nav2 steers by -- or None."""
     res = run_ros("ros2 topic echo --once --field pose.pose.position /odom",
@@ -1110,6 +1124,17 @@ def main():
                       f"Nav2 steers by /odom, so every goal will fail. Check the ekf block "
                       f"(odom0_config, frames) before anything downstream.")
                 failures.append("EKF does not follow /odom/unfiltered")
+            # Let the base come to rest first. The drive suite ends with a stop,
+            # but the simulated wheels decelerate through their acceleration
+            # clamp; a new session that zeroes the pose while they still coast
+            # leaves the robot a few cm out (measured 0.079 m on the GenDrv) and
+            # the origin check below then argues with a robot that is fine.
+            t_still = time.time()
+            while time.time() - t_still < 10:
+                v = _odom_speed(args.distro)
+                if v is not None and v < 0.01:
+                    break
+                time.sleep(0.5)
             bringup_proc = next((proc for tag, proc in stack_processes if tag == "bringup"), None)
             if bringup_proc is None:
                 print("  ⚠️ no bringup process to restart; the pose keeps the drive suite's residual.")
@@ -1138,11 +1163,11 @@ def main():
                     while time.time() - t_settle < 30:
                         after_raw, after_ekf = _odom_xy(args.distro), _ekf_xy(args.distro)
                         if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
-                                                           abs(after_ekf[0]), abs(after_ekf[1])) < 0.05:
+                                                           abs(after_ekf[0]), abs(after_ekf[1])) < ORIGIN_TOL:
                             break
                         time.sleep(1.0)
                     if after_raw and after_ekf and max(abs(after_raw[0]), abs(after_raw[1]),
-                                                       abs(after_ekf[0]), abs(after_ekf[1])) < 0.05:
+                                                       abs(after_ekf[0]), abs(after_ekf[1])) < ORIGIN_TOL:
                         print(f"  ✅ pose {fmt(before_raw)} -> base {fmt(after_raw)}, EKF {fmt(after_ekf)}: "
                               f"back at the origin, EKF fresh.")
                     else:
