@@ -13,6 +13,8 @@ release test while being unable to receive a velocity command at all.
 These tests drive run_test's decision logic through a stand-in node, so they run
 without a ROS graph. They are about the RULE, not about rclpy.
 """
+
+import os
 import os
 import sys
 import types
@@ -476,3 +478,22 @@ def test_a_crossing_within_its_own_error_bar_of_the_end_claims_nothing(monkeypat
     out = capsys.readouterr().out
     assert "DROVE INTO THE WALL" not in out
     assert "unproven" in out, out[-200:]
+
+
+def test_the_goal_distance_is_measured_in_the_frame_the_goal_was_sent_in():
+    """A leg "reached" its goal 2.829 m away: the robot had hit the wall, the
+    fake wheels slipped, the EKF's odom walked on, and SLAM absorbed the
+    difference into map->odom. Nav2 was right that it had arrived; the gate was
+    comparing an odom-frame pose with a map-frame goal. The pose now comes from
+    map -> base_link, with the frame named in the verdict so the two can never
+    be silently mixed again."""
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "test_nav2_goal.py")).read()
+    assert 'goal_msg.pose.header.frame_id = "map"' in src
+    assert "def world_xy(self, msg: Odometry)" in src
+    assert "lookup_transform(self.goal_frame, self.base_frame" in src
+    body = src[src.index("def _odom_cb"):src.index("def send_goal")]
+    assert "wx, wy = self.world_xy(msg)" in body
+    assert "self.goal_dist_now = math.hypot(self.goal_x - wx, self.goal_y - wy)" in body
+    assert "gap = math.hypot(wx - prev[0], wy - prev[1])" in body, "the wall crossing too"
+    assert 'frame = "map" if getattr(node, "tf_ok", False) else "odom' in src

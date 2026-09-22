@@ -39,6 +39,10 @@ try:
     from geometry_msgs.msg import PoseStamped, Twist, TwistStamped
     from nav_msgs.msg import Path, Odometry
     from nav2_msgs.action import NavigateToPose
+    try:
+        import tf2_ros
+    except ImportError:          # the gate still runs, measuring in odom and saying so
+        tf2_ros = None
 except ImportError as exc:
     # Name the module that actually failed, per AGENTS.md 12: this block used to
     # report "rclpy not found" for every import error in the group, and rclpy is
@@ -85,6 +89,17 @@ class Nav2GoalTester(Node):
         self.timeout_sec = timeout_sec
 
         self.action_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        # The goal is sent in the MAP frame, so that is the frame the distance to
+        # it has to be measured in. Measuring in odom passed a leg that ended
+        # 2.829 m away: the robot had hit the wall, its wheels slipped, the
+        # EKF's odom walked on, and SLAM absorbed the difference into map->odom.
+        # Nav2 was right that it had arrived; the gate was reading another frame.
+        self.tf_buffer = tf2_ros.Buffer() if tf2_ros else None
+        self.tf_listener = (tf2_ros.TransformListener(self.tf_buffer, self)
+                            if tf2_ros else None)
+        self.goal_frame = "map"
+        self.base_frame = "base_link"
+        self.tf_ok = False
         
         self.path_received: Optional[Path] = None
         self.path_avoids_wall: bool = False
@@ -212,9 +227,9 @@ class Nav2GoalTester(Node):
         self.goal_dist_min = float("inf")
         self.leg_max_dist = 0.0
         if self.latest_odom is not None:
-            p = self.latest_odom.pose.pose.position
-            self.leg_start_xy = (p.x, p.y)
-            self.goal_dist_start = math.hypot(goal_x - p.x, goal_y - p.y)
+            wx, wy = self.world_xy(self.latest_odom)
+            self.leg_start_xy = (wx, wy)
+            self.goal_dist_start = math.hypot(goal_x - wx, goal_y - wy)
         else:
             self.leg_start_xy = None
 
@@ -274,6 +289,25 @@ class Nav2GoalTester(Node):
     def _raw_odom_cb(self, msg: Odometry):
         self.raw_max_x = max(self.raw_max_x, msg.pose.pose.position.x)
 
+    def world_xy(self, msg: Odometry):
+        """Where the robot is in the frame the goal was sent in.
+
+        map -> base_link when TF has it (what Nav2 steers by), the odometry pose
+        otherwise -- naming which, so a verdict can never silently compare two
+        different frames again.
+        """
+        try:
+            if self.tf_buffer is None:
+                raise RuntimeError("no tf2_ros")
+            tr = self.tf_buffer.lookup_transform(self.goal_frame, self.base_frame,
+                                                 rclpy.time.Time()).transform.translation
+            self.tf_ok = True
+            return tr.x, tr.y
+        except Exception:
+            self.tf_ok = False
+            p = msg.pose.pose.position
+            return p.x, p.y
+
     def _odom_cb(self, msg: Odometry):
         if self.initial_odom is None:
             self.initial_odom = msg
@@ -294,18 +328,19 @@ class Nav2GoalTester(Node):
         # Displacement FROM THE GOAL: the distance still to close, and the best
         # it managed. goal_dist_start is taken from the first sample so the line
         # can say how much of the gap was closed rather than just where it ended.
-        self.goal_dist_now = math.hypot(self.goal_x - p1.x, self.goal_y - p1.y)
+        wx, wy = self.world_xy(msg)
+        self.goal_dist_now = math.hypot(self.goal_x - wx, self.goal_y - wy)
         if self.leg_start_xy is None:
-            self.leg_start_xy = (p1.x, p1.y)
+            self.leg_start_xy = (wx, wy)
         if math.isnan(self.goal_dist_start):
             self.goal_dist_start = math.hypot(self.goal_x - self.leg_start_xy[0],
                                               self.goal_y - self.leg_start_xy[1])
         self.goal_dist_min = min(self.goal_dist_min, self.goal_dist_now)
-        self.leg_max_dist = max(self.leg_max_dist, math.hypot(p1.x - self.leg_start_xy[0],
-                                                              p1.y - self.leg_start_xy[1]))
+        self.leg_max_dist = max(self.leg_max_dist, math.hypot(wx - self.leg_start_xy[0],
+                                                              wy - self.leg_start_xy[1]))
         prev = getattr(self, "_last_xy", None)
-        self._last_xy = (p1.x, p1.y)
-        if prev is not None and (prev[0] - WALL_X) * (p1.x - WALL_X) < 0:
+        self._last_xy = (wx, wy)
+        if prev is not None and (prev[0] - WALL_X) * (wx - WALL_X) < 0:
             # Interpolate, but only believe it when the two samples bracketing
             # the crossing are close together. /odom is 50 Hz and the robot does
             # 0.4 m/s, so 8 mm apart is normal -- and a dropped burst would let a
@@ -318,9 +353,9 @@ class Nav2GoalTester(Node):
             # y = -1.6 came back as -1.31 and -1.44 with the samples 0.2-0.3 m
             # apart, which is "inside the wall" by the number and "round the
             # end" by the physics.
-            gap = math.hypot(p1.x - prev[0], p1.y - prev[1])
-            t = (WALL_X - prev[0]) / (p1.x - prev[0])
-            y = prev[1] + t * (p1.y - prev[1])
+            gap = math.hypot(wx - prev[0], wy - prev[1])
+            t = (WALL_X - prev[0]) / (wx - prev[0])
+            y = prev[1] + t * (wy - prev[1])
             self.wall_cross_y.append((y, gap))
 
     def send_goal(self) -> bool:
@@ -651,7 +686,9 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         branch -- which is how the old version passed. It computed this same odom
         delta, formatted it into the success message, and never compared it to
         anything."""
-        detail = (f"{node.cmd_vel_count} cmd_vel msgs ({node.cmd_vel_stamped_count} stamped) "
+        frame = "map" if getattr(node, "tf_ok", False) else "odom (no map->base_link TF)"
+        detail = (f"measured in {frame}; {node.cmd_vel_count} cmd_vel msgs "
+                  f"({node.cmd_vel_stamped_count} stamped) "
                   f"peaking at {node.cmd_peak_lin:.3f} m/s / {node.cmd_peak_ang:.3f} rad/s; "
                   f"odom reported up to {node.odom_peak_lin:.3f} m/s / "
                   f"{node.odom_peak_ang:.3f} rad/s and moved "
