@@ -130,6 +130,10 @@ base_controller:
       # board is 2S. The generic 30 k/7.5 k placeholder that sat here reads
       # 5.0x instead of 4.03x and reports a full pack as 10.42 V, 24 % high,
       # so `min_v` never trips and the pack looks permanently over-full.
+      #
+      # DOCUMENTED, NOT MEASURED: nothing has been on the T-plug here, so this
+      # ratio has never been checked against a real pack. Confirm it the first
+      # time this board runs on a chassis.
       r1: 10000
       r2: 3300
       min_v: 6.4
