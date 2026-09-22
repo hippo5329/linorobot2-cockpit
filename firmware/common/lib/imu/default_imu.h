@@ -604,10 +604,18 @@ class ICM42670IMU : public IMUInterface
                 found = readReg(REG_WHO_AM_I) == 0x67;
             }
             if (!found)
+            {
+                Serial.println("[imu] icm42670: no WHO_AM_I 0x67 at 0x68/0x69");
                 return false;
+            }
 
             writeReg(REG_SIGNAL_PATH_RESET, SOFT_RESET);
-            delay(20);
+            delay(50);                           // the datasheet's 1 ms, with margin
+            if (readReg(REG_WHO_AM_I) != 0x67)
+            {
+                Serial.printf("[imu] icm42670 @0x%02X: silent after soft reset\n", addr_);
+                return false;
+            }
             writeReg(REG_PWR_MGMT0, PWR_LN_BOTH);
             delay(2);                            // no register writes for 200 us after a mode change
             writeReg(REG_GYRO_CONFIG0, GYRO_1000DPS_200HZ);
@@ -615,9 +623,21 @@ class ICM42670IMU : public IMUInterface
             writeReg(REG_GYRO_CONFIG1, FILT_BW_25HZ);
             writeReg(REG_ACCEL_CONFIG1, FILT_BW_25HZ);
             delay(100);                          // gyro start-up and filter settle
-            if (readReg(REG_PWR_MGMT0) != PWR_LN_BOTH)
+            const uint8_t pwr = readReg(REG_PWR_MGMT0);
+            const uint8_t gcfg = readReg(REG_GYRO_CONFIG0);
+            if ((pwr & 0x0F) != PWR_LN_BOTH || gcfg != GYRO_1000DPS_200HZ)
+            {
+                Serial.printf("[imu] icm42670 @0x%02X: config did not take (PWR_MGMT0 0x%02X, GYRO_CONFIG0 0x%02X)\n",
+                              addr_, pwr, gcfg);
                 return false;
-            return sample();
+            }
+            if (!sample())
+            {
+                Serial.printf("[imu] icm42670 @0x%02X: burst read failed\n", addr_);
+                return false;
+            }
+            Serial.printf("[imu] icm42670 @0x%02X: running, %.1f C\n", addr_, temperature_c_);
+            return true;
         }
 
         geometry_msgs__msg__Vector3 readGyroscope() override
