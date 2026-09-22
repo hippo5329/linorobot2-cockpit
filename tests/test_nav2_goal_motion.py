@@ -457,3 +457,17 @@ def test_driving_through_the_wall_is_not_an_arrival(monkeypatch, capsys):
     node.wall_cross_y = [0.04]
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
     assert "DROVE THROUGH THE WALL" in capsys.readouterr().out
+
+
+def test_a_crossing_measured_from_distant_samples_claims_nothing(monkeypatch, capsys):
+    """A dropped burst of /odom would interpolate a robot that went around the
+    wall's END into a straight line through its middle. NaN means unmeasured,
+    and an unmeasured crossing neither passes a leg nor fails one for driving
+    through a wall."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False, goal_status=4)
+    node.wall_cross_y = [float("nan")]
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True,
+                goal_x=3.0, goal_y=0.0) is False
+    out = capsys.readouterr().out
+    assert "DROVE THROUGH THE WALL" not in out
+    assert "WITHOUT GOING AROUND THE WALL" in out

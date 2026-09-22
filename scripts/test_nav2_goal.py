@@ -74,6 +74,9 @@ def _status_name(status: int) -> str:
 # The obstacle wall of the simulated room (fake_ld19.h defaults).
 WALL_X = 2.0
 WALL_HALF_SPAN = 1.5
+# The widest gap between two /odom samples that still says where the robot
+# crossed the wall's line. Wider than this and the crossing is not measured.
+WALL_CROSS_MAX_GAP = 0.25
 
 
 class Nav2GoalTester(Node):
@@ -293,10 +296,17 @@ class Nav2GoalTester(Node):
         prev = getattr(self, "_last_xy", None)
         self._last_xy = (p1.x, p1.y)
         if prev is not None and (prev[0] - WALL_X) * (p1.x - WALL_X) < 0:
-            # Linear interpolation is plenty: /odom is 50 Hz and the robot does
-            # 0.4 m/s, so consecutive samples are ~8 mm apart.
+            # Interpolate, but only believe it when the two samples bracketing
+            # the crossing are close together. /odom is 50 Hz and the robot does
+            # 0.4 m/s, so 8 mm apart is normal -- and a dropped burst would let a
+            # robot that went around the END be interpolated into a straight line
+            # through the middle, which is the difference between a pass and
+            # "it drove through the wall".
+            gap = math.hypot(p1.x - prev[0], p1.y - prev[1])
             t = (WALL_X - prev[0]) / (p1.x - prev[0])
-            self.wall_cross_y.append(prev[1] + t * (p1.y - prev[1]))
+            y = prev[1] + t * (p1.y - prev[1])
+            self.wall_cross_y.append(y if gap <= WALL_CROSS_MAX_GAP else float("nan"))
+            self.wall_cross_gap = max(getattr(self, "wall_cross_gap", 0.0), gap)
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -447,13 +457,14 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
 
     def went_around() -> bool:
         """Did the robot cross the wall's line beyond one of its ends?"""
-        return any(abs(y) > WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+        return any(y == y and abs(y) > WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
 
     def went_through() -> bool:
         """Did it cross where the wall actually is? The simulated robot is pushed
         off the segment (fake_ld19.h clampToRoom), so this should be impossible;
-        if it happens the room, not the navigation, is what failed."""
-        return any(abs(y) <= WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+        if it happens the room, not the navigation, is what failed. A crossing
+        whose bracketing samples were too far apart is NaN and claims nothing."""
+        return any(y == y and abs(y) <= WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
 
     def wall_path_ok() -> bool:
         if not leg_crosses_wall():
@@ -551,7 +562,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"needs before arriving proves anything.")
                 elif reached_goal() and not wall_path_ok():
                     if went_through():
-                        ys = ", ".join(f"{y:+.2f}" for y in node.wall_cross_y)
+                        ys = ", ".join("unmeasured" if y != y else f"{y:+.2f}"
+                                       for y in node.wall_cross_y)
                         print(f"❌ NAV2 LEG {i}/{n} DROVE THROUGH THE WALL: it crossed x={WALL_X:.1f} "
                               f"at y={ys}, inside the wall's span (±{WALL_HALF_SPAN:.1f} m)"
                               f"{_gap(node)}. The simulated robot is supposed to be pushed off that "
@@ -574,7 +586,9 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             elif node.path_avoids_wall:
                 around = "yes, planned and driven" if went_around() else "yes, in the plan"
             else:
-                around = f"yes, driven (crossed at y={max(node.wall_cross_y, key=abs):+.2f})"
+                measured = [y for y in node.wall_cross_y if y == y]
+                around = (f"yes, driven (crossed at y={max(measured, key=abs):+.2f})" if measured
+                          else "unproven: no plan seen and no crossing measured")
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
                   f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
                   f"around the wall: {around}; {node.cmd_vel_count} cmd_vel so far")
