@@ -178,7 +178,12 @@
 
       this.map = null;          // { canvas, info }
       this.scan = null;
-      this.pose = null;         // { x, y, yaw }
+      this.pose = null;         // { x, y, yaw } -- ALWAYS in the map frame
+      this.odomPose = null;     // the raw /odom pose, in the odom frame
+      // map -> odom: what SLAM (or AMCL) has corrected the dead reckoning by.
+      // Identity until /tf says otherwise, which is the right assumption before
+      // a map exists.
+      this.mapOdom = { x: 0, y: 0, yaw: 0 };
       this.poseSource = "";
 
       this.tool = null;         // null | "initialpose" | "goal_pose"
@@ -267,14 +272,49 @@
       this.draw();
     }
 
+    // map -> odom, straight off /tf. Without it everything drawn from /odom is
+    // in the WRONG FRAME: the map is published in `map`, the odometry is in
+    // `odom`, and the difference between them is precisely the drift SLAM is
+    // correcting. Measured on the bench 2026-09-23 while a scan visibly sat at
+    // an angle to the mapped walls: map->odom was yaw +5.20 deg, (+0.099,
+    // -0.121) m. This EKF fuses velocities only, so it has nothing to correct
+    // against and that angle grows over a run.
+    setMapOdom(transform) {
+      this.mapOdom = {
+        x: transform.translation.x,
+        y: transform.translation.y,
+        yaw: yawFromQuaternion(transform.rotation),
+      };
+      if (this.odomPose && this.poseSource !== "amcl") this._recomputePose();
+      this.draw();
+    }
+
+    _recomputePose() {
+      const m = this.mapOdom, o = this.odomPose;
+      const c = Math.cos(m.yaw), s = Math.sin(m.yaw);
+      this.pose = {
+        x: m.x + c * o.x - s * o.y,
+        y: m.y + s * o.x + c * o.y,
+        yaw: m.yaw + o.yaw,
+      };
+    }
+
     setPose(pose, source) {
       // /amcl_pose is the localized truth; do not let raw /odom overwrite it.
       if (source === "odom" && this.poseSource === "amcl") return;
-      this.pose = {
+      const p = {
         x: pose.position.x,
         y: pose.position.y,
         yaw: yawFromQuaternion(pose.orientation),
       };
+      if (source === "odom") {
+        // /odom is in the odom frame and everything here is drawn in map.
+        this.odomPose = p;
+        this._recomputePose();
+      } else {
+        // /amcl_pose is already in map.
+        this.pose = p;
+      }
       this.poseSource = source;
       this.draw();
     }
@@ -458,8 +498,10 @@
       const ranges = scan.ranges || [];
       if (!ranges.length) return;
 
-      // Projected from the robot pose rather than through TF: the browser has no
-      // transform listener, and base_link -> laser is a small fixed offset.
+      // Projected from the robot pose in the MAP frame (see setMapOdom): the
+      // browser has no full transform listener, and base_link -> laser really is
+      // a small fixed offset. map -> odom is not -- skipping that one drew the
+      // scan at an angle to the walls it had just built.
       const { x: rx, y: ry, yaw } = this.pose;
       ctx.fillStyle = "#f43f5e";
       for (let i = 0; i < ranges.length; i++) {
@@ -541,7 +583,7 @@
     const urlInput = el("rosviz-url");
     const topicsEl = el("rosviz-topics");
 
-    const counts = { map: 0, scan: 0, odom: 0, amcl: 0 };
+    const counts = { map: 0, scan: 0, odom: 0, amcl: 0, tf: 0 };
 
     function setStatus(level, message) {
       if (!statusEl) return;
@@ -552,7 +594,8 @@
     function updateTopicCounts() {
       if (!topicsEl) return;
       topicsEl.textContent =
-        `/map ${counts.map} · /scan ${counts.scan} · /odom ${counts.odom} · /amcl_pose ${counts.amcl}`;
+        `/map ${counts.map} · /scan ${counts.scan} · /odom ${counts.odom} · `
+      + `/amcl_pose ${counts.amcl} · map→odom ${counts.tf}`;
     }
 
     bridge.onStatus = setStatus;
@@ -580,6 +623,15 @@
         counts.scan++; updateTopicCounts(); viewer.setScan(msg);
       }, 100);
 
+      // /tf is busy, and only one transform on it matters here. Throttled,
+      // because the correction moves at SLAM's update rate, not the base's.
+      bridge.subscribe("/tf", "tf2_msgs/msg/TFMessage", (msg) => {
+        for (const t of msg.transforms || []) {
+          if (t.header.frame_id === "map" && t.child_frame_id === "odom") {
+            counts.tf++; updateTopicCounts(); viewer.setMapOdom(t.transform);
+          }
+        }
+      }, 200);
       bridge.subscribe("/odom", "nav_msgs/msg/Odometry", (msg) => {
         counts.odom++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "odom");
       }, 100);
