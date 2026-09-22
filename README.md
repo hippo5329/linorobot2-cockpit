@@ -192,6 +192,9 @@ time from your config. Every key the config side writes is one the firmware read
 (`tests/test_env_contract.py`) fails when that stops being true. Editing the config and pressing
 Start again rewrites 4 KB; the application image is untouched. The IMU and magnetometer are
 detected on the I2C bus at boot, so swapping a sensor needs no edit at all.
+An IMU whose DATA_RDY line is wired (`pins.imu.int`) is read on its interrupt instead of polled,
+with a logged fallback to polling if the line never fires; the Yahboom microROS control board
+reference (`yahboom_esp32s3_config.yaml`, ESP32-S3, INT on GPIO 41) is the first config that uses it.
 
 To switch fake mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.

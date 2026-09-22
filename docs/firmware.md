@@ -222,6 +222,55 @@ answer in 30 ms. Every override is printed and syslogged, so a config that disag
 visible rather than silently routed around. A chip this image has no driver for (a BNO055, say) gets
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
 
+### An IMU with its interrupt wired is read when it says so, not when the timer fires
+`pins.imu.int` in the config (env key `imu_int`, header fallback `IMU_INT_PIN`, `-1` in every
+config that predates the key) names the GPIO the chip's DATA_RDY line is on. With it set, the
+ISR does one thing -- set a flag -- and `IMUInterface::getData()` only touches the bus when the
+flag says a fresh sample is there: no stale re-read at the publish edge, and no I2C transaction
+spent learning that nothing changed. Everything else still runs in the publish context, where
+the bus is safe to use.
+
+Three things keep a wired line from being worse than polling. A driver that cannot turn its
+chip's DATA_RDY output on says so (`enableDataReadyInterrupt()` returns false; the boot log
+prints which); if the pin then never fires within a second of attaching, `getData()` polls --
+once logged -- rather than returning the same sample forever; and a line that fired once and
+then stopped (a chip that lost power, a wire that came off) is caught by a staleness ceiling,
+`IMU_INT_STALE_MS` (200 ms), past which the bus is read anyway. The boot log names the case:
+
+```
+[imu] data-ready interrupt on GPIO 41 (driver enabled DATA_RDY)
+[imu] data-ready pin 41 never fired in 1 s - polling instead      <- only when the wire is wrong
+[imu] polling (set imu_int to use a DATA_RDY pin)                <- no pin configured
+```
+
+The ISR is declared in `imu_interface.h` and **defined in `imu_interface.cpp`**. An `IRAM_ATTR`
+function defined inside its class is inline, and the Xtensa linker places the COMDAT section's
+literal pool after the code -- `dangerous relocation: l32r: literal placed after use` -- on
+every ESP32 image. Out of line it is an ordinary IRAM function. The ESP32 core also compiles as
+gnu++11, so the ISR's instance pointer is a plain static, not a C++17 inline variable.
+
+**The QMI8658 driver is the base's own.** The QST/Waveshare reference copy it replaced carried
+a 2.2 s on-chip calibration at every boot that `calibrateGyro()` then repeated, a hard-coded
+0x6B, three bus transactions per sample, and a `getData()` override that the `IMUInterface*`
+the sketch holds never reached -- `getData()` is not virtual, so its bias handling was dead
+code. The driver in `default_imu.h` is 200 lines: WHO_AM_I at 0x6B then 0x6A, a soft reset,
+±8 g and ±1024 dps at 224 Hz with the on-chip low-pass at ~30 Hz (the base publishes at 50 Hz,
+so the filter sits at its Nyquist), and **one 20-byte burst per sample** -- STATUSINT, STATUS0,
+the 24-bit sample counter, temperature, six axes -- which is also what re-arms DATA_RDY.
+`readGyroscope()` does the burst and `readAccelerometer()` hands back the other half of it,
+which is the order `getData()` calls them in. The chip drives DATA_RDY on INT2 in its normal
+mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely says which, so
+`enableDataReadyInterrupt()` turns on both pins and both modes; neither pin is driven until
+asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
+`tests/test_qmi8658_driver.py` pins each of these.
+
+**The Yahboom microROS control board** (`config/reference/yahboom_esp32s3_config.yaml`,
+YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: QMI8658 at 0x6B on
+SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on M1 4/5 and M2 15/16 (the `pwm` enable
+is `-1`, tied high on the board), encoders 6/7 and 47/48, battery ADC on GPIO 3 for a 2S pack,
+LED on 45 -- a strapping pin, which the inspector warns about and nothing else. The board's own
+firmware inverts the right motor; so does the config.
+
 ### A diagnostic must read the env, not the macro it was compiled with
 `initBoard()` opens the bus with `envInt("i2c_sda", SDA_PIN)` — the env partition first, the header
 macro only as a fallback. `i2c_detect`'s banner printed `SDA_PIN` *alone*, so on a prebuilt release
