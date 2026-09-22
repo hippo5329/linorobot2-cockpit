@@ -264,6 +264,21 @@ mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely sa
 asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
 `tests/test_qmi8658_driver.py` pins each of these.
 
+**`console: uart0` -- the S3 image talks where the board's USB actually is.** The S3 images
+are built with `ARDUINO_USB_CDC_ON_BOOT=1`, so `Serial` is the chip's native USB (HW CDC/JTAG on
+GPIO 19/20) and UART0 (GPIO 43/44) is `Serial0`, which nothing used. That fits the DevKit and not
+a board whose only USB is a bridge on UART0 -- the Yahboom's is a CP2102 on 43/44, and the
+released image printed its banner, and ran micro-ROS, into a port the board does not have. The
+MCU is the same, so the choice is the env's: `base_controller.console` (`usb`, the default, or
+`uart0`; Config Studio's "ESP32-S3 Console Port") is read at the top of `setup()`, before the
+first print, and every `Serial.` in this tree goes through `lino_console`
+(`common/lib/mcu_env/lino_console.h`), a Stream that forwards to `Serial` or `Serial0`. The
+`#define Serial lino_console` that makes that happen is scoped to the translation units that
+include it -- all of ours, via `mcu_env.h`; the core and the vendored libraries keep the real
+object -- and it defines nothing on a board without CDC-on-boot. A bridge never waits for a host,
+so `boot_serial_wait` is skipped on UART0. `tests/test_console_uart0.py` walks the tree for a
+translation unit that prints without the wrapper.
+
 **The Yahboom microROS control board** (`config/reference/yahboom_esp32s3_config.yaml`,
 YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: QMI8658 at 0x6B on
 SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on M1 4/5 and M2 15/16 (the `pwm` enable
