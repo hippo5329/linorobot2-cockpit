@@ -464,13 +464,19 @@ def stop_bg(proc, first=signal.SIGINT):
             continue
 
 
-def wait_for_nav2_activation(timeout_sec: int = 90) -> tuple:
+def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
     """Watch logs/nav2.log for lifecycle_manager's verdict.
 
     "Launched" and "active" are different events: one node that fails to
     configure aborts the whole managed set, after the healthy ones logged a
     clean configure. Returns (ok, detail); detail names the failed node when
     the log shows it.
+
+    The window is four minutes because this stack is meant for a weak robot PC:
+    twelve lifecycle nodes, each waiting on TF and a costmap, on a machine whose
+    control loop makes 7-8 Hz. 90 s expired mid-bringup on a loaded bench host
+    and the run reported "the stack never activated" about a stack that was
+    still coming up.
     """
     log_path = os.path.join(LOG_DIR, "nav2.log")   # this run's, never a previous one's
     deadline = time.time() + timeout_sec
