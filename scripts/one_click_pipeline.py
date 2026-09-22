@@ -1228,9 +1228,19 @@ def main():
                          f"--round-trips {args.goal_round_trips}")
             if args.require_goal or args.goal_round_trips:
                 goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
-            test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
-                               + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
-                               distro=args.distro)
+            if nav2_ok:
+                test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
+                                   + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
+                                   distro=args.distro)
+            else:
+                # A goal sent to a stack that never activated is rejected on
+                # arrival ("Action server is inactive") and the transcript then
+                # reads like a navigation failure. The failure is the lifecycle
+                # one above; say so and let the drive suite below place it.
+                test_res = subprocess.CompletedProcess(
+                    args=[], returncode=3, stderr="",
+                    stdout=f"❌ NAV2 GOAL NOT SENT: the stack never activated ({nav2_detail}); "
+                           f"a goal would only be rejected. See logs/nav2.log.")
             print(test_res.stdout)
             if test_res.returncode == 0:
                 print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
