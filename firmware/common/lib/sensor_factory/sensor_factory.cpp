@@ -1,3 +1,4 @@
+#include "lino_console.h"
 #include <Arduino.h>
 #include <string.h>
 // The interfaces build their header frame_id with this, and main.cpp happened to

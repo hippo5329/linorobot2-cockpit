@@ -65,6 +65,8 @@ async function loadHardwareConfig() {
 
     const elBaud = document.getElementById("cfg-baudrate");
     if (elBaud && tgt.baudrate) elBaud.value = String(tgt.baudrate);
+    const elConsole = document.getElementById("cfg-console");
+    if (elConsole) elConsole.value = tgt.console || "usb";
 
     const elPort = document.getElementById("hw-flash-port");
     if (elPort && tgt.serial_port) elPort.value = tgt.serial_port;
@@ -803,6 +805,7 @@ async function saveCurrentHardwareConfig() {
     driver_type: driverType,
     baudrate: baudrate,
     serial_port: serialPort,
+    console: document.getElementById("cfg-console")?.value || "usb",
     geometry: readGeometryForm(kineType),
     kinematics: {
       base_type: kineType,

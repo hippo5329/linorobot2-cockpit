@@ -1,3 +1,4 @@
+#include "lino_console.h"
 #include "adc_lut.h"
 
 #if ADC_LUT_SUPPORTED

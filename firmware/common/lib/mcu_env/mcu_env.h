@@ -19,6 +19,7 @@
 #define MCU_ENV_H
 
 #include <Arduino.h>
+#include "lino_console.h"
 
 // Loads and CRC-checks the env partition once. Safe to call repeatedly, and
 // safe to call before WiFi is up. NOT safe to call from a static constructor:

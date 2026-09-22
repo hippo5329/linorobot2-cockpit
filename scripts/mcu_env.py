@@ -32,7 +32,7 @@ one of them a particular robot is here:
                 syslog_ip  syslog_port
                 lidar_ip   lidar_port  lidar_rx  lidar_baud
 
-    runtime     dual_core  i2c_scan  pub_mag  pub_battery  pub_env  best_effort
+    runtime     dual_core  i2c_scan  pub_mag  pub_battery  pub_env  best_effort  console
                 fake_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
                 ota_port
@@ -502,6 +502,14 @@ def hardware_env(params: dict) -> dict:
 
     # --- transport and radio
     env["transport"] = tgt.get("transport", "serial")
+    # Which port is the console on an ESP32-S3: its native USB (the DevKit) or
+    # UART0 through a bridge (the Yahboom YB-EET01, whose only USB is a CP2102
+    # on GPIO 43/44). Same MCU, same image; the env decides. Absent means usb.
+    console = str(tgt.get("console", "") or "").strip().lower()
+    if console:
+        if console not in ("usb", "uart0"):
+            raise ValueError(f"base_controller.console must be 'usb' or 'uart0', not {console!r}")
+        env["console"] = console
     env["wifi"] = _bool((tgt.get("wifi", {}) or {}).get("enabled", False))
 
     # --- drivetrain

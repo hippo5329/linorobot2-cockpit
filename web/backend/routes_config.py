@@ -99,6 +99,13 @@ async def api_save_hardware_config(request: Request):
         ctrl["baudrate"] = int(data["baudrate"])
     if "serial_port" in data:
         ctrl["serial_port"] = str(data["serial_port"])
+    # Which port is the console on an ESP32-S3 (env key `console`): the native
+    # USB or UART0 through a bridge. Only the two spellings the firmware knows.
+    if "console" in data:
+        console = str(data["console"] or "usb").strip().lower()
+        if console not in ("usb", "uart0"):
+            raise HTTPException(status_code=400, detail=f"console must be 'usb' or 'uart0', not {console!r}")
+        ctrl["console"] = console
     # The robot computer's address, entered by the user like `host`/`host_ip`.
     # Stored even when blank, because blank is a meaningful value: it means
     # "this is the rig, resolve the box". Written through str() and stripped so

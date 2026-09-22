@@ -314,6 +314,14 @@
             </select>
           </div>
           <div class="form-group">
+            <label for="cfg-console" class="form-label">ESP32-S3 Console Port</label>
+            <select id="cfg-console" class="form-select font-mono">
+              <option value="usb" selected>Native USB (S3 DevKit, ttyACM)</option>
+              <option value="uart0">UART0 via USB bridge (Yahboom YB-EET01, ttyUSB)</option>
+            </select>
+            <span class="input-hint">Where the banner and micro-ROS serial go on an ESP32-S3 (env key <code>console</code>); ignored on other MCUs</span>
+          </div>
+          <div class="form-group">
             <label for="cfg-kinematics" class="form-label">Kinematics Base Type</label>
             <select id="cfg-kinematics" class="form-select">
               <option value="2wd" selected>2WD Differential Drive (2 Motors)</option>

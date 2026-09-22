@@ -1,3 +1,4 @@
+#include "lino_console.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <string.h>

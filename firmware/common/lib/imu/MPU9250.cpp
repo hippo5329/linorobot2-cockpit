@@ -34,6 +34,7 @@ THE SOFTWARE.
 ===============================================
 */
 
+#include "lino_console.h"
 #include "MPU9250.h"
 
 /** Default constructor, uses default I2C address.

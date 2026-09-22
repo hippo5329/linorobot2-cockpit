@@ -36,13 +36,15 @@ base_controller:
   # RPWM on in_a and LPWM on in_b, pwm (the enable) at -1.
   driver_type: BTS7960
   transport: serial
-  # Yahboom documents "USB serial / debug on GPIO 43/44", which is UART0 -- a
-  # USB-serial bridge, so it enumerates as ttyUSB0, not the native-USB ttyACM0
-  # the S3 DevKit reference uses. To confirm on the bench: which node appears
-  # on plug-in, and whether the shipped esp32s3 image (built for native USB
-  # CDC) talks on it. Set the baud to match what the agent is started with.
+  # Yahboom's USB is a CP2102 bridge on GPIO 43/44 (UART0): it enumerates as
+  # ttyUSBn (USB serial "0001"), not the native-USB ttyACMn of the S3 DevKit.
   serial_port: /dev/ttyUSB0
   baudrate: 921600
+  # The S3 images are built with the native USB as `Serial`; this board's only
+  # USB is a CP2102 on UART0 (GPIO 43/44), so the console -- banner, diagnostics
+  # and the micro-ROS serial transport -- is moved there by the env. Leave it at
+  # `usb` (or out) on an S3 DevKit.
+  console: uart0
   use_dual_core: true
   lidar:
     model: ld19

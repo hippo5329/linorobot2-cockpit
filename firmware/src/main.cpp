@@ -783,6 +783,11 @@ void setup()
     // anything is sized for it. The 4+4 KB UART rings below exist to carry
     // micro-ROS traffic; a diagnostic that prints a line a second needs neither,
     // and in a unified image that memory would otherwise be spent in every mode.
+#if LINO_CONSOLE_SELECTABLE
+    // Which port is the console -- decided by the env before the first print,
+    // so even the banner lands where this board's USB actually is.
+    lino_console.selectFromEnv();
+#endif
     app_mode = toolSelect();
     const bool micro_ros = (app_mode == APP_BASE);
     // Base's message buffers, the executor and the odometry estimator are

@@ -29,7 +29,7 @@ MAXIMAL_CONFIG = {
                    "max_rpm": 100, "counts_per_rev": 100, "pwm_bits": 8, "pwm_frequency": 1000,
                    "pid": {"kp": 1, "ki": 0, "kd": 0}},
     "base_controller": {
-        "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial",
+        "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial", "console": "uart0",
         "qos": "reliable", "use_dual_core": True, "boot_delay": 2,
         "telemetry": {"ota_port": 3232},
         "sensors": {"imu": "auto", "mag": "auto", "current": "INA219", "env": "BMP280",

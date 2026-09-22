@@ -381,6 +381,7 @@ const REFERENCE_DESIGNS = {
       name: "Yahboom microROS Control Board (ESP32-S3, YB-EET01-V2.0)",
       mcu: "esp32s3",
       kinematics: "2wd",
+      console: "uart0",
       driver: "BTS7960",
       wheel_diameter: 0.065,
       lr_wheels_distance: 0.17,
@@ -515,6 +516,7 @@ async function applyReferenceDesign(designId) {
     const el = document.getElementById(id);
     if (el && val !== undefined) el.value = val;
   };
+  setVal("cfg-console", found.console || "usb");
   setVal("cfg-wheel-diameter", found.wheel_diameter);
   setVal("cfg-track-width", found.lr_wheels_distance);
   setVal("cfg-wheelbase", found.fr_wheels_distance);

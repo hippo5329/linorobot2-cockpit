@@ -17,6 +17,7 @@
 // effectively setting the current physical alignment of the mower as the
 // zero reference for roll and pitch.
 
+#include "lino_console.h"
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
 #include <stdio.h>
