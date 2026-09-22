@@ -64,7 +64,25 @@ def test_footprint_sits_on_the_floor(reference):
     p.setdefault("geometry", {}).setdefault("wheel", {})["z"] = -0.02
     root = _tree(p)
     _, xyz = _joint(root, "base_to_footprint")
-    assert math.isclose(xyz[2], p["kinematics"]["wheel_diameter"] / 2 + 0.02)
+    # base_footprint hangs BELOW base_link: ground clearance straight down.
+    assert math.isclose(xyz[2], -(p["kinematics"]["wheel_diameter"] / 2 + 0.02))
+
+
+def test_base_link_has_no_parent_in_the_urdf(reference):
+    """The EKF publishes odom -> base_link, so the URDF must not give base_link a
+    parent of its own. It did (base_footprint -> base_link): tf2 kept the dynamic
+    parent, base_footprint became an orphan root, and robot_localization dropped
+    every /odom/unfiltered twist (child frame base_footprint) with "Could not
+    transform measurement into base_link" -- 7447 times in one GenDrv run, with
+    the EKF pinned at (0, 0) while the base drove 4 m.
+    """
+    for name in ("pico2_mecanum", "gendrv", "esp32s3", "yahboom_esp32s3"):
+        root = _tree(reference(name))
+        children = {j.find("child").get("link") for j in root.findall("joint")}
+        assert "base_link" not in children, f"{name}: base_link has a URDF parent"
+        j, _ = _joint(root, "base_to_footprint")
+        assert j.find("parent").get("link") == "base_link"
+        assert j.find("child").get("link") == "base_footprint"
 
 
 def test_effective_geometry_fills_gaps_from_kinematics_only():

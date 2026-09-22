@@ -51,7 +51,8 @@ import cockpit_paths  # noqa: E402
 
 # Frames the rest of the stack already agrees on. `imu_link` is what the firmware
 # stamps on /imu/data_raw (imu_interface.h) and `base_footprint` is the child
-# frame of its /odom/unfiltered; the EKF publishes odom -> base_link. They are
+# frame of its /odom/unfiltered; the EKF publishes odom -> base_link, which is
+# why base_footprint is a CHILD of base_link here and not its parent. They are
 # protocol, not robot facts, which is why they are not config keys.
 FOOTPRINT_FRAME = "base_footprint"
 BASE_FRAME = "base_link"
@@ -263,7 +264,16 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
     ET.SubElement(robot, "link", name=FOOTPRINT_FRAME)
     _box_link(robot, BASE_FRAME, _f(body["length"]), _f(body["width"]), _f(body["height"]),
               _f(body["mass"]), mesh.get("base") or "", "0.88 0.66 0.66 1.0")
-    _joint(robot, "base_to_footprint", "fixed", FOOTPRINT_FRAME, BASE_FRAME, (0, 0, ground_clearance))
+    # base_footprint hangs BELOW base_link, never above it. The EKF publishes
+    # odom -> base_link, so base_link's one and only parent is odom; a URDF that
+    # made base_footprint the parent gave base_link two parents, tf2 kept the
+    # dynamic one, base_footprint became an orphan root, and robot_localization
+    # could not transform the firmware's odom twist (child frame base_footprint)
+    # into base_link -- 7447 times in one run, silently, on the GenDrv: the EKF
+    # never moved while the base drove 4 m, and every Nav2 goal "failed to make
+    # progress". The costmaps and SLAM use base_link too, so the ground contact
+    # frame is a leaf: base_link -> base_footprint, ground_clearance straight down.
+    _joint(robot, "base_to_footprint", "fixed", BASE_FRAME, FOOTPRINT_FRAME, (0, 0, -ground_clearance))
 
     for prefix, x, y in wheel_positions(params):
         link = f"{prefix}_wheel_link"
