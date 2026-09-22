@@ -317,7 +317,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
              cmd_vel_type: str = "auto", noise_lin: float = 0.03,
              noise_ang: float = 0.10, require_motion: bool = True,
              min_traverse: float = 0.10, require_goal: bool = False,
-             goal_tolerance: float = 0.30) -> bool:
+             goal_tolerance: float = 0.30, min_start_gap: float = 1.0) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
@@ -341,6 +341,18 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         the floor catches exactly that.
         """
         return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
+
+    def start_gap_is_meaningful() -> bool:
+        """Was the robot far enough away for arriving to mean anything?
+
+        The simulated pose survives a run -- only a boot zeroes it -- so a second
+        goal at the same coordinates can begin with the robot already sitting on
+        it. Measured: an RP2350 started 0.484 m from a goal with a 0.30 m
+        tolerance, closed 0.185 m, and was reported REACHED. That is the gate
+        passing without the robot going anywhere, in a new place.
+        """
+        start = getattr(node, "goal_dist_start", float("nan"))
+        return not (start == start) or start >= min_start_gap
 
     def reached_goal() -> bool:
         """Did it actually get there?
@@ -422,7 +434,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                     ((moved() and traversed()) or not require_motion):
                 return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
 
-            if require_goal and reached_goal() and (moved() or not require_motion):
+            if require_goal and start_gap_is_meaningful() and reached_goal() \
+                    and (moved() or not require_motion):
                 return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
 
             if node.goal_rejected:
@@ -447,6 +460,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             return verdict("NAV2 GOAL COMPLETED (after the window)")
         if node.goal_rejected:
             print(f"❌ NAV2 GOAL REJECTED by bt_navigator{_why(node)}.")
+            return False
+        if require_goal and not start_gap_is_meaningful():
+            start = node.goal_dist_start
+            print(f"❌ NAV2 GOAL TEST IS VACUOUS: the robot began {start:.3f} m from the "
+                  f"goal, inside the {min_start_gap:.2f} m this gate needs before arriving "
+                  f"proves anything (tolerance {goal_tolerance:.2f} m).")
+            print(f"   The simulated pose survives a run -- only a boot zeroes it -- so a "
+                  f"repeated goal can start with the robot already on top of it. Reboot the "
+                  f"board, or send a goal measured from where it actually is.")
             return False
         if require_goal and not reached_goal():
             # Asked to verify the goal, not merely the plan. The gap is the
@@ -478,6 +500,10 @@ def main():
                         help="Type published on /cmd_vel; 'auto' reads it off the graph")
     parser.add_argument("--noise-lin", type=float, default=0.03,
                         help="Linear speed (m/s) at or below which /odom is considered at rest")
+    parser.add_argument("--min-start-gap", type=float, default=1.0,
+                        help="metres the robot must START from the goal for --require-goal "
+                             "to mean anything. The simulated pose survives a run, so a "
+                             "repeated goal can begin with the robot already on it.")
     parser.add_argument("--goal-tolerance", type=float, default=0.30,
                         help="metres from the goal pose that count as reached, when "
                              "--require-goal is given")
@@ -504,7 +530,8 @@ def main():
                        noise_lin=args.noise_lin, noise_ang=args.noise_ang,
                        require_motion=not args.no_require_motion,
                        min_traverse=args.min_traverse, require_goal=args.require_goal,
-                       goal_tolerance=args.goal_tolerance)
+                       goal_tolerance=args.goal_tolerance,
+                       min_start_gap=args.min_start_gap)
     sys.exit(0 if success else 1)
 
 

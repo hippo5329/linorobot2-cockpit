@@ -323,3 +323,30 @@ def test_a_tighter_tolerance_is_honoured(monkeypatch):
     assert _run(monkeypatch, close, timeout=30.0, require_goal=True) is True
     assert _run(monkeypatch, close, timeout=0.3, require_goal=True,
                 goal_tolerance=0.10) is False
+
+
+def test_an_arrival_that_started_on_the_goal_is_rejected(monkeypatch, capsys):
+    """The simulated pose survives a run, so a repeated goal can begin under the robot.
+
+    Measured on an RP2350: started 0.484 m from a goal with a 0.30 m tolerance,
+    closed 0.185 m in 24 commands, and was reported REACHED. That is the gate
+    passing without the robot going anywhere -- the same trap as ok_no_traverse,
+    one layer up.
+    """
+    class OnTop(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.goal_dist_start = 0.484
+    node = OnTop(odom_lin=0.12, dist=0.227, goal_dist=0.299)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True) is False
+    out = capsys.readouterr().out
+    assert "VACUOUS" in out and "0.484" in out, out
+
+
+def test_a_real_gap_still_passes(monkeypatch):
+    class FarEnough(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.goal_dist_start = 3.0
+    node = FarEnough(odom_lin=0.25, dist=2.9, goal_dist=0.12, completed=True)
+    assert _run(monkeypatch, node, timeout=30.0, require_goal=True) is True
