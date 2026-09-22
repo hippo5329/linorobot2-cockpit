@@ -18,6 +18,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include <sensor_msgs/msg/imu.h>
+#include <micro_ros_utilities/string_utilities.h>
 #include "mcu_env.h"
 
 #ifndef ACCEL_COV
@@ -57,7 +58,7 @@ class IMUInterface
     private:
         // One IMU per board, so one instance for the ISR to reach. Set by
         // attachDataReady(); an ISR cannot carry a `this`.
-        inline static IMUInterface *instance_ = nullptr;
+        static IMUInterface *instance_;       // defined in imu_interface.cpp (no C++17 inline variables on the ESP32 core)
         // Defined in imu_interface.cpp, not here: an IRAM_ATTR function that
         // is inline (a member defined in its class is) lands in a COMDAT
         // .iram1 section whose literal pool the Xtensa linker then places

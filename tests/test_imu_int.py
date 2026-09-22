@@ -19,6 +19,7 @@ import gen_wiring_table  # noqa: E402
 YAHBOOM = os.path.join(REPO_ROOT, "config", "reference", "yahboom_esp32s3_config.yaml")
 MAIN = os.path.join(REPO_ROOT, "firmware", "src", "main.cpp")
 IFACE = os.path.join(REPO_ROOT, "firmware", "common", "lib", "imu", "imu_interface.h")
+ISR_CPP = os.path.join(REPO_ROOT, "firmware", "common", "lib", "imu", "imu_interface.cpp")
 GEN = os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py")
 
 
@@ -57,8 +58,13 @@ def test_getdata_polls_when_the_line_never_fires():
 
 
 def test_the_isr_only_sets_a_flag():
-    src = open(IFACE, encoding="utf-8").read()
-    isr = re.search(r"dataReadyISR\(\)\s*\{(.*?)\}", src, re.S).group(1)
+    # Declared in the header, defined out of line: an IRAM_ATTR function that
+    # is inline lands in a COMDAT section whose literal pool the Xtensa linker
+    # places after the code, and every ESP32 image fails to link.
+    hdr = open(IFACE, encoding="utf-8").read()
+    assert re.search(r"static void IMU_ISR_ATTR dataReadyISR\(\);", hdr), "declare it; define it in the .cpp"
+    src = open(ISR_CPP, encoding="utf-8").read()
+    isr = re.search(r"IMUInterface::dataReadyISR\(\)\s*\{(.*?)\}", src, re.S).group(1)
     # "data_ready_" is the flag it sets; what must NOT be there is bus traffic.
     for forbidden in ("Wire", "readGyroscope", "readAccelerometer", "I2Cdev", "getData"):
         assert forbidden not in isr, f"{forbidden} inside the ISR: no I2C from an ISR"
