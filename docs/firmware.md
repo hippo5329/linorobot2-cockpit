@@ -264,6 +264,17 @@ mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely sa
 asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
 `tests/test_qmi8658_driver.py` pins each of these.
 
+**Fake wheels no longer imply a fake IMU.** `use_fake_wheel: true` used to skip the I2C sensors
+entirely -- right for a bare module with nothing on the bus, wrong for a bare custom board with no
+encoders and a real IMU (the Yahboom on the bench), where the `/imu/data_raw` measured at 50 Hz
+was the simulation and the driver under test never ran. Now only the sensors that are themselves
+fake are synthesised from the simulated wheels (`sim_imu = fake_wheels && imu_is_fake`, likewise
+the magnetometer): a real IMU the config or the bus names is initialised and its DATA_RDY
+attached with fake wheels too, and one that fails to init on such a board falls back to the
+simulation with `[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU`
+rather than the fatal LED loop. The bus probe also prints reg 0x00 / 0x0F / 0x75 for a device
+it cannot name, so an unfamiliar chip is identified from the boot log.
+
 **The S3 image is built for a 4 MB flash, the smallest S3 module.** The bootloader trusts the
 image header's flash size. Built for the DevKitC-1 board file's 8 MB, the same image put the
 Yahboom's 4 MB module into a reboot loop before `setup()` ever ran -- `Detected size(4096k)
