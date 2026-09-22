@@ -627,12 +627,25 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
     def reached_goal() -> bool:
         """Did it actually get there?
 
-        Either Nav2 said SUCCEEDED, or the base is inside the tolerance of the
-        goal pose -- because a controller can stop short and report success, and
-        can equally be aborted by a behaviour-tree timeout while sitting on top
-        of the goal. The position is the fact; the status is the explanation.
+        The POSITION decides. A controller can stop short and report success,
+        and can equally be aborted by a behaviour-tree timeout while sitting on
+        top of the goal -- so the status explains, and the distance is the fact.
+
+        This used to be `goal_completed OR inside the tolerance`, which let a
+        SUCCEEDED override the position entirely. Measured on the Yahboom
+        (2026-09-22): leg 2/8 was reported "reached in 2 s, closest 2.830 m"
+        against a 0.40 m tolerance, because Nav2 called the goal SUCCEEDED while
+        the robot sat where leg 1 had left it. Leg 3 then began 0.292 m from its
+        own goal and was correctly failed as vacuous -- one leg's false arrival
+        became the next leg's missing journey.
+
+        The status is only consulted when the position was never measured: with
+        no pose there is nothing better, and the verdict says so.
         """
-        return node.goal_completed or getattr(node, "goal_dist_min", float("inf")) <= goal_tolerance
+        dist = getattr(node, "goal_dist_min", float("inf"))
+        if dist == dist and dist != float("inf"):     # a pose was seen
+            return dist <= goal_tolerance
+        return node.goal_completed
 
     def traversed() -> bool:
         """Did it actually GO somewhere, as opposed to answering the command?
@@ -853,7 +866,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                       f"this can be judged.")
                 return False
 
-            if node.goal_completed and (moved() or not require_motion):
+            # SUCCEEDED is Nav2's account of itself, and a goal demanded with
+            # --require-goal is judged on the distance instead: see
+            # reached_goal(). Without --require-goal this is the old, looser
+            # contract -- the caller asked whether Nav2 finished, not whether
+            # the robot is on the spot.
+            if node.goal_completed and not require_goal \
+                    and (moved() or not require_motion):
                 return verdict("NAV2 GOAL COMPLETED SUCCESSFULLY")
 
         # The commanded peak belongs here too. Without it a timeout line says the
@@ -865,8 +884,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
               f"cmd_peak={node.cmd_peak_lin:.3f}m/s,{node.cmd_peak_ang:.3f}rad/s, "
               f"odom_peak={node.odom_peak_lin:.3f}m/s,{node.odom_peak_ang:.3f}rad/s, "
               f"odom_moved={node.odom_max_dist:.3f}m,{node.odom_max_yaw:.3f}rad")
-        if node.goal_completed:
+        if node.goal_completed and not require_goal:
             return verdict("NAV2 GOAL COMPLETED (after the window)")
+        if node.goal_completed and require_goal and not reached_goal():
+            print(f"❌ NAV2 GOAL NOT REACHED: Nav2 reported SUCCEEDED, but the robot is "
+                  f"{node.goal_dist_now:.3f} m from ({goal_x:.2f}, {goal_y:.2f}) and this gate "
+                  f"needs {goal_tolerance:.2f} m. The status explains; the distance decides.")
+            return False
         if node.goal_rejected:
             print(f"❌ NAV2 GOAL REJECTED by bt_navigator{_why(node)}.")
             return False

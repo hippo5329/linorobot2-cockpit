@@ -20,6 +20,17 @@ def judge(want_lin, want_ang, got_lin, got_ang):
     return ok_vx and ok_wz
 
 
+def statistic(samples, want):
+    """Which sample stands for the run: mirrored from drive_suite._statistic."""
+    if not samples:
+        return 0.0
+    if want > 0:
+        return max(samples)
+    if want < 0:
+        return min(samples)
+    return sum(samples) / len(samples)
+
+
 def test_a_faithful_report_passes():
     assert judge(0.25, 0.0, 0.24, 0.01)
     assert judge(0.0, 1.5, 0.02, 1.42)
@@ -94,3 +105,40 @@ def test_the_note_matches_the_suite_verbatim():
                    "WALL_X, WALL_HALF_SPAN = 2.0, 1.5", "NEAR = 0.05",
                    'notes.append("OBSTACLE WALL")', "pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"):
         assert needle in src, needle
+
+
+def test_a_commanded_speed_is_judged_by_whether_it_was_reached():
+    """A base that tracks badly still passes: this is sign and magnitude, not
+    performance. So the extreme in the commanded direction is the statistic."""
+    assert statistic([0.10, 0.24, 0.05], 0.25) == 0.24
+    assert statistic([-0.10, -0.26, -0.05], -0.25) == -0.26
+
+
+def test_a_commanded_zero_is_judged_by_the_mean_not_the_worst_sample():
+    """Measured on the GenDrv 2026-09-22: a 1.5 rad/s spin reported vx peaks of
+    +0.15 m/s while the pose moved 0.05 m in 5 s -- standing still. Judged by
+    max(), both spins failed; judged by the mean, they pass, which is what the
+    pose says happened. A zero command has no direction to peak in, so an
+    extremum answers a different question from the one being asked."""
+    spin = [0.15, -0.14, 0.12, -0.13, 0.01]        # noise about zero
+    assert abs(statistic(spin, 0.0)) < 0.05
+    assert judge(0.0, 1.5, statistic(spin, 0.0), 1.52)
+    # and the old rule is what failed it
+    assert not judge(0.0, 1.5, max(spin), 1.52)
+
+
+def test_a_base_that_really_creeps_forward_while_spinning_still_fails():
+    """The check must keep catching the thing it exists for: a base that drives
+    forward when told to spin has a mean that is not zero."""
+    creep = [0.18, 0.17, 0.19, 0.16, 0.18]
+    assert statistic(creep, 0.0) > 0.12
+    assert not judge(0.0, 1.5, statistic(creep, 0.0), 1.52)
+
+
+def test_the_statistic_matches_the_suite_verbatim():
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "drive_suite.py")).read()
+    assert "def _statistic(samples: list, want: float) -> float:" in src
+    assert "return sum(samples) / len(samples)" in src
+    assert "got_vx = _statistic(vx, lin)" in src

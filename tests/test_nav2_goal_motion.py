@@ -589,3 +589,24 @@ def test_the_startup_retry_happens_once_per_run_not_once_per_leg(monkeypatch):
     assert "retried_startup = False" in src
     assert src.index("retried_startup = False") < src.index("for i, (gx, gy) in enumerate(legs, 1):")
     assert "and not retried_startup" in src
+
+
+def test_a_succeeded_status_cannot_outvote_the_distance(monkeypatch, capsys):
+    """Measured on the Yahboom 2026-09-22: leg 2/8 reported "reached in 2 s,
+    closest 2.830 m" against a 0.40 m tolerance, because Nav2 called the goal
+    SUCCEEDED while the robot sat where leg 1 had left it. Leg 3 then began
+    0.292 m from its own goal. One leg's false arrival is the next leg's missing
+    journey, so the distance decides and the status only explains."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=2.830, completed=True)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=0,
+                goal_x=0.0, goal_y=0.0, goal_tolerance=0.40) is False
+    assert "NOT REACHED" in capsys.readouterr().out
+
+
+def test_the_status_is_used_when_there_is_no_pose_at_all(monkeypatch):
+    """With nothing on /odom there is nothing better than the status, and the
+    run still has to reach a verdict rather than hang."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=float("inf"), completed=True)
+    node.goal_dist_min = float("inf")
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=0,
+                goal_x=0.0, goal_y=0.0, goal_tolerance=0.40) is True

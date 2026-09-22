@@ -71,6 +71,24 @@ def _where(x: float, y: float) -> str:
     return ", ".join(notes) if notes else "clear"
 
 
+def _statistic(samples: list, want: float) -> float:
+    """What to compare against the command.
+
+    Asked for motion, the question is whether the base REACHED that speed, so
+    the extreme in the commanded direction is right -- a base that tracks badly
+    still passes, which is the point of a sign-and-magnitude test. Asked for
+    zero, the question is whether it stayed still, and an extremum answers a
+    different question: it reports the worst sample instead of the behaviour.
+    """
+    if not samples:
+        return 0.0
+    if want > 0:
+        return max(samples)
+    if want < 0:
+        return min(samples)
+    return sum(samples) / len(samples)
+
+
 def _topics(prefix: str) -> tuple:
     """(cmd_vel, odom) for a robot whose namespace is `prefix` ("" = plain)."""
     ns = f"/{prefix}" if prefix else ""
@@ -143,9 +161,14 @@ def main() -> int:
         command(lin, ang, secs)
         vx = seen["vx"] or [0.0]
         wz = seen["wz"] or [0.0]
-        # The extreme in the commanded direction.
-        got_vx = max(vx) if lin >= 0 else min(vx)
-        got_wz = max(wz) if ang >= 0 else min(wz)
+        # The extreme in the commanded direction -- but only when there IS one.
+        # A zero command has no direction to peak in, and judging it by its
+        # largest positive excursion fails on noise by construction: measured on
+        # the GenDrv, a 1.5 rad/s spin reported vx peaks of +0.15 m/s while the
+        # pose moved 0.05 m in 5 s, which is standing still. The question for a
+        # zero command is whether the base STAYED there, so it is the mean.
+        got_vx = _statistic(vx, lin)
+        got_wz = _statistic(wz, ang)
         ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)
         ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)
         x1, y1 = seen["x"], seen["y"]
