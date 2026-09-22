@@ -304,12 +304,24 @@ translation unit that prints without the wrapper.
 **The Yahboom's IMU is a TDK ICM-42670-P, not the QMI8658 its documentation names.** The bus
 probe now prints reg 0x00 / 0x0F / 0x75 for a device it cannot name, and the V2.0 board on the
 bench answered at 0x68 with WHO_AM_I (0x75) = 0x67. `ICM42670IMU` in `default_imu.h` is the
-driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, one 14-byte big-endian
-burst (temperature, six axes), DATA_RDY routed to INT1 and INT2 as a push-pull active-high pulse
-when asked. Five seconds after a DATA_RDY pin is attached the base prints
-`[imu] data-ready line GPIO 41 fired N times in the first 5 s` -- about 1000 for a 200 Hz ODR,
-0 when the wire is on a pin the chip is not driving -- so the interrupt path is verified by a
-count in the boot log, not by faith.
+driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, one 14-byte burst
+(temperature, six axes) in the byte order `INTF_CONFIG0` declares, DATA_RDY routed to INT1 and
+INT2 as a push-pull active-high pulse when asked. Five seconds after a DATA_RDY pin is attached
+the base prints `[imu] data-ready line GPIO 41 fired N times in the first 5 s` -- about 1000 for a
+200 Hz ODR, 0 when the wire is on a pin the chip is not driving -- so the interrupt path is
+verified by a count in the boot log, not by faith.
+
+The init follows TDK's own driver, because the first attempt did not and never got past
+WHO_AM_I: the probe had just read 0x67 from 0x68, and the driver's own read of the same register
+came back empty. A raw-transaction trace showed the **first I2C transaction after the boot-time
+bus scan returns nothing and every later one answers**. The part has I3C on by default
+(`INTF_CONFIG1` bits 3:2), and the scan ran to 0x7E -- the I3C broadcast address. So:
+WHO_AM_I is tried three times, 1 ms apart, before the part is declared absent (the success line
+says which try answered); the bank selects are zeroed and I3C switched off before the soft reset
+and again after it, since the reset restores the defaults; `INT_STATUS` must then show
+`RESET_DONE`; and the bus scan covers the assignable addresses 0x08..0x77 only. A still board
+publishes exactly 0 rad/s: the base class zeroes any axis inside ±0.01 rad/s after the bias is
+removed, which is older than this driver and applies to every IMU.
 
 **The Yahboom microROS control board** (`config/reference/yahboom_esp32s3_config.yaml`,
 YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: ICM-42670-P at 0x68 on
