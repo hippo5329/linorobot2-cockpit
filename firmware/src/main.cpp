@@ -1887,6 +1887,27 @@ void publishData()
             mag_bias[1] = compiled[1];
             mag_bias[2] = compiled[2];
 #endif
+            // A SIMULATED magnetometer ships calibrated, because a real robot
+            // that has been through magnetometer_calibration does. The fake
+            // hard-iron offset is still injected (applyMag) so the calibration
+            // routine has a real offset to find -- this only means the default
+            // robot is one that has already found it.
+            //
+            // It is not cosmetic. The EKF fuses absolute yaw from madgwick, and
+            // madgwick's heading comes off this field: uncorrected, the
+            // simulated (6, -4, 2.5) uT drags the heading 7.4 deg at rest and
+            // 8.3 deg worst-case round a turn. Measured on the bench before
+            // this: madgwick -137.3 deg against wheels -129.1, and SLAM quietly
+            // absorbing the difference into map->odom.
+            //
+            // Writing `mag_bias 0,0,0` in the env puts the robot back to
+            // uncalibrated, which is how the calibration leg is run.
+            if (sim_mag && !mag_bias[0] && !mag_bias[1] && !mag_bias[2])
+            {
+                mag_bias[0] = (float)FAKE_MAG_BIAS_X;
+                mag_bias[1] = (float)FAKE_MAG_BIAS_Y;
+                mag_bias[2] = (float)FAKE_MAG_BIAS_Z;
+            }
             envFloatVec("mag_bias", mag_bias, 3);
             mag_bias_set = (mag_bias[0] != 0.0f || mag_bias[1] != 0.0f
                             || mag_bias[2] != 0.0f);

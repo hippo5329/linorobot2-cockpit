@@ -426,3 +426,23 @@ def test_the_fake_sensor_declares_the_covariance_it_produces():
     for placeholder in ("float accel_cov[3] = ACCEL_COV", "float gyro_cov[3] = GYRO_COV",
                         "float mag_cov[3] = MAG_COV"):
         assert placeholder not in head, f"{placeholder}: the fake sensor is using a placeholder"
+
+
+def test_the_simulated_magnetometer_ships_calibrated():
+    """A real robot that has run magnetometer_calibration has its hard iron
+    removed; the simulated one should start there too.
+
+    The offset is still INJECTED by applyMag, so the calibration routine has a
+    real one to find -- this only makes the default robot one that has already
+    found it. Uncorrected, the simulated (6, -4, 2.5) uT drags madgwick's
+    heading 7.4 deg at rest, and the EKF now fuses that heading as absolute.
+    Writing `mag_bias 0,0,0` in the env puts it back to uncalibrated.
+    """
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "firmware", "src", "main.cpp")).read()
+    block = src[src.index("static bool mag_bias_read"):src.index('envFloatVec("mag_bias"')]
+    assert "sim_mag" in block, "the default is not conditioned on the mag being simulated"
+    for macro in ("FAKE_MAG_BIAS_X", "FAKE_MAG_BIAS_Y", "FAKE_MAG_BIAS_Z"):
+        assert macro in block, f"{macro} is not used as the simulated calibration"
+    # and it must not override a calibration somebody actually supplied
+    assert "!mag_bias[0] && !mag_bias[1] && !mag_bias[2]" in block
