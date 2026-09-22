@@ -139,7 +139,7 @@ def test_the_drive_suite_runs_after_the_goal_not_before_it():
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "[4.5/6] [DRIVE]" not in pipe, "the drive suite no longer runs before SLAM"
     assert pipe.index("[6/6] [NAV2]") < pipe.index("[6.5/6] [DRIVE]"), "drive comes after the goal"
-    assert pipe.count("drive_suite.py") == 2, "one call plus the comment pointing at it"
+    assert pipe.count("drive_suite.py") == 1, "exactly one drive suite call, not one per outcome"
     drive = pipe[pipe.index("[6.5/6] [DRIVE]"):]
     assert "EKF does not follow /odom/unfiltered" in drive, \
         "the suite reads /odom/unfiltered; Nav2 steers by /odom, so compare them here"
