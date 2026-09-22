@@ -398,6 +398,15 @@ IMUInterface *imu = nullptr;
 MAGInterface *mag = nullptr;
 // Set in setup() once the name is resolved (config, then env, then the bus).
 static bool imu_is_fake = false;
+// Which of the two simulated sensors actually ride on the simulated wheels.
+// Fake wheels used to imply a fake IMU and a fake magnetometer, full stop --
+// right for a bare module with nothing on the bus, wrong for a bare custom
+// board (the Yahboom YB-EET01 on the bench: no encoders, a real IMU). Now a
+// real sensor that the config or the bus names is initialised even when the
+// wheels are simulated, and only the sensors that are themselves fake are
+// synthesised from the wheels.
+static bool sim_imu = false;
+static bool sim_mag = false;
 
 #ifndef BAUDRATE
 #define BAUDRATE 921600
@@ -972,45 +981,63 @@ void setup()
     publish_mag = envFlag("pub_mag",
                               (strcasecmp(mag_name, "fake") != 0) || fake_wheels);
 
+    sim_imu = fake_wheels && imu_is_fake;
+    sim_mag = fake_wheels && (strcasecmp(mag_name, "fake") == 0);
     if (fake_wheels) {
-        // A bare module has nothing on the I2C bus, so probing it would fail and
-        // the fatal loops below would trap the board before it ever connects. The
-        // simulated IMU and magnetometer are computed from the simulated wheels
-        // anyway, and would overwrite whatever a real sensor returned -- so skip
-        // the hardware entirely and just prepare the two messages.
+        // The simulated IMU and magnetometer are computed from the simulated
+        // wheels; prepare the two messages whether or not they end up used.
         fake_imu.initMsgs(*imu_msg, *mag_msg);
-    } else {
-        if (!imu->init()) // take IMU failure as fatal
+    }
+    if (!sim_imu) {
+        if (!imu->init())
         {
-            Serial.println("IMU init failed");
-            syslog(LOG_INFO, "%s IMU init failed %lu", __FUNCTION__, millis());
-            while (1)
-            {
-                flashLED(3); // flash 3 times
-                runWifis();
-                runOta();
+            if (fake_wheels) {
+                // A bare board whose IMU did not answer is still a working
+                // simulated robot; say so loudly and carry on with the
+                // simulation rather than trapping the board before it connects.
+                Serial.println("[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU");
+                syslog(LOG_INFO, "%s IMU init failed, simulated IMU instead %lu", __FUNCTION__, millis());
+                sim_imu = true;
+                imu_is_fake = true;
+            } else {
+                Serial.println("IMU init failed");   // take IMU failure as fatal
+                syslog(LOG_INFO, "%s IMU init failed %lu", __FUNCTION__, millis());
+                while (1)
+                {
+                    flashLED(3); // flash 3 times
+                    runWifis();
+                    runOta();
+                }
             }
         }
+    }
+    if (!sim_imu) {
         // The data-ready line, if this board has one wired. -1 keeps polling.
+        const int imu_int = envInt("imu_int", IMU_INT_PIN);
+        imu->attachDataReady(imu_int);
+        if (imu_int >= 0)
+            Serial.printf("[imu] data-ready interrupt on GPIO %d (%s)\n", imu_int,
+                          imu->intConfigured() ? "driver enabled DATA_RDY"
+                                               : "driver cannot enable DATA_RDY; polls if the pin stays quiet");
+        else
+            Serial.println("[imu] polling (set imu_int to use a DATA_RDY pin)");
+    }
+    if (!sim_mag) {
+        if (!mag->init())
         {
-            const int imu_int = envInt("imu_int", IMU_INT_PIN);
-            imu->attachDataReady(imu_int);
-            if (imu_int >= 0)
-                Serial.printf("[imu] data-ready interrupt on GPIO %d (%s)\n", imu_int,
-                              imu->intConfigured() ? "driver enabled DATA_RDY"
-                                                   : "driver cannot enable DATA_RDY; polls if the pin stays quiet");
-            else
-                Serial.println("[imu] polling (set imu_int to use a DATA_RDY pin)");
-        }
-        if (!mag->init()) // take mag failure as fatal
-        {
-            Serial.println("MAG init failed");
-            syslog(LOG_INFO, "%s MAG init failed %lu", __FUNCTION__, millis());
-            while (1)
-            {
-                flashLED(4); // flash 4 times
-                runWifis();
-                runOta();
+            if (fake_wheels) {
+                Serial.println("[mag] init FAILED on a fake-wheel board - falling back to the simulated field");
+                syslog(LOG_INFO, "%s MAG init failed, simulated field instead %lu", __FUNCTION__, millis());
+                sim_mag = true;
+            } else {
+                Serial.println("MAG init failed");   // take mag failure as fatal
+                syslog(LOG_INFO, "%s MAG init failed %lu", __FUNCTION__, millis());
+                while (1)
+                {
+                    flashLED(4); // flash 4 times
+                    runWifis();
+                    runOta();
+                }
             }
         }
     }
@@ -1072,10 +1099,8 @@ void setup()
     // 2026-09-21).
     odometry->applyEnvCovariance();
     odometry->applyEnvFrames();
-    if (!fake_wheels) {
-        if (imu) imu->applyEnvFrames();
-        if (mag) mag->applyEnvFrames();
-    }
+    if (!sim_imu && imu) imu->applyEnvFrames();
+    if (!sim_mag && mag) mag->applyEnvFrames();
     // The SIMULATED sonar fills range_msg field by field and never touches the
     // header, so without this it published an empty frame_id -- a Range that no
     // consumer can place anywhere. The real path overwrites the whole message
@@ -1805,18 +1830,21 @@ void publishData()
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
     const uint32_t sens_t0 = micros();
-    if (fake_wheels) {
-        // Every field these would return is overwritten just below, and on a bare
-        // module the reads are two failing I2C transactions per publish, each one
-        // stalling the loop for the bus timeout. Skip them.
+    if (sim_imu) {
+        // Every field the driver would return is overwritten here, and on a bare
+        // module the read is a failing I2C transaction per publish, stalling the
+        // loop for the bus timeout. Skip it.
         fake_imu.apply(*imu_msg);
-        // Simulated wheels mean a simulated heading, so the magnetometer has to
-        // follow it: a real one left in the loop here would fight the fused yaw.
-        fake_imu.applyMag(*mag_msg);
     } else {
         *imu_msg = imu->getData();
         if (imu_is_fake)
             imu_msg->angular_velocity.z = odom_msg->twist.twist.angular.z;
+    }
+    if (sim_mag) {
+        // Simulated wheels mean a simulated heading, so a simulated magnetometer
+        // follows it; a real one is read as itself.
+        fake_imu.applyMag(*mag_msg);
+    } else {
         *mag_msg = mag->getData();
     }
     // Hard-iron offsets, from the env like everything else about this robot.

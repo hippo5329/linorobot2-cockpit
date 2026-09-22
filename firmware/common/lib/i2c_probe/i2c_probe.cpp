@@ -163,8 +163,22 @@ void identify(Sink &sink, uint8_t addr)
     }
 
     // It answered and we do not know what it is. That is worth printing: a bus
-    // with an unexpected device on it is a different problem from an empty one.
-    sink.add(addr, "unknown", "?", "", "", "unidentified device");
+    // with an unexpected device on it is a different problem from an empty one
+    // -- and the three registers most parts keep their identity in are worth
+    // printing with it, so the operator can name the chip from the log rather
+    // than from a second tool. (The Yahboom YB-EET01's IMU answered at 0x68
+    // with none of the InvenSense WHO_AM_I values; this line is how it gets
+    // identified.)
+    static char unknown_desc[4][48];
+    static int  unknown_n = 0;
+    const char *desc = "unidentified device";
+    if (unknown_n < 4) {
+        snprintf(unknown_desc[unknown_n], sizeof(unknown_desc[0]),
+                 "unidentified: reg00=%02X reg0F=%02X reg75=%02X",
+                 readRegister8(addr, 0x00), readRegister8(addr, 0x0F), readRegister8(addr, 0x75));
+        desc = unknown_desc[unknown_n++];
+    }
+    sink.add(addr, "unknown", "?", "", "", desc);
 }
 
 }  // namespace
