@@ -495,7 +495,7 @@ def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
         # node we can see is not the board's). Nothing to wait for.
         return True
     # It went and did not come back. Inside a container that is the normal
-    # case: incus attaches a unix-char device once and does not restore it.
+    # case: a container runtime attaches a device node once and does not restore it.
     # Returning True here used to let the touch run against nothing, and the
     # failure was then reported as the BOARD refusing BOOTSEL.
     log(f"usb reset done but {port} did not come back openable within {settle_s:.0f}s")
