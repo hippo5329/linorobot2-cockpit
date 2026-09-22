@@ -89,7 +89,11 @@ def test_registered_everywhere_a_driver_must_be():
 
 def test_the_interrupt_edge_count_is_reported_once():
     m = _read(os.path.join(FW, "src", "main.cpp"))
-    assert "fired %lu times in the first 5 s" in m
+    assert "fired %lu times in %.1f s = %.1f Hz" in m, \
+        "the edge report must print the window it measured, not a nominal one"
+    # The window is elapsed time since the attach, not a constant: the publish
+    # path this runs in only starts when the agent connects.
+    assert "const uint32_t int_ms    = millis() - imu->intAttachedMs();" in m
     h = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.h"))
     assert "volatile uint32_t int_edges_" in h and "uint32_t intEdges() const" in h
     c = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.cpp"))

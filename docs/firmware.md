@@ -306,10 +306,16 @@ probe now prints reg 0x00 / 0x0F / 0x75 for a device it cannot name, and the V2.
 bench answered at 0x68 with WHO_AM_I (0x75) = 0x67. `ICM42670IMU` in `default_imu.h` is the
 driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, one 14-byte burst
 (temperature, six axes) in the byte order `INTF_CONFIG0` declares, DATA_RDY routed to INT1 and
-INT2 as a push-pull active-high pulse when asked. Five seconds after a DATA_RDY pin is attached
-the base prints `[imu] data-ready line GPIO 41 fired N times in the first 5 s` -- about 1000 for a
-200 Hz ODR, 0 when the wire is on a pin the chip is not driving -- so the interrupt path is
-verified by a count in the boot log, not by faith.
+INT2 as a push-pull active-high pulse when asked. At least five seconds after a DATA_RDY pin is
+attached the base prints `[imu] data-ready line GPIO 41 fired N times in T s = R Hz`, and `R`
+should be the configured ODR -- 200 Hz here, 0 when the wire is on a pin the chip is not driving
+-- so the interrupt path is verified by a rate in the boot log, not by faith.
+
+The window is measured rather than assumed, because the report rides in the publish path and that
+path does not start until the micro-ROS agent connects. On a serial leg the agent is already
+waiting and the window is 5.0 s; over Wi-Fi the board must join an AP first and the same board at
+the same ODR reported 1576 edges in 7.9 s. Both are 200 Hz. A fixed "in the first 5 s" label read
+correctly only in the first case.
 
 The init follows TDK's own driver, because the first attempt did not and never got past
 WHO_AM_I: the probe had just read 0x67 from 0x68, and the driver's own read of the same register

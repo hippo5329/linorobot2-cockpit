@@ -1822,16 +1822,28 @@ void moveBase()
 void publishData()
 {
     static unsigned skip_dip = 0;
-    // The hardware verdict on a wired DATA_RDY line, once, five seconds in: how
-    // many edges the ISR actually counted. ~1000 for a 200 Hz ODR; 0 means
+    // The hardware verdict on a wired DATA_RDY line, once, at least five seconds
+    // in: how many edges the ISR actually counted, and over how long. 0 means
     // the wire is on a pin the chip is not driving.
+    //
+    // Report the WINDOW, not a nominal one. This runs in the publish path, which
+    // does not start until the agent connects: 5.0 s after the attach on a serial
+    // leg where the agent is already waiting, but 7.9 s on a Wi-Fi leg that has
+    // to join an AP first. A line that says "in the first 5 s" is therefore right
+    // only by luck -- measured on the Yahboom, the same 200 Hz ODR printed 1001
+    // on serial and 1576 over Wi-Fi, and only the first divides out to the ODR.
+    // Printing the elapsed time and the quotient makes the number a rate that can
+    // be checked against the configured ODR instead of a count to be squinted at.
     static bool int_reported = false;
     if (!int_reported && !sim_imu && imu && imu->intPin() >= 0
             && (millis() - imu->intAttachedMs()) > 5000) {
         int_reported = true;
-        Serial.printf("[imu] data-ready line GPIO %d fired %lu times in the first 5 s (%s)\n",
-                      imu->intPin(), (unsigned long)imu->intEdges(),
-                      imu->intEdges() ? "interrupt path live" : "never fired - polling");
+        const uint32_t int_ms    = millis() - imu->intAttachedMs();
+        const uint32_t int_edges = imu->intEdges();
+        Serial.printf("[imu] data-ready line GPIO %d fired %lu times in %.1f s = %.1f Hz (%s)\n",
+                      imu->intPin(), (unsigned long)int_edges, int_ms / 1000.0f,
+                      int_edges * 1000.0f / (float)int_ms,
+                      int_edges ? "interrupt path live" : "never fired - polling");
     }
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
