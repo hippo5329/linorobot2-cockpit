@@ -25,9 +25,9 @@ def test_a_bare_module_says_so_instead_of_printing_an_empty_table():
     default); the table says so and lists only that pin."""
     md = gen_wiring_table.render(bare_config("pico2"))
     assert "bare module" in md
-    rows = [l for l in md.splitlines() if l.startswith("| ") and "| Function |" not in l and "|---" not in l]
-    assert [r for r in rows if "Status LED" in r], "the LED row is the whole chart"
-    assert all("Status LED" in r or r.startswith("| 25 ") for r in rows), rows
+    rows = [l for l in md.splitlines() if l.startswith("| ") and "|---" not in l
+            and not l.startswith("| Function |") and not l.startswith("| GPIO |")]
+    assert rows and all("Status LED" in r for r in rows), rows
 
 
 def test_every_wired_pin_appears_once_by_function():
