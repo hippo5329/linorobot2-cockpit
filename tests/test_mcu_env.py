@@ -161,8 +161,12 @@ def test_battery_fake_lidar_and_geometry_reach_the_env():
     # gendrv drives a real LD19 now (the merge with gendrv_real), so flip the
     # flag on a copy: what is under test is that the emulator raycasts from the
     # config's LiDAR pose, not which board happens to ship with it on.
-    fake = _env_from_params(_with(reference_params("gendrv"),
-                                  sensors={"use_fake_ld19": True}))
+    # Every default config now shares one chassis with the laser at the base
+    # origin, so state the pose here: what is under test is that the emulator
+    # raycasts from the config's LiDAR pose, not what that pose happens to be.
+    params = _with(reference_params("gendrv"), sensors={"use_fake_ld19": True})
+    params.setdefault("geometry", {}).setdefault("laser", {})["x"] = 0.12
+    fake = _env_from_params(params)
     assert fake["fake_ld19"] == "1"
     assert float(fake["lidar_x"]) == 0.12   # the emulator raycasts from the config's LiDAR pose
     assert "pwm_min" not in fake and "pwm_max" not in fake   # derived from pwm_bits on the board

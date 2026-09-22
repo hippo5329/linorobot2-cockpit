@@ -48,7 +48,10 @@ def test_a_shared_pin_is_one_row_and_flagged():
 
 
 def test_inversion_is_noted_on_the_direction_pins_not_the_pwm():
+    # invert is off in every default config now (the default is forward), so ask
+    # for it: what is under test is WHERE the note lands, not who ships it on.
     params = yaml.safe_load(open(MECANUM))
+    params["base_controller"]["pins"]["motor2"]["invert"] = True
     md = gen_wiring_table.render(params)
     assert "| Motor 2 IN A | 6 | output | direction inverted |" in md
     assert "| Motor 2 PWM | 22 | output |  |" in md

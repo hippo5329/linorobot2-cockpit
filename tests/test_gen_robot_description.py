@@ -44,8 +44,11 @@ def test_mecanum_four_wheels_on_two_axles(reference):
 
 def test_sensor_frames_and_poses(reference):
     p = reference("gendrv")
-    p["geometry"]["laser"].update({"x": 0.21, "y": -0.02, "z": 0.3, "yaw": 1.5, "frame": "lidar_top"})
-    p["geometry"]["imu"].update({"x": 0.05, "z": -0.01})
+    # The references carry no explicit geometry any more -- one default chassis,
+    # derived. What is under test is that a pose the config DOES give is honoured.
+    geo = p.setdefault("geometry", {})
+    geo.setdefault("laser", {}).update({"x": 0.21, "y": -0.02, "z": 0.3, "yaw": 1.5, "frame": "lidar_top"})
+    geo.setdefault("imu", {}).update({"x": 0.05, "z": -0.01})
     root = _tree(p)
     j, xyz = _joint(root, "lidar_top_to_base_link")
     assert xyz == [0.21, -0.02, 0.3]
@@ -58,7 +61,7 @@ def test_sensor_frames_and_poses(reference):
 
 def test_footprint_sits_on_the_floor(reference):
     p = reference("pico2_mecanum")
-    p["geometry"]["wheel"]["z"] = -0.02
+    p.setdefault("geometry", {}).setdefault("wheel", {})["z"] = -0.02
     root = _tree(p)
     _, xyz = _joint(root, "base_to_footprint")
     assert math.isclose(xyz[2], p["kinematics"]["wheel_diameter"] / 2 + 0.02)
