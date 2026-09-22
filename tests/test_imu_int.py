@@ -103,7 +103,7 @@ def test_yahboom_reference_loads_and_is_the_board():
     assert (pins["encoder2"]["pin_a"], pins["encoder2"]["pin_b"]) == (47, 48)
     assert (pins["i2c"]["sda"], pins["i2c"]["scl"], pins["imu"]["int"]) == (40, 39, 41)
     assert pins["led"] == 45 and pins["battery"]["pin"] == 3
-    assert str(bc["sensors"]["imu"]).lower() == "qmi8658", "Yahboom names the part: QST QMI8658 at 0x6B"
+    assert str(bc["sensors"]["imu"]).lower() == "icm42670", "the V2.0 board answers 0x68 / WHO_AM_I 0x67: ICM-42670-P"
     assert int(mcu_env.hardware_env(d)["imu_int"]) == 41
 
 

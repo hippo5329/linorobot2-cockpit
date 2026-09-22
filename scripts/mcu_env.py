@@ -572,6 +572,7 @@ def hardware_env(params: dict) -> dict:
         "BNO085": {"accel_cov": 2.2e-4, "gyro_cov": 1.5e-6, "ori_cov": 4e-3},
         "LSM6DSOX": {"accel_cov": 4.7e-5, "gyro_cov": 4.4e-7},
         "ICM20948": {"accel_cov": 5.1e-4, "gyro_cov": 6.9e-6},
+        "ICM42670": {"accel_cov": 4.9e-5, "gyro_cov": 1.4e-6},   # 70 ug/rtHz, 3.8 mdps/rtHz
         "QMI8658": {"accel_cov": 8e-5, "gyro_cov": 2e-6},
         "MPU9250": {"accel_cov": 9e-4, "gyro_cov": 3e-6},
         "MPU9150": {"accel_cov": 1.5e-3, "gyro_cov": 3e-6},

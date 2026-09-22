@@ -5,6 +5,8 @@ IMUInterface *IMUInterface::instance_ = nullptr;
 
 void IMU_ISR_ATTR IMUInterface::dataReadyISR()
 {
-    if (instance_)
+    if (instance_) {
         instance_->data_ready_ = true;
+        instance_->int_edges_++;
+    }
 }

@@ -1822,6 +1822,17 @@ void moveBase()
 void publishData()
 {
     static unsigned skip_dip = 0;
+    // The hardware verdict on a wired DATA_RDY line, once, five seconds in: how
+    // many edges the ISR actually counted. ~1000 for a 200 Hz ODR; 0 means
+    // the wire is on a pin the chip is not driving.
+    static bool int_reported = false;
+    if (!int_reported && !sim_imu && imu && imu->intPin() >= 0
+            && (millis() - imu->intAttachedMs()) > 5000) {
+        int_reported = true;
+        Serial.printf("[imu] data-ready line GPIO %d fired %lu times in the first 5 s (%s)\n",
+                      imu->intPin(), (unsigned long)imu->intEdges(),
+                      imu->intEdges() ? "interrupt path live" : "never fired - polling");
+    }
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
 #endif

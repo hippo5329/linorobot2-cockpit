@@ -477,6 +477,167 @@ class QMI8658IMU : public IMUInterface
 };
 
 // ---------------------------------------------------------------------------
+// ICM-42670-P (TDK InvenSense 6-axis, I2C 0x68 / 0x69). Self-contained Wire
+// driver, written for the Yahboom YB-EET01 V2.0 -- whose documentation names a
+// QMI8658 and whose bus answers at 0x68 with WHO_AM_I (0x75) = 0x67, which is
+// this part. Datasheet DS-000451, register map rev 1.x; bank 0 only.
+//
+//   * +/-8 g (4096 LSB/g) and +/-1000 dps (32.768 LSB/dps), both at 200 Hz in
+//     low-noise mode, UI filter 25 Hz: the base publishes at 50 Hz, so each
+//     publish sees a settled, oversampled value.
+//   * ONE burst per sample, 0x09..0x16: temperature, AX..AZ, GX..GZ, big-endian.
+//   * DATA_RDY on request: INT_SOURCE0 routes UI_DRDY to INT1, INT_SOURCE3 to
+//     INT2, both configured push-pull, active-high, 100 us pulse -- a board that
+//     breaks out "INT" rarely says which pin, so both fire. Pulse mode needs no
+//     status read to re-arm. Neither pin is driven until asked.
+// ---------------------------------------------------------------------------
+class ICM42670IMU : public IMUInterface
+{
+    private:
+        static const uint8_t REG_SIGNAL_PATH_RESET = 0x02;  // bit4 SOFT_RESET_DEVICE_CONFIG
+        static const uint8_t REG_INT_CONFIG        = 0x06;  // INT2[5:3] INT1[2:0]: mode|drive|polarity
+        static const uint8_t REG_TEMP_DATA1        = 0x09;  // burst start
+        static const uint8_t REG_PWR_MGMT0         = 0x1F;  // GYRO_MODE[3:2] ACCEL_MODE[1:0]
+        static const uint8_t REG_GYRO_CONFIG0      = 0x20;  // GYRO_UI_FS_SEL[6:5] GYRO_ODR[3:0]
+        static const uint8_t REG_ACCEL_CONFIG0     = 0x21;  // ACCEL_UI_FS_SEL[6:5] ACCEL_ODR[3:0]
+        static const uint8_t REG_GYRO_CONFIG1      = 0x23;  // GYRO_UI_FILT_BW[2:0]
+        static const uint8_t REG_ACCEL_CONFIG1     = 0x24;  // ACCEL_UI_FILT_BW[2:0]
+        static const uint8_t REG_INT_SOURCE0       = 0x2B;  // INT1 sources: bit3 UI_DRDY_INT1_EN
+        static const uint8_t REG_INT_SOURCE3       = 0x2D;  // INT2 sources: bit3 UI_DRDY_INT2_EN
+        static const uint8_t REG_WHO_AM_I          = 0x75;  // -> 0x67
+
+        static const uint8_t SOFT_RESET            = 0x10;
+        static const uint8_t PWR_LN_BOTH           = 0x0F;  // gyro LN, accel LN
+        static const uint8_t GYRO_1000DPS_200HZ    = 0x28;  // FS 01 | ODR 1000 (200 Hz)
+        static const uint8_t ACCEL_8G_200HZ        = 0x28;  // FS 01 | ODR 1000 (200 Hz)
+        static const uint8_t FILT_BW_25HZ          = 0x06;
+        static const uint8_t INT_PP_HIGH_PULSE_BOTH = 0x1B; // INT1 011, INT2 011
+        static const uint8_t UI_DRDY_EN            = 0x08;
+
+        static constexpr float ACCEL_LSB_PER_G  = 4096.0f;
+        static constexpr float GYRO_LSB_PER_DPS = 32.768f;
+        static constexpr float DEG_TO_RAD_F     = 0.017453292519943295f;
+        static const uint8_t BURST_LEN = 14;    // 0x09..0x16
+
+        uint8_t addr_ = 0x68;
+        geometry_msgs__msg__Vector3 accel_{};
+        geometry_msgs__msg__Vector3 gyro_{};
+        float temperature_c_ = 0.0f;
+        uint32_t bursts_ok_ = 0;
+        uint32_t bursts_failed_ = 0;
+
+        void writeReg(uint8_t reg, uint8_t val)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            Wire.write(val);
+            Wire.endTransmission();
+        }
+
+        uint8_t readReg(uint8_t reg)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            if (Wire.endTransmission(false) != 0)
+                return 0xFF;
+            if (Wire.requestFrom((int)addr_, 1) != 1)
+                return 0xFF;
+            return Wire.read();
+        }
+
+        bool readBlock(uint8_t reg, uint8_t *buf, uint8_t len)
+        {
+            Wire.beginTransmission(addr_);
+            Wire.write(reg);
+            if (Wire.endTransmission(false) != 0)
+                return false;
+            const uint8_t got = Wire.requestFrom((int)addr_, (int)len);
+            for (uint8_t i = 0; i < got; i++)
+            {
+                const uint8_t b = Wire.read();
+                if (i < len) buf[i] = b;
+            }
+            return got == len;
+        }
+
+        static int16_t be16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] << 8 | p[1]); }
+
+        bool sample()
+        {
+            uint8_t b[BURST_LEN];
+            if (!readBlock(REG_TEMP_DATA1, b, BURST_LEN))
+            {
+                bursts_failed_++;
+                return false;
+            }
+            bursts_ok_++;
+            temperature_c_ = (float)be16(&b[0]) / 128.0f + 25.0f;
+            accel_.x = (float)be16(&b[2]) / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.y = (float)be16(&b[4]) / ACCEL_LSB_PER_G * g_to_accel_;
+            accel_.z = (float)be16(&b[6]) / ACCEL_LSB_PER_G * g_to_accel_;
+            gyro_.x = (float)be16(&b[8])  / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.y = (float)be16(&b[10]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            gyro_.z = (float)be16(&b[12]) / GYRO_LSB_PER_DPS * DEG_TO_RAD_F;
+            return true;
+        }
+
+    protected:
+        bool enableDataReadyInterrupt() override
+        {
+            writeReg(REG_INT_CONFIG, INT_PP_HIGH_PULSE_BOTH);
+            writeReg(REG_INT_SOURCE0, UI_DRDY_EN);
+            writeReg(REG_INT_SOURCE3, UI_DRDY_EN);
+            return readReg(REG_INT_SOURCE0) == UI_DRDY_EN;
+        }
+
+    public:
+        ICM42670IMU() {}
+
+        bool startSensor() override
+        {
+            Wire.begin();
+            bool found = false;
+            const uint8_t cand[2] = { 0x68, 0x69 };
+            for (uint8_t i = 0; i < 2 && !found; i++)
+            {
+                addr_ = cand[i];
+                found = readReg(REG_WHO_AM_I) == 0x67;
+            }
+            if (!found)
+                return false;
+
+            writeReg(REG_SIGNAL_PATH_RESET, SOFT_RESET);
+            delay(20);
+            writeReg(REG_PWR_MGMT0, PWR_LN_BOTH);
+            delay(2);                            // no register writes for 200 us after a mode change
+            writeReg(REG_GYRO_CONFIG0, GYRO_1000DPS_200HZ);
+            writeReg(REG_ACCEL_CONFIG0, ACCEL_8G_200HZ);
+            writeReg(REG_GYRO_CONFIG1, FILT_BW_25HZ);
+            writeReg(REG_ACCEL_CONFIG1, FILT_BW_25HZ);
+            delay(100);                          // gyro start-up and filter settle
+            if (readReg(REG_PWR_MGMT0) != PWR_LN_BOTH)
+                return false;
+            return sample();
+        }
+
+        geometry_msgs__msg__Vector3 readGyroscope() override
+        {
+            sample();
+            return gyro_;
+        }
+
+        geometry_msgs__msg__Vector3 readAccelerometer() override
+        {
+            return accel_;
+        }
+
+        uint8_t address() const { return addr_; }
+        float temperatureC() const { return temperature_c_; }
+        uint32_t burstsOk() const { return bursts_ok_; }
+        uint32_t burstsFailed() const { return bursts_failed_; }
+};
+
+// ---------------------------------------------------------------------------
 // LSM6DSOX (STMicroelectronics 6-axis, I2C / SPI). Self-contained Wire
 // driver (no external library). Supports I2C Fast-Mode-Plus up to 1 MHz.
 // I2C address 0x6A (SDO/SA0 low) or 0x6B (high).

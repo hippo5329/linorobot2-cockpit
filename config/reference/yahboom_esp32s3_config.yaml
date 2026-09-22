@@ -57,10 +57,11 @@ base_controller:
     rx_pin: 18
     raw_scan_topic: raw_scan
   sensors:
-    # Yahboom's own firmware names the part: a QST QMI8658 at 0x6B (0x6A with
-    # AD0/SDO grounded), 400 kHz. The bus is still probed at boot and wins over
-    # this name; naming it here just makes the fallback honest.
-    imu: QMI8658
+    # Yahboom's documentation names a QST QMI8658 at 0x6B; the V2.0 board on
+    # the bench answers at 0x68 with WHO_AM_I 0x67 -- a TDK ICM-42670-P. The
+    # bus is probed at boot and wins over this name either way; naming the part
+    # that was actually found keeps the fallback honest.
+    imu: ICM42670
     mag: NONE
     current: NONE
     env: NONE

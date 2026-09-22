@@ -70,6 +70,13 @@ void identify(Sink &sink, uint8_t addr)
                      "MPU6500 6-Axis IMU");
             return;
         }
+        if (who == 0x67) {
+            // TDK's newer 6-axis part; the Yahboom YB-EET01 V2.0 carries one
+            // where its documentation says QMI8658.
+            sink.add(addr, "imu", "ICM42670", "icm42670", "USE_ICM42670_IMU",
+                     "ICM-42670-P 6-Axis IMU (Acc+Gyr)");
+            return;
+        }
         const uint8_t who0 = readRegister8(addr, 0x00);
         if (who0 == 0xEA) {
             sink.add(addr, "imu", "ICM20948", "icm20948", "USE_ICM20948_IMU",

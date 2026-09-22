@@ -27,6 +27,7 @@ static const IMUEntry IMU_TABLE[] = {
     {"mpu9250",  makeIMU<MPU9250IMU>},
     {"qmi8658",  makeIMU<QMI8658IMU>},
     {"lsm6dsox", makeIMU<LSM6DSOXIMU>},
+    {"icm42670", makeIMU<ICM42670IMU>},
     {"icm20948", makeIMU<ICM20948IMU>},
     {"bno085",   makeIMU<BNO085IMU>},
 };

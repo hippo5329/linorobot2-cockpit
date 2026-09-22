@@ -389,7 +389,7 @@ const REFERENCE_DESIGNS = {
       max_rpm: 200,
       cpr: 1320,
       operating_voltage: 8.4,
-      imu: "QMI8658",
+      imu: "ICM42670",
       mag: "NONE",
       use_fake_imu: false,
       use_fake_mag: true,

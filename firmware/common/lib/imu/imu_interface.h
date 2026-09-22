@@ -68,6 +68,7 @@ class IMUInterface
         static void IMU_ISR_ATTR dataReadyISR();
         int int_pin_ = -1;
         volatile bool data_ready_ = false;
+        volatile uint32_t int_edges_ = 0;      // every rising edge the ISR saw
         bool int_ever_ = false;
         bool int_configured_ = false;
         bool poll_fallback_ = false;
@@ -258,6 +259,8 @@ class IMUInterface
         int intPin() const { return int_pin_; }
         bool intConfigured() const { return int_configured_; }
         bool intEverFired() const { return int_ever_; }
+        uint32_t intEdges() const { return int_edges_; }
+        uint32_t intAttachedMs() const { return int_attached_ms_; }
 
         sensor_msgs__msg__Imu getData()
         {
