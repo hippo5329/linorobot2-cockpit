@@ -74,9 +74,6 @@ def _status_name(status: int) -> str:
 # The obstacle wall of the simulated room (fake_ld19.h defaults).
 WALL_X = 2.0
 WALL_HALF_SPAN = 1.5
-# The widest gap between two /odom samples that still says where the robot
-# crossed the wall's line. Wider than this and the crossing is not measured.
-WALL_CROSS_MAX_GAP = 0.25
 
 
 class Nav2GoalTester(Node):
@@ -302,11 +299,16 @@ class Nav2GoalTester(Node):
             # robot that went around the END be interpolated into a straight line
             # through the middle, which is the difference between a pass and
             # "it drove through the wall".
+            # The interpolated y, and how uncertain it is: the robot could have
+            # been anywhere along the segment between the two samples, so the
+            # gap between them IS the error bar. A detour round the end at
+            # y = -1.6 came back as -1.31 and -1.44 with the samples 0.2-0.3 m
+            # apart, which is "inside the wall" by the number and "round the
+            # end" by the physics.
             gap = math.hypot(p1.x - prev[0], p1.y - prev[1])
             t = (WALL_X - prev[0]) / (p1.x - prev[0])
             y = prev[1] + t * (p1.y - prev[1])
-            self.wall_cross_y.append(y if gap <= WALL_CROSS_MAX_GAP else float("nan"))
-            self.wall_cross_gap = max(getattr(self, "wall_cross_gap", 0.0), gap)
+            self.wall_cross_y.append((y, gap))
 
     def send_goal(self) -> bool:
         self.get_logger().info("Waiting for /navigate_to_pose action server...")
@@ -456,20 +458,18 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         return abs(sy + t * (gy - sy)) <= WALL_HALF_SPAN
 
     def went_around() -> bool:
-        """Did the robot cross the wall's line beyond one of its ends?"""
-        return any(y == y and abs(y) > WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+        """Crossed beyond a wall end, further out than the measurement's error bar."""
+        return any(abs(y) - gap > WALL_HALF_SPAN for y, gap in getattr(node, "wall_cross_y", ()))
 
     def went_through() -> bool:
-        """Did it cross where the wall actually is? The simulated robot is pushed
-        off the segment (fake_ld19.h clampToRoom), so this should be impossible;
-        if it happens the room, not the navigation, is what failed. A crossing
-        whose bracketing samples were too far apart is NaN and claims nothing."""
-        return any(y == y and abs(y) <= WALL_HALF_SPAN for y in getattr(node, "wall_cross_y", ()))
+        """Crossed where the wall actually is, by more than the error bar.
 
-    def crossing_unmeasured() -> bool:
-        """Did the robot cross the line without any usable measurement of where?"""
-        ys = getattr(node, "wall_cross_y", ())
-        return bool(ys) and not any(y == y for y in ys)
+        The simulated robot is pushed off the segment (fake_ld19.h clampToRoom,
+        measured: a board driven at the wall stops 0.30 m short and stays), so
+        this should be impossible; if it is ever true the room, not the
+        navigation, is what failed. Anything within a sample gap of the wall's
+        end is not a measurement of either answer."""
+        return any(abs(y) + gap < WALL_HALF_SPAN for y, gap in getattr(node, "wall_cross_y", ()))
 
     def wall_path_ok() -> bool:
         if not leg_crosses_wall():
@@ -494,9 +494,11 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             return "yes, planned and driven"
         if node.path_avoids_wall:
             return "yes, in the plan"
-        measured = [y for y in getattr(node, "wall_cross_y", ()) if y == y]
-        if measured:
-            return f"yes, driven (crossed at y={max(measured, key=abs):+.2f})"
+        crossings = [(y, gap) for y, gap in getattr(node, "wall_cross_y", ())
+                     if abs(y) - gap > WALL_HALF_SPAN]
+        if crossings:
+            y, gap = max(crossings, key=lambda c: abs(c[0]))
+            return f"yes, driven (crossed at y={y:+.2f} ±{gap:.2f})"
         return ("unproven: no /plan detour seen and the crossing was not measured; "
                 "the wall is solid and the robot got there, so it went round")
 
@@ -586,8 +588,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"needs before arriving proves anything.")
                 elif reached_goal() and not wall_path_ok():
                     if went_through():
-                        ys = ", ".join("unmeasured" if y != y else f"{y:+.2f}"
-                                       for y in node.wall_cross_y)
+                        ys = ", ".join(f"{y:+.2f} ±{gap:.2f}" for y, gap in node.wall_cross_y)
                         print(f"❌ NAV2 LEG {i}/{n} DROVE THROUGH THE WALL: it crossed x={WALL_X:.1f} "
                               f"at y={ys}, inside the wall's span (±{WALL_HALF_SPAN:.1f} m)"
                               f"{_gap(node)}. The simulated robot is supposed to be pushed off that "

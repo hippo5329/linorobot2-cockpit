@@ -433,7 +433,7 @@ def test_the_return_leg_is_judged_on_the_wall_too(monkeypatch, capsys):
             super().begin_leg(gx, gy)
             self.leg_start_xy = (3.0, 0.0) if gx == 0.0 else (0.0, 0.0)
             self.path_avoids_wall = gx != 0.0
-            self.wall_cross_y = [] if gx != 0.0 else [-0.31]
+            self.wall_cross_y = [] if gx != 0.0 else [(-0.31, 0.01)]
     node = ThroughOnTheWayHome(odom_lin=0.25, dist=3.1, goal_dist=0.2, goal_status=4)
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1) is False
     assert "LEG 2/2 DROVE THROUGH THE WALL" in capsys.readouterr().out
@@ -450,7 +450,7 @@ def test_a_leg_driven_around_the_wall_passes_without_the_plan(monkeypatch, capsy
     A tester that subscribes after the first plans are published would otherwise
     fail a leg the robot demonstrably drove around (GenDrv, 2026-09-22)."""
     node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False, goal_status=4)
-    node.wall_cross_y = [1.72]
+    node.wall_cross_y = [(1.72, 0.01)]
     assert _run(monkeypatch, node, timeout=0.3, round_trips=0, require_goal=True,
                 goal_x=3.0, goal_y=0.0) is True
 
@@ -459,18 +459,18 @@ def test_driving_through_the_wall_is_not_an_arrival(monkeypatch, capsys):
     """The simulated robot is pushed off the wall segment, so a crossing inside
     the wall's span means the room failed, not the navigation."""
     node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
-    node.wall_cross_y = [0.04]
+    node.wall_cross_y = [(0.04, 0.01)]
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
     assert "DROVE THROUGH THE WALL" in capsys.readouterr().out
 
 
-def test_a_crossing_measured_from_distant_samples_claims_nothing(monkeypatch, capsys):
-    """A dropped burst of /odom would interpolate a robot that went around the
-    wall's END into a straight line through its middle. NaN means unmeasured,
-    and an unmeasured crossing neither passes a leg nor fails one for driving
-    through a wall."""
+def test_a_crossing_within_its_own_error_bar_of_the_end_claims_nothing(monkeypatch, capsys):
+    """The gap between the two /odom samples bracketing the crossing IS the
+    error bar on it. A detour round the end at y = -1.6 came back as -1.44 with
+    the samples 0.30 m apart: inside the wall by the number, round the end by
+    the physics. Neither answer is measured, so the leg is not failed for it."""
     node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False, goal_status=4)
-    node.wall_cross_y = [float("nan")]
+    node.wall_cross_y = [(-1.44, 0.30)]
     assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=1,
                 goal_x=3.0, goal_y=0.0) is True
     out = capsys.readouterr().out
