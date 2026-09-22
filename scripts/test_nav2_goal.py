@@ -473,6 +473,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                         and (moved() or not require_motion):
                     arrived = True
                     break
+                if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
+                    break                # Nav2 gave up; waiting out the window adds nothing
             took = time.time() - t0
             if not arrived:
                 if not start_gap_is_meaningful():
