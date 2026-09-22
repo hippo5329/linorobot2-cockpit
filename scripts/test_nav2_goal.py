@@ -188,6 +188,11 @@ class Nav2GoalTester(Node):
         # a wall the base is pinned against. Reading both is what lets a verdict
         # say which of the two happened.
         self.raw_max_x: float = float("-inf")
+        # Crossings measured on the UNFILTERED pose. The firmware clamps that
+        # one -- it is where the simulation's physics live -- so it, not the
+        # filtered estimate, answers "did the robot go through the wall".
+        self.raw_cross_y: list = []
+        self._raw_prev = None
         self.create_subscription(Odometry, "/odom/unfiltered",
                                  self._raw_odom_cb, sensor_qos)
 
@@ -222,6 +227,8 @@ class Nav2GoalTester(Node):
         self._goal_handle = None
         self.wall_cross_y = []
         self.raw_max_x = float("-inf")
+        self.raw_cross_y = []
+        self._raw_prev = None
         self.goal_x, self.goal_y = goal_x, goal_y
         self.path_received = None
         self.path_avoids_wall = False
@@ -292,7 +299,15 @@ class Nav2GoalTester(Node):
         self._note_command(msg.twist)
 
     def _raw_odom_cb(self, msg: Odometry):
-        self.raw_max_x = max(self.raw_max_x, msg.pose.pose.position.x)
+        rx = msg.pose.pose.position.x
+        ry = msg.pose.pose.position.y
+        self.raw_max_x = max(self.raw_max_x, rx)
+        prev = self._raw_prev
+        self._raw_prev = (rx, ry)
+        if prev is not None and (prev[0] - WALL_X) * (rx - WALL_X) < 0:
+            gap = math.hypot(rx - prev[0], ry - prev[1])
+            t = (WALL_X - prev[0]) / (rx - prev[0])
+            self.raw_cross_y.append((prev[1] + t * (ry - prev[1]), gap))
 
     def world_xy(self, msg: Odometry):
         """Where the robot is in the frame the goal was sent in.
@@ -510,6 +525,26 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         t = (WALL_X - sx) / (gx - sx)
         return abs(sy + t * (gy - sy)) <= WALL_HALF_SPAN
 
+    def crossings():
+        """The crossings that answer "did it go through the wall", and whose.
+
+        The firmware clamps the SIMULATED pose -- /odom/unfiltered -- so that is
+        where the room's physics live and the only pose that can answer the
+        question. The filtered pose is an estimate this EKF builds from
+        velocities alone; it drifts, and it can cut a corner the robot never
+        cut. Measured on the GenDrv (2026-09-22): the filtered pose crossed at
+        y=-0.63, apparently straight through the middle, while the base's own
+        odometry never went nearer the wall than its own radius and had rounded
+        the end. Failing that leg blamed the firmware for the estimator.
+
+        Falls back to the filtered pose only when /odom/unfiltered was never
+        seen, and says which it used.
+        """
+        raw = getattr(node, "raw_cross_y", None)
+        if raw or getattr(node, "raw_max_x", float("-inf")) > float("-inf"):
+            return raw or [], "the base's own odometry"
+        return getattr(node, "wall_cross_y", ()), "the filtered pose (no /odom/unfiltered)"
+
     def went_around() -> bool:
         """Crossed at or beyond a wall end, further out than the error bar.
 
@@ -517,7 +552,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         that keeps it one radius clear puts a crossing near the end at
         |y| a little under the span rather than over it."""
         return any(abs(y) + gap > WALL_HALF_SPAN - WALL_END_MARGIN
-                   for y, gap in getattr(node, "wall_cross_y", ()))
+                   for y, gap in crossings()[0])
 
     def went_through() -> bool:
         """Crossed where the wall actually is, by more than the error bar.
@@ -528,7 +563,17 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         navigation, is what failed. Anything within a sample gap of the wall's
         end is not a measurement of either answer."""
         return any(abs(y) + gap < WALL_HALF_SPAN - WALL_END_MARGIN
-                   for y, gap in getattr(node, "wall_cross_y", ()))
+                   for y, gap in crossings()[0])
+
+    def estimator_cut_the_corner() -> bool:
+        """The filtered pose went through where the base did not.
+
+        Not a collision -- nothing hit anything -- but worth saying, because
+        Nav2 steered by a pose that was inside an obstacle.
+        """
+        filt = getattr(node, "wall_cross_y", ())
+        return (not went_through()) and any(
+            abs(y) + gap < WALL_HALF_SPAN - WALL_END_MARGIN for y, gap in filt)
 
     def wall_path_ok() -> bool:
         if not leg_crosses_wall():
@@ -647,7 +692,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"needs before arriving proves anything.")
                 elif reached_goal() and not wall_path_ok():
                     if went_through():
-                        ys = ", ".join(f"{y:+.2f} ±{gap:.2f}" for y, gap in node.wall_cross_y)
+                        _cross, _whose = crossings()
+                        ys = ", ".join(f"{y:+.2f} ±{gap:.2f}" for y, gap in _cross)
                         raw_x = getattr(node, "raw_max_x", float("-inf"))
                         if raw_x < WALL_X - 0.15:
                             why = (f"The base itself never got past x={raw_x:.2f} -- it is pinned "
@@ -659,7 +705,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                             why = (f"The base's own odometry reached x={raw_x:.2f} too, so the clamp "
                                    f"that should push a simulated robot off the wall did not act: "
                                    f"check that fake_ld19 is enabled and clampToRoom is reached.")
-                        print(f"❌ NAV2 LEG {i}/{n} DROVE INTO THE WALL: the pose Nav2 steers by "
+                        print(f"❌ NAV2 LEG {i}/{n} DROVE INTO THE WALL: {_whose} "
                               f"crossed x={WALL_X:.1f} at y={ys}, inside the wall's span "
                               f"(±{WALL_HALF_SPAN:.1f} m){_gap(node)}. {why}")
                     else:
@@ -678,6 +724,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
                   f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
                   f"around the wall: {around}; {node.cmd_vel_count} cmd_vel so far")
+            if estimator_cut_the_corner():
+                fy = ", ".join(f"{y:+.2f} ±{gap:.2f}"
+                               for y, gap in getattr(node, "wall_cross_y", ()))
+                print(f"   ⚠️ leg {i}/{n}: the BASE went round the wall, but the filtered pose "
+                      f"Nav2 steers by crossed x={WALL_X:.1f} at y={fy} — inside the obstacle. "
+                      f"Nothing collided; the estimate did. This EKF fuses velocities only, so "
+                      f"it has no position to correct against and drifts across a long leg.")
             # Close the leg before opening the next one: cancel the goal in
             # flight and wait for a terminal status, so bt_navigator is idle
             # when the next goal arrives and this leg's status is its own.

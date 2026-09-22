@@ -507,3 +507,45 @@ def test_clipping_the_corner_is_not_driving_through_the_wall(monkeypatch, capsys
     node.wall_cross_y = [(-1.40, 0.01)]
     assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is True
     assert "DROVE INTO THE WALL" not in capsys.readouterr().out
+
+
+def test_the_base_going_round_is_not_failed_for_the_estimate_cutting_through(monkeypatch, capsys):
+    """The firmware clamps the SIMULATED pose, so /odom/unfiltered is where the
+    room's physics live. This EKF fuses velocities only -- no position to correct
+    against -- so the filtered pose drifts and can cut a corner the robot never
+    cut. Measured on the GenDrv 2026-09-22: the filtered pose crossed x=2.0 at
+    y=-0.63, apparently straight through the middle, while the base's own
+    odometry had rounded the end. Failing that leg blamed the firmware for the
+    estimator, and it was the last red leg holding up a cut."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=False, goal_status=4)
+    node.wall_cross_y = [(-0.63, 0.01)]        # the estimate: through the middle
+    node.raw_cross_y = [(-1.62, 0.01)]         # the base: round the end
+    node.raw_max_x = 2.31
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=1,
+                goal_x=3.0, goal_y=0.0) is True
+    out = capsys.readouterr().out
+    assert "DROVE INTO THE WALL" not in out
+    assert "the BASE went round the wall" in out and "the estimate did" in out
+
+
+def test_the_base_itself_going_through_still_fails_and_says_whose_pose(monkeypatch, capsys):
+    """When the unfiltered pose is the one inside the wall, the room failed."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    node.wall_cross_y = [(0.04, 0.01)]
+    node.raw_cross_y = [(0.04, 0.01)]
+    node.raw_max_x = 2.6
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
+    out = capsys.readouterr().out
+    assert "DROVE INTO THE WALL" in out
+    assert "the base's own odometry crossed" in out
+
+
+def test_without_unfiltered_odom_the_filtered_pose_is_all_there_is(monkeypatch, capsys):
+    """A bringup that never published /odom/unfiltered still gets a verdict, and
+    the transcript says the answer rests on the filtered pose."""
+    node = FakeNode(odom_lin=0.25, dist=3.1, goal_dist=0.2, planned=True, goal_status=4)
+    node.wall_cross_y = [(0.04, 0.01)]
+    node.raw_cross_y = []
+    node.raw_max_x = float("-inf")
+    assert _run(monkeypatch, node, timeout=0.3, round_trips=1, goal_x=3.0, goal_y=0.0) is False
+    assert "no /odom/unfiltered" in capsys.readouterr().out
