@@ -12,12 +12,20 @@ rule in isolation.
 # it is not importable on the build host. Its DECISION RULE is pure, though, and
 # that is the part worth guarding -- so it is mirrored here verbatim. If the two
 # ever drift, that is the bug this file exists to catch: keep them identical.
-def judge(want_lin, want_ang, got_lin, got_ang):
+def judge(want_lin, want_ang, got_lin, got_ang, want_lat=0.0, got_lat=0.0):
     """The suite's rule, extracted: the extreme in the commanded direction,
-    within a loose sign-and-magnitude tolerance."""
+    within a loose sign-and-magnitude tolerance. vy is judged by the same rule
+    as vx -- a sideways command is a command like any other."""
     ok_vx = abs(got_lin - want_lin) < max(0.12, abs(want_lin) * 0.45)
+    ok_vy = abs(got_lat - want_lat) < max(0.12, abs(want_lat) * 0.45)
     ok_wz = abs(got_ang - want_ang) < max(0.45, abs(want_ang) * 0.45)
-    return ok_vx and ok_wz
+    return ok_vx and ok_vy and ok_wz
+
+
+def strafe_expectation(base_type, strafe_speed=0.20):
+    """What the sideways pair must produce on this drivetrain: mirrored from
+    the suite's `want = STRAFE_SPEED if MECANUM else 0.0`."""
+    return strafe_speed if base_type == "mecanum" else 0.0
 
 
 def statistic(samples, want):
@@ -142,3 +150,54 @@ def test_the_statistic_matches_the_suite_verbatim():
     assert "def _statistic(samples: list, want: float) -> float:" in src
     assert "return sum(samples) / len(samples)" in src
     assert "got_vx = _statistic(vx, lin)" in src
+    assert "got_vy = _statistic(vy, lat)" in src
+    assert "want = STRAFE_SPEED if MECANUM else 0.0" in src
+    assert "STRAFE_SPEED = 0.20" in src
+
+
+# --- the sideways pair -------------------------------------------------------
+# Strafing is the only thing a mecanum base does that 2wd and skid cannot, so a
+# drivetrain axis without it tests nothing: a mecanum leg would go green with a
+# dead vy channel. The command is identical on every base; only the right answer
+# differs, which is what makes the same pair worth running three times.
+
+def test_a_mecanum_base_must_strafe_at_the_commanded_speed():
+    want = strafe_expectation("mecanum")
+    assert want == 0.20
+    assert judge(0.0, 0.0, 0.0, 0.0, want_lat=want, got_lat=0.19)
+    assert judge(0.0, 0.0, 0.0, 0.0, want_lat=-want, got_lat=-0.21)
+
+
+def test_a_mecanum_base_with_a_dead_vy_channel_fails():
+    """The whole reason the pair exists: without it this base passes 6/6."""
+    assert not judge(0.0, 0.0, 0.0, 0.0, want_lat=0.20, got_lat=0.00)
+
+
+def test_a_mecanum_base_that_turns_instead_of_strafing_fails():
+    """A wrong inverse-kinematics branch yaws the base instead of translating."""
+    assert not judge(0.0, 0.0, 0.0, 1.10, want_lat=0.20, got_lat=0.00)
+
+
+def test_a_differential_base_must_do_nothing_when_told_to_strafe():
+    for base in ("2wd", "4wd", "skid_steer"):
+        assert strafe_expectation(base) == 0.0
+    # commanded sideways, base stayed put and reported nothing: correct.
+    assert judge(0.0, 0.0, 0.0, 0.0, want_lat=0.0, got_lat=0.0)
+
+
+def test_a_differential_base_that_reports_vy_fails():
+    """A 2wd base cannot move sideways, so vy on /odom is a broken odometry
+    model -- it will be fused, and nothing else in the suite would catch it."""
+    assert not judge(0.0, 0.0, 0.0, 0.0, want_lat=0.0, got_lat=0.18)
+
+
+def test_the_strafe_pair_runs_on_every_drivetrain():
+    """Same command, three different right answers -- so the pair is not
+    conditioned on the base type, only its expectation is."""
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "drive_suite.py")).read()
+    assert 'run("strafe left",  0.00, 0.00, lat=+want)' in src
+    assert 'run("strafe right", 0.00, 0.00, lat=-want)' in src
+    # every base runs them
+    assert "STRAFES = True" in src

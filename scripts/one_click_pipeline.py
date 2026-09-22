@@ -1175,7 +1175,7 @@ def main():
         # Step 4.7: SLAM and Nav2 must start from a known pose.
         #
         # The flash zeroes the simulated pose, so on an ordinary run there is
-        # nothing to do -- which is why the six manoeuvres now run AFTER the goal
+        # nothing to do -- which is why the drive manoeuvres now run AFTER the goal
         # instead of before it. They used to run here and leave a 0.46-0.48 m
         # residual inside the same micro-ROS session; SLAM then anchored its map
         # wherever the robot stood, and a goal at fixed coordinates was either
@@ -1346,17 +1346,24 @@ def main():
             # Rates prove the board TALKS; only driving proves it MOVES, and moves
             # the way it was told -- the FakeEncoder invert and the PID windup each
             # shipped perfect 50 Hz topics on a base that spun in place or pinned a
-            # rail. Every pass runs the six manoeuvres unless --no-drive-test, and a
+            # rail. Every pass runs the drive manoeuvres unless --no-drive-test, and a
             # failure is recorded but not fatal. They run HERE, after the goal,
             # because running them before SLAM left a 0.46-0.48 m residual in the
             # pose that SLAM then anchored its map to. When the goal has just
             # failed they are also the diagnostic: a base that still does 6/6 puts
             # the fault above the base. See docs memory "always flash and drive".
-            print("\n[6.5/6] [DRIVE] Six manoeuvres, checked against odometry...")
+            # The drivetrain decides how many manoeuvres there are and what the
+            # strafe pair must answer, so the suite is told which base this is
+            # rather than left to assume a differential one.
+            base_type = str((params.get("kinematics") or {}).get("base_type", "2wd")).lower()
+            n_moves = 8
+            print(f"\n[6.5/6] [DRIVE] {n_moves} manoeuvres ({base_type}), checked against "
+                  f"odometry...")
             stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
             tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
-            drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} {tname}",
-                                timeout=90, distro=args.distro)
+            drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} "
+                                f"{tname} --base-type {base_type}",
+                                timeout=140, distro=args.distro)
             if drive_res.stdout:
                 print(drive_res.stdout)
             raw_after, ekf_after = _odom_xy(args.distro), _ekf_xy(args.distro)
@@ -1373,7 +1380,7 @@ def main():
                       f"goal fails while the base drives. Check the ekf block and the TF tree.")
                 failures.append("EKF does not follow /odom/unfiltered")
             if drive_res.returncode == 0:
-                print("  ✅ All six manoeuvres correct.")
+                print(f"  ✅ All {n_moves} manoeuvres correct ({base_type}).")
             else:
                 print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
                 failures.append(f"Drive suite: exit {drive_res.returncode}")

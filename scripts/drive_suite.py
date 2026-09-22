@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Six manoeuvres, checked for sign and magnitude against odometry.
+"""Eight manoeuvres, checked for sign and magnitude against odometry.
 
 Rates prove the board talks. Only this proves it MOVES, and moves the way it
 was told: the fake-wheel invert bug and the PID integral windup both produced
@@ -16,6 +16,17 @@ performance one (see scripts/test_nav2_goal.py for the same reasoning).
     python3 scripts/drive_suite.py geometry_msgs/msg/TwistStamped
     python3 scripts/drive_suite.py --config ~/linorobot2-config/lino1_config.yaml
     python3 scripts/drive_suite.py --prefix lino1
+    python3 scripts/drive_suite.py --base-type mecanum
+
+Six of the eight are forward/backward, two turns and two spins. The last two are
+a sideways pair, and they are run on EVERY drivetrain because the command is the
+same and only the right answer differs: a mecanum base must strafe at the
+commanded speed without turning, and a 2wd or skid base must do nothing at all.
+Strafing is the only thing mecanum does that the others cannot, so without the
+pair a mecanum base passes with its vy channel dead; and a differential base
+that reports vy has a broken odometry model, which nothing else here would
+catch. The drivetrain comes from --base-type, or from kinematics.base_type in
+--config.
 
 A namespaced robot has to be addressed by its namespace or the suite drives
 nothing and then reports the silence as the board's fault. `--config` reads
@@ -56,6 +67,10 @@ ROBOT_R = 0.30
 WALL_X, WALL_HALF_SPAN = 2.0, 1.5
 NEAR = 0.05          # "against" a surface: within this of where the clamp holds
 
+# Set from the drivetrain before the manoeuvres run. The closures read them, so
+# they are module-level rather than threaded through every call.
+BASE_TYPE, MECANUM, STRAFES = "2wd", False, True
+
 
 def _where(x: float, y: float) -> str:
     """Which surface, if any, the robot is being held against."""
@@ -95,23 +110,40 @@ def _topics(prefix: str) -> tuple:
     return f"{ns}/cmd_vel", f"{ns}/odom/unfiltered"
 
 
+# The sideways command used for the strafe pair. Well under the 0.4 m/s the Nav2
+# legs drive at, so a base that ignores vy is obvious rather than marginal.
+STRAFE_SPEED = 0.20
+
+
 def main() -> int:
+    global BASE_TYPE, MECANUM, STRAFES
     argv = sys.argv[1:]
     prefix = ""
+    base_type = "2wd"
     rest = []
     i = 0
     while i < len(argv):
-        if argv[i] == "--prefix" and i + 1 < len(argv):
+        if argv[i] == "--base-type" and i + 1 < len(argv):
+            base_type = argv[i + 1].strip().lower()
+            i += 2
+        elif argv[i] == "--prefix" and i + 1 < len(argv):
             prefix = argv[i + 1].strip().strip("/")
             i += 2
         elif argv[i] == "--config" and i + 1 < len(argv):
             import yaml
             with open(os.path.expanduser(argv[i + 1])) as fh:
-                prefix = cockpit_paths.robot_namespace(yaml.safe_load(fh) or {})
+                _cfg = yaml.safe_load(fh) or {}
+            prefix = cockpit_paths.robot_namespace(_cfg)
+            base_type = str((_cfg.get("kinematics") or {}).get(
+                "base_type", base_type)).strip().lower()
             i += 2
         else:
             rest.append(argv[i])
             i += 1
+    BASE_TYPE = base_type
+    MECANUM = base_type == "mecanum"
+    # Every drivetrain runs the strafe pair; only the expected answer differs.
+    STRAFES = True
     cmd_topic, odom_topic = _topics(prefix)
 
     rclpy.init()
@@ -127,23 +159,26 @@ def main() -> int:
               flush=True)
     pub = node.create_publisher(T, cmd_topic, 10)
 
-    seen = {"vx": [], "wz": [], "x": float("nan"), "y": float("nan")}
+    seen = {"vx": [], "vy": [], "wz": [], "x": float("nan"), "y": float("nan")}
 
     def _odom(m):
         seen["vx"].append(m.twist.twist.linear.x)
+        seen["vy"].append(m.twist.twist.linear.y)
         seen["wz"].append(m.twist.twist.angular.z)
         seen["x"] = m.pose.pose.position.x
         seen["y"] = m.pose.pose.position.y
 
     node.create_subscription(Odometry, odom_topic, _odom, qos_profile_sensor_data)
 
-    def command(lin: float, ang: float, secs: float) -> None:
+    def command(lin: float, ang: float, secs: float, lat: float = 0.0) -> None:
         m = T()
         if stamped:
             m.twist.linear.x = lin
+            m.twist.linear.y = lat
             m.twist.angular.z = ang
         else:
             m.linear.x = lin
+            m.linear.y = lat
             m.angular.z = ang
         t0 = time.time()
         while time.time() - t0 < secs:
@@ -153,13 +188,16 @@ def main() -> int:
             rclpy.spin_once(node, timeout_sec=0.02)
             time.sleep(0.03)
 
-    def run(label: str, lin: float, ang: float, secs: float = 5.0) -> bool:
+    def run(label: str, lin: float, ang: float, secs: float = 5.0,
+            lat: float = 0.0) -> bool:
         command(0.0, 0.0, 2.5)
         x0, y0 = seen["x"], seen["y"]
         seen["vx"].clear()
+        seen["vy"].clear()
         seen["wz"].clear()
-        command(lin, ang, secs)
+        command(lin, ang, secs, lat)
         vx = seen["vx"] or [0.0]
+        vy = seen["vy"] or [0.0]
         wz = seen["wz"] or [0.0]
         # The extreme in the commanded direction -- but only when there IS one.
         # A zero command has no direction to peak in, and judging it by its
@@ -168,20 +206,28 @@ def main() -> int:
         # pose moved 0.05 m in 5 s, which is standing still. The question for a
         # zero command is whether the base STAYED there, so it is the mean.
         got_vx = _statistic(vx, lin)
+        got_vy = _statistic(vy, lat)
         got_wz = _statistic(wz, ang)
         ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)
+        ok_vy = abs(got_vy - lat) < max(0.12, abs(lat) * 0.45)
         ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)
         x1, y1 = seen["x"], seen["y"]
         where = _where(x1, y1)
-        print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (want %+.2f) %s   wz %+.3f (want %+.2f) %s"
+        # vy is only printed when it is part of the question: on a differential
+        # base every line would carry a column that is always zero, and a column
+        # that is always zero stops being read.
+        lat_col = ("   vy %+.3f (want %+.2f) %s"
+                   % (got_vy, lat, "ok" if ok_vy else "BAD")) if lat or STRAFES else ""
+        print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (want %+.2f) %s%s   wz %+.3f (want %+.2f) %s"
               "   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
-              % (label, lin, ang, got_vx, lin, "ok" if ok_vx else "BAD",
+              % (label, lin, ang, got_vx, lin, "ok" if ok_vx else "BAD", lat_col,
                  got_wz, ang, "ok" if ok_wz else "BAD", x0, y0, x1, y1, where), flush=True)
-        if not (ok_vx and ok_wz) and where not in ("clear", "pose unknown"):
+        ok = ok_vx and ok_vy and ok_wz
+        if not ok and where not in ("clear", "pose unknown"):
             print("             ^ held against %s: the clamp moves the pose every cycle and "
                   "that shows up as a velocity nobody commanded. Not a base fault." % where,
                   flush=True)
-        return ok_vx and ok_wz
+        return ok
 
     # Wait for the board before judging it: no odom in 10 s is its own failure.
     t0 = time.time()
@@ -199,8 +245,27 @@ def main() -> int:
         run("left spin",   0.00,  1.50),
         run("right spin",  0.00, -1.50),
     ]
+    # Strafing is the ONE thing a mecanum base does that the other two cannot, so
+    # without these a mecanum leg goes green with its vy channel dead -- which is
+    # exactly how a drivetrain axis can be added and test nothing (2026-09-23).
+    #
+    # The command is the same on every base; only the expected answer differs.
+    # On 2wd and skid the right answer is that NOTHING happens: a differential
+    # base that reports vy has a broken odometry model, and a differential base
+    # that actually moves sideways has a broken inverse kinematic. Both are worth
+    # a leg, and neither was tested before.
+    if STRAFES:
+        want = STRAFE_SPEED if MECANUM else 0.0
+        results += [
+            run("strafe left",  0.00, 0.00, lat=+want),
+            run("strafe right", 0.00, 0.00, lat=-want),
+        ]
+        if not MECANUM:
+            print("             ^ %s is not a mecanum base: a sideways command must "
+                  "produce no vy and no motion." % BASE_TYPE, flush=True)
     command(0.0, 0.0, 2.5)
-    print("VERDICT: %d/6 manoeuvres correct" % sum(results), flush=True)
+    print("VERDICT: %d/%d manoeuvres correct (%s)"
+          % (sum(results), len(results), BASE_TYPE), flush=True)
     rclpy.shutdown()
     return 0 if all(results) else 1
 
