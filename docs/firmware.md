@@ -214,7 +214,7 @@ with the `i2c_scan` env key) `setup()` probes the bus, prints every address that
 the detected driver names to the sensor factories.
 
 Detection wins over the configured name, and that is deliberate: the YAML is a claim about the
-hardware and the bus is the hardware. A wrong claim used to produce the worst failure this firmware
+hardware and the bus is the hardware. Trusting a wrong claim produces the worst failure this firmware
 has — `imu->init()` returns false, `setup()` enters the fatal `flashLED(3)` loop, the board never
 reaches micro-ROS, and the Cockpit sees a board that will not connect and nothing saying why — while
 the `i2c_detect` application, two flash pages away in the same image, could have read the right
@@ -264,11 +264,10 @@ mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely sa
 asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
 `tests/test_qmi8658_driver.py` pins each of these.
 
-**Fake wheels no longer imply a fake IMU.** `use_fake_wheel: true` used to skip the I2C sensors
-entirely -- right for a bare module with nothing on the bus, wrong for a bare custom board with no
-encoders and a real IMU (the Yahboom on the bench), where the `/imu/data_raw` measured at 50 Hz
-was the simulation and the driver under test never ran. Now only the sensors that are themselves
-fake are synthesised from the simulated wheels (`sim_imu = fake_wheels && imu_is_fake`, likewise
+**Fake wheels do not imply a fake IMU.** Skipping the I2C sensors whenever `use_fake_wheel: true`
+would be right for a bare module with nothing on the bus and wrong for a board with no encoders and
+a real IMU: `/imu/data_raw` would be the simulation at 50 Hz and the driver you meant to test would
+never run. Only the sensors that are themselves fake are synthesised from the simulated wheels (`sim_imu = fake_wheels && imu_is_fake`, likewise
 the magnetometer): a real IMU the config or the bus names is initialised and its DATA_RDY
 attached with fake wheels too, and one that fails to init on such a board falls back to the
 simulation with `[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU`
@@ -437,8 +436,8 @@ of flash, over the application. `flash_mcu.py` writes the env **before** the app
 because loading the application with `-x` runs it and leaves BOOTSEL.
 
 ### The ADC LUT is flash data, not source to paste
-`firmware/adc_calibrate` used to print `const int16_t ADC_LUT[4096]` over serial for the user
-to paste into a config header and rebuild. Under tool mode there is nothing to paste into, so
+`firmware/adc_calibrate` does not print `const int16_t ADC_LUT[4096]` over serial to be pasted into
+a config header and rebuilt: under tool mode there is nothing to paste into, so
 the table goes to its own `adclut` partition (0x3f0000, 12 KB: header sector + 8 KB of int16),
 carved out of the front of the unused `spiffs` area so `env` and both app slots keep their
 offsets and no already-flashed board is disturbed. The header is written **last** and acts as
@@ -481,13 +480,11 @@ Enforced in three places, deliberately: `uros_transport.cpp` gates `UROS_HAVE_UD
 fallback alone is not enough — it is discovered on hardware, one build and one flash after the mistake.
 
 ### Pair the config with its own PlatformIO env
-A robot config carries `pio_env:`; build the env it names and no other. This used to be sharp —
-`esp32_wifi` and `esp32` were separate envs and crossing them failed on
-`micro_ros_agent_locator has incomplete type`. There is now **one ESP32 env**: the transport is installed
-at boot by `initUrosTransport()` from the env partition's `transport` key. That is also why there is now
-one ESP32 *config* — `config/reference/gendrv_config.yaml`. The serial and udp4 DevKit references that
-used to sit beside it described the same silicon and differed only in keys the env decides at boot, so
-they were deleted; `-e esp32` builds gendrv, and `transport=` in the env picks the rest.
+A robot config carries `pio_env:`; build the env it names and no other. There is **one ESP32 env**:
+the transport is installed at boot by `initUrosTransport()` from the env partition's `transport` key.
+That is also why there is one ESP32 *config* — `config/reference/gendrv_config.yaml`. A serial and a
+udp4 DevKit reference beside it would describe the same silicon and differ only in keys the env
+decides at boot; `-e esp32` builds gendrv, and `transport=` in the env picks the rest.
 
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
@@ -764,14 +761,12 @@ released image: the published `esp32` firmware is built from the Wi-Fi profile
 runs with `wifi=0`. The emulator's counters carry `udp_noradio` so a bench can see it happening.
 
 ### An AP that does not answer must not stop the boot
-`initWifis()` ended in `while (wifiMulti.run() != WL_CONNECTED) delay(500);` — no timeout, no
-message. A board whose AP refused it stopped inside `setup()`: the console ended at
-`[wifi] using SSID '<x>' from the env partition` and stayed there, no I2C scan, no banner, no
-micro-ROS, no syslog (which needs that radio), and no reset either — so it looked bricked while
-it was in fact waiting. Measured on the GenDrv on 2026-09-19: 0 resets in 25 s, 0 datagrams, 0
-datawriters, while the same board had been on that AP half an hour earlier.
+An unbounded `while (wifiMulti.run() != WL_CONNECTED) delay(500);` stops a board whose AP refuses
+it inside `setup()`: the console ends at `[wifi] using SSID '<x>' from the env partition` and stays
+there — no I2C scan, no banner, no micro-ROS, no syslog (which needs that radio), and no reset
+either, so it looks bricked while it is in fact waiting.
 
-The wait is bounded now (`WIFI_CONNECT_TIMEOUT_MS`, 20 s) and says which way it went; the robot
+The wait is bounded (`WIFI_CONNECT_TIMEOUT_MS`, 20 s) and says which way it went; the robot
 boots either way and `runWifis()` keeps trying. That retry had to be rate-limited in the same
 change: `WiFiMulti::run()` on a *disconnected* radio calls the blocking `WiFi.scanNetworks()`
 first, and until now a board only reached that state briefly between dropouts. It can now be in
@@ -829,10 +824,9 @@ a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 
 ### `topic_prefix` is an env key too, so the names are built at run time
 
-It used to be the one remaining compile-time fact about a robot: `TOPIC_PREFIX`
-was pasted onto each topic literal by the preprocessor, so putting two robots on
-one DDS domain meant a build per robot -- and the published images, built from
-the generated bare config, could not do it at all. It is `topic_prefix` in the
+Pasting `TOPIC_PREFIX` onto each topic literal with the preprocessor would mean
+a build per robot to put two robots on one DDS domain -- and the published
+images, built from the generated bare config, could not do it at all. It is `topic_prefix` in the
 env now, which means the names themselves have to be assembled at run time.
 
 `topicName()` in `main.cpp` does that, and the two rules it follows are the
@@ -861,9 +855,8 @@ names gets you a robot that publishes `/lino1/odom/unfiltered` with
 `frame_id: odom` inside it -- naming a frame that does not exist in its own TF
 tree, where `robot_state_publisher` has published `lino1/odom`. The EKF finds
 nothing relating the two, ignores every message, and publishes nothing; the
-board looks perfect and the robot has no odometry. That is what the two-robot
-bench found on 2026-09-21, and it is invisible with one robot because a
-single-robot stack is usually run without a prefix at all.
+board looks perfect and the robot has no odometry. It is invisible with one
+robot, because a single-robot stack is usually run without a prefix at all.
 
 So `envPrefixed()` lives in `mcu_env`, beside the env reader it depends on, and
 every frame the firmware stamps goes through it: `odom` and `base_footprint` in

@@ -240,16 +240,13 @@ Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robo
 
 A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
 the pin matrix, I2C bus, LiDAR pin and baud, micro-ROS transport and credentials all live in
-the `env` flash partition, not the binary. A robot is a configuration, not a build — and as
-of 2026-09-20 that is true without exception. `comm_mode` used to be the one thing compiled
-in; it is an env key now, along with the sonar pins, the fake-sensor flags, the motor brake
-mode and the forward safety stop. Nothing about a robot is decided by the compiler any more.
-The only conditionals left in the firmware are about the silicon (ESP32 vs RP2) or the ROS 2
-distro's message ABI.
+the `env` flash partition, not the binary. A robot is a configuration, not a build: the pin
+matrix, `comm_mode`, the sonar pins, the fake-sensor flags, the motor brake mode and the
+forward safety stop are all env keys. The only conditionals in the firmware are about the
+silicon (ESP32 vs RP2) or the ROS 2 distro's message ABI.
 
 **The RP2 images are built from the W envs and run on both.** A Pico W is an RP2040 and a
-Pico 2 W is an RP2350, so one image serves the W and non-W board alike — verified on a plain
-Pico 2. The radio is compiled in but never initialised until you enter a Wi-Fi list: with no
+Pico 2 W is an RP2350, so one image serves the W and non-W board alike. The radio is compiled in but never initialised until you enter a Wi-Fi list: with no
 SSID in the env and none compiled in, nothing touches the CYW43, so a board that has no radio
 at all is unaffected and pays only flash for the capability. Entering the list is what turns
 Wi-Fi, syslog and OTA on.
@@ -260,14 +257,13 @@ Wi-Fi, syslog and OTA on.
 moves.
 
 Notes: an ESP32 at 921 600 baud cannot carry a full LiDAR scan alongside the 50 Hz control
-loop — measured, not assumed. With the scan on `lidar_comm: topic` every topic drops to
-**33 Hz** and jitter triples; with the scan off the same board holds **50.0 Hz**. At
+loop. With the scan on `lidar_comm: topic` every topic drops to **33 Hz** and jitter triples;
+with the scan off the same board holds **50.0 Hz**. At
 1.5 Mbaud, which the GenDrv's CP2102N does, the scan runs at 78 Hz and the control topics
 stay at 50 Hz. So use a faster bridge, or `udp4`, or leave the scan to the robot computer.
 
 The ESP32-S3's serial is native USB CDC, so its port comes and goes with the firmware rather
-than the cable. The mecanum RP2350 reference has now been run on hardware: real MPU6050 found
-by bus probe, real HC-SR04 on GP27/GP28, 50 Hz control topics.
+than the cable.
 
 The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
 ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
@@ -358,8 +354,7 @@ Fake mode is what makes a bare board useful. Under `base_controller.sensors`:
 default a board falls back to with a blank env: `fake_wheel`, `fake_ld19`, `fake_env`,
 `fake_sonar` and the IMU/mag names can all be changed on a flashed board without a compiler.
 The same binary is a bench simulator or a real robot depending on four bytes in the env
-partition — demonstrated on the bench by turning `/raw_scan` off on a running board with
-`fake_ld19=0` and nothing else.
+partition.
 
 **Where the scan is raycast follows the wiring, not the config.** A board whose emulated
 LD19 goes out a real serial bridge is read by the real LiDAR driver, because that is the path
@@ -383,7 +378,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` or `imu/data_raw` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/mag` only with a magnetometer (`PUBLISH_MAG`) |
 | `raw_scan` | `std_msgs/UInt8MultiArray` | fake LD19 on the MCU |
-| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`) — they were compile-time until 2026-09-20 and no reference config carried them, so the interrupt-driven driver had never run in any released image; it does now, measured at 8.3 Hz on an RP2350. `safety_stop` is off unless `safety_stop=1` is in the env, because it brakes the robot.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
+| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` is off unless `safety_stop=1` is in the env, because it brakes the robot.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
 above moves under `/lino1/` — on the board, which builds both its topic names *and* the
@@ -468,7 +463,7 @@ COCKPIT_URL=http://127.0.0.1:18099 \
 ```
 
 It is worth running on its own: the web UI and the one-click pipeline are different code paths,
-and the UI is the one most people use. Several defects have only ever shown up through it.
+and the UI is the one most people use.
 
 ---
 
@@ -489,7 +484,7 @@ explain.
 
 | fork | why |
 |---|---|
-| **[hippo5329/micro_ros_platformio](https://github.com/hippo5329/micro_ros_platformio)** | Builds the micro-ROS library the firmware links against. Its per-distro recipe lists the repositories to clone, **by branch**, at build time. Upstream's `lyrical` entry still pinned four of them to `rolling` from when they had no lyrical branch; `rolling` kept moving, and the drift eventually overflowed the ESP32's `dram0_0_seg` by 96 bytes mid-release. Our rule: a repository with a branch for our distro is pinned to it, and only one that genuinely has none stays on `rolling`. Upstream is not developing this package, so it is ours to keep correct. |
+| **[hippo5329/micro_ros_platformio](https://github.com/hippo5329/micro_ros_platformio)** | Builds the micro-ROS library the firmware links against. Its per-distro recipe lists the repositories to clone, **by branch**, at build time. Upstream's `lyrical` entry pins four of them to `rolling`, which keeps moving and drifts until the build overflows the ESP32's `dram0_0_seg`. Here, a repository with a branch for our distro is pinned to it, and only one that genuinely has none stays on `rolling`. Upstream is not developing this package. |
 | **[hippo5329/ldlidar_stl_ros2](https://github.com/hippo5329/ldlidar_stl_ros2)** | The LD19/LD06 driver. ldrobot's node declares only the serial parameters; every non-serial path here needs the ones the fork adds — `comm_mode`, `server_ip`/`server_port` for a board streaming its scan over UDP, and `raw_scan_topic`/`bins`. With the upstream driver, `comm_mode: udp_server` reaches a node that has never heard of it, falls through to the serial path, dies on `input serial param error` with an empty port, and no `/scan` is ever published. |
 | **[hippo5329/arduino-pico](https://github.com/hippo5329/arduino-pico)** (branch `fix/rp2350-bootsel-touch-hang`) | The RP2 core. Fixes an RP2350 hang on the 1200-baud BOOTSEL touch — the mechanism the cockpit uses to put a board into the bootloader without anyone reaching for the button. See [docs/flashing.md](docs/flashing.md). |
 

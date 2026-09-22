@@ -15,10 +15,10 @@
 
 ### 1-Click leaves the robot running, and something has to remember it
 
-The pipeline used to stop bringup, SLAM and Nav2 in its `finally` block the moment it finished. That
-is right for an automated run and wrong for a person: pressing **Start 1-Click** is how you *get* a
-robot, and it handed back one that had just been switched off — nothing on `/scan`, nothing to drive,
-the map saved from a stack that no longer existed.
+The pipeline leaves bringup, SLAM and Nav2 running when it finishes. Stopping them would be right
+for an automated run and wrong for a person: pressing **Start 1-Click** is how you *get* a robot,
+and a stack that is switched off on the way out gives you nothing on `/scan`, nothing to drive, and
+a map saved from a stack that no longer exists. Pass `--shutdown-when-done` for the automated case.
 
 The stack now stays up until it is stopped. `--shutdown-when-done` restores the old behaviour and is
 what automation should pass: a bench run that leaves a stack behind floods the DDS domain for whatever
@@ -151,11 +151,11 @@ origin would make `dock_robot` drive at a fiction. On jazzy these are the only t
 ### "Launched" is not "active", and Nav2 will happily look launched
 `lifecycle_manager` brings the Nav2 servers up as a unit, so one node that fails to configure aborts the
 whole set — and it aborts *after* the healthy ones have logged a clean configure, so the tail of
-`logs/nav2.log` looks fine. `one_click_pipeline.py` used to `time.sleep(8)` and print "✅ Nav2 stack
-launched" unconditionally; on 2026-09-16 it printed that 24 s after the stack had died, then drove a goal
-into nothing and reported `Nav2 obstacle test returned 1` — blaming the goal for a stack that was never
-there. It now calls `wait_for_nav2_activation()`, which watches the log for `Managed nodes are active`
-versus `Failed to bring up all requested nodes` and names the node that failed.
+`logs/nav2.log` looks fine. So a fixed wait and an unconditional "✅ Nav2 stack launched" will cheerfully announce a stack that
+has already died, and the goal driven into nothing then reads as a navigation failure.
+`one_click_pipeline.py` calls `wait_for_nav2_activation()` instead, which watches the log for
+`Managed nodes are active` versus `Failed to bring up all requested nodes` and names the node that
+failed.
 
 The node that failed was `bt_navigator`: `config/rover_pico2_config.yaml` was the only config still
 naming its navigators in the **slash** form (`nav2_bt_navigator/NavigateToPoseNavigator`), which
@@ -232,8 +232,8 @@ not have helped; do not raise a nav2 timeout to chase this symptom again.
 
 The file reaches every process the same way: the robot image exports `FASTDDS_DEFAULT_PROFILES_FILE`
 container-wide (`docker-compose.yml`, `docker/Dockerfile`), and `runners.py` / `one_click_pipeline.py`
-export it for native runs. Until 2026-09-19 only the CLI pipeline did, so anything started from the
-browser ran without these profiles.
+export it for native runs, so a stack started from the browser and one started from the CLI get the
+same profiles.
 
 ### Fast DDS 3.x can leave one endpoint unmatched forever, and nav2 never activates
 On lyrical (Fast DDS 3.6) `bt_navigator` failed its *activate* transition on 8 of 13 runs with
@@ -264,10 +264,10 @@ file (the deb writes `.sources`, not `.list`), and check `apt-get update` itself
 inferring from what installed.
 
 ### The description is generated from the config, not picked from a shelf
-`bringup.launch.py` used to include `linorobot2_description`'s `description.launch.py` with a
-xacro chosen by `kinematics.base_type` alone. Those files carry a 90 mm wheel on a 260 mm
-track; the reference GenDrv robot has 152 mm on 271 mm. Odometry was right (it comes from the
-env) and the TF tree was wrong, so the robot sat at the wrong height and its wheels turned at
+Including `linorobot2_description`'s `description.launch.py` with a xacro chosen by
+`kinematics.base_type` alone does not work: those files carry a 90 mm wheel on a 260 mm
+track, while the reference GenDrv robot has 152 mm on 271 mm. Odometry would be right (it comes from
+the env) and the TF tree wrong, so the robot sits at the wrong height and its wheels turn at
 the wrong scale in every viewer -- a mismatch nothing reports, because SLAM and Nav2 never
 consult wheel geometry.
 
@@ -287,8 +287,8 @@ the fresh image was proven on the GenDrv bench first (generated description publ
 
 
 ### The IMU filter's `dt` comes from the stamps, not from a constant copied out of the firmware
-`imu_filter_madgwick` used to run with `constant_dt: 0.02`, mirroring the firmware's
-`CONTROL_TIMER` (20 ms). The firmware does publish `/imu/data_raw` once per control period,
+Running `imu_filter_madgwick` with `constant_dt: 0.02` to mirror the firmware's `CONTROL_TIMER`
+(20 ms) is wrong. The firmware does publish `/imu/data_raw` once per control period,
 but what *arrives* is not always 50 Hz: an RP2040 at 921600 delivers ~40 Hz, and best-effort
 QoS drops a message rather than stall the link. With a constant `dt` the filter integrates the
 gyro for 20 ms per message it *receives*, so every dropped message is time that never happened
