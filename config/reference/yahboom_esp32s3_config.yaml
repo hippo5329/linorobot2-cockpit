@@ -48,7 +48,13 @@ base_controller:
   use_dual_core: true
   lidar:
     model: ld19
-    comm_mode: topic
+    # Not `topic`: this board reaches the PC through a 921600-baud bridge, and a
+    # scan on the same wire as the 50 Hz control topics pulls every rate down
+    # (46.5 Hz measured). The emulated LD19 goes out the LiDAR header instead
+    # (UART1: TX 17, RX 18 -- the MS200 connector); with nothing plugged in
+    # there, bringup's host fake laser stands in, as on the bare ESP32.
+    comm_mode: serial
+    rx_pin: 18
     raw_scan_topic: raw_scan
   sensors:
     # Yahboom's own firmware names the part: a QST QMI8658 at 0x6B (0x6A with

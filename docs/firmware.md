@@ -264,6 +264,17 @@ mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely sa
 asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
 `tests/test_qmi8658_driver.py` pins each of these.
 
+**The S3 image is built for a 4 MB flash, the smallest S3 module.** The bootloader trusts the
+image header's flash size. Built for the DevKitC-1 board file's 8 MB, the same image put the
+Yahboom's 4 MB module into a reboot loop before `setup()` ever ran -- `Detected size(4096k)
+smaller than the size in the binary image header(8192k). Probe failed`, an assert in
+`do_core_init`, `Rebooting...` -- while the flash itself had reported success. One image per MCU
+means building for the smallest module (`board_upload.flash_size = 4MB` in `[base_esp32s3]`): a
+larger flash goes unused, and the env partition at 0x3FF000 is the last sector of 4 MB either
+way, the layout the 4 MB ESP32 DevKit has always had. The flasher now reads the ROM at 115200
+when no application banner arrives and puts those lines in the log, so a boot loop is named as
+one instead of "no banner".
+
 **`console: uart0` -- the S3 image talks where the board's USB actually is.** The S3 images
 are built with `ARDUINO_USB_CDC_ON_BOOT=1`, so `Serial` is the chip's native USB (HW CDC/JTAG on
 GPIO 19/20) and UART0 (GPIO 43/44) is `Serial0`, which nothing used. That fits the DevKit and not
