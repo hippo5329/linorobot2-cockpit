@@ -1139,7 +1139,7 @@ def main():
                     # The scan has to come back too before SLAM is asked to map it.
                     if has_lidar:
                         wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
-                                       distro=args.distro, require_message=True)
+                                       distro=args.distro, require_message="header.frame_id")
 
         # Step 5: SLAM. A robot with no scan source has nothing to map.
         if has_lidar:
