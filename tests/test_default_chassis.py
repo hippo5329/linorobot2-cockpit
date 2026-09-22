@@ -320,3 +320,44 @@ def test_a_failed_goal_reports_what_nav2_complained_about():
 def test_the_pipeline_asks_for_them_on_a_failed_goal():
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert 'print(_nav2_complaints(os.path.join(LOG_DIR, "nav2.log")))' in pipe
+
+
+# --- the EKF's heading source ------------------------------------------------
+
+def _all_configs():
+    """Every reference, plus every bare module the rule generates: the EKF row is
+    part of the one default chassis, so a fix to it must reach both."""
+    for name, cfg in _refs():
+        yield name, cfg
+    import gen_bare_config
+    for mcu in sorted(gen_bare_config.BOARDS):
+        yield f"bare_{mcu}", gen_bare_config.bare_config(mcu)
+
+
+def _ekf(cfg):
+    ekf = (cfg.get("ekf") or {}).get("ekf_filter_node", {}).get("ros__parameters", {})
+    return ekf or (cfg.get("ekf") or {})
+
+
+def test_every_config_fuses_absolute_yaw_from_the_imu():
+    """linorobot2_hardware's wiki specifies imu0 as yaw, vyaw, ax, ay.
+
+    Without index 5 the EKF integrates yaw rate with nothing to correct it: the
+    magnetometer that exists to anchor the heading is fused into madgwick and
+    then thrown away, and the error lands in map->odom where nobody looks.
+    Measured 2026-09-23 with it off: madgwick -137.3 deg against wheels -129.1,
+    and the map viewer drew the scan 5-8 deg off the walls it had just built.
+    """
+    for name, cfg in _all_configs():
+        imu0 = _ekf(cfg).get("imu0_config")
+        assert imu0, f"{name}: no imu0_config"
+        assert imu0[5] is True, f"{name}: imu0_config[5] (absolute yaw) is not fused"
+        assert imu0[11] is True, f"{name}: imu0_config[11] (yaw rate) is not fused"
+
+
+def test_only_one_source_supplies_absolute_yaw():
+    """Two absolute headings that disagree make the filter split the difference."""
+    for name, cfg in _all_configs():
+        odom0 = _ekf(cfg).get("odom0_config")
+        assert odom0, f"{name}: no odom0_config"
+        assert odom0[5] is False, f"{name}: odom0_config[5] also fuses absolute yaw"

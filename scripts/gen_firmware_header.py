@@ -289,6 +289,29 @@ def config_warnings(params: dict) -> list:
             f"use_fake_ld19 with lidar.comm_mode 'serial' transmits synthetic LD19 frames "
             f"out of {where}: wire it to a serial bridge or the host UART, or /scan stays "
             f"silent. Use comm_mode 'topic' to publish the scan over micro-ROS instead.")
+    # An IMU whose absolute yaw is not fused leaves the EKF dead-reckoning its
+    # heading off the yaw RATE alone, with nothing to correct against. It never
+    # looks broken: the robot drives, the map builds, and SLAM quietly absorbs
+    # the growing error into map -> odom. Measured on the bench 2026-09-23 with
+    # this row unset -- madgwick -137.3 deg, wheels -129.1 deg, and the map
+    # viewer drawing the scan 5-8 deg off the walls it had just built.
+    #
+    # The magnetometer exists to anchor exactly this (FakeIMUFromWheels::applyMag
+    # rotates a world field by the wheel heading for no other reason), and
+    # linorobot2_hardware's wiki specifies imu0 as yaw, vyaw, ax, ay.
+    ekf = node_params(params.get("ekf"), "ekf_filter_node")
+    imu0 = ekf.get("imu0_config")
+    if isinstance(imu0, list) and len(imu0) > 5 and not imu0[5]:
+        if sensors.get("imu", "NONE") != "NONE" or sensors.get("use_fake_imu"):
+            out.append(
+                "an IMU is fitted but ekf imu0_config[5] (absolute yaw) is false: the EKF "
+                "integrates yaw rate with nothing to correct it, and the heading error ends "
+                "up in map->odom instead of anywhere you would look. Enable it.")
+    odom0 = ekf.get("odom0_config")
+    if isinstance(odom0, list) and len(odom0) > 5 and odom0[5] and isinstance(imu0, list) and imu0[5]:
+        out.append(
+            "both odom0_config[5] and imu0_config[5] fuse absolute yaw: two absolute headings "
+            "that disagree make the filter split the difference. Fuse yaw from the IMU only.")
     out.extend(gen_robot_description.geometry_warnings(params))
     return out
 
