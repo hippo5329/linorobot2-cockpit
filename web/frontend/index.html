@@ -223,10 +223,10 @@
       </p>
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px; margin-top:10px;">
         <div id="sim-odom-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
-          <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (100 Hz /odom)</b>
+          <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (50 Hz /odom)</b>
         </div>
         <div id="sim-imu-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
-          <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (100 Hz /imu/data)</b>
+          <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data_raw)</b>
         </div>
         <div id="sim-lidar-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated LiDAR:</span> <b style="color:#34d399;">Active (10 Hz /scan)</b>
@@ -1366,7 +1366,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     <div class="card">
       <h2>Robot bringup</h2>
       <p class="hint"><code>bringup.launch.py</code> starts its own micro-ROS agent internally
-        (base_serial_port/transport/port below) -- Console does not launch a separate agent
+        (base_serial_port/transport/port below) -- the cockpit does not launch a separate agent
         alongside it, since two agents on the same port would just fight each other.
         The manual agent controls in Config Studio are for other uses only (e.g. testing agent
         connectivity on its own).</p>
@@ -1376,7 +1376,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         whatever connection details are hardcoded in <code>linorobot2_bringup</code>'s own
         launch files (e.g. YDLIDAR/RPLIDAR already use persistent <code>/dev/ydlidar</code>
         /<code>/dev/rplidar</code> udev symlinks). For a custom serial path, baudrate, or the
-        LiDAR-over-WiFi-UDP bridge, use the Laser driver card on the Sensors tab instead of
+        LiDAR-over-WiFi-UDP bridge, use the Laser driver card on the LiDAR / Scan tab instead of
         going through Bringup.</p>
       <div class="row">
         <button id="btn-bringup-start" class="btn btn-primary">Start bringup</button>
@@ -1500,13 +1500,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>🗺️ 9. Visualize &amp; SLAM Mapping / Nav2 Navigation (RViz via browser)</h2>
       <p class="hint">Most robot computers are headless -- RViz has nowhere to open a window
         on. This runs RViz against a virtual display and serves it over noVNC, the same idea
-        as the <code>kasmvnc</code> service in the console's <code>docker/docker-compose.yaml</code>,
-        but native (no Docker) to match how the rest of Console installs things. Works whether
+        as the <code>kasmvnc</code> service in the cockpit's <code>docker/docker-compose.yaml</code>,
+        but native (no Docker) to match how the rest of the cockpit installs things. Works whether
         you're viewing from the robot computer itself or a separate laptop on the network.</p>
-      <p class="hint"><b>Heavier than the rest of Console</b> -- RViz is a full Qt/OpenGL app,
+      <p class="hint"><b>Heavier than the rest of the cockpit</b> -- RViz is a full Qt/OpenGL app,
         and on a small SBC (limited CPU, 4GB RAM class) running it headlessly through Xvfb adds
         real CPU/memory load on top of Bringup/Nav2. On constrained hardware, prefer the plain
-        Sensors tab's <code>/scan</code> canvas viewer (much cheaper) and only reach for this
+        LiDAR / Scan tab's <code>/scan</code> canvas viewer (much cheaper) and only reach for this
         when you actually need the full map/costmap/TF view.</p>
       <div class="row">
         <label>VNC display <input type="text" id="vnc-display" value=":99"></label>
@@ -1815,7 +1815,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>🕹️ 8. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:600;">no hardware needed</span></h2>
       <p class="hint">Drive the robot from this page -- no physical joystick, and no
         terminal for <code>teleop_twist_keyboard</code>. Drag the stick (or use the arrow
-        keys / WASD while it has focus) and Console publishes <code>/cmd_vel</code> at
+        keys / WASD while it has focus) and the cockpit publishes <code>/cmd_vel</code> at
         20&nbsp;Hz. Pair it with the <b>Teleop</b> RViz view to watch the robot move,
         which on a bare module running <code>USE_FAKE_WHEEL</code> firmware is the whole
         robot: cmd_vel drives the simulated wheels and the odometry comes back.</p>
@@ -1882,9 +1882,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <h2 style="margin:0;">📡 6. Standalone Laser Driver &amp; Radar Viewer</h2>
         <span class="badge-pill badge-accent" style="font-size:0.75rem; font-weight:700;">Live Sensor Stream</span>
       </div>
-      <p class="hint">Directly run and verify the 2D LiDAR driver independently of the micro-ROS autonomy stack. Configured model synchronizes with <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">Sensors</a> tab.</p>
-        micro-ROS agent -- the LiDAR talks to the robot computer directly (USB serial or its
-        own WiFi-UDP relay), not through the MCU/agent link.</p>
+      <p class="hint">Directly run and verify the 2D LiDAR driver independently of the micro-ROS autonomy stack. Configured model synchronizes with <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">Sensors</a> tab.
+        It needs no micro-ROS agent -- the LiDAR talks to the robot computer directly (USB
+        serial or its own WiFi-UDP relay), not through the MCU/agent link.</p>
       <div class="row">
         <label>Model
           <select id="laser-driver-model"></select>
@@ -1925,7 +1925,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <div class="row" id="laser-driver-udpbridge-row" style="display:none">
           <p class="hint">The MCU relays raw LiDAR UART bytes as UDP datagrams to this port
             (its <code>LIDAR_PORT</code>/<code>AGENT_IP</code> setting in config-engine must
-            point at this robot computer). Console bridges them into a local persistent serial
+            point at this robot computer). The cockpit bridges them into a local persistent serial
             device with <code>socat</code>, then points the driver at that device -- there's no
             other consumer for this feed today.</p>
           <label>UDP listen port <input type="text" id="laser-driver-udp-port" value="8889"></label>
@@ -1951,9 +1951,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <label for="laser-driver-topic" class="form-label" style="margin:0;">Scan topic</label>
         <input type="text" id="laser-driver-topic" class="form-input font-mono"
                value="/scan" placeholder="/scan" style="max-width:220px;">
-        <span class="input-hint">The viewer read <code>/scan</code> and only
-          <code>/scan</code>; a robot publishing under a namespace, or a second
-          laser on <code>/scan_raw</code>, could not be plotted at all.</span>
+        <span class="input-hint">Which topic to plot. Change it for a robot publishing
+          under a namespace (<code>/robot1/scan</code>) or a second laser on a topic of
+          its own (<code>/scan_raw</code>).</span>
       </div>
       <button id="btn-lidar-start" class="btn btn-primary">Start</button>
       <button id="btn-lidar-stop" class="btn btn-danger" disabled>Stop</button>
@@ -2402,7 +2402,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           <span>Automatically start Robot Bringup when Teleop, SLAM, Nav, or Calibration starts</span>
         </label>
       </div>
-      <p class="hint">Console automatically adapts ROS environment sourcing, git branch fallbacks (<code>$ROS_DISTRO</code> &rarr; <code>main</code> &rarr; <code>jazzy</code>), micro-ROS container images, and Nav2 launch configurations across distributions.</p>
+      <p class="hint">The cockpit automatically adapts ROS environment sourcing, git branch fallbacks (<code>$ROS_DISTRO</code> &rarr; <code>main</code> &rarr; <code>jazzy</code>), micro-ROS container images, and Nav2 launch configurations across distributions.</p>
       <button id="btn-save-distro" class="btn">Save</button>
     </div>
   
@@ -2525,7 +2525,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div class="card">
         <h2>2. Host udev rules</h2>
         <p class="hint">The image already contains the sensor drivers -- this only creates the
-          persistent <code>/dev/&lt;sensor&gt;</code> symlink on the host, using Console's own
+          persistent <code>/dev/&lt;sensor&gt;</code> symlink on the host, using the cockpit's own
           native udev-rule commands (same as the native Laser/Depth sensor install cards above),
           not <code>install.bash</code>.</p>
         <button id="btn-docker-udev" class="btn">Install udev rules for selected sensors</button>
@@ -2546,9 +2546,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </select>
         </div>
         <p class="hint">Runs in the foreground through the same console pane as everything else
-          in Console -- Stop sends the container(s) a normal <code>compose stop</code> signal.
+          in the cockpit -- Stop sends the container(s) a normal <code>compose stop</code> signal.
           Start <code>kasmvnc</code> alongside <code>bringup</code>/<code>slam</code>/etc. (in a
-          second Console tab, since each occupies the one exec slot) for GUI output from any of
+          second cockpit tab, since each occupies the one exec slot) for GUI output from any of
           them.</p>
         <button id="btn-docker-service-start" class="btn btn-primary">Start</button>
         <button id="btn-docker-service-stop" class="btn btn-danger" disabled>Stop</button>

@@ -702,12 +702,12 @@ function updateFakeModeUI(enabled) {
   }
   if (odomStatus) {
     odomStatus.innerHTML = enabled
-      ? `<span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (100 Hz /odom)</b>`
+      ? `<span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (50 Hz /odom)</b>`
       : `<span style="color:#94a3b8;">Wheel Encoders:</span> <b style="color:#38bdf8;">Physical Hardware Pinouts</b>`;
   }
   if (imuStatus) {
     imuStatus.innerHTML = enabled
-      ? `<span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (100 Hz /imu/data)</b>`
+      ? `<span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data_raw)</b>`
       : `<span style="color:#94a3b8;">Physical IMU:</span> <b style="color:#38bdf8;">Real I2C Bus Driver</b>`;
   }
   if (lidarStatus) {

@@ -566,7 +566,7 @@ if (vgpPad) {
       const r = await vgpPost("/api/gamepad/cmd", twist());
       if (r && r.running === false) stopGamepad("publisher exited");
     } catch (e) {
-      stopGamepad("lost contact with Console");
+      stopGamepad("lost contact with the cockpit");
     }
   }
 
