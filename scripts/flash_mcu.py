@@ -161,6 +161,50 @@ def is_esp_family(env: str) -> bool:
     return any(k in env_lower for k in ("esp32", "esp32s3", "espressif", "gendrv"))
 
 
+
+def _ancestry() -> set:
+    """This process and every ancestor of it, by pid."""
+    pids = set()
+    pid = os.getpid()
+    while pid > 0 and pid not in pids:
+        pids.add(pid)
+        try:
+            with open(f"/proc/{pid}/stat") as fh:
+                # "pid (comm) state ppid ..." -- comm may contain spaces, so split after ')'
+                pid = int(fh.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return pids
+
+
+def _holders_of(path: str) -> list:
+    """Pids with an open fd on `path` (by real path), excluding our own ancestry."""
+    try:
+        real = os.path.realpath(path)
+    except OSError:
+        return []
+    skip = _ancestry()
+    holders = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    for d in entries:
+        if not d.isdigit() or int(d) in skip:
+            continue
+        fd_dir = f"/proc/{d}/fd"
+        try:
+            for fd in os.listdir(fd_dir):
+                try:
+                    if os.readlink(f"{fd_dir}/{fd}") == real:
+                        holders.append(int(d))
+                        break
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return holders
+
 def release_serial_port(serial_port: str):
     """Safely release the serial port from micro_ros_agent or other holders (Directive 6)."""
     if not serial_port or not os.path.exists(serial_port):
@@ -183,27 +227,30 @@ def release_serial_port(serial_port: str):
     except Exception:
         pass
 
-    # 2. Safely signal processes directly holding the character device
+    # 2. Signal the processes that actually hold the character device.
+    #
+    # Not lsof: in a rootless Docker container a passed-through device node
+    # resolves to the numbers of /dev/null, so `lsof -t /dev/ttyUSB0` lists
+    # EVERY process with /dev/null open -- this one included -- and the SIGINT
+    # meant for a stale agent landed on the flasher itself (a
+    # KeyboardInterrupt in release_serial_port, seen on the a21 bench host).
+    # /proc says which fds really point at the path, and our own ancestry is
+    # never a holder worth signalling.
     try:
         for _ in range(5):
-            res = subprocess.run(["lsof", "-t", serial_port], capture_output=True, text=True, timeout=3)
-            if res.returncode == 0 and res.stdout.strip():
-                for pid_str in res.stdout.splitlines():
-                    pid_str = pid_str.strip()
-                    if pid_str:
-                        try:
-                            pid = int(pid_str)
-                            os.kill(pid, signal.SIGINT)
-                            time.sleep(0.2)
-                            os.kill(pid, signal.SIGTERM)
-                        except (ProcessLookupError, PermissionError):
-                            pass
-                time.sleep(0.4)
-            else:
+            holders = _holders_of(serial_port)
+            if not holders:
                 break
+            for pid in holders:
+                try:
+                    os.kill(pid, signal.SIGINT)
+                    time.sleep(0.2)
+                    os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            time.sleep(0.5)
     except Exception:
         pass
-    time.sleep(0.5)
 
 
 def ensure_port_permissions(serial_port: str):
