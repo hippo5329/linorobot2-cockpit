@@ -477,6 +477,41 @@ def stop_bg(proc, first=signal.SIGINT):
             continue
 
 
+def _nav2_complaints(log_path: str, keep: int = 6) -> str:
+    """The distinct complaints Nav2 logged, most frequent first.
+
+    A leg fails with `error_code=203` (controller TF_ERROR) or `103` (planner
+    TF_ERROR) and the code alone cannot say which transform was missing or by
+    how much it was late. The log has that, and on a bench it is inside a
+    container that the next leg destroys -- so the reason has to reach the
+    transcript while the log still exists.
+    """
+    try:
+        with open(log_path, errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return f"     (no {os.path.basename(log_path)} to explain it)"
+    pat = re.compile(r"(?:Could not transform|Lookup would require extrapolation|"
+                     r"Transform .*? timeout|Timed out waiting for transform|"
+                     r"extrapolation into the (?:past|future)|"
+                     r"No valid path|Failed to make progress|invalid path|"
+                     r"passed to lookupTransform argument)", re.I)
+    counts: dict = {}
+    for line in lines:
+        if pat.search(line):
+            msg = line.strip()
+            for cut in (" at line ", " [ERROR] ", " [WARN] "):
+                if cut in msg:
+                    msg = msg.split(cut)[-1]
+            counts[msg[:160]] = counts.get(msg[:160], 0) + 1
+    if not counts:
+        return "     (nav2.log logged no transform or path complaint)"
+    out = ["     --- what Nav2 complained about (distinct, most frequent first) ---"]
+    for msg, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
+        out.append(f"     {n:5d}x {msg}")
+    return "\n".join(out)
+
+
 def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
     """Watch logs/nav2.log for lifecycle_manager's verdict.
 
@@ -1287,6 +1322,13 @@ def main():
                     stdout=f"❌ NAV2 GOAL NOT SENT: the stack never activated ({nav2_detail}); "
                            f"a goal would only be rejected. See logs/nav2.log.")
             print(test_res.stdout)
+            if test_res.returncode != 0:
+                # A goal that ABORTED says error_code=203 and nothing else, and the
+                # log that explains it dies with the container on a bench. Surface
+                # the reason HERE, where the transcript is kept: measured
+                # 2026-09-22, five legs aborted with TF error codes and there was
+                # nothing left afterwards to say which transform, or how late.
+                print(_nav2_complaints(os.path.join(LOG_DIR, "nav2.log")))
             if test_res.returncode == 0:
                 print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
             else:

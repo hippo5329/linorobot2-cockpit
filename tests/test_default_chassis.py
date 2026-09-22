@@ -287,3 +287,36 @@ def test_a_real_imu_on_simulated_wheels_is_called_out():
         # index 11 is vyaw: both sources fuse it, which is what makes the mix bite
         assert ekf["odom0_config"][11] is True, name
         assert ekf["imu0_config"][11] is True, name
+
+
+def test_a_failed_goal_reports_what_nav2_complained_about():
+    """`error_code=203` is a controller TF error and `103` a planner one, and
+    neither says WHICH transform was missing or how late it was. On a bench the
+    log that would say dies with the container the next leg destroys. Measured
+    2026-09-22: five legs aborted with TF codes on the released image and there
+    was nothing afterwards to diagnose them with."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ocp_complaints", os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as fh:
+        fh.write("[controller_server] [ERROR] Could not transform odom to base_link\n" * 3)
+        fh.write("[planner_server] [WARN] Lookup would require extrapolation into the past\n")
+        fh.write("[bt_navigator] nothing interesting here\n")
+        path = fh.name
+    out = m._nav2_complaints(path)
+    assert "3x" in out and "Could not transform" in out
+    assert "Lookup would require extrapolation" in out
+    assert "nothing interesting" not in out
+    os.unlink(path)
+
+    # A missing log is a fact about the run, not a crash.
+    assert "no nav2.log" in m._nav2_complaints("/nonexistent/nav2.log")
+
+
+def test_the_pipeline_asks_for_them_on_a_failed_goal():
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'print(_nav2_complaints(os.path.join(LOG_DIR, "nav2.log")))' in pipe
