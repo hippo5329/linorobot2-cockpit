@@ -141,12 +141,12 @@ ekf:
       - false
       - false
       - false
-      - true
+      - true    # vx
+      - true    # vy: the firmware publishes it with TWIST_COV 1e-5 -- on a
+      - false    #     differential base that zero is the non-holonomic constraint
       - false
       - false
-      - false
-      - false
-      - true
+      - true    # yaw rate
       - false
       - false
       - false

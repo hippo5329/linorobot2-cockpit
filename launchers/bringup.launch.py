@@ -301,6 +301,25 @@ def launch_setup(context, *args, **kwargs):
             parameters=[
                 {"publish_tf": False},
                 {"use_mag": use_mag},
+                # ENU: x east, y north, z up (StatelessOrientation::
+                # computeOrientation). It is imu_filter_madgwick's default
+                # TODAY, and the default it derives heading from is exactly what
+                # FakeIMUFromWheels::applyMag points its world field along
+                # (+Y = north). Pinned rather than inherited because this
+                # package's default was NWU before it was ENU, and a silent
+                # change of convention turns every fused heading 90 degrees
+                # without one line of the log saying so.
+                {"world_frame": "enu"},
+                # The EKF now fuses ax and ay (imu0_config 12, 13). A real
+                # accelerometer measures specific force, so on any slope gravity
+                # leaks into the horizontal axes and the filter reads it as
+                # acceleration. madgwick already has the orientation estimate
+                # needed to subtract it (filter_.getGravity), so it is removed
+                # once, at the source, and /imu/data means what it says.
+                {"remove_gravity_vector": True},
+                # What the EKF is told about how much to trust that heading:
+                # this becomes orientation_covariance[0,4,8]. Tighten it only as
+                # far as the magnetometer is actually calibrated.
                 {"orientation_stddev": 0.01},
                 # dt from the message stamps (0.0 is the package default), not
                 # a constant mirroring CONTROL_TIMER (20 ms): the firmware

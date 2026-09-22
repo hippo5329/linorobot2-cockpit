@@ -355,6 +355,20 @@ def test_every_config_fuses_absolute_yaw_from_the_imu():
         assert imu0[11] is True, f"{name}: imu0_config[11] (yaw rate) is not fused"
 
 
+def test_every_config_fuses_the_wheel_vy():
+    """Both wiki pages specify odom0 as vx, vy, vyaw.
+
+    On a differential base vy is not missing data -- the firmware publishes it as
+    0 with TWIST_COV 1e-5, which is the non-holonomic constraint stated as a
+    measurement. Dropping it lets the filter drift sideways for free. On a
+    mecanum base it is a real velocity and dropping it loses a whole axis.
+    """
+    for name, cfg in _all_configs():
+        odom0 = _ekf(cfg).get("odom0_config")
+        assert odom0[6] is True, f"{name}: odom0_config[6] (vx) is not fused"
+        assert odom0[7] is True, f"{name}: odom0_config[7] (vy) is not fused"
+
+
 def test_only_one_source_supplies_absolute_yaw():
     """Two absolute headings that disagree make the filter split the difference."""
     for name, cfg in _all_configs():
