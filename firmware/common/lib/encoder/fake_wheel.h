@@ -103,6 +103,12 @@ static inline float fakeWheelNoise(float amplitude)
     return ((float)random(-1000, 1001) / 1000.0) * amplitude;
 }
 
+// The variance of what fakeWheelNoise() produces: uniform on +/-peak, so
+// var = peak^2 / 3. A simulated sensor is the one sensor whose noise is known
+// exactly -- so it declares this, rather than a constant somebody has to
+// remember to update alongside.
+static inline constexpr float fakeCov(float peak) { return peak * peak / 3.0f; }
+
 class FakeEncoder : public EncoderInterface
 {
 private:
@@ -223,8 +229,23 @@ public:
 #define FAKE_IMU_ACCEL_TAU_MS 60    // accelerometer band limit (ms)
 #endif
 
+// The simulated sensors are sized to a TYPICAL real one, not to whatever looked
+// plausible. mcu_env.py carries datasheet variances for the parts this project
+// supports (_imu_cov, _mag_cov); the medians of those tables are used here,
+// which in each case is the figure of an actual shipping chip rather than an
+// average of things nobody makes:
+//
+//     accel  5.1e-4 (m/s^2)^2   ICM20948      spread 4.7e-5 .. 1.8e-3
+//     gyro   3.0e-6 (rad/s)^2   MPU6050/9250  spread 4.4e-7 .. 4.4e-5
+//     mag    4.0e-14 T^2        QMC5883L      spread 2.3e-14 .. 9e-14
+//
+// fakeWheelNoise() is uniform on +/-peak, so peak = sigma*sqrt(3) and the
+// variance the sensor DECLARES (fakeCov below) is the variance it actually has.
+// Getting this wrong breaks the stack in a way that only shows up on hardware:
+// too quiet and the EKF learns to trust an IMU nobody sells, too loud and
+// tuning that works on the bench is wrong on a robot.
 #ifndef FAKE_IMU_ACCEL_NOISE
-#define FAKE_IMU_ACCEL_NOISE 0.05   // +/- peak accelerometer noise (m/s^2)
+#define FAKE_IMU_ACCEL_NOISE 0.03912 // +/- peak accel noise (m/s^2) = typical 5.1e-4 var
 #endif
 
 // A real MEMS IMU is not a clean derivative of the truth: it has a fixed bias,
@@ -261,7 +282,7 @@ public:
 #endif
 
 #ifndef FAKE_MAG_NOISE_T
-#define FAKE_MAG_NOISE_T 0.5e-6f    // +/- peak magnetometer noise (Tesla)
+#define FAKE_MAG_NOISE_T 3.464e-7f  // +/- peak mag noise (T) = typical 4.0e-14 var
 #endif
 
 // Hard-iron offset. A magnetometer mounted on a robot always sits next to
@@ -280,7 +301,7 @@ public:
 #endif
 
 #ifndef FAKE_IMU_GYRO_NOISE
-#define FAKE_IMU_GYRO_NOISE 0.005   // +/- peak gyroscope noise (rad/s)
+#define FAKE_IMU_GYRO_NOISE 0.003   // +/- peak gyro noise (rad/s) = typical 3.0e-6 var
 #endif
 
 // Derives IMU readings from the simulated body motion, so the accelerometer
@@ -327,10 +348,20 @@ public:
         // class rather than IMUInterface, so without this the covariance a
         // config sets reached every robot EXCEPT the simulated one -- which is
         // the default here, and the one an EKF is usually tuned against first.
-        float accel_cov[3] = ACCEL_COV;
-        float gyro_cov[3] = GYRO_COV;
+        //
+        // The DEFAULT, though, is derived from this class's own noise rather
+        // than the generic ACCEL_COV/GYRO_COV/MAG_COV placeholders: a simulated
+        // sensor is the one sensor whose noise is known exactly, so restating
+        // it in a second constant only creates something to drift. The
+        // placeholders said 1e-5 while the accelerometer produced 5.1e-4, and
+        // the EKF was told the simulated IMU was 50x quieter than it was.
+        float accel_cov[3] = {fakeCov(FAKE_IMU_ACCEL_NOISE), fakeCov(FAKE_IMU_ACCEL_NOISE),
+                              fakeCov(FAKE_IMU_ACCEL_NOISE)};
+        float gyro_cov[3] = {fakeCov(FAKE_IMU_GYRO_NOISE), fakeCov(FAKE_IMU_GYRO_NOISE),
+                             fakeCov(FAKE_IMU_GYRO_NOISE)};
         float ori_cov[3] = ORI_COV;
-        float mag_cov[3] = MAG_COV;
+        float mag_cov[3] = {fakeCov(FAKE_MAG_NOISE_T), fakeCov(FAKE_MAG_NOISE_T),
+                            fakeCov(FAKE_MAG_NOISE_T)};
         envFloatVec("accel_cov", accel_cov, 3);
         envFloatVec("gyro_cov", gyro_cov, 3);
         envFloatVec("ori_cov", ori_cov, 3);

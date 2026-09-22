@@ -375,3 +375,54 @@ def test_only_one_source_supplies_absolute_yaw():
         odom0 = _ekf(cfg).get("odom0_config")
         assert odom0, f"{name}: no odom0_config"
         assert odom0[5] is False, f"{name}: odom0_config[5] also fuses absolute yaw"
+
+
+# --- the simulated sensors must be a typical real one -------------------------
+
+def _fake_peak(macro):
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "firmware", "common", "lib", "encoder", "fake_wheel.h")).read()
+    m = re.search(rf"#define {macro}\s+([0-9.eE+-]+)f?\b", src)
+    assert m, f"{macro} not found in fake_wheel.h"
+    return float(m.group(1))
+
+
+def test_the_simulated_sensors_are_a_typical_real_one():
+    """Sized to the MEDIAN of the datasheet variances mcu_env.py carries, so the
+    bench is not tuned against a sensor nobody sells.
+
+    fakeWheelNoise() is uniform on +/-peak, so var = peak^2/3. The placeholders
+    said 1e-5 while the accelerometer produced 5.1e-4 -- the EKF was told the
+    simulated IMU was 50x quieter than it was, on every fake-mode leg.
+    """
+    import statistics as st
+    import mcu_env
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "mcu_env.py")).read()
+    # The tables are the authority; read the medians back out of them.
+    import re
+    accel = [float(v) for v in re.findall(r'"accel_cov":\s*([0-9.eE+-]+)', src)]
+    gyro = [float(v) for v in re.findall(r'"gyro_cov":\s*([0-9.eE+-]+)', src)]
+    assert len(accel) >= 8 and len(gyro) >= 8, "the per-chip table shrank; check this test"
+    for macro, want in (("FAKE_IMU_ACCEL_NOISE", st.median(accel)),
+                        ("FAKE_IMU_GYRO_NOISE", st.median(gyro))):
+        got = _fake_peak(macro) ** 2 / 3.0
+        assert abs(got - want) / want < 0.02, (
+            f"{macro} produces variance {got:.4g}; the typical real sensor is {want:.4g}")
+
+
+def test_the_fake_sensor_declares_the_covariance_it_produces():
+    """The simulated sensor is the one sensor whose noise is known exactly, so
+    it derives its covariance instead of restating it in a second constant that
+    can drift."""
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "firmware", "common", "lib", "encoder", "fake_wheel.h")).read()
+    assert "constexpr float fakeCov(float peak) { return peak * peak / 3.0f; }" in src
+    for macro in ("FAKE_IMU_ACCEL_NOISE", "FAKE_IMU_GYRO_NOISE", "FAKE_MAG_NOISE_T"):
+        assert f"fakeCov({macro})" in src, f"{macro} covariance is not derived from its noise"
+    # and the generic placeholders must no longer stand in for the fake sensor
+    head = src[src.index("void initMsgs("):src.index("for (int i = 0; i < 3; i++)")]
+    for placeholder in ("float accel_cov[3] = ACCEL_COV", "float gyro_cov[3] = GYRO_COV",
+                        "float mag_cov[3] = MAG_COV"):
+        assert placeholder not in head, f"{placeholder}: the fake sensor is using a placeholder"
