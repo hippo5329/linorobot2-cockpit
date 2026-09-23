@@ -730,12 +730,19 @@ def hardware_env(params: dict) -> dict:
                           ("fake_wall", int), ("fake_wall_x1", float),
                           ("fake_wall_y1", float), ("fake_wall_x2", float),
                           ("fake_wall_y2", float), ("fake_mass", float),
-                          ("fake_noise_rpm", float)):
+                          ("fake_noise_rpm", float), ("fake_gear_eff", float),
+                          ("fake_coulomb", float), ("fake_sag", float)):
             src = {"fake_map_w": "map_width", "fake_map_h": "map_height",
                    "fake_wall": "wall_obstacle", "fake_wall_x1": "wall_x1",
                    "fake_wall_y1": "wall_y1", "fake_wall_x2": "wall_x2",
                    "fake_wall_y2": "wall_y2", "fake_mass": "robot_mass",
-                   "fake_noise_rpm": "wheel_noise_rpm"}[key]
+                   "fake_noise_rpm": "wheel_noise_rpm",
+                   # The drivetrain's losses. Sweeping these is how you find out
+                   # which one a navigation failure was sensitive to, and it must
+                   # not cost a firmware build per value.
+                   "fake_gear_eff": "gear_efficiency",
+                   "fake_coulomb": "gear_drag_rpm",
+                   "fake_sag": "battery_sag"}[key]
             if sim.get(src) is None:
                 continue
             try:

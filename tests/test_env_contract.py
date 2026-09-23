@@ -61,7 +61,11 @@ MAXIMAL_CONFIG = {
                        "mag_bias": [1.5, -2.25, 0.75]},
         "simulation": {"map_width": 10.0, "map_height": 6.0, "wall_obstacle": True,
                        "wall_x1": 2.0, "wall_y1": -1.5, "wall_x2": 2.0,
-                       "wall_y2": 1.5, "robot_mass": 3.5, "wheel_noise_rpm": 1.0},
+                       "wall_y2": 1.5, "robot_mass": 3.5, "wheel_noise_rpm": 1.0,
+                       # The simulated drivetrain's losses, swept from the env so
+                       # a sensitivity test costs a 4 KB write, not a build.
+                       "gear_efficiency": 0.75, "gear_drag_rpm": 12.0,
+                       "battery_sag": 0.25},
     },
 }
 

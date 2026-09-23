@@ -231,3 +231,55 @@ def test_sag_recovers_once_the_wheels_are_up_to_speed(lib, wheels):
     settled = drive(lib, wheels, [PWM_MAX] * 4, 4.0)
     assert abs(settled - solo) / solo < 0.05, (
         f"settled four-wheel {settled:.1f} vs one-wheel {solo:.1f}: sag persists at speed")
+
+
+# --- the losses are env-configurable ---------------------------------------
+
+def test_the_three_losses_come_from_the_env():
+    """A sweep across gear efficiency or pack stiffness is how you find out which
+    one a navigation failure was sensitive to. It must not cost a firmware build
+    per value -- the same argument as fake_mass beside them."""
+    src = open(os.path.join(ROOT, "firmware", "common", "lib", "encoder",
+                            "fake_wheel.h"), encoding="utf-8").read()
+    for fn, key in (("fakeGearEfficiency", "fake_gear_eff"),
+                    ("fakeCoulombRpm", "fake_coulomb"),
+                    ("fakeBattSag", "fake_sag")):
+        assert f'envFloat("{key}"' in src, f"{key} is not read from the env"
+        assert f"static inline float {fn}()" in src, f"{fn} is gone"
+        # and the running model must go through the accessor, not the macro.
+        # Scoped to the CLASS, not to after integrate(): fakeBattSag() is used by
+        # busScale(), which integrate() calls but which is defined above it -- an
+        # "after integrate()" slice cannot see it and failed on the one accessor
+        # that was wired correctly.
+        cls = src[src.index("class FakeEncoder"):]
+        assert f"{fn}()" in cls, f"the model still uses the compile-time constant, not {fn}()"
+
+
+def test_the_env_values_are_clamped_to_physical_ranges():
+    """A gearbox returning more than it is given, drag that accelerates, or a
+    pack that gains voltage under load are all nonsense -- and -1 is the cache's
+    unset marker, so an unclamped negative would be read as "not yet loaded" on
+    every call."""
+    src = open(os.path.join(ROOT, "firmware", "common", "lib", "encoder",
+                            "fake_wheel.h"), encoding="utf-8").read()
+    eff = src[src.index("static inline float fakeGearEfficiency()"):]
+    eff = eff[:eff.index("\n}")]
+    assert "> 1.0f) eff = 1.0f" in eff, "gear efficiency is not capped at 1"
+    assert "< 0.0f) eff = 0.0f" in eff
+    for fn in ("fakeCoulombRpm", "fakeBattSag"):
+        blk = src[src.index(f"static inline float {fn}()"):]
+        blk = blk[:blk.index("\n}")]
+        assert "< 0.0f" in blk, f"{fn} accepts a negative value"
+
+
+def test_the_config_keys_reach_the_env():
+    """simulation.gear_efficiency -> fake_gear_eff, and the other two."""
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import mcu_env
+    src = open(os.path.join(ROOT, "scripts", "mcu_env.py"), encoding="utf-8").read()
+    for env_key, cfg_key in (("fake_gear_eff", "gear_efficiency"),
+                             ("fake_coulomb", "gear_drag_rpm"),
+                             ("fake_sag", "battery_sag")):
+        assert f'"{env_key}": "{cfg_key}"' in src, f"{cfg_key} is not mapped to {env_key}"
+        assert f'("{env_key}", float)' in src, f"{env_key} is not cast as a float"

@@ -122,6 +122,51 @@ static inline float fakeRobotMass()
     return mass;
 }
 
+// The drivetrain's losses, from the env.
+//
+// A sweep across gear efficiency or pack stiffness is a legitimate test -- it is
+// how you find out which of them a navigation failure was actually sensitive to
+// -- and it must not cost eight firmware builds. Same reasoning as fake_mass
+// beside it: these describe THIS robot, not the image.
+//
+// Cached behind a sentinel like the others, because integrate() reads them on
+// every wheel on every control cycle.
+//
+// -1 is the "unset" marker, so the sentinel cannot collide with a real value:
+// none of the three is meaningfully negative. A gear that returns negative
+// torque, drag that accelerates, or a pack that gains voltage under load are all
+// nonsense, and clamping here is cheaper than three checks in the hot path.
+static inline float fakeGearEfficiency()
+{
+    static float eff = -1.0f;
+    if (eff < 0.0f) {
+        eff = envFloat("fake_gear_eff", (float)FAKE_GEAR_EFFICIENCY);
+        if (eff < 0.0f) eff = 0.0f;
+        if (eff > 1.0f) eff = 1.0f;     // a gearbox cannot return more than it is given
+    }
+    return eff;
+}
+
+static inline float fakeCoulombRpm()
+{
+    static float drag = -1.0f;
+    if (drag < 0.0f) {
+        drag = envFloat("fake_coulomb", (float)FAKE_WHEEL_COULOMB_RPM);
+        if (drag < 0.0f) drag = 0.0f;
+    }
+    return drag;
+}
+
+static inline float fakeBattSag()
+{
+    static float sag = -1.0f;
+    if (sag < 0.0f) {
+        sag = envFloat("fake_sag", (float)FAKE_BATT_SAG);
+        if (sag < 0.0f) sag = 0.0f;
+    }
+    return sag;
+}
+
 #ifndef FAKE_WHEEL_NOISE_RPM
 #define FAKE_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
 #endif
@@ -182,7 +227,7 @@ private:
         total *= 0.25;                      // mean across the four wheels
         if (total < 0.0) total = 0.0;
         if (total > 1.0) total = 1.0;
-        return 1.0f / (1.0f + (float)FAKE_BATT_SAG * total);
+        return 1.0f / (1.0f + fakeBattSag() * total);
     }
 
     // advance the wheel model to now
@@ -217,16 +262,16 @@ private:
 
         // back-EMF: driving torque is proportional to the remaining speed error,
         // and the gearbox returns only part of it
-        float accel = (float)FAKE_GEAR_EFFICIENCY * (no_load_rpm - wheel_rpm_) / tau;
+        float accel = fakeGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
         // viscous friction always opposes motion
         accel -= wheel_rpm_ * (float)FAKE_WHEEL_FRICTION;
         // ...and the gear train's constant drag, which does not scale with speed.
         // Signed against motion, and never enough to drive the wheel backwards
         // through zero: that would be a gearbox pushing the robot.
         if (wheel_rpm_ > 0.0f)
-            accel -= (float)FAKE_WHEEL_COULOMB_RPM;
+            accel -= fakeCoulombRpm();
         else if (wheel_rpm_ < 0.0f)
-            accel += (float)FAKE_WHEEL_COULOMB_RPM;
+            accel += fakeCoulombRpm();
         // traction and current limit the achievable acceleration
         if (accel > (float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = (float)FAKE_WHEEL_MAX_ACCEL_RPM;
         if (accel < -(float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = -(float)FAKE_WHEEL_MAX_ACCEL_RPM;
