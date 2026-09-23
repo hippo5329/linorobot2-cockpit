@@ -740,6 +740,42 @@ def _sample_map_odom(node):
             node.map_odom_max_gap = gap
     if last is None or stamp > last:
         node._last_map_odom_stamp = stamp
+    # HOW BIG the correction is, not just how fresh.
+    #
+    # The same lookup already has it and was throwing it away. map->odom is
+    # SLAM's correction to the wheels; on a simulated robot in a 10 x 6 m room
+    # it should stay small, because the fake LiDAR sees a room that matches the
+    # wheels exactly. On the 2026-09-23 mecanum slice a leg aborted with
+    # error_code=203, "failed to plan from (3.80, -3.11)", while the drive suite
+    # moments later showed the base at (+0.01, -0.00) driving 8/8 -- so the
+    # correction had walked about 4.9 m and taken the robot's map pose outside
+    # the room, and the planner refused a start it could not see.
+    #
+    # Reported on PASSING legs too, for the reason the gap is: a leg that passes
+    # with a 3 m correction is one leg away from that abort, and a gate that only
+    # shows the number when it has already failed cannot see it coming.
+    t = tr.transform.translation
+    offset = math.hypot(t.x, t.y)
+    if offset > getattr(node, "map_odom_max_offset", 0.0):
+        node.map_odom_max_offset = offset
+
+
+def _map_odom_offset_note(node, room_half_y: float = 2.69) -> str:
+    """How far SLAM's correction wandered, and whether that is survivable.
+
+    room_half_y is the y half-extent the firmware clamps the simulated base to
+    (FAKE_MAP_HEIGHT 6.0 m, less the robot radius). A correction bigger than
+    that can put the map pose outside the room on its own, with the base still
+    where it should be -- which is exactly the 203 this measures.
+    """
+    worst = getattr(node, "map_odom_max_offset", 0.0)
+    if worst <= 0.0:
+        return ""
+    note = f"; map->odom reached {worst:.2f} m"
+    if worst >= room_half_y:
+        note += (f" -- past the {room_half_y:.2f} m the room allows, so the map pose "
+                 f"can be outside a room the BASE is still inside")
+    return note
 
 
 def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
@@ -1224,7 +1260,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg"
-                          f"{_map_odom_gap_note(node)}{_scan_gap_note(node)}")
+                          f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}{_scan_gap_note(node)}")
                 return False
             around = route_note()
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
@@ -1264,7 +1300,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         # comfortable or whether every green leg was one hiccup from red.
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
                        f"the obstacle wall and back home (within {goal_tolerance:.2f} m)"
-                       f"{_map_odom_gap_note(node)}{_scan_gap_note(node)}")
+                       f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}{_scan_gap_note(node)}")
 
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one
