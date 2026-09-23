@@ -90,6 +90,23 @@ STARTUP_ABORT_SEC = 5.0
 STARTUP_ABORT_DIST = 0.05
 STARTUP_SETTLE_SEC = 15.0
 
+# How far from home the robot may be before the leg is abandoned as a runaway.
+#
+# The simulated room is about 11.6 x 9.4 m (a saved map measured 232x188 cells
+# at 0.05 m) and every goal in this test is within 3 m of the origin, so a base
+# more than this from home is not navigating badly -- it has left.
+#
+# Measured on 2026-09-23: a leg asked to return to (0.00, 0.00) came within
+# 1.326 m of home, kept going, and ended 13.667 m away having traversed
+# 11.235 m, with nav2.log logging no transform or path complaint at all. The
+# gate sat and watched for the full window.
+#
+# On the bench that is a wasted leg. On a real robot it is the hazard, and the
+# thing that would stop it there -- nav2_collision_monitor with a real scan --
+# is exactly what fake mode does not have. Catching it here is what makes the
+# behaviour visible before there is a robot to be hurt by it.
+RUNAWAY_RADIUS_M = 6.0
+
 # How much TF history has to exist before the first goal is dispatched, and how
 # long to wait for it. Lifecycle "active" says every node configured and
 # activated; it does not say the transform tree is assembled. Measured on
@@ -563,6 +580,22 @@ def _gap(node) -> str:
     return out
 
 
+def _runaway(node) -> bool:
+    """Has the base left the room?
+
+    Distance from HOME, not from the goal: every goal in this test is within
+    3 m of the origin, so one number covers both directions of every leg. A
+    pose that has never been seen is not a runaway.
+
+    Module level, like _why/_gap/_where, so the rule is one implementation and
+    can be exercised without a ROS graph.
+    """
+    xy = getattr(node, "_last_xy", None)
+    if xy is None:
+        return False
+    return math.hypot(xy[0], xy[1]) > RUNAWAY_RADIUS_M
+
+
 def _where(node) -> str:
     """WHERE it ended, not just how far off -- and in which frame.
 
@@ -855,6 +888,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                         and (moved() or not require_motion):
                     arrived = True
                     break
+                if _runaway(node):
+                    break                # gone; see the report below
                 if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
                     break                # Nav2 gave up; waiting out the window adds nothing
             took = time.time() - t0
@@ -919,6 +954,14 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"robot never crossed it beyond ±{WALL_HALF_SPAN:.1f} m. It cannot have "
                               f"got there; check the frames (a goal in map, a pose read from odom).")
                 else:
+                    if _runaway(node):
+                        print(f"❌ NAV2 LEG {i}/{n} RAN AWAY: asked for ({gx:.2f}, {gy:.2f}), "
+                              f"left the {RUNAWAY_RADIUS_M:.0f} m room instead"
+                              f"{_why(node)}{_gap(node)}{_where(node)} after {took:.0f} s. "
+                              f"The base was still taking commands, so this is the controller "
+                              f"driving it away, not a stall -- and nothing in fake mode would "
+                              f"have stopped it.")
+                        return False
                     print(f"❌ NAV2 LEG {i}/{n} NOT REACHED: ({gx:.2f}, {gy:.2f}) ended as "
                           f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)}{_where(node)} after "
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "

@@ -413,6 +413,41 @@ def test_no_goal_is_sent_before_the_tree_can_answer():
     assert "No goal was sent" in src
 
 
+def test_a_base_that_leaves_the_room_is_a_runaway_not_a_missed_goal():
+    """Different fault, different name, and a hazard on a real robot.
+
+    A leg asked to return to (0, 0) came within 1.326 m of home, kept going,
+    and ended 13.667 m away having traversed 11.235 m -- with nav2.log logging
+    no transform or path complaint at all. Reported as "NOT REACHED" it reads
+    like a controller stopping short, which is the opposite of what happened.
+    """
+    class Gone(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self._last_xy = (-11.2, 0.4)
+
+    node = Gone()
+    assert MOD._runaway(node) is True
+    node._last_xy = (2.9, 0.1)          # at the far goal, still in the room
+    assert MOD._runaway(node) is False
+    node._last_xy = None                # no pose yet is not a runaway
+    assert MOD._runaway(node) is False
+
+
+def test_the_runaway_radius_is_bigger_than_the_room_and_the_goals():
+    assert MOD.RUNAWAY_RADIUS_M > 3.0, "every goal in this test is within 3 m"
+    assert MOD.RUNAWAY_RADIUS_M < 11.6 / 2 + 3, "must still be inside a plausible room"
+
+
+def test_the_leg_is_abandoned_rather_than_watched_to_the_timeout():
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
+    # checked in the drive loop, before the give-up-status check
+    assert src.index("if _runaway(node):\n                    break") < \
+           src.index("if node.goal_status in (5, 6) and not reached_goal():")
+    assert "RAN AWAY" in src
+    assert "nothing in fake mode would" in src
+
+
 def test_a_failed_leg_says_where_it_ended_and_in_which_frame():
     """A distance cannot say which of three things happened.
 
