@@ -28,9 +28,15 @@ def env_for(sensors):
 
 
 def launcher_use_mag(mag_sensor, use_fake_mag):
-    src = open(LAUNCH, encoding="utf-8").read()
-    m = re.search(r"else:\s*\n(?:\s*#.*\n)*\s*use_mag\s*=\s*(.+)", src)
-    return bool(eval(m.group(1).strip(), {}, {"mag_sensor": mag_sensor, "use_fake_mag": use_fake_mag}))
+    """Execute the launcher's own default branch.
+
+    The regex version required `use_mag = ...` to follow the comments
+    immediately and crashed with AttributeError on None the moment a second
+    statement appeared above it. Reuses the helper in test_fake_mag_is_fused so
+    there is one way to ask this question.
+    """
+    from test_fake_mag_is_fused import use_mag_default
+    return bool(use_mag_default(mag_sensor, use_fake_mag))
 
 
 def test_fake_mag_on_a_bare_module_is_published():

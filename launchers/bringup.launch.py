@@ -248,14 +248,6 @@ def launch_setup(context, *args, **kwargs):
         for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_link"),
                              ("world_frame", "odom"), ("map_frame", "map")):
             rp[key] = frame_prefix + str(rp.get(key, default))
-    # rcl matches a params section against the node's FULLY-QUALIFIED name, so
-    # under a namespace `ekf_filter_node:` matches nothing and the EKF starts on
-    # its own defaults -- no odom0, no imu0, nothing published, no complaint.
-    ekf_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    yaml.dump(cockpit_paths.namespace_params(ekf_data, ns), ekf_temp)
-    ekf_temp.flush()
-    ekf_params_path = ekf_temp.name
-
     imu_sensor = controller.get("sensors", {}).get("imu", "NONE")
     use_fake_imu = controller.get("sensors", {}).get("use_fake_imu", False)
     has_imu = (imu_sensor != "NONE") or use_fake_imu
@@ -301,11 +293,51 @@ def launch_setup(context, *args, **kwargs):
               "would risk starving /imu/data entirely. Name the part (mag: AK09918) "
               "to fuse it.")
 
+    # THE EKF HALF OF THE SAME RULE, and it cannot ship without the other two.
+    #
+    #   magnetometer    madgwick publishes imu/data with a field-anchored yaw,
+    #                   and the EKF fuses that yaw: imu0_config[5] = True.
+    #   no magnetometer no madgwick, the BOARD publishes imu/data, and its
+    #                   orientation is the identity quaternion. Fusing index 5
+    #                   there feeds the filter a constant zero heading -- the
+    #                   estimate pinned to the starting yaw however the robot
+    #                   turns, and not one line of log to say so. Angular speed
+    #                   (index 11, vyaw) is what carries rotation instead, and
+    #                   it is already true in every shipped config.
+    #
+    # Patched here rather than kept as two config blocks, for the same reason
+    # nav2.launch.py prunes the collision monitor's `sonar` source when no sonar
+    # is fitted: one config per robot, and the launch derives what the hardware
+    # implies.
+    if not use_mag:
+        rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
+        cfg = rp.get("imu0_config")
+        if isinstance(cfg, list) and len(cfg) > 5 and cfg[5]:
+            cfg = list(cfg)
+            cfg[5] = False
+            rp["imu0_config"] = cfg
+            print("[bringup] no magnetometer: imu0_config[5] (absolute yaw) -> False. "
+                  "The board's imu/data carries an identity quaternion, so fusing yaw "
+                  "would pin the heading to zero; vyaw carries rotation instead.")
+
+    # rcl matches a params section against the node's FULLY-QUALIFIED name, so
+    # under a namespace `ekf_filter_node:` matches nothing and the EKF starts on
+    # its own defaults -- no odom0, no imu0, nothing published, no complaint.
+    ekf_temp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    yaml.dump(cockpit_paths.namespace_params(ekf_data, ns), ekf_temp)
+    ekf_temp.flush()
+    ekf_params_path = ekf_temp.name
+
     madgwick_arg = context.launch_configurations.get("madgwick", "")
     if madgwick_arg != "":
         enable_madgwick = (madgwick_arg.lower() in ("true", "1", "yes"))
     else:
-        enable_madgwick = has_imu
+        # No magnetometer, no madgwick. With use_mag false the node would fuse
+        # accel and gyro alone and publish an orientation whose yaw drifts with
+        # nothing to anchor it -- and the EKF would fuse that as absolute. The
+        # board publishes imu/data itself in that configuration (main.cpp keys
+        # the topic name on the same fact), so the filter has no job.
+        enable_madgwick = has_imu and use_mag
 
     nodes = [
         LogInfo(

@@ -1407,12 +1407,32 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
         topicName("odom/unfiltered")
     ));
-    // create IMU publisher: raw sensor data for madgwick filter
+    // The IMU topic NAME depends on whether this robot has a magnetometer,
+    // because that decides whether anything filters the message.
+    //
+    //   magnetometer  -> imu/data_raw + imu/mag, madgwick fuses them and
+    //                    publishes imu/data. Absolute yaw is anchored to the
+    //                    field and the EKF fuses it.
+    //   no magnetometer -> no madgwick is launched at all, so there is no raw
+    //                    stage and this IS the consumer topic: imu/data. The
+    //                    EKF then fuses ANGULAR SPEED only -- it must not fuse
+    //                    yaw, which would be the identity quaternion this
+    //                    message carries, i.e. a constant zero heading.
+    //
+    // `publish_mag` is the right discriminator and not a new flag: it is
+    // already (a real magnetometer answered) OR (fake wheels are synthesising a
+    // field). A magless real robot gets imu/data; a bench board in fake mode
+    // keeps imu/data_raw and madgwick exactly as before, which is why the
+    // 30-leg fake-mode matrix does not move under this change.
+    const char *imu_topic = publish_mag ? "imu/data_raw" : "imu/data";
+    Serial.printf("[imu] publishing %s (%s)\n", imu_topic,
+                  publish_mag ? "magnetometer fitted: madgwick fuses this into imu/data"
+                              : "no magnetometer: no madgwick, this is the consumer topic");
     RCCHECK(init_fast(
         &imu_publisher, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-        topicName("imu/data_raw")
+        topicName(imu_topic)
     ));
     if (publish_mag)
         RCCHECK(init_fast(
