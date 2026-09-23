@@ -495,11 +495,22 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
             lines = fh.readlines()
     except OSError:
         return f"     (no {os.path.basename(log_path)} to explain it)"
+    # The collision monitor is in this list even though its lines are INFO, not
+    # WARN or ERROR. It sits between cmd_vel_smoothed and cmd_vel and can zero
+    # the command every cycle -- and when it does, the only thing the rest of
+    # the stack reports is "Failed to make progress", which reads like a
+    # controller or planner fault and sent 2026-09-23 chasing the wrong layer
+    # for an afternoon. It also speaks only ONCE per state change
+    # (notifyActionState fires on a change of polygon_name), so a robot held
+    # from the first second to the last produces a single line that is trivial
+    # to miss and decisive to have.
     pat = re.compile(r"(?:Could not transform|Lookup would require extrapolation|"
                      r"Transform .*? timeout|Timed out waiting for transform|"
                      r"extrapolation into the (?:past|future)|"
                      r"No valid path|Failed to make progress|invalid path|"
-                     r"passed to lookupTransform argument)", re.I)
+                     r"passed to lookupTransform argument|"
+                     r"Robot to stop due to|Robot to slowdown|Robot to limit speed|"
+                     r"Robot to approach for|Robot to continue normal operation)", re.I)
     counts: dict = {}
     exemplar: dict = {}
     for line in lines:

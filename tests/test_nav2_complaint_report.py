@@ -101,3 +101,41 @@ def test_a_line_without_two_stamps_is_left_alone(tmp_path):
     out = _report(tmp_path, [line])
     assert "Timed out waiting for transform from base_link to map" in out
     assert "behind the request" not in out
+
+
+def test_a_braked_robot_is_visible_in_the_transcript(tmp_path):
+    """The collision monitor sits between cmd_vel_smoothed and cmd_vel and can
+    zero the command every cycle. When it does, the rest of the stack reports
+    only "Failed to make progress" -- which reads like a controller fault, and
+    on 2026-09-23 sent an afternoon into the wrong layer.
+
+    Its lines are INFO, not WARN or ERROR, and notifyActionState() fires only
+    on a CHANGE of state, so a robot held from the first second to the last
+    produces exactly ONE line. It has to be in the pattern or it is not in the
+    transcript, and the nav2 log dies with the leg's container.
+    """
+    log = tmp_path / "nav2.log"
+    log.write_text(
+        "[collision_monitor-9] [WARN] [123.4] [collision_monitor]: Robot to stop due to "
+        "invalid source. Either due to data not published yet, or to lack of new data\n"
+        "[controller_server-5] [WARN] [124.0] [controller_server]: Failed to make progress\n"
+        "[controller_server-5] [WARN] [125.0] [controller_server]: Failed to make progress\n")
+    out = ocp._nav2_complaints(str(log))
+    assert "Robot to stop due to" in out, out
+    assert "Failed to make progress" in out, out
+    # the single monitor line must not be crowded out by the frequent one
+    assert out.index("Robot to stop") >= 0
+
+
+def test_every_monitor_action_is_extracted_not_just_the_stop(tmp_path):
+    """A slowdown or a speed limit is the same class of evidence: the robot was
+    commanded one thing and given another."""
+    for phrase in ("Robot to stop due to invalid source",
+                   "Robot to slowdown for 50.000000 percents due to Foo polygon",
+                   "Robot to limit speed due to Foo polygon",
+                   "Robot to approach for 1.200000 seconds away from collision",
+                   "Robot to continue normal operation"):
+        log = tmp_path / "one.log"
+        log.write_text(f"[collision_monitor-9] [INFO] [1.0] [collision_monitor]: {phrase}\n")
+        out = ocp._nav2_complaints(str(log))
+        assert phrase.split(" due to")[0].split(" for ")[0] in out, (phrase, out)
