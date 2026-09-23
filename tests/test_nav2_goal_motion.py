@@ -413,6 +413,59 @@ def test_no_goal_is_sent_before_the_tree_can_answer():
     assert "No goal was sent" in src
 
 
+def test_a_failed_leg_says_where_it_ended_and_in_which_frame():
+    """A distance cannot say which of three things happened.
+
+    "13.667 m from the goal" after traversing 11.235 m, with nav2.log logging
+    no transform or path complaint at all, fits the base driving out of the
+    room, SLAM's correction running away, or the measurement quietly falling
+    back to odom. The map pose, the odom pose and map->odom separate them.
+    """
+    class Wandered(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self._last_xy = (-11.2, 0.4)
+            self.tf_ok = True
+            self.latest_odom = type("O", (), {"pose": type("P", (), {"pose": type("Q", (), {
+                "position": type("V", (), {"x": -11.1, "y": 0.4, "z": 0.0})()})()})()})()
+
+        def map_odom_offset(self):
+            return (0.08, -0.02)
+
+    node = Wandered(odom_lin=0.25, dist=11.2, goal_status=6, goal_dist=13.667)
+    out = MOD._where(node)
+    assert "ended at (-11.20, +0.40) in map" in out, out
+    assert "odom pose (-11.10, +0.40)" in out, out
+    assert "map->odom (+0.08, -0.02) m" in out, out
+
+
+def test_it_names_the_odom_fallback_rather_than_implying_map():
+    """Comparing an odom pose to a map goal is not a distance at all."""
+    class NoTf(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self._last_xy = (1.0, 2.0)
+            self.tf_ok = False
+
+        def map_odom_offset(self):
+            return None
+
+    out = MOD._where(NoTf())
+    assert "TF could not answer" in out, out
+    assert "map->odom" not in out, out
+
+
+def test_where_says_nothing_when_there_is_nothing_to_say():
+    class Bare(FakeNode):
+        def map_odom_offset(self):
+            return None
+
+    node = Bare()
+    node._last_xy = None
+    node.latest_odom = None
+    assert MOD._where(node) == ""
+
+
 def test_the_goal_is_stamped_zero_not_now():
     """A goal in the map frame is a place, not an observation.
 

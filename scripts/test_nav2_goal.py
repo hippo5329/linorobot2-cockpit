@@ -131,6 +131,7 @@ class Nav2GoalTester(Node):
                             if tf2_ros else None)
         self.goal_frame = "map"
         self.base_frame = "base_link"
+        self.odom_frame = "odom"
         self.tf_ok = False
         
         self.path_received: Optional[Path] = None
@@ -355,6 +356,22 @@ class Nav2GoalTester(Node):
             p = msg.pose.pose.position
             return p.x, p.y
 
+    def map_odom_offset(self):
+        """The correction SLAM is applying, or None when TF cannot say.
+
+        This is the number that separates "the base drove there" from "the
+        estimate went there": the base cannot know about map->odom, and SLAM
+        cannot move the wheels.
+        """
+        try:
+            if self.tf_buffer is None:
+                return None
+            tr = self.tf_buffer.lookup_transform(self.goal_frame, self.odom_frame,
+                                                 rclpy.time.Time()).transform.translation
+            return (tr.x, tr.y)
+        except Exception:
+            return None
+
     def _odom_cb(self, msg: Odometry):
         if self.initial_odom is None:
             self.initial_odom = msg
@@ -544,6 +561,40 @@ def _gap(node) -> str:
     if rem == rem:
         out += f" [nav2's own feedback: {rem:.3f} m remaining]"
     return out
+
+
+def _where(node) -> str:
+    """WHERE it ended, not just how far off -- and in which frame.
+
+    A leg that reports "13.667 m from the goal" after traversing 11.235 m has
+    three explanations and the distance alone cannot tell them apart:
+
+      * the base really drove out of the room -- odom says 11 m and map->odom
+        is small;
+      * SLAM's correction ran away -- odom says it went nowhere and map->odom
+        carries the 11 m;
+      * the measurement is the odom fallback, because TF could not answer, and
+        the two frames were never comparable.
+
+    So print all three: the map pose the verdict was measured from, the base's
+    own odometry, and the correction between them. Measured on a mecanum leg
+    (2026-09-23) whose nav2.log logged no transform or path complaint at all,
+    which is what made the distance uninterpretable.
+    """
+    bits = []
+    xy = getattr(node, "_last_xy", None)
+    if xy:
+        frame = (getattr(node, "goal_frame", "map") if getattr(node, "tf_ok", False)
+                 else "odom (TF could not answer)")
+        bits.append(f"ended at ({xy[0]:+.2f}, {xy[1]:+.2f}) in {frame}")
+    odom = getattr(node, "latest_odom", None)
+    if odom is not None:
+        p = odom.pose.pose.position
+        bits.append(f"odom pose ({p.x:+.2f}, {p.y:+.2f})")
+    off = node.map_odom_offset() if hasattr(node, "map_odom_offset") else None
+    if off is not None:
+        bits.append(f"map->odom ({off[0]:+.2f}, {off[1]:+.2f}) m")
+    return ("; " + ", ".join(bits)) if bits else ""
 
 
 def _why(node) -> str:
@@ -869,7 +920,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"got there; check the frames (a goal in map, a pose read from odom).")
                 else:
                     print(f"❌ NAV2 LEG {i}/{n} NOT REACHED: ({gx:.2f}, {gy:.2f}) ended as "
-                          f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)} after "
+                          f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)}{_where(node)} after "
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg")
