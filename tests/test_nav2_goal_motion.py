@@ -336,6 +336,83 @@ def test_the_gap_and_the_error_both_reach_the_output(monkeypatch, capsys):
     assert "2.830 m from the goal" in out and "from 3.000 m at the start" in out, out
 
 
+class FakeBuffer:
+    """A tf2 buffer that answers only for times it has history for."""
+    def __init__(self, earliest_ns=None, raises=None):
+        self.earliest_ns, self.raises = earliest_ns, raises
+        self.asked = []
+
+    def lookup_transform(self, target, source, stamp):
+        self.asked.append((target, source, stamp))
+        if self.raises:
+            raise RuntimeError(self.raises)
+        if self.earliest_ns is not None and stamp.nanoseconds < self.earliest_ns:
+            raise RuntimeError(
+                f"Lookup would require extrapolation into the past.  Requested time "
+                f"{stamp.nanoseconds / 1e9:.6f} but the earliest data is at time "
+                f"{self.earliest_ns / 1e9:.6f}")
+        return object()
+
+
+class FakeStamp:
+    def __init__(self, nanoseconds):
+        self.nanoseconds = nanoseconds
+
+
+def test_tf_readiness_needs_history_not_just_a_transform(monkeypatch):
+    """A tree one message old satisfies "can you do it now" and is not ready.
+
+    The costmaps look BACK through the buffer, and the complaint that cost a
+    leg was "the earliest data is at" -- the buffer answered for the present
+    and had nothing 176 ms ago.
+    """
+    monkeypatch.setattr(MOD.rclpy, "time", type("t", (), {"Time": FakeStamp}), raising=False)
+    now = 1_000_000_000_000
+    # a buffer that begins 0.2 s ago cannot answer for 1.0 s ago
+    shallow = FakeBuffer(earliest_ns=now - int(0.2e9))
+    ready, detail = MOD.tf_history_ready(shallow, "map", "base_link", now, 1.0)
+    assert not ready
+    assert "earliest data is at" in detail
+    # one that begins 5 s ago can
+    deep = FakeBuffer(earliest_ns=now - int(5e9))
+    ready, detail = MOD.tf_history_ready(deep, "map", "base_link", now, 1.0)
+    assert ready, detail
+
+
+def test_tf_readiness_passes_tf2s_own_words_through(monkeypatch):
+    """Three failures, three fixes: name which one it was."""
+    monkeypatch.setattr(MOD.rclpy, "time", type("t", (), {"Time": FakeStamp}), raising=False)
+    for words in ("Tf has two or more unconnected trees",
+                  'Invalid frame ID "base_link" passed to canTransform argument source_frame'):
+        ready, detail = MOD.tf_history_ready(FakeBuffer(raises=words), "map", "base_link",
+                                             1_000_000_000_000, 1.0)
+        assert not ready and words in detail
+
+
+def test_tf_readiness_is_not_claimed_without_tf2():
+    ready, detail = MOD.tf_history_ready(None, "map", "base_link", 0, 1.0)
+    assert not ready and "no tf2_ros" in detail
+
+
+def test_no_goal_is_sent_before_the_tree_can_answer():
+    """A precondition, not another retry -- and its failure is its own verdict.
+
+    The reactive remedy retries only when a leg aborts inside 5 s having moved
+    under 0.05 m with no plan. The mecanum leg that failed this way had planned
+    around the wall and driven 1.999 m, so it never matched: a stack can be far
+    enough up to plan and drive and still be short of the history a costmap
+    reads back through.
+    """
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
+    assert "if not wait_for_tf():" in src
+    # before anything is dispatched, in both the round-trip and single-goal paths
+    assert src.index("if not wait_for_tf():") < src.index("return run_legs(legs)")
+    assert src.index("if not wait_for_tf():") < src.index("start_time = time.time()")
+    assert "NAV2 TF NEVER READY" in src
+    # said plainly: nothing was asked of Nav2, so this is not its verdict
+    assert "No goal was sent" in src
+
+
 def test_the_goal_is_stamped_zero_not_now():
     """A goal in the map frame is a place, not an observation.
 

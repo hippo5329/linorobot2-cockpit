@@ -89,6 +89,23 @@ WALL_END_MARGIN = 0.30
 STARTUP_ABORT_SEC = 5.0
 STARTUP_ABORT_DIST = 0.05
 STARTUP_SETTLE_SEC = 15.0
+
+# How much TF history has to exist before the first goal is dispatched, and how
+# long to wait for it. Lifecycle "active" says every node configured and
+# activated; it does not say the transform tree is assembled. Measured on
+# 2026-09-23, on legs that had just been told the stack was active:
+#
+#   Could not find a connection between 'odom' and 'base_link' because they are
+#   not part of the same tree. Tf has two or more unconnected trees.
+#   Invalid frame ID "base_link" passed to canTransform argument source_frame
+#   Requested time ...734.581103 but the earliest data is at ...734.756795
+#
+# The last one is why this is a HISTORY requirement and not just "can you do it
+# now": the buffer answered for the present and had nothing 176 ms back, which
+# is what the costmaps ask for. One second is chosen against the slowest thing
+# in the chain -- the global costmap updates at 1 Hz on these configs.
+TF_READY_HISTORY_SEC = 1.0
+TF_READY_TIMEOUT_SEC = 40.0
 # How long to wait for Nav2 to give a cancelled goal a terminal status: between
 # legs, and once more on the way out. Named so a test can shrink them.
 GOAL_CLOSE_SEC = 20.0
@@ -474,6 +491,28 @@ class Nav2GoalTester(Node):
                 f"Nav2 goal finished as {_status_name(self.goal_status)}"
                 + (f", error_code={self.goal_error_code}" if self.goal_error_code else "")
                 + (f", error_msg={self.goal_error_msg!r}" if self.goal_error_msg else ""))
+
+
+def tf_history_ready(buffer, goal_frame: str, base_frame: str,
+                     now_ns: int, history_sec: float):
+    """Can the buffer answer goal <- base as it was `history_sec` ago?
+
+    Split out from the node so the rule can be tested without a ROS graph. The
+    answer that matters is not "is there a transform now" -- a tree one message
+    old satisfies that and still has no history for a costmap to look back
+    through. Returns (ready, detail); detail is tf2's own complaint, which
+    names which frame is missing or how short the buffer is, and is worth
+    printing verbatim because the three failures it distinguishes need three
+    different fixes.
+    """
+    if buffer is None:
+        return False, "no tf2_ros: this build cannot check the transform tree"
+    try:
+        stamp = rclpy.time.Time(nanoseconds=max(0, now_ns - int(history_sec * 1e9)))
+        buffer.lookup_transform(goal_frame, base_frame, stamp)
+        return True, f"{goal_frame} <- {base_frame} answers for {history_sec:.1f} s ago"
+    except Exception as exc:                     # tf2 raises several distinct types
+        return False, str(exc).strip() or exc.__class__.__name__
 
 
 def _gap(node) -> str:
@@ -894,7 +933,56 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                   f"controller -- not the base -- is the place to look.")
         return False
 
+    def wait_for_tf() -> bool:
+        """Do not dispatch anything until the transform tree can answer.
+
+        This is a PRECONDITION, not another retry. What the pipeline waits for
+        today is lifecycle activation -- every node configured and activated --
+        and a goal sent on that signal alone has been accepted by a stack whose
+        costmaps had no tree to look through yet. Three distinct complaints, all
+        on 2026-09-23, all moments after "Nav2 stack active":
+
+            Tf has two or more unconnected trees
+            Invalid frame ID "base_link" ... frame does not exist
+            Requested time ...581103 but the earliest data is at ...756795
+
+        The existing remedy is reactive and narrow: retry once when a leg aborts
+        inside 5 s having moved under 0.05 m with no plan. The leg that failed
+        this way on mecanum had planned around the wall and driven 1.999 m, so
+        it never matched -- a stack can be far enough up to plan and drive and
+        still be short of the history a costmap reads back through.
+
+        A failure here is reported as its own verdict rather than as a
+        navigation failure, because it is one: nothing was ever asked of Nav2.
+        """
+        # No tf2_ros at all is a different thing from a tree that never came
+        # up, and it is not this gate's to fail: world_xy already falls back to
+        # the odometry pose in that build, so there is no map frame to be ready.
+        # Refusing here would turn a working configuration into a red leg.
+        if getattr(node, "tf_buffer", None) is None:
+            print("   TF readiness not checked: no tf2_ros in this build, so the "
+                  "verdict is measured from /odom and there is no map frame to wait for.")
+            return True
+        t0 = time.time()
+        detail = "no attempt"
+        while time.time() - t0 < TF_READY_TIMEOUT_SEC:
+            rclpy.spin_once(node, timeout_sec=0.2)
+            ready, detail = tf_history_ready(node.tf_buffer, node.goal_frame, node.base_frame,
+                                             node.get_clock().now().nanoseconds,
+                                             TF_READY_HISTORY_SEC)
+            if ready:
+                print(f"   TF ready after {time.time() - t0:.1f} s: {detail}")
+                return True
+        print(f"❌ NAV2 TF NEVER READY: {node.goal_frame} <- {node.base_frame} could not be "
+              f"resolved for {TF_READY_HISTORY_SEC:.1f} s ago within {TF_READY_TIMEOUT_SEC:.0f} s "
+              f"of the stack reporting active. No goal was sent, so this is not a navigation "
+              f"result.\n   tf2 says: {detail}")
+        return False
+
     try:
+        if not wait_for_tf():
+            return False
+
         if round_trips >= 1:
             # Back and forth: out to the goal, home again, round_trips times.
             # Arrival is required on every leg -- a round trip that only plans
