@@ -1203,8 +1203,24 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"driving it away, not a stall -- and nothing in fake mode would "
                               f"have stopped it.")
                         return False
+                    # WHERE first, then why. The order is not cosmetic: on the
+                    # 2026-09-23 mecanum 203 this line stopped INSIDE _why's
+                    # error_msg repr --
+                    #
+                    #   ended as ABORTED (error_code=203, error_msg='GridBased
+                    #   plugin failed to plan from (3.80, -3.11) [q: 0.00, 0.
+                    #
+                    # -- and everything after was gone, including _where, which
+                    # is the one thing that separates "the base drove out of the
+                    # room" from "the estimate drifted there". I could not
+                    # establish what truncated it (no timeout marker, no stray
+                    # newline, the line simply ends), so the fix is to put the
+                    # irreplaceable part where a tail cut cannot reach it rather
+                    # than to claim a cause. Nav2's error_msg is the replaceable
+                    # half: it is in nav2.log too, and _nav2_complaints lifts it
+                    # out separately.
                     print(f"❌ NAV2 LEG {i}/{n} NOT REACHED: ({gx:.2f}, {gy:.2f}) ended as "
-                          f"{_status_name(node.goal_status)}{_why(node)}{_gap(node)}{_where(node)} after "
+                          f"{_status_name(node.goal_status)}{_where(node)}{_gap(node)}{_why(node)} after "
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg"

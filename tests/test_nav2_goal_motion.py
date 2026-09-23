@@ -898,3 +898,24 @@ def test_the_stub_list_covers_every_ros_import_the_tester_makes():
     assert not missing, (
         f"{missing} imported by test_nav2_goal.py but not stubbed in _load_module(); "
         "collection will abort the entire suite")
+
+
+def test_where_it_ended_comes_before_the_error_message():
+    """The frame breakdown must survive a truncated line.
+
+    On the 2026-09-23 mecanum slice a 203 printed as
+
+        ended as ABORTED (error_code=203, error_msg='GridBasedplugin failed to
+        plan from (3.80, -3.11) [q: 0.00, 0.
+
+    and stopped -- no _gap, no _where, no traversed distance. _where is the only
+    part that separates "the base drove out of the room" from "the estimate
+    drifted there", and it was behind Nav2's error_msg, which is long, variable
+    and already recoverable from nav2.log. Order the line so the irreplaceable
+    half is first.
+    """
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
+    line = next(l for l in src.splitlines() if "NAV2 LEG {i}/{n} NOT REACHED" in l)
+    nxt = src.splitlines()[src.splitlines().index(line) + 1]
+    assert nxt.index("_where(node)") < nxt.index("_why(node)"), \
+        "the error message is back in front of the frame breakdown"
