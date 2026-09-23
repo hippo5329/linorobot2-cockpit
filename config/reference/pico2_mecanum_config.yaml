@@ -230,6 +230,32 @@ slam:
       debug_logging: false
       throttle_scans: 1
       transform_publish_period: 0.02
+      # The map->odom correction is stamped with the CLOCK, not with the scan
+      # that produced it.
+      #
+      # slam_toolbox's publishTransformLoop runs at transform_publish_period
+      # (50 Hz here) but, with restamp_tf false, stamps every message
+      # scan_timestamp + transform_timeout -- and scan_header is assigned on
+      # every incoming scan. So the stamp advances only as fast as /scan
+      # ARRIVES, and the loop republishes the same stamp in between.
+      #
+      # That makes every TF consumer hostage to scan latency. Our Wi-Fi is
+      # strong but shared, so datagrams queue behind other traffic and a scan
+      # lands late; its stamp is then old, map->odom inherits the age, and a
+      # controller asking for the transform at "now" is asking into the future.
+      # That is the whole of error_code=102: measured 601 ms of frozen stamp on
+      # a SERIAL leg, and the Wi-Fi legs fail more often for the same reason
+      # with latency on top.
+      #
+      # Stamping with now() is what AMCL does with its own map->odom, and it is
+      # right for the same reason: this is a slowly-varying CORRECTION, not an
+      # observation. Its value is unchanged between scans, so asserting it is
+      # current is true.
+      #
+      # It does not hide a dead LiDAR. nav2_collision_monitor's `scan` source
+      # has source_timeout 1.0 and stops the robot when the topic goes quiet --
+      # which is the component whose job that is, and it says so out loud.
+      restamp_tf: true
       map_update_interval: 5.0
       resolution: 0.05
       max_laser_range: 10.0
