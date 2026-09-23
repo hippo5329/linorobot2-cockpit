@@ -233,8 +233,24 @@ def launch_setup(context, *args, **kwargs):
                 "min_lookahead_dist": follow_path.pop("min_lookahead_dist", 0.3),
                 "max_lookahead_dist": follow_path.pop("max_lookahead_dist", 0.9),
                 "lookahead_time": 1.5,
-                "rotate_to_heading_angular_vel": 0.75,
-                "transform_tolerance": 0.1,
+                # 0.75 here against 1.8 in every shipped config: on Lyrical the
+                # robot turned to heading at under half the speed Jazzy uses,
+                # on every leg, and no edit to the YAML could reach it.
+                "rotate_to_heading_angular_vel": follow_path.pop(
+                    "rotate_to_heading_angular_vel", 1.8),
+                # Carried across the nesting like every other key here, NOT
+                # hardcoded. It was 0.1 while the flat block Jazzy reads says
+                # 0.3, so the same robot tolerated three times less TF staleness
+                # on Lyrical than on Jazzy -- and the config's own value was
+                # silently discarded rather than overridden.
+                #
+                # It matters because map->odom does stall: measured at 601 ms on
+                # a serial leg (slam_toolbox, configured at 50 Hz). Both
+                # tolerances lose to a stall that long, but 0.1 also loses to
+                # every shorter one, and the Wi-Fi legs bear it out -- GenDrv
+                # Wi-Fi passes 88% on Jazzy against 75% on Lyrical across every
+                # run since 2026-09-22, same board, same link, same firmware.
+                "transform_tolerance": follow_path.pop("transform_tolerance", 0.3),
                 "use_velocity_scaled_lookahead_dist": False,
                 "min_approach_linear_velocity": 0.05,
                 "approach_velocity_scaling_dist": 0.6,
@@ -249,7 +265,7 @@ def launch_setup(context, *args, **kwargs):
                 "use_rotate_to_heading": True,
                 "allow_reversing": False,
                 "rotate_to_heading_min_angle": 0.785,
-                "max_angular_accel": 3.2,
+                "max_angular_accel": follow_path.pop("max_angular_accel", 3.2),
                 "max_robot_pose_search_dist": 10.0,
                 "stateful": True,
             }
