@@ -38,6 +38,7 @@ try:
     from action_msgs.msg import GoalStatus
     from geometry_msgs.msg import PoseStamped, Twist, TwistStamped
     from nav_msgs.msg import Path, Odometry
+    from sensor_msgs.msg import LaserScan
     from nav2_msgs.action import NavigateToPose
     try:
         import tf2_ros
@@ -245,6 +246,28 @@ class Nav2GoalTester(Node):
         self.create_subscription(Odometry, "/odom/unfiltered",
                                  self._raw_odom_cb, sensor_qos)
 
+        # /scan itself, beside the map->odom stamp.
+        #
+        # The map->odom meter says the stamp stood still; with restamp_tf false
+        # that stamp IS the scan stamp, so it cannot say which of two very
+        # different things happened:
+        #
+        #   * the board stopped producing scans  -- the STAMPS gap, or
+        #   * the scans were produced on time and arrived in a burst -- the
+        #     stamps are evenly spaced and the ARRIVALS gap.
+        #
+        # The first is the emulator or the firmware loop; the second is the
+        # transport or DDS. Measuring only one of them is how "scan gap" stayed
+        # a single undifferentiated suspect. Both are recorded here, in a plain
+        # callback: no lookup, no I/O, nothing that can perturb the run the way
+        # an unthrottled TF lookup in the leg loop did.
+        self.scan_count: int = 0
+        self.scan_max_stamp_gap: float = 0.0
+        self.scan_max_arrival_gap: float = 0.0
+        self._scan_prev_stamp = None
+        self._scan_prev_arrival = None
+        self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
+
         self.get_logger().info(
             f"Nav2 Goal Tester initialized for target ({goal_x:.2f}, {goal_y:.2f}) behind "
             f"obstacle wall, /cmd_vel as {self.cmd_vel_type}."
@@ -346,6 +369,25 @@ class Nav2GoalTester(Node):
         self.cmd_vel_count += 1
         self.cmd_vel_stamped_count += 1
         self._note_command(msg.twist)
+
+    def _scan_cb(self, msg):
+        """Record the worst stamp interval and the worst arrival interval."""
+        self.scan_count += 1
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        arrival = time.time()
+        if self._scan_prev_stamp is not None:
+            gap = stamp - self._scan_prev_stamp
+            if gap > self.scan_max_stamp_gap:
+                self.scan_max_stamp_gap = gap
+        if self._scan_prev_arrival is not None:
+            gap = arrival - self._scan_prev_arrival
+            if gap > self.scan_max_arrival_gap:
+                self.scan_max_arrival_gap = gap
+        # A zero or backwards stamp is a board whose clock has not synced yet;
+        # it would otherwise register as one enormous gap on the first scans.
+        if stamp > 0.0:
+            self._scan_prev_stamp = stamp
+        self._scan_prev_arrival = arrival
 
     def _raw_odom_cb(self, msg: Odometry):
         rx = msg.pose.pose.position.x
@@ -687,6 +729,31 @@ def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
     if worst >= tolerance:
         note += (f" -- at or past the {tolerance:.1f} s transform tolerance, so a "
                  f"controller TF error here is a symptom of the scan gap, not of TF")
+    return note
+
+
+def _scan_gap_note(node, nominal_hz: float = 10.0) -> str:
+    """Name which end of the scan path gapped: the board's, or the wire's.
+
+    Reported together, because the interesting case is the DIFFERENCE. Scans
+    stamped 100 ms apart that arrive 1.2 s apart were generated on time and
+    held up in transport; stamps 1.2 s apart mean nothing was generated to
+    hold up, and no amount of transport tuning touches it.
+    """
+    if not getattr(node, "scan_count", 0):
+        return "; no /scan seen by the tester"
+    period = 1.0 / nominal_hz
+    stamp_gap = getattr(node, "scan_max_stamp_gap", 0.0)
+    arrival_gap = getattr(node, "scan_max_arrival_gap", 0.0)
+    if max(stamp_gap, arrival_gap) <= period * 1.5:
+        return f"; /scan steady ({node.scan_count} scans, no interval over {period * 1500:.0f} ms)"
+    note = (f"; /scan gapped: worst stamp interval {stamp_gap * 1000:.0f} ms, "
+            f"worst arrival interval {arrival_gap * 1000:.0f} ms "
+            f"({node.scan_count} scans, {period * 1000:.0f} ms nominal)")
+    if stamp_gap > period * 1.5 and arrival_gap <= stamp_gap * 1.2:
+        note += " -- the board stopped producing, so this is upstream of the wire"
+    elif arrival_gap > stamp_gap * 1.5:
+        note += " -- produced on time and delivered late, so this is the transport"
     return note
 
 
@@ -1065,7 +1132,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg"
-                          f"{_map_odom_gap_note(node)}")
+                          f"{_map_odom_gap_note(node)}{_scan_gap_note(node)}")
                 return False
             around = route_note()
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
@@ -1096,7 +1163,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         # comfortable or whether every green leg was one hiccup from red.
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
                        f"the obstacle wall and back home (within {goal_tolerance:.2f} m)"
-                       f"{_map_odom_gap_note(node)}")
+                       f"{_map_odom_gap_note(node)}{_scan_gap_note(node)}")
 
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one

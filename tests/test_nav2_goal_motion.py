@@ -35,9 +35,12 @@ def _load_module():
         "action_msgs.msg": ["GoalStatus"],
         "geometry_msgs.msg": ["PoseStamped", "Twist", "TwistStamped"],
         "nav_msgs.msg": ["Path", "Odometry"],
+        "sensor_msgs.msg": ["LaserScan"],
         "nav2_msgs.action": ["NavigateToPose"],
         "action_msgs": [], "geometry_msgs": [], "nav_msgs": [], "nav2_msgs": [],
+        "sensor_msgs": [],
     }
+    globals()["_STUB_NAMES"] = tuple(stubs)
     saved = {name: sys.modules.get(name) for name in stubs}
     for name, attrs in stubs.items():
         mod = types.ModuleType(name)
@@ -851,3 +854,34 @@ def test_an_open_goal_is_cancelled_on_every_leg_including_the_last(monkeypatch, 
     out = capsys.readouterr().out
     assert "has not closed the goal" in out
     assert "may be rejected" in out
+
+
+def test_the_stub_list_covers_every_ros_import_the_tester_makes():
+    """This list names its inputs, so it rots -- and it rots loudly.
+
+    It is imported at MODULE scope, so a missing entry is not a failing test:
+    the tester's own import guard calls sys.exit(1) inside collection and pytest
+    aborts with INTERNALERROR and "no tests ran". The whole suite goes dark,
+    including the 500 tests that have nothing to do with ROS.
+
+    That is what adding `from sensor_msgs.msg import LaserScan` to the tester
+    did on 2026-09-23. Assert the coverage instead of rediscovering it.
+    """
+    import ast
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    wanted = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for stmt in ast.walk(node):
+                if isinstance(stmt, ast.ImportFrom) and stmt.module:
+                    wanted.add(stmt.module)
+                elif isinstance(stmt, ast.Import):
+                    wanted.update(a.name for a in stmt.names)
+    # tf2_ros has its own nested guard: the tester runs without it on purpose.
+    wanted -= {"tf2_ros"}
+    stubbed = set(_STUB_NAMES)
+    missing = sorted(m for m in wanted if m not in stubbed)
+    assert not missing, (
+        f"{missing} imported by test_nav2_goal.py but not stubbed in _load_module(); "
+        "collection will abort the entire suite")
