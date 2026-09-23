@@ -27,25 +27,16 @@ def _read(p):
         return fh.read()
 
 
-def test_the_isr_times_the_edge_before_it_raises_the_flag():
-    """Order matters: a flag that is set must have a time to go with it."""
-    c = _read(IFACE_C)
-    assert c.index("data_ready_us_ = micros()") < c.index("data_ready_ = true")
-
-
-def test_getdata_takes_the_edge_time_with_the_flag():
+def test_the_chip_counter_is_the_only_source():
+    """There were two: the chip's counter and the DATA_RDY edge. The interrupt
+    path went on 2026-09-24 and the edge with it, because an ISR that cannot
+    read the bus times an edge whose SAMPLE is then uncertain -- a precise time
+    paired with the wrong reading."""
     h = _read(IFACE_H)
-    blk = h[h.index("if (data_ready_)"):]
-    blk = blk[:blk.index("else if")]
-    assert "sample_us_ = data_ready_us_;" in blk
-    assert "sample_time_known_ = true;" in blk
-
-
-def test_the_chip_counter_is_preferred_over_the_edge():
-    h = _read(IFACE_H)
-    blk = h[h.index("uint32_t sampleAgeUs()"):]
-    blk = blk[:blk.index("bool sampleTimeKnown")]
-    assert blk.index("chipSampleAgeUs()") < blk.index("sample_time_known_")
+    blk = h[h.index("uint32_t sampleAgeUs()"):h.index("// Running statistics")]
+    assert "chipSampleAgeUs()" in blk
+    assert "sample_time_known_" not in blk, "the edge source is back"
+    assert "micros()" not in blk, "the host clock is being used as a sample time again"
 
 
 def test_an_age_not_a_counter():
@@ -64,8 +55,8 @@ def test_a_driver_that_cannot_say_returns_zero_and_zero_means_no_correction():
     h, m = _read(IFACE_H), _read(MAIN)
     assert "virtual uint32_t chipSampleAgeUs() { return 0; }" in h
     # no pin, or a line that never fired: sampleAgeUs answers 0
-    blk = h[h.index("uint32_t sampleAgeUs()"):]
-    assert "if (!sample_time_known_)\n                return 0;" in blk
+    blk = h[h.index("uint32_t sampleAgeUs()"):h.index("// Running statistics")]
+    assert "return 0;" in blk, "a driver with no counter must answer 0, not guess"
     # and main.cpp subtracting 0 leaves every existing board exactly as it was
     assert "- (int64_t)imu_age_us * 1000LL" in m
 
@@ -73,14 +64,20 @@ def test_a_driver_that_cannot_say_returns_zero_and_zero_means_no_correction():
 def test_the_age_is_clamped_so_a_fault_cannot_move_a_stamp_anywhere():
     h = _read(IFACE_H)
     assert "IMU_SAMPLE_AGE_MAX_US 50000" in h
-    blk = h[h.index("uint32_t sampleAgeUs()"):h.index("bool sampleTimeKnown")]
-    assert blk.count("IMU_SAMPLE_AGE_MAX_US") >= 3, "both sources must be clamped"
+    blk = h[h.index("uint32_t sampleAgeUs()"):h.index("// Running statistics")]
+    assert blk.count("IMU_SAMPLE_AGE_MAX_US") >= 2, "the chip's counter must be clamped"
 
 
-def test_the_micros_wrap_is_handled_by_unsigned_arithmetic():
-    h = _read(IFACE_H)
-    blk = h[h.index("uint32_t sampleAgeUs()"):h.index("bool sampleTimeKnown")]
-    assert "const uint32_t age = micros() - sample_us_;" in blk
+def test_the_report_does_not_wait_for_an_agent():
+    """It hung off the data-ready verdict, which ran in publishData() -- so on a
+    board whose console shares the micro-ROS port it was printed only after the
+    session opened, into the XRCE stream, and was never readable. Reported from
+    loop() now."""
+    m = _read(MAIN)
+    assert "static void reportSampleAge()" in m
+    loop = m[m.index("void loop() {"):]
+    loop = loop[:min(loop.index(t) for t in ("\nvoid ", "\nstatic ") if t in loop)]
+    assert "reportSampleAge();" in loop
 
 
 def test_the_imu_stamp_is_no_longer_odoms():
@@ -106,5 +103,11 @@ def test_the_bench_can_see_the_correction_and_which_source_made_it():
     assert "sample age from %s" in m
     # the spread, not just the mean: a constant age is a constant offset
     assert "%lu..%lu us, mean %lu" in m
-    for src in ("chip timestamp", "DATA_RDY edge", "none - stamped at publish"):
+    for src in ("chip timestamp", "none - stamped at publish"):
         assert src in h, src
+    # The edge source must be gone from the CODE, not from the prose: the
+    # comment explaining why it was removed is worth more than the silence, and
+    # a check that forbids the word forbids the explanation too.
+    for line in h.splitlines():
+        if "DATA_RDY" in line:
+            assert line.lstrip().startswith("//"), f"DATA_RDY in live code: {line.strip()}"

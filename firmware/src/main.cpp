@@ -492,9 +492,7 @@ bool destroyEntities();
 void fullStop();
 void moveBase();
 void publishData();
-// Defined below, called from loop(): the DATA_RDY verdict must not depend on
-// an agent, because on a shared-console board it is unreadable once one is up.
-static void reportDataReadyLine();
+static void reportSampleAge();
 void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
 void twistCallback(const void * msgin);
 #ifdef USE_STAMPED_CMD_VEL
@@ -624,9 +622,6 @@ static inline void wdtFeed()  {}
 // external flash chip. See identityField() below -- the key is the claim.
 // The last two come from firmware/common/build_stamp.py through the build flags.
 // scripts/mcu_probe.py parses exactly this line -- keep the key=value shape.
-#ifndef IMU_INT_PIN
-#define IMU_INT_PIN -1      // no DATA_RDY line wired; the env key imu_int overrides
-#endif
 #ifndef FW_GIT_REV
 #define FW_GIT_REV "unknown"      // built outside a git tree; say so rather than guess
 #endif
@@ -1014,17 +1009,6 @@ void setup()
             }
         }
     }
-    if (!sim_imu) {
-        // The data-ready line, if this board has one wired. -1 keeps polling.
-        const int imu_int = envInt("imu_int", IMU_INT_PIN);
-        imu->attachDataReady(imu_int);
-        if (imu_int >= 0)
-            Serial.printf("[imu] data-ready interrupt on GPIO %d (%s)\n", imu_int,
-                          imu->intConfigured() ? "driver enabled DATA_RDY"
-                                               : "driver cannot enable DATA_RDY; polls if the pin stays quiet");
-        else
-            Serial.println("[imu] polling (set imu_int to use a DATA_RDY pin)");
-    }
     if (!sim_mag) {
         if (!mag->init())
         {
@@ -1259,10 +1243,7 @@ void loop() {
         return;
     }
     fakeWallLedService();
-    // Not in publishData(): the ISR counts edges whether or not an agent
-    // exists, and on a board whose console shares the micro-ROS port the
-    // verdict is only readable BEFORE one connects.
-    reportDataReadyLine();
+    reportSampleAge();
     diagCount(DIAG_LOOP);
     diagState((int)state);
     switch (state) 
@@ -1847,45 +1828,28 @@ void moveBase()
 }
 
 
-// The hardware verdict on a wired DATA_RDY line: how many edges the ISR
-// actually counted, and over how long. 0 means the wire is on a pin the chip
-// is not driving.
+// What the stamp correction is actually doing, once, a few seconds in.
 //
-// This lived in publishData(), which does not run until the agent connects --
-// and that made it unreadable on exactly the boards that need it most. A Pico
-// 2 carries micro-ROS and its console on the SAME USB CDC, so the moment the
-// agent is up the line goes into the XRCE stream and is lost; before the agent
-// is up, publishData() never ran and it was never printed at all. The verdict
-// was therefore obtainable only on a board with a second UART -- the YB-EET01,
-// whose console is its own CP2102 -- which is not a property the measurement
-// should depend on.
+// This used to hang off the data-ready verdict, which is gone with the
+// interrupt path. It belongs on its own: the correction now comes from the
+// chip's own timestamp counter, which has nothing to do with a pin, and a
+// feature that cannot be observed cannot be verified.
 //
-// The ISR counts edges whether or not an agent exists, so the report does not
-// need one either. Called from loop(), in every state.
+// The SPREAD is the number that matters. A constant age is a constant offset
+// and harms nothing; a varying one is the jitter madgwick integrates the gyro
+// through, and it lands in the heading the EKF takes as absolute.
 //
-// Report the WINDOW, not a nominal one. On a Wi-Fi leg the agent takes longer
-// to join, and "in the first 5 s" is then right only by luck: measured on the
-// Yahboom, the same 200 Hz ODR printed 1001 edges on serial and 1576 over
-// Wi-Fi, and only the first divides out to the ODR. Printing the elapsed time
-// and the quotient makes it a rate that can be checked against the configured
-// ODR instead of a count to be squinted at.
-static void reportDataReadyLine()
+// Reported from loop() rather than publishData() so it does not wait for an
+// agent -- on a board whose console shares the micro-ROS port, anything printed
+// after the session opens is lost in the XRCE stream.
+static void reportSampleAge()
 {
-    static bool int_reported = false;
-    if (int_reported || sim_imu || !imu || imu->intPin() < 0)
+    static bool reported = false;
+    if (reported || sim_imu || !imu)
         return;
-    if ((millis() - imu->intAttachedMs()) <= 5000)
+    if (millis() < 8000)
         return;
-    int_reported = true;
-    const uint32_t int_ms    = millis() - imu->intAttachedMs();
-    const uint32_t int_edges = imu->intEdges();
-    Serial.printf("[imu] data-ready line GPIO %d fired %lu times in %.1f s = %.1f Hz (%s)\n",
-                  imu->intPin(), (unsigned long)int_edges, int_ms / 1000.0f,
-                  int_edges * 1000.0f / (float)int_ms,
-                  int_edges ? "interrupt path live" : "never fired - polling");
-    // What the stamp correction is actually doing. The spread is the point: a
-    // constant age is a constant offset and harms nothing, a varying one is
-    // the jitter madgwick integrates the gyro through.
+    reported = true;
     if (imu->ageCount())
         Serial.printf("[imu] sample age from %s: %lu..%lu us, mean %lu over %lu samples "
                       "(stamps dated back by this much)\n",
@@ -1993,11 +1957,10 @@ void publishData()
     // interval between stamps (constant_dt: 0.0 in bringup.launch.py), so it
     // goes straight into the heading the EKF then takes as absolute.
     //
-    // sampleAgeUs() answers from the chip's own timestamp counter where the
-    // driver can read one, and from the DATA_RDY edge otherwise. It returns 0
-    // when neither is available -- no interrupt pin, or a line that never
-    // fired -- and 0 here means "leave the stamp alone", which is exactly the
-    // behaviour every board had before this.
+    // sampleAgeUs() answers from the chip's own timestamp counter, where the
+    // driver can read one. It returns 0 when the driver has none, and 0 here
+    // means "leave the stamp alone" -- which is the behaviour every board had
+    // before this, and the behaviour every board without a counter keeps.
     {
         const uint32_t imu_age_us = imu->sampleAgeUs();
         imu->noteSampleAge(imu_age_us);

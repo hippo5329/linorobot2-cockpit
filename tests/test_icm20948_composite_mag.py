@@ -19,12 +19,10 @@ was replaced with an ICM-20948 on the same wiring (I2C0 GP0/GP1, INT on GPIO 2).
    turns the bypass on; reorder those and the mag goes silent with the bus
    still ACKing and nothing to explain it.
 
-2. THE INTERRUPT. ICM20948IMU inherited enableDataReadyInterrupt() -> false, so
-   with INT wired the firmware attached an ISR, waited a second for an edge the
-   chip was never told to produce, and polled: "data-ready pin 2 never fired in
-   1 s". And the ISR itself reached ONE static instance, which made data-ready a
-   single-sensor feature -- a second line would have silently marked the wrong
-   sensor's sample fresh.
+(This file also covered the ICM-20948's data-ready interrupt. That whole path
+was removed on 2026-09-24 -- an ISR that cannot read the bus buys a timestamp
+whose pairing with the eventually-read sample is uncertain -- so those tests
+went with it. The composite fold is independent of it and stands.)
 """
 import ctypes
 import os
@@ -36,7 +34,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FW = os.path.join(ROOT, "firmware", "common", "lib")
 PROBE_DIR = os.path.join(FW, "i2c_probe")
-IMU_DIR = os.path.join(FW, "imu")
+IMU_DIR = os.path.join(FW, "imu")  # noqa: F401  (kept: the fold tests read it)
 
 
 def _read(p):
@@ -149,80 +147,3 @@ def test_the_fold_runs_inside_the_probe_not_only_in_the_test():
 
 
 # --- the interrupt ---------------------------------------------------------
-
-def test_the_icm20948_can_ask_its_chip_for_data_ready():
-    body = _read(os.path.join(IMU_DIR, "default_imu.h"))
-    start = body.index("class ICM20948IMU")
-    cls = body[start:body.index("\nclass ", start + 10)]
-    assert "enableDataReadyInterrupt" in cls, "the ICM-20948 still cannot drive INT1"
-    assert "0x11" in cls, "INT_ENABLE_1 is never written"
-    assert "0x01" in cls, "RAW_DATA_0_RDY_EN is never set"
-
-
-def test_enabling_the_interrupt_does_not_switch_the_magnetometer_off():
-    """INT_PIN_CFG carries BYPASS_EN, which is how the AK09918 is reachable at
-    all. Writing the pin's shape must preserve it -- a bare w8(0x0F, ...) here
-    would turn the magnetometer off to turn the interrupt on."""
-    body = _read(os.path.join(IMU_DIR, "default_imu.h"))
-    start = body.index("class ICM20948IMU")
-    cls = body[start:body.index("\nclass ", start + 10)]
-    fn = cls[cls.index("bool enableDataReadyInterrupt"):]
-    fn = fn[:fn.index("\n        }")]
-    assert "r8(0x0F)" in fn, "INT_PIN_CFG is written without reading it first"
-    assert "~0xF0" in fn, "the pin's mode bits are not all forced"
-
-
-def test_the_interrupt_is_pulsed_not_latched():
-    """INT1_LATCH_INT_EN (INT_PIN_CFG bit 5) must be CLEARED, not inherited.
-
-    Latched, the line goes high on the first sample and stays high, because
-    nothing in this driver reads INT_STATUS (0x1A) to clear it. That is exactly
-    one rising edge and then silence -- which getData() sees as a line that
-    fired once and died, and the staleness ceiling then papers over by reading
-    the bus anyway. A data-ready feature that silently degrades to polling is
-    the fault this whole change exists to remove.
-
-    It is clear today only because startSensor() writes 0x0F = 0x02 first.
-    Depending on that ordering is the same fragility as depending on it for the
-    magnetometer bypass, which is already a known trap on this part.
-    """
-    body = _read(os.path.join(IMU_DIR, "default_imu.h"))
-    start = body.index("class ICM20948IMU")
-    cls = body[start:body.index("\nclass ", start + 10)]
-    fn = cls[cls.index("bool enableDataReadyInterrupt"):]
-    fn = fn[:fn.index("\n        }")]
-    # ~0xF0 clears ACTL(7), OPEN(6), LATCH(5) and ANYRD_2CLEAR(4); bit 1
-    # BYPASS_EN survives.
-    assert "~0xF0" in fn
-    assert "~0xC0" not in fn, "only ACTL and OPEN are forced; LATCH is left to chance"
-
-
-def test_data_ready_is_multiplexed_not_a_singleton():
-    """One static instance made data-ready single-sensor: a second line would
-    overwrite the first and mark the WRONG sensor's sample fresh."""
-    hdr = _read(os.path.join(IMU_DIR, "imu_interface.h"))
-    cpp = _read(os.path.join(IMU_DIR, "imu_interface.cpp"))
-    assert "static IMUInterface *instance_;" not in hdr, "the singleton is back"
-    assert "sources_[IMU_INT_MAX_SOURCES]" in hdr
-    assert "int_slot_" in hdr
-    # one trampoline per slot, because attachInterrupt takes no argument on
-    # the AVR and RP2 cores
-    for n in range(4):
-        assert f"isrSlot{n}" in cpp, f"no trampoline for slot {n}"
-
-
-def test_running_out_of_slots_is_refused_out_loud():
-    """Silently polling would look identical to a line that never fires, and
-    this is a wiring fact the person holding the board can act on."""
-    hdr = _read(os.path.join(IMU_DIR, "imu_interface.h"))
-    fn = hdr[hdr.index("void attachDataReady(int pin)"):]
-    fn = fn[:fn.index("\n        int intPin()")]
-    assert "no interrupt slot free" in fn
-    assert "int_pin_ = -1;" in fn, "a sensor with no slot must fall back to polling"
-
-
-def test_reattaching_the_same_sensor_does_not_consume_a_second_slot():
-    hdr = _read(os.path.join(IMU_DIR, "imu_interface.h"))
-    fn = hdr[hdr.index("void attachDataReady(int pin)"):]
-    fn = fn[:fn.index("\n        int intPin()")]
-    assert "sources_[i] == this" in fn, "a re-attach exhausts the table"

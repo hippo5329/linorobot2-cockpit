@@ -65,15 +65,6 @@ def test_the_bus_scan_stops_at_the_last_assignable_address():
     assert "0x7E" in probe and "I3C broadcast" in probe
 
 
-def test_data_ready_goes_to_both_int_pins_as_a_push_pull_pulse():
-    b = _body()
-    fn = b[b.index("enableDataReadyInterrupt() override"):]
-    fn = fn[:fn.index("return")]
-    assert "REG_INT_CONFIG, INT_PP_HIGH_PULSE_BOTH" in fn
-    assert "REG_INT_SOURCE0, UI_DRDY_EN" in fn and "REG_INT_SOURCE3, UI_DRDY_EN" in fn
-    assert "INT_PP_HIGH_PULSE_BOTH = 0x1B" in b and "UI_DRDY_EN            = 0x08" in b
-
-
 def test_scales_match_the_ranges():
     b = _body()
     assert "GYRO_1000DPS_200HZ    = 0x28" in b and "GYRO_LSB_PER_DPS = 32.768f" in b
@@ -86,22 +77,6 @@ def test_registered_everywhere_a_driver_must_be():
     assert 'if (who == 0x67) {' in probe and '"ICM42670", "icm42670"' in probe
     assert '"ICM42670"' in _read(os.path.join(ROOT, "scripts", "mcu_env.py"))
     assert 'value="ICM42670"' in _read(os.path.join(ROOT, "web", "frontend", "index.html"))
-
-
-def test_the_interrupt_edge_count_is_reported_once():
-    m = _read(os.path.join(FW, "src", "main.cpp"))
-    assert "fired %lu times in %.1f s = %.1f Hz" in m, \
-        "the edge report must print the window it measured, not a nominal one"
-    # The window is elapsed time since the attach, not a constant: the publish
-    # path this runs in only starts when the agent connects.
-    assert "const uint32_t int_ms    = millis() - imu->intAttachedMs();" in m
-    h = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.h"))
-    assert "volatile uint32_t int_edges_" in h and "uint32_t intEdges() const" in h
-    c = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.cpp"))
-    # The ISR counts every edge. Spelled `instance_->int_edges_++` while
-    # data-ready was a singleton; the counter is per-SOURCE now, so this asks
-    # that the increment is there rather than how the source is reached.
-    assert re.search(r"->int_edges_\+\+;", c), "the ISR no longer counts edges"
 
 
 def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
@@ -126,35 +101,3 @@ def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
     assert "is gone after the usb reset; cannot send the 1200-baud touch" in pulse
     assert "touched = (r.returncode == 0)" in pulse, "a failed stty is not a touch"
     assert "s.dtr = False" in pulse, "drop DTR explicitly; the core wants 1200 baud AND DTR low"
-
-
-def test_the_edge_verdict_does_not_require_an_agent():
-    """The DATA_RDY verdict is only readable when no agent is connected.
-
-    It lived in publishData(), which does not run until micro-ROS connects --
-    and a Pico 2 carries micro-ROS and its console on the SAME USB CDC. So the
-    moment the line could be printed, the port was carrying XRCE binary and it
-    was lost; before that, publishData() had never run. The measurement was
-    obtainable only on a board with a second UART (the YB-EET01, whose console
-    is its own CP2102), which is not a property the verdict should depend on.
-
-    The ISR counts edges whether or not an agent exists, so the report must not
-    need one. Found on the bench 2026-09-23 trying to prove the LSM6DSOX's INT1
-    on a plain Pico 2 -- which, note, runs the `w` firmware with no radio
-    fitted, so there is no udp4 escape route either.
-    """
-    m = _read(os.path.join(FW, "src", "main.cpp"))
-    assert "static void reportDataReadyLine()" in m, "the verdict is inlined again"
-    def body(sig):
-        """From a function's signature to the start of the next top-level
-        definition. Slicing on the first "\n}\n" cuts at the first nested
-        block that happens to close in column 1, which is not the function."""
-        start = m.index(sig)
-        rest = m[start + len(sig):]
-        ends = [rest.index(t) for t in ("\nvoid ", "\nstatic ") if t in rest]
-        return rest[:min(ends)] if ends else rest
-
-    assert "reportDataReadyLine();" in body("void loop() {"), \
-        "the verdict is not reported from loop()"
-    assert "reportDataReadyLine" not in body("void publishData()"), \
-        "the verdict is back in the agent-only path"

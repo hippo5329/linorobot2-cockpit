@@ -50,15 +50,6 @@ def test_the_driver_does_not_override_getdata_or_touch_the_bus_clock():
     assert "setClock" not in body, "board_init owns the bus clock (env i2c_clock)"
 
 
-def test_data_ready_enables_both_int_pins_and_sync_sample():
-    body = _class_body("QMI8658IMU")
-    fn = body[body.index("enableDataReadyInterrupt() override"):]
-    fn = fn[:fn.index("return")]
-    assert "CTRL1_INT1_EN | CTRL1_INT2_EN" in fn
-    assert "CTRL7_SYNC" in fn
-    assert "DRDY_DIS" in fn  # the comment says why INT2 stays live
-
-
 def test_int_pins_are_high_impedance_until_asked():
     body = _class_body("QMI8658IMU")
     start = body[body.index("startSensor() override"):]

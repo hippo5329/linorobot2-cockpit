@@ -135,18 +135,6 @@ class MPU6050IMU: public IMUInterface
             return true;
         }
 
-        // The MPU6050's INT pin, as a data-ready strobe: active high, push-pull,
-        // a 50 us pulse per new sample, cleared by any register read so a slow
-        // reader cannot wedge it high. Register names are i2cdevlib's.
-        bool enableDataReadyInterrupt() override
-        {
-            accelgyro_.setInterruptMode(0);
-            accelgyro_.setInterruptDrive(0);
-            accelgyro_.setInterruptLatch(0);
-            accelgyro_.setInterruptLatchClear(1);
-            accelgyro_.setIntDataReadyEnabled(true);
-            return true;
-        }
 
         geometry_msgs__msg__Vector3 readAccelerometer() override
         {
@@ -274,21 +262,9 @@ class FakeIMU: public IMUInterface
 //     50 Hz, so the filter sits at its Nyquist and each publish sees a
 //     settled, oversampled value rather than one raw 224 Hz sample.
 //   * ONE burst per sample, 0x2D..0x40: STATUSINT, STATUS0, STATUS1, the
-//     24-bit sample counter, temperature, AX..GZ. Reading STATUS0/STATUSINT
-//     is what clears the chip's DATA_RDY line, so the burst both fetches the
-//     sample and re-arms the interrupt for the next one. readGyroscope() does
-//     the burst; readAccelerometer() hands back the accel half of it, which
-//     is the order IMUInterface::getData() calls them in.
-//   * DATA_RDY on request (enableDataReadyInterrupt()): the chip drives DRDY
-//     on INT2 in its normal mode and on INT1 in SyncSample mode; a board that
-//     breaks out "INT" rarely says which, so both are enabled and both modes
-//     turned on. Whichever line the board routed rises once per sample.
-//     Neither pin is driven until asked -- a board with the line unwired (the
-//     GenDrv) keeps them high-impedance.
-//
-// Datasheet: QMI8658A rev 1.x, register map section 9. Field names below are
-// the datasheet's.
-// ---------------------------------------------------------------------------
+//     24-bit sample counter, temperature, AX..GZ. readGyroscope() does the
+//     burst; readAccelerometer() hands back the accel half of it, which is the
+//     order IMUInterface::getData() calls them in.
 class QMI8658IMU : public IMUInterface
 {
     private:
@@ -406,17 +382,6 @@ class QMI8658IMU : public IMUInterface
         }
 
     protected:
-        // Both pins, both modes: see the header comment. The base attaches
-        // its ISR on RISING; the chip re-asserts the line after every sample
-        // once the previous one's status has been read, which the burst does.
-        bool enableDataReadyInterrupt() override
-        {
-            ctrl1_ |= CTRL1_INT1_EN | CTRL1_INT2_EN;
-            ctrl7_ |= CTRL7_SYNC;               // DRDY_DIS stays 0: INT2 too
-            writeReg(REG_CTRL1, ctrl1_);
-            writeReg(REG_CTRL7, ctrl7_);
-            return readReg(REG_CTRL7) == ctrl7_;
-        }
 
     public:
         QMI8658IMU() {}
@@ -486,25 +451,18 @@ class QMI8658IMU : public IMUInterface
 //     low-noise mode, UI filter 25 Hz: the base publishes at 50 Hz, so each
 //     publish sees a settled, oversampled value.
 //   * ONE burst per sample, 0x09..0x16: temperature, AX..AZ, GX..GZ, big-endian.
-//   * DATA_RDY on request: INT_SOURCE0 routes UI_DRDY to INT1, INT_SOURCE3 to
-//     INT2, both configured push-pull, active-high, 100 us pulse -- a board that
-//     breaks out "INT" rarely says which pin, so both fire. Pulse mode needs no
-//     status read to re-arm. Neither pin is driven until asked.
 // ---------------------------------------------------------------------------
 class ICM42670IMU : public IMUInterface
 {
     private:
         static const uint8_t REG_MCLK_RDY          = 0x00;  // bit3 MCLK_RDY
         static const uint8_t REG_SIGNAL_PATH_RESET = 0x02;  // bit4 SOFT_RESET_DEVICE_CONFIG
-        static const uint8_t REG_INT_CONFIG        = 0x06;  // INT2[5:3] INT1[2:0]: mode|drive|polarity
         static const uint8_t REG_TEMP_DATA1        = 0x09;  // burst start
         static const uint8_t REG_PWR_MGMT0         = 0x1F;  // GYRO_MODE[3:2] ACCEL_MODE[1:0]
         static const uint8_t REG_GYRO_CONFIG0      = 0x20;  // GYRO_UI_FS_SEL[6:5] GYRO_ODR[3:0]
         static const uint8_t REG_ACCEL_CONFIG0     = 0x21;  // ACCEL_UI_FS_SEL[6:5] ACCEL_ODR[3:0]
         static const uint8_t REG_GYRO_CONFIG1      = 0x23;  // GYRO_UI_FILT_BW[2:0]
         static const uint8_t REG_ACCEL_CONFIG1     = 0x24;  // ACCEL_UI_FILT_BW[2:0]
-        static const uint8_t REG_INT_SOURCE0       = 0x2B;  // INT1 sources: bit3 UI_DRDY_INT1_EN
-        static const uint8_t REG_INT_SOURCE3       = 0x2D;  // INT2 sources: bit3 UI_DRDY_INT2_EN
         static const uint8_t REG_INTF_CONFIG0      = 0x35;  // bit4 SENSOR_DATA_ENDIAN (1 = big)
         static const uint8_t REG_INTF_CONFIG1      = 0x36;  // bit3 I3C_SDR_EN, bit2 I3C_DDR_EN
         static const uint8_t REG_INT_STATUS        = 0x3A;  // bit4 RESET_DONE_INT (clears on read)
@@ -520,8 +478,6 @@ class ICM42670IMU : public IMUInterface
         static const uint8_t GYRO_1000DPS_200HZ    = 0x28;  // FS 01 | ODR 1000 (200 Hz)
         static const uint8_t ACCEL_8G_200HZ        = 0x28;  // FS 01 | ODR 1000 (200 Hz)
         static const uint8_t FILT_BW_25HZ          = 0x06;
-        static const uint8_t INT_PP_HIGH_PULSE_BOTH = 0x1B; // INT1 011, INT2 011
-        static const uint8_t UI_DRDY_EN            = 0x08;
         static const uint8_t WHO_TRIES             = 3;
 
         static constexpr float ACCEL_LSB_PER_G  = 4096.0f;
@@ -635,13 +591,6 @@ class ICM42670IMU : public IMUInterface
         }
 
     protected:
-        bool enableDataReadyInterrupt() override
-        {
-            writeReg(REG_INT_CONFIG, INT_PP_HIGH_PULSE_BOTH);
-            writeReg(REG_INT_SOURCE0, UI_DRDY_EN);
-            writeReg(REG_INT_SOURCE3, UI_DRDY_EN);
-            return readReg(REG_INT_SOURCE0) == UI_DRDY_EN;
-        }
 
     public:
         ICM42670IMU() {}
@@ -740,8 +689,6 @@ class LSM6DSOXIMU : public IMUInterface
         static const uint8_t REG_CTRL1_XL  = 0x10;   // accel ODR / full-scale
         static const uint8_t REG_CTRL2_G   = 0x11;   // gyro  ODR / full-scale
         static const uint8_t REG_CTRL3_C   = 0x12;   // BDU / IF_INC / SW_RESET
-        static const uint8_t REG_COUNTER_BDR1 = 0x0B; // bit 7 DRDY_PULSED
-        static const uint8_t REG_INT1_CTRL = 0x0D;   // bit 0 INT1_DRDY_XL, bit 1 INT1_DRDY_G
         static const uint8_t REG_CTRL10_C  = 0x19;   // TIMESTAMP_EN (bit 5)
         static const uint8_t REG_OUTX_L_G  = 0x22;   // gyro  X..Z (6 bytes)
         static const uint8_t REG_OUTX_L_A  = 0x28;   // accel X..Z (6 bytes)
@@ -817,60 +764,6 @@ class LSM6DSOXIMU : public IMUInterface
             return true;
         }
 
-        // Drive INT1 on every new accelerometer sample.
-        //
-        // INT1, specifically: that is the pin this part brings out to the
-        // bench Pico 2's GPIO 2 (user, 2026-09-23). INT2 would need
-        // CTRL4_C.INT2_on_INT1 to reach the same wire and is not what is
-        // fitted, so routing there would produce a line that never fires and
-        // a silent fall back to polling.
-        //
-        // Three registers, and the middle one is the one that is easy to miss:
-        //
-        //   CTRL3_C     read-modify-written. H_LACTIVE (bit 5) and PP_OD
-        //               (bit 4) forced clear -> push-pull, active high, which
-        //               is what IMUInterface attaches on (RISING). The write
-        //               must preserve BDU and IF_INC, set by startSensor():
-        //               clearing IF_INC would break every multi-byte read this
-        //               driver makes.
-        //
-        //   COUNTER_BDR_REG1.DRDY_PULSED  a ~75 us pulse per sample instead of
-        //               a level that stays asserted until the data is read.
-        //
-        //               NOT because level mode fails to clear -- it does clear,
-        //               on the read of the output registers, so it would give
-        //               an edge per sample in steady state. Adafruit's
-        //               Adafruit_LSM6DS drives INT1 in the default level mode
-        //               and works.
-        //
-        //               The reason is the START. In level mode, if a sample is
-        //               already pending when attachDataReady() runs, INT1 is
-        //               ALREADY high and stays high until someone reads. The
-        //               ISR attaches on RISING, so there is no edge; getData()
-        //               only reads the bus when the flag says a sample is
-        //               waiting, so nothing reads; so the line never falls and
-        //               no edge ever comes. It recovers -- the 1 s fallback and
-        //               IMU_INT_STALE_MS both force a read -- but it recovers
-        //               by polling, which is the thing the interrupt exists to
-        //               avoid. A pulse per sample cannot deadlock that way and
-        //               costs nothing.
-        //
-        //   INT1_CTRL   accelerometer data-ready only. The gyro runs at the
-        //               same 104 Hz ODR off the same clock, so routing both
-        //               adds a second edge per sample and no information, and
-        //               getData() reads both regardless.
-        bool enableDataReadyInterrupt() override
-        {
-            const uint8_t ctrl3 = readReg(REG_CTRL3_C);
-            writeReg(REG_CTRL3_C, (uint8_t)(ctrl3 & ~0x30));
-            const uint8_t bdr = readReg(REG_COUNTER_BDR1);
-            writeReg(REG_COUNTER_BDR1, (uint8_t)(bdr | 0x80));
-            writeReg(REG_INT1_CTRL, 0x01);
-            // Read back: an I2C write that never landed is indistinguishable
-            // from a chip that will not drive the line, and only one of those
-            // is worth sending someone to look at the wiring for.
-            return (readReg(REG_INT1_CTRL) & 0x01) != 0;
-        }
 
         // Built-in hardware timestamp: 32-bit free-running counter latched with
         // each sample, 1 LSB ~= 25 us. Use this for sample timing instead of
@@ -972,48 +865,6 @@ class ICM20948IMU: public IMUInterface
             return false;
         }
 
-        // The ICM-20948 can drive INT1 on every new sample, and until now this
-        // driver never asked it to: enableDataReadyInterrupt() was inherited
-        // from IMUInterface, which returns false. A board with the line wired
-        // -- the bench Pico 2 has INT on GPIO 2 -- attached the ISR, waited a
-        // second for an edge that the chip was never told to produce, and fell
-        // back to polling with "data-ready pin 2 never fired in 1 s".
-        //
-        // INT_ENABLE_1 (bank 0, 0x11) bit 0 is RAW_DATA_0_RDY_EN. The pin's
-        // shape is INT_PIN_CFG (0x0F), already written by startSensor() for
-        // the magnetometer bypass: bit 1 is BYPASS_EN, bit 7 would be
-        // ACTIVE_LOW and bit 6 OPEN_DRAIN. Push-pull and active high is what
-        // IMUInterface attaches on (RISING), so the bits stay clear and the
-        // bypass bit is preserved rather than overwritten -- clobbering it
-        // here would turn the magnetometer off to turn the interrupt on.
-        bool enableDataReadyInterrupt() override
-        {
-            bank(0);
-            // INT_PIN_CFG, read-modify-written. Bit 1 is BYPASS_EN and must
-            // survive -- it is the only reason the magnetometer is reachable,
-            // so a bare write here would switch the mag off to switch the
-            // interrupt on.
-            //
-            // Clearing the top FOUR bits, not the top two:
-            //   7 INT1_ACTL          0 = active high   (the ISR attaches RISING)
-            //   6 INT1_OPEN          0 = push-pull     (no pull-up is fitted)
-            //   5 INT1_LATCH_INT_EN  0 = 50 us pulse, not held until cleared
-            //   4 INT_ANYRD_2CLEAR   0 = status clears on its own read
-            //
-            // Bit 5 is the one that matters and clearing only 7 and 6 left it
-            // to chance. Latched, the line goes high on the first sample and
-            // STAYS high, because nothing in this driver reads INT_STATUS
-            // (0x1A) to clear it -- so there would be exactly one rising edge
-            // and then silence, which getData() reads as a line that fired
-            // once and died and the staleness ceiling papers over. It happens
-            // to be clear today only because startSensor() writes 0x02 before
-            // this runs; depending on that ordering is the same fragility as
-            // depending on it for the bypass.
-            const uint8_t pin_cfg = r8(0x0F);
-            w8(0x0F, (uint8_t)(pin_cfg & ~0xF0));
-            w8(0x11, 0x01);                         // INT_ENABLE_1: RAW_DATA_0_RDY_EN
-            return r8(0x11) == 0x01;                // read back: the bus can fail silently
-        }
 
         geometry_msgs__msg__Vector3 readAccelerometer() override
         {

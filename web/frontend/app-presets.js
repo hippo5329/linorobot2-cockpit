@@ -402,7 +402,6 @@ const REFERENCE_DESIGNS = {
         encoder1: { a: 6, b: 7 },
         encoder2: { a: 47, b: 48 },
         i2c: { sda: 40, scl: 39 },
-        imu_int: 41,
         battery: 3,
         sonar: { trig: -1, echo: -1 },
       }
@@ -574,7 +573,6 @@ async function applyReferenceDesign(designId) {
 
     setVal("pin-i2c-sda", found.pins.i2c?.sda);
     setVal("pin-i2c-scl", found.pins.i2c?.scl);
-    setVal("pin-imu-int", found.pins.imu_int !== undefined ? found.pins.imu_int : -1);
     setVal("pin-battery", found.pins.battery);
     setVal("pin-sonar-trig", found.pins.sonar?.trig);
     setVal("pin-sonar-echo", found.pins.sonar?.echo);

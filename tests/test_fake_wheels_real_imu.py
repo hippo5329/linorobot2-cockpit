@@ -27,7 +27,6 @@ def test_the_simulation_follows_the_sensor_not_the_wheels():
     assert 'sim_mag = fake_wheels && (strcasecmp(mag_name, "fake") == 0);' in m
     # the real IMU is initialised and its DATA_RDY attached whenever it is not simulated
     assert re.search(r"if \(!sim_imu\) \{\s*if \(!imu->init\(\)\)", m)
-    assert re.search(r"if \(!sim_imu\) \{\s*// The data-ready line", m)
 
 
 def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():
@@ -35,7 +34,11 @@ def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():
     assert "init FAILED on a fake-wheel board - falling back to the simulated IMU" in m
     assert "init FAILED on a fake-wheel board - falling back to the simulated field" in m
     blk = m[m.index("if (!imu->init())"):]
-    blk = blk[:blk.index("if (!sim_imu) {", 1)]
+    # Bounded by the MAG init, which is the next thing setup() does. It used to
+    # slice to the second `if (!sim_imu) {` -- the data-ready attach block --
+    # which vanished with the interrupt path on 2026-09-24, and the test then
+    # failed inside its own slicing rather than on anything it asserts.
+    blk = blk[:blk.index("if (!sim_mag) {")]
     assert "if (fake_wheels) {" in blk and "sim_imu = true;" in blk and "flashLED(3)" in blk
 
 

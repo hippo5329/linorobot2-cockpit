@@ -114,7 +114,15 @@ base_controller:
       scl: 39
       clock: 400000
     imu:
-      int: 41          # IMU INT -> DATA_RDY interrupt (env key imu_int)
+      # The board breaks the IMU's INT out here. Nothing reads it: the
+      # data-ready interrupt path was removed on 2026-09-24 -- an ISR that
+      # cannot touch the bus (the ESP32 Arduino I2C driver takes a FreeRTOS
+      # mutex with portMAX_DELAY) bought only a timestamp whose pairing with the
+      # eventually-read sample was uncertain. The chip's own FIFO and timestamp
+      # counter give the same thing with the sample attached. Recorded because
+      # it is a fact about the wiring, and the pin checker still tests it for
+      # conflicts.
+      int: 41
     # GPIO 45 is a strapping pin (VDD_SPI); the board drives its status LED
     # from it regardless, so the inspector's warning is expected.
     led: 45

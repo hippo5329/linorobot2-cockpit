@@ -239,11 +239,12 @@ uncorrected hard iron is worth several degrees on its own (7.4° for the offset 
 simulated robot carries). See `docs/ros2-stack.md` and the wiki's
 [Heading & Magnetometer Calibration](https://github.com/hippo5329/linorobot2-cockpit/wiki/Heading-and-Magnetometer-Calibration).
 
-Interrupt support is per driver, not per project: the generic path is in
-`IMUInterface`, and each chip needs its own `enableDataReadyInterrupt()`. The drivers are
-being worked through as boards with the line broken out reach the bench, so check the
-[pin matrix](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring)
-for where your sensor stands rather than assuming.
+The IMU is read by polling, on every board. A data-ready interrupt path existed and was
+removed: an ISR cannot touch the I2C bus on an ESP32 (the Arduino driver takes a FreeRTOS
+mutex), so the read happened later and the precise edge time belonged to an uncertain
+sample — a precise time paired with the wrong reading. Where a chip has a FIFO with its own
+timestamp counter, that gives the same information with the sample attached to it, and needs
+no wiring at all.
 
 To switch fake mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.

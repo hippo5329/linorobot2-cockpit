@@ -113,6 +113,10 @@ def _collect(tgt: dict) -> List[Tuple[str, int, str]]:
     i2c = pins.get("i2c") or {}
     out.append(("i2c.sda", _pin(i2c.get("sda", -1)), "io"))
     out.append(("i2c.scl", _pin(i2c.get("scl", -1)), "io"))
+    # imu.int is still collected so a config that declares it is checked for
+    # conflicts, but nothing reads it any more: the IMU data-ready interrupt was
+    # removed on 2026-09-24 in favour of polling the chip's own FIFO. Left in the
+    # catalogue rather than rejected, so an existing config keeps validating.
     imu = pins.get("imu") or {}
     out.append(("imu.int", _pin(imu.get("int", -1)), "in"))
     out.append(("led", _pin(pins.get("led", -1)), "out"))

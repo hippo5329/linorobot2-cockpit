@@ -46,25 +46,14 @@ def _has_drdy(cls_name):
 def _doc_rows():
     """The IMU table's rows: label -> the DATA_RDY cell."""
     doc = _src(DOC)
-    table = doc[doc.index("| IMU | I2C addr | identified by | DATA_RDY | read on | DRDY proven on |"):]
+    table = doc[doc.index("| IMU | I2C addr | identified by | read on |"):]
     table = table[:table.index("\n\n")]
     rows = {}
     for line in table.splitlines()[2:]:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) >= 4:
-            rows[cells[0]] = cells[3]
+            rows[cells[0]] = cells[3]      # the "read on" cell
     return rows
-
-
-def test_the_data_ready_column_matches_the_drivers():
-    rows = _doc_rows()
-    for label, cell in rows.items():
-        cls = next((c for k, c in ROW_TO_CLASS.items() if label.startswith(k)), None)
-        assert cls, f"the table row {label!r} names no known driver class"
-        documented = "no" not in cell.lower()
-        assert documented == _has_drdy(cls), (
-            f"{label}: the table says DATA_RDY {cell!r} but {cls} "
-            f"{'has' if _has_drdy(cls) else 'has no'} enableDataReadyInterrupt()")
 
 
 def test_every_imu_in_the_factory_has_a_row():
@@ -91,23 +80,11 @@ def test_the_table_says_what_bench_means():
     assert "October 2026" in doc
 
 
-def test_reading_a_part_is_not_the_same_claim_as_proving_its_interrupt():
-    """One column carrying both is how "bench: yes -- GenDrv" against a
-    DATA_RDY "yes" was read as "the GenDrv's QMI8658 interrupt is wired". It
-    is not: gendrv_config.yaml has no pins.imu.int and that chip is polled.
-    """
-    import glob
-    import yaml
+def test_no_driver_claims_a_data_ready_interrupt_any_more():
+    """The interrupt path was removed on 2026-09-24. A driver that grows one
+    back needs the table, the docs and a decision -- not a silent override."""
+    src = _src(IMU_H)
+    assert "enableDataReadyInterrupt" not in src, \
+        "a driver implements a data-ready interrupt again; the path was removed"
     doc = _src(DOC)
-    assert "DRDY proven on" in doc, "the interrupt claim has been merged back into `read on`"
-    # and the claim must match the configs: a board can only have proven a
-    # DATA_RDY line if it ships a pin for one.
-    wired = set()
-    for path in glob.glob(os.path.join(ROOT, "config", "reference", "*_config.yaml")):
-        cfg = yaml.safe_load(open(path, encoding="utf-8")) or {}
-        pins = (cfg.get("base_controller") or {}).get("pins") or {}
-        if (pins.get("imu") or {}).get("int", -1) not in (-1, None):
-            wired.add(os.path.basename(path).replace("_config.yaml", ""))
-    assert "yb_eet01" in wired, "the one board with a wired DATA_RDY lost its pin"
-    assert "gendrv" not in wired, \
-        "the GenDrv now has an IMU interrupt pin -- the table's QMI8658 row says it does not"
+    assert "Every part is read by polling." in doc

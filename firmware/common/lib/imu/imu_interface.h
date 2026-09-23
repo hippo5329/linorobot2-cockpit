@@ -52,81 +52,16 @@
 #define IMU_SAMPLE_AGE_MAX_US 50000
 #endif
 
-#ifndef IMU_INT_STALE_MS
-#define IMU_INT_STALE_MS 200   // longer than this since the last read: read anyway
-#endif
-
-// How many sensors may own a data-ready line at once. One trampoline is
-// generated per slot (see sources_), so this is a code-size cost, not a
-// runtime one.
-#ifndef IMU_INT_MAX_SOURCES
-#define IMU_INT_MAX_SOURCES 4
-#endif
-#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
-#define IMU_ISR_ATTR IRAM_ATTR
-#else
-#define IMU_ISR_ATTR
-#endif
 
 class IMUInterface
 {
     private:
-        // An ISR cannot carry a `this`, so the instance has to be reachable
-        // from a plain function. This used to be ONE static pointer --
-        // `instance_ = this` in attachDataReady() -- which quietly made
-        // data-ready a single-sensor feature: a second sensor attaching its
-        // line overwrote the first, and from then on every edge on EITHER pin
-        // marked the SECOND sensor's sample fresh. The first sensor would then
-        // sit on its staleness ceiling, reading the bus anyway, while the
-        // second returned samples it had not taken. Nothing printed.
-        //
-        // One board has one IMU today, so nothing has been wrong yet. But the
-        // magnetometer has its own DRDY line on several parts, the ICM-20948
-        // and MPU9250 break out two, and a second IMU is an ordinary thing to
-        // fit -- so the singleton is a trap rather than a simplification.
-        //
-        // A slot table with one trampoline per slot is the multiplexer.
-        // attachInterrupt() takes a bare function pointer on the AVR and RP2
-        // cores (only the ESP32 has attachInterruptArg), so the arity has to
-        // come from somewhere: N fixed trampolines, each closing over its own
-        // index. Four is the number of interrupt-capable sensors a linorobot
-        // board plausibly carries; asking for a fifth is refused out loud
-        // rather than silently ignored.
-        static IMUInterface *sources_[IMU_INT_MAX_SOURCES];   // defined in imu_interface.cpp (no C++17 inline variables on the ESP32 core)
-        int int_slot_ = -1;
-        // Defined in imu_interface.cpp, not here: an IRAM_ATTR function that
-        // is inline (a member defined in its class is) lands in a COMDAT
-        // .iram1 section whose literal pool the Xtensa linker then places
-        // AFTER the code -- "dangerous relocation: l32r: literal placed after
-        // use", a link failure on every ESP32 image. Out of line it is an
-        // ordinary IRAM function.
-        static void IMU_ISR_ATTR dataReadyISR(int slot);
-        static void IMU_ISR_ATTR isrSlot0();
-        static void IMU_ISR_ATTR isrSlot1();
-        static void IMU_ISR_ATTR isrSlot2();
-        static void IMU_ISR_ATTR isrSlot3();
-        static void (*slotISR(int slot))();
-        int int_pin_ = -1;
-        volatile bool data_ready_ = false;
-        volatile uint32_t data_ready_us_ = 0;  // micros() at the edge that produced the pending sample
-        uint32_t sample_us_ = 0;               // micros() of the sample getData() last returned
-        bool sample_time_known_ = false;       // false until an edge has actually timed one
-        volatile uint32_t int_edges_ = 0;      // every rising edge the ISR saw
-        bool int_ever_ = false;
-        bool int_configured_ = false;
-        bool poll_fallback_ = false;
-        uint32_t int_attached_ms_ = 0;
-        uint32_t last_read_ms_ = 0;
         uint32_t age_n_ = 0;
         uint64_t age_sum_us_ = 0;
         uint32_t age_min_us_ = 0xFFFFFFFFu;
         uint32_t age_max_us_ = 0;
 
     protected:
-        // Ask the chip to drive its DATA_RDY output. A driver that knows its
-        // chip overrides this; the default admits it cannot, and getData()
-        // then polls if the pin stays quiet.
-        virtual bool enableDataReadyInterrupt() { return false; }
 
         // How old the sample just read is, in microseconds, ACCORDING TO THE
         // CHIP. Modern MEMS parts keep a monotonic counter and put its value
@@ -287,65 +222,6 @@ class IMUInterface
         // than publishing a known-doubtful bias -- but the caller can say so.
         bool gyroCalSuspect() const { return gyro_cal_suspect_; }
 
-        // ---- optional data-ready interrupt -----------------------------------
-        //
-        // With no pin (-1, the default, and every config that predates the key)
-        // getData() reads the bus on every publish, exactly as before. With a
-        // pin, the chip's DATA_RDY line drives an ISR that sets a flag, and
-        // getData() only touches the bus when a fresh sample is actually there:
-        // no stale re-reads at the publish edge, and no I2C transaction spent
-        // to learn that nothing changed. Boards with the line broken out (the
-        // Yahboom YB-EET01 puts its IMU's INT on GPIO 41) set `imu_int` in the
-        // env; `pins.imu.int` in the config puts it there.
-        //
-        // Three things keep this from being worse than polling:
-        //   * a driver that cannot configure its chip's DATA_RDY output says so
-        //     (enableDataReadyInterrupt() returns false), and if the pin then
-        //     never fires within a second of attaching, getData() polls -- once
-        //     logged -- rather than returning the same sample forever;
-        //   * a line that fired once and then stops (a chip that lost power, a
-        //     wire that came off) is caught by a staleness ceiling: more than
-        //     IMU_INT_STALE_MS since the last read and the bus is read anyway;
-        //   * the ISR does one thing: set a flag. Everything else runs in the
-        //     publish context, where the I2C bus is safe to use.
-        void attachDataReady(int pin)
-        {
-            int_pin_ = pin;
-            if (pin < 0)
-                return;
-            // Re-attaching the same object keeps its slot rather than
-            // consuming a second one; a board that reconfigures its IMU would
-            // otherwise exhaust the table by doing nothing wrong.
-            if (int_slot_ < 0) {
-                for (int i = 0; i < IMU_INT_MAX_SOURCES; i++) {
-                    if (sources_[i] == nullptr || sources_[i] == this) {
-                        int_slot_ = i;
-                        break;
-                    }
-                }
-            }
-            if (int_slot_ < 0) {
-                // Refused out loud. Silently polling would look identical to a
-                // line that never fires, and this is a wiring fact the person
-                // holding the board can fix.
-                Serial.printf("[imu] no interrupt slot free for pin %d (%d in use) - polling\n",
-                              pin, IMU_INT_MAX_SOURCES);
-                int_pin_ = -1;
-                return;
-            }
-            sources_[int_slot_] = this;
-            pinMode(pin, INPUT);
-            attachInterrupt(digitalPinToInterrupt(pin), slotISR(int_slot_), RISING);
-            int_attached_ms_ = millis();
-            last_read_ms_ = int_attached_ms_;
-            int_configured_ = enableDataReadyInterrupt();
-        }
-        int intPin() const { return int_pin_; }
-        bool intConfigured() const { return int_configured_; }
-        bool intEverFired() const { return int_ever_; }
-        uint32_t intEdges() const { return int_edges_; }
-        uint32_t intAttachedMs() const { return int_attached_ms_; }
-
         // ---- when the sample was taken --------------------------------------
         //
         // The publisher stamps every message with one getTime() taken AFTER
@@ -355,33 +231,30 @@ class IMUInterface
         // the gyro over the interval between stamps (constant_dt: 0.0), so it
         // lands directly in the heading.
         //
-        // Two sources, best first:
-        //   * the chip's own counter, when the driver can read it;
-        //   * the DATA_RDY edge, which the ISR times. Universal to any chip
-        //     with the line wired, and already within a microsecond or two of
-        //     the conversion completing.
+        // ONE source: the chip's own counter, when the driver can read it.
         //
-        // 0 when neither is available -- no interrupt pin, or the line never
-        // fired and getData() is polling. The caller must treat 0 as "no
-        // correction", never as "brand new".
+        // There used to be a second -- the DATA_RDY edge, timed in an ISR. The
+        // whole interrupt path is gone (2026-09-24), and the reasoning is worth
+        // keeping because it applies to any "interrupt that only sets a flag":
+        // the ISR could not read the bus (the ESP32 Arduino I2C driver takes a
+        // FreeRTOS mutex with portMAX_DELAY, which is illegal from an ISR), so
+        // the read happened later in the publish path -- and by then more
+        // samples may have arrived, which means the precise edge time belonged
+        // to an UNCERTAIN sample. A precise time paired with the wrong sample
+        // is not an improvement.
+        //
+        // The chip's counter has none of that problem: it is latched with the
+        // sample, by the part, and comes back in the same read.
+        //
+        // 0 when the driver has no counter to read. The caller must treat 0 as
+        // "no correction", never as "brand new".
         uint32_t sampleAgeUs()
         {
             const uint32_t chip = chipSampleAgeUs();
             if (chip)
                 return chip > IMU_SAMPLE_AGE_MAX_US ? IMU_SAMPLE_AGE_MAX_US : chip;
-            if (!sample_time_known_)
-                return 0;
-            // Unsigned arithmetic, so the 32-bit micros() wrap costs nothing:
-            // the difference is right across it.
-            const uint32_t age = micros() - sample_us_;
-            // A sample older than this is not a late read, it is a stale flag
-            // from a line that stopped -- the staleness ceiling above will have
-            // read the bus anyway, and dating that read backwards would be a
-            // lie. Clamped rather than returned, so a fault cannot move a
-            // stamp by an arbitrary amount.
-            return age > IMU_SAMPLE_AGE_MAX_US ? IMU_SAMPLE_AGE_MAX_US : age;
+            return 0;
         }
-        bool sampleTimeKnown() const { return sample_time_known_; }
 
         // Running statistics on the correction, so the bench can see the thing
         // this feature exists to remove rather than take it on trust. The
@@ -401,46 +274,17 @@ class IMUInterface
         uint32_t ageMinUs()  const { return age_n_ ? age_min_us_ : 0; }
         uint32_t ageMaxUs()  const { return age_n_ ? age_max_us_ : 0; }
         uint32_t ageMeanUs() const { return age_n_ ? (uint32_t)(age_sum_us_ / age_n_) : 0; }
-        // Where the number came from, because the two sources are not equally
-        // good and a report that does not say which is being read is not
-        // evidence of anything.
+        // Where the number came from. One source now -- the chip's own
+        // counter -- but the report still names it, because "no correction" and
+        // "a correction of zero" are different facts and a line that does not
+        // distinguish them is not evidence.
         const char *ageSource()
         {
-            if (chipSampleAgeUs()) return "chip timestamp";
-            if (sample_time_known_) return "DATA_RDY edge";
-            return "none - stamped at publish";
+            return chipSampleAgeUs() ? "chip timestamp" : "none - stamped at publish";
         }
 
         sensor_msgs__msg__Imu getData()
         {
-            if (int_pin_ >= 0)
-            {
-                const uint32_t now = millis();
-                if (data_ready_)
-                {
-                    // Take the edge time with the flag, in that order: the ISR
-                    // writes the time BEFORE the flag, so a flag that is set
-                    // has a time to go with it.
-                    sample_us_ = data_ready_us_;
-                    sample_time_known_ = true;
-                    data_ready_ = false;
-                    int_ever_ = true;
-                }
-                else if (int_ever_ && (now - last_read_ms_) < IMU_INT_STALE_MS)
-                {
-                    return imu_msg_;        // nothing new: last sample, no bus traffic
-                }
-                else if (!int_ever_ && (now - int_attached_ms_) < 1000)
-                {
-                    return imu_msg_;        // give the line a second to show up
-                }
-                else if (!int_ever_ && !poll_fallback_)
-                {
-                    poll_fallback_ = true;
-                    Serial.printf("[imu] data-ready pin %d never fired in 1 s - polling instead\n", int_pin_);
-                }
-                last_read_ms_ = now;
-            }
             imu_msg_.angular_velocity = readGyroscope();
             // Gyro bias is removed HERE, for every driver, and nowhere else.
             //

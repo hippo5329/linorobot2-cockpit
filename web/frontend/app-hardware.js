@@ -242,9 +242,6 @@ async function loadHardwareConfig() {
     const elBatPin = document.getElementById("pin-battery");
     if (elBatPin) elBatPin.value = bat.pin !== undefined ? bat.pin : -1;
 
-    const imuPins = pins.imu || {};
-    if (document.getElementById("pin-imu-int")) document.getElementById("pin-imu-int").value = imuPins.int !== undefined ? imuPins.int : -1;
-
     const sonar = pins.sonar || {};
     if (document.getElementById("pin-sonar-trig")) document.getElementById("pin-sonar-trig").value = sonar.trigger !== undefined ? sonar.trigger : -1;
     if (document.getElementById("pin-sonar-echo")) document.getElementById("pin-sonar-echo").value = sonar.echo !== undefined ? sonar.echo : -1;
@@ -889,8 +886,6 @@ async function saveCurrentHardwareConfig() {
         sda: parsePin("pin-i2c-sda", -1),
         scl: parsePin("pin-i2c-scl", -1),
       },
-      // The IMU's DATA_RDY line; -1 (the default) keeps the firmware polling.
-      imu: { int: parsePin("pin-imu-int", -1) },
       battery: {
         pin: parsePin("pin-battery", -1),
         r1: parseFloat(document.getElementById("cfg-bat-r1")?.value || 30000),

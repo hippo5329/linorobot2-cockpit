@@ -225,14 +225,6 @@ visible rather than silently routed around. A chip this image has no driver for 
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
 
 ### An IMU with its interrupt wired is read when it says so, not when the timer fires
-**Recommended wherever the chip breaks the line out.** The error it removes is *jitter*,
-not shift: a polled sample carries an unknown age that varies with loop load, and the
-filter fuses it as if it were current. The magnetometer is the answer to shift (the
-one-way growth of heading with no absolute reference, `ros2-stack.md`); this is the answer
-to jitter, and they are different faults. Support is per driver — the generic path is in
-`IMUInterface`, each chip needs its own `enableDataReadyInterrupt()`, and the drivers are
-being worked through as boards with the line broken out reach the bench.
-
 ### Which sensors this image carries, and what has been proven on silicon
 
 Every driver below is compiled into every release image -- the table is the *sensor
@@ -252,16 +244,16 @@ were taken. *DRDY proven on* is narrower still: where the line was actually
 observed firing. A part can be read on a board whose interrupt pin is not
 wired, and most are -- only `yb_eet01` ships a `pins.imu.int` at all.
 
-| IMU | I2C addr | identified by | DATA_RDY | read on | DRDY proven on |
-|---|---|---|---|---|---|
-| MPU6050 / MPU6500 / MPU9150 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x68 / 0x70 | yes | z13 Pico 2, GP0/GP1 | — |
-| MPU9250 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x71 / 0x73 | **no** | — | — |
-| ICM-42670-P | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x67 | yes | Yahboom YB-EET01 | **YB-EET01, GPIO 41** |
-| ICM-20948 | 0x68, 0x69 | reg 0x00 = 0xEA | yes | z13 Pico 2, 2026-09-23 | — |
-| QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | yes | GenDrv | — (INT not wired on the GenDrv) |
-| LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | yes | z13 Pico 2, 2026-09-23 | — |
-| GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | **no** | — | — |
-| BNO085 | 0x4A, 0x4B | — | **no** | — | — |
+| IMU | I2C addr | identified by | read on |
+|---|---|---|---|
+| MPU6050 / MPU6500 / MPU9150 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x68 / 0x70 | z13 Pico 2, GP0/GP1 |
+| MPU9250 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x71 / 0x73 | — |
+| ICM-42670-P | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x67 | Yahboom YB-EET01 |
+| ICM-20948 | 0x68, 0x69 | reg 0x00 = 0xEA | z13 Pico 2, 2026-09-23 |
+| QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | GenDrv |
+| LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | z13 Pico 2, 2026-09-23 |
+| GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | — |
+| BNO085 | 0x4A, 0x4B | — | — |
 
 **Only one entry in the last column, and that is the honest state.** The
 ICM-42670-P on the YB-EET01 is the single part whose DATA_RDY line this project
@@ -278,10 +270,16 @@ carries no `pins.imu.int`.
 | QMC5883L | 0x0D | | no |
 | HMC5883L | 0x1E | | no |
 
-A **`no` in the DATA_RDY column is not a broken driver** -- the chip is driven by polling,
-which is what every board did before the line was wired. It means `pins.imu.int` on that
-part will attach an ISR, see nothing, and log the fall back after a second. Closing those
-three is per-part register work, done as boards reach the bench.
+**Every part is read by polling.** There was a data-ready interrupt path -- `pins.imu.int`,
+an ISR, per-driver `enableDataReadyInterrupt()` -- and it was removed on 2026-09-24. The
+reasoning is worth keeping, because it applies to any "interrupt that only sets a flag":
+the ISR could not read the bus (the ESP32 Arduino I2C driver takes a FreeRTOS mutex with
+`portMAX_DELAY`, which is illegal from an ISR), so the read happened later in the publish
+path -- by which time further samples may have arrived, making the precise edge time belong
+to an *uncertain* sample. A precise time paired with the wrong reading is not an
+improvement, and what remained was one avoided transaction. The chip's own FIFO and
+timestamp counter give the same information with the sample attached to it, need no pin, no
+ISR, no masking and no per-part interrupt registers.
 
 **One chip, two roles.** The ICM-20948 carries an AK09918 on its internal auxiliary bus.
 `ICM20948IMU::startSensor()` sets `INT_PIN_CFG.BYPASS_EN`, which puts that magnetometer on
