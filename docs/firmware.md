@@ -231,8 +231,66 @@ filter fuses it as if it were current. The magnetometer is the answer to shift (
 one-way growth of heading with no absolute reference, `ros2-stack.md`); this is the answer
 to jitter, and they are different faults. Support is per driver — the generic path is in
 `IMUInterface`, each chip needs its own `enableDataReadyInterrupt()`, and the drivers are
-being worked through as boards with the line broken out reach the bench. Proven on
-hardware so far: ICM-42670-P. Implemented, not yet run on a real chip: MPU6050.
+being worked through as boards with the line broken out reach the bench.
+
+### Which sensors this image carries, and what has been proven on silicon
+
+Every driver below is compiled into every release image -- the table is the *sensor
+factory* (`sensor_factory.cpp`), and which one runs is decided at boot by the I2C probe,
+not at build time. So "supported" means the image can drive it; the other two columns are
+narrower claims and are kept separate on purpose.
+
+**Read the columns exactly.** *Bench* means a real chip of that part answered on a bare
+module and its numbers were read -- not that a robot drove with it. Nothing in this
+project has run on a real robot yet (first is October 2026), and a bare-module reading is
+the strongest evidence any row here has.
+
+Three separate claims, three columns. *Driver* is what the image can drive.
+*DATA_RDY* is whether that driver knows how to turn its chip's data-ready
+output on. *Read on* is where a real chip of that part answered and its numbers
+were taken. *DRDY proven on* is narrower still: where the line was actually
+observed firing. A part can be read on a board whose interrupt pin is not
+wired, and most are -- only `yb_eet01` ships a `pins.imu.int` at all.
+
+| IMU | I2C addr | identified by | DATA_RDY | read on | DRDY proven on |
+|---|---|---|---|---|---|
+| MPU6050 / MPU6500 / MPU9150 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x68 / 0x70 | yes | z13 Pico 2, GP0/GP1 | — |
+| MPU9250 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x71 / 0x73 | **no** | — | — |
+| ICM-42670-P | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x67 | yes | Yahboom YB-EET01 | **YB-EET01, GPIO 41** |
+| ICM-20948 | 0x68, 0x69 | reg 0x00 = 0xEA | yes | z13 Pico 2, 2026-09-23 | — |
+| QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | yes | GenDrv | — (INT not wired on the GenDrv) |
+| LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | yes | z13 Pico 2, 2026-09-23 | — |
+| GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | **no** | — | — |
+| BNO085 | 0x4A, 0x4B | — | **no** | — | — |
+
+**Only one entry in the last column, and that is the honest state.** The
+ICM-42670-P on the YB-EET01 is the single part whose DATA_RDY line this project
+has watched fire. Every other `yes` in the DATA_RDY column is a driver that
+writes the right registers and has never had a wire on the pin -- the GenDrv's
+QMI8658 included, which is read at 50 Hz by polling because `gendrv_config.yaml`
+carries no `pins.imu.int`.
+
+| Magnetometer | I2C addr | notes | bench |
+|---|---|---|---|
+| AK09918 | 0x0C | standalone, or inside an ICM-20948 (see below) | yes — GenDrv |
+| AK8963 / AK8975 | 0x0C | `WIA` 0x00 = 0x48 | no |
+| AK09916 | via ICM-20948 | reached through the IMU's bypass at 0x0C | yes — z13 Pico 2 |
+| QMC5883L | 0x0D | | no |
+| HMC5883L | 0x1E | | no |
+
+A **`no` in the DATA_RDY column is not a broken driver** -- the chip is driven by polling,
+which is what every board did before the line was wired. It means `pins.imu.int` on that
+part will attach an ISR, see nothing, and log the fall back after a second. Closing those
+three is per-part register work, done as boards reach the bench.
+
+**One chip, two roles.** The ICM-20948 carries an AK09918 on its internal auxiliary bus.
+`ICM20948IMU::startSensor()` sets `INT_PIN_CFG.BYPASS_EN`, which puts that magnetometer on
+the *main* bus at 0x0C -- and leaves it there until the part is power-cycled. So a scan of
+a board that has run this firmware once sees 0x0C answer and cannot tell it from a
+standalone AK09918. `i2cProbeFoldComposites()` attributes it to the part that owns it,
+keyed on the ICM-20948 being present, so a genuine standalone AK09918 is untouched. Two
+consequences worth knowing: the magnetometer only works because IMU init runs before MAG
+init, and after a power cycle 0x0C is silent until it does.
 
 `pins.imu.int` in the config (env key `imu_int`, header fallback `IMU_INT_PIN`, `-1` in every
 config that predates the key) names the GPIO the chip's DATA_RDY line is on. With it set, the
