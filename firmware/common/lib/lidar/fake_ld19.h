@@ -506,7 +506,7 @@ public:
             // quietly makes any obstacle-avoidance test meaningless, because
             // nothing stops a plan that goes through it.
             pushOffSegment(x, y, wall_x1_, wall_y1_, wall_x2_, wall_y2_,
-                           pose_x_, pose_y_);
+                           pose_x_, pose_y_, robot_radius_);
         }
         return (x != in_x) || (y != in_y);
     }
@@ -522,9 +522,8 @@ public:
     // it rounds a corner.
     static void pushOffSegment(float &x, float &y,
                                float x1, float y1, float x2, float y2,
-                               float px, float py)
+                               float px, float py, float r)
     {
-        const float r = robot_radius_;
         const float sx = x2 - x1, sy = y2 - y1;
         const float len2 = sx * sx + sy * sy;
 
