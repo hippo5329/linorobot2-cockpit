@@ -336,6 +336,41 @@ def test_the_gap_and_the_error_both_reach_the_output(monkeypatch, capsys):
     assert "2.830 m from the goal" in out and "from 3.000 m at the start" in out, out
 
 
+def test_nav2s_own_idea_of_the_gap_is_reported_beside_the_measured_one(monkeypatch, capsys):
+    """Two numbers, because one of them cannot say where the fault is.
+
+    This gate measures map -> base_link out of TF -- the transform Nav2 steers
+    by -- so when Nav2's last feedback agrees with it, the controller stopped
+    short of a goal it could see, and when it does not, Nav2's pose estimate is
+    not the one in TF.
+
+    Wanted for the 2wd leg (2026-09-23) that ended "as SUCCEEDED; 2.908 m from
+    the goal" after moving 0.100 m: with only the measured number there is no
+    telling whether Nav2 lied about arriving or was told it had already arrived.
+    """
+    class Believes(FakeNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.distance_remaining = 0.021
+
+    node = Believes(odom_lin=0.25, dist=0.1, goal_status=6, goal_dist=2.908,
+                    goal_error_code=105, goal_error_msg="Failed to make progress")
+    _run(monkeypatch, node, timeout=0.3, require_goal=True)
+    out = capsys.readouterr().out
+    assert "2.908 m from the goal" in out, out
+    assert "nav2's own feedback: 0.021 m remaining" in out, out
+
+
+def test_no_feedback_adds_no_number(monkeypatch, capsys):
+    """distance_remaining is NaN until Nav2 sends feedback; NaN is not a reading."""
+    node = FakeNode(odom_lin=0.25, dist=0.4, goal_status=6, goal_dist=2.83,
+                    goal_error_code=105, goal_error_msg="Failed to make progress")
+    _run(monkeypatch, node, timeout=0.3, require_goal=True)
+    out = capsys.readouterr().out
+    assert "2.830 m from the goal" in out, out
+    assert "nav2's own feedback" not in out, out
+
+
 def test_a_tighter_tolerance_is_honoured(monkeypatch):
     close = FakeNode(odom_lin=0.25, dist=2.8, goal_status=6, goal_dist=0.21)
     assert _run(monkeypatch, close, timeout=30.0, require_goal=True) is True

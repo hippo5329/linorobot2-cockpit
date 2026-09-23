@@ -467,7 +467,20 @@ def _gap(node) -> str:
     out = f"; {now:.3f} m from the goal (closest {best:.3f} m"
     if start == start and start > 0:
         out += f", from {start:.3f} m at the start"
-    return out + ")"
+    out += ")"
+    # What NAV2 thought the gap was, from its own last feedback. The two numbers
+    # answer different questions and only together say where the fault is: this
+    # gate measures map -> base_link out of TF, the same transform Nav2 steers
+    # by, so agreement means the controller stopped short of a goal it could see,
+    # and disagreement means Nav2's pose estimate is not the one in TF.
+    #
+    # Needed for the 2wd leg that ended "as SUCCEEDED; 2.908 m from the goal"
+    # after moving 0.100 m: with only one of the numbers there is no telling
+    # whether Nav2 lied about arriving or was told it had already arrived.
+    rem = getattr(node, "distance_remaining", float("nan"))
+    if rem == rem:
+        out += f" [nav2's own feedback: {rem:.3f} m remaining]"
+    return out
 
 
 def _why(node) -> str:
