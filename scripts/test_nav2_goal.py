@@ -619,9 +619,25 @@ def _sample_map_odom(node):
     the size of the gap.
 
     So the thing to measure is the longest interval between map->odom
-    stamps, and whether it ever reaches the tolerance. slam_toolbox
-    publishes it at 50 Hz (transform_publish_period: 0.02); anything near
-    500 ms is the fault, and it belongs to SLAM, not to the controller.
+    stamps -- but read it correctly, which took two tries.
+
+    slam_toolbox's publishTransformLoop runs at 50 Hz
+    (transform_publish_period: 0.02) and it is tempting to conclude that a
+    gap means the loop stalled. It does not. The loop stamps what it sends
+    from the SCAN, not from the clock:
+
+        msg.header.stamp = scan_timestamp + transform_timeout_;   // restamp_tf false
+
+    and scan_header is assigned at the top of laserCallback, on every
+    incoming scan. So the stamp advances at the /scan rate and the loop
+    merely republishes the same stamp in between. Our /scan is 10 Hz, so a
+    ~100 ms interval is the floor and means nothing is wrong.
+
+    A 600 ms interval therefore means SIX SCAN PERIODS WITH NO SCAN. The
+    fault is upstream of SLAM -- the board's emulator, the LiDAR serial
+    path, or the driver -- and slam_toolbox is only the messenger. Measured
+    scan rates already show it: 5.30 Hz seen on a serial leg against a
+    nominal 10.
     """
     if getattr(node, "tf_buffer", None) is None:
         return
@@ -667,10 +683,10 @@ def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
     # value at or below that is "no stall seen", not a measurement.
     if worst <= 0.12:
         return f"; map->odom kept up (no gap over {worst * 1000:.0f} ms seen at 10 Hz sampling)"
-    note = f"; map->odom's longest gap was {worst * 1000:.0f} ms"
+    note = f"; map->odom's stamp stood still for up to {worst * 1000:.0f} ms"
     if worst >= tolerance:
-        note += (f" -- at or past the {tolerance:.1f} s transform tolerance, "
-                 f"so SLAM stalled and the controller's TF error is a symptom")
+        note += (f" -- at or past the {tolerance:.1f} s transform tolerance, so a "
+                 f"controller TF error here is a symptom of the scan gap, not of TF")
     return note
 
 

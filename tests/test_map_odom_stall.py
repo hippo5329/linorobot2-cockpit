@@ -1,4 +1,4 @@
-"""The recurring error_code=102 is a SLAM stall, and the message hides it.
+"""The recurring error_code=102 is a SCAN gap, and two layers hide it.
 
     [transformPoseInTargetFrame]: Extrapolation Error looking up target frame:
     Lookup would require extrapolation into the future.  Requested time
@@ -17,8 +17,20 @@ which that function catches separately and reports differently. The tolerance in
 force is the local costmap's (controller_server.cpp: transform_tolerance_ =
 costmap_ros_->getTransformTolerance()), 0.5 s in our configs.
 
-So map->odom did not arrive for at least half a second, from a publisher running
-at 50 Hz. The 18 ms is the age of the last stamp before the stall, not the gap.
+So map->odom did not arrive for at least half a second. The 18 ms is the age of
+the last stamp before the gap, not the size of it.
+
+The second layer is what "did not arrive" means. slam_toolbox's
+publishTransformLoop runs at 50 Hz, so a gap looks like the loop stalling -- and
+it is not. The loop stamps from the SCAN, not the clock:
+
+    msg.header.stamp = scan_timestamp + transform_timeout_;   // restamp_tf false
+
+and scan_header is assigned at the top of laserCallback, on every incoming scan.
+The stamp therefore advances at the /scan rate; the loop republishes the same one
+in between. Our /scan is 10 Hz, so ~100 ms is the floor and means nothing is
+wrong, and 601 ms means SIX SCAN PERIODS WITH NO SCAN. The fault is upstream of
+SLAM entirely.
 
 Measuring the longest gap is therefore the whole diagnosis, and it has to be
 sampled rather than awaited: a transform that has stopped arriving fires no
@@ -64,7 +76,7 @@ def test_the_note_names_the_tolerance_when_the_gap_reaches_it():
     fn = _func("_map_odom_gap_note")
     body = ast.get_source_segment(_src(), fn)
     assert "transform tolerance" in body
-    assert "SLAM stalled" in body
+    assert "symptom of the scan gap" in body
     assert "0.5" in body or "tolerance: float = 0.5" in body
 
 
@@ -101,7 +113,7 @@ def test_the_gap_logic_is_monotonic():
 
     stalled = Node(); stalled.map_odom_max_gap = 0.63
     out = note(stalled)
-    assert "630 ms" in out and "SLAM stalled" in out, out
+    assert "630 ms" in out and "symptom of the scan gap" in out, out
 
     quiet = Node(); quiet.map_odom_max_gap = 0.0
     assert note(quiet) == ""
@@ -134,7 +146,7 @@ def test_a_gap_under_the_sampling_resolution_is_not_reported_as_one():
         map_odom_max_gap = 0.03
     assert "kept up" in note(N()), note(N())
     N.map_odom_max_gap = 0.63
-    assert "SLAM stalled" in note(N())
+    assert "symptom of the scan gap" in note(N())
 
 
 def test_a_passing_run_reports_its_worst_gap_too():
