@@ -932,8 +932,28 @@ class ICM20948IMU: public IMUInterface
         bool enableDataReadyInterrupt() override
         {
             bank(0);
+            // INT_PIN_CFG, read-modify-written. Bit 1 is BYPASS_EN and must
+            // survive -- it is the only reason the magnetometer is reachable,
+            // so a bare write here would switch the mag off to switch the
+            // interrupt on.
+            //
+            // Clearing the top FOUR bits, not the top two:
+            //   7 INT1_ACTL          0 = active high   (the ISR attaches RISING)
+            //   6 INT1_OPEN          0 = push-pull     (no pull-up is fitted)
+            //   5 INT1_LATCH_INT_EN  0 = 50 us pulse, not held until cleared
+            //   4 INT_ANYRD_2CLEAR   0 = status clears on its own read
+            //
+            // Bit 5 is the one that matters and clearing only 7 and 6 left it
+            // to chance. Latched, the line goes high on the first sample and
+            // STAYS high, because nothing in this driver reads INT_STATUS
+            // (0x1A) to clear it -- so there would be exactly one rising edge
+            // and then silence, which getData() reads as a line that fired
+            // once and died and the staleness ceiling papers over. It happens
+            // to be clear today only because startSensor() writes 0x02 before
+            // this runs; depending on that ordering is the same fragility as
+            // depending on it for the bypass.
             const uint8_t pin_cfg = r8(0x0F);
-            w8(0x0F, (uint8_t)(pin_cfg & ~0xC0));   // push-pull, active high; keep BYPASS_EN
+            w8(0x0F, (uint8_t)(pin_cfg & ~0xF0));
             w8(0x11, 0x01);                         // INT_ENABLE_1: RAW_DATA_0_RDY_EN
             return r8(0x11) == 0x01;                // read back: the bus can fail silently
         }

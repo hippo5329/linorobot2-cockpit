@@ -169,7 +169,32 @@ def test_enabling_the_interrupt_does_not_switch_the_magnetometer_off():
     fn = cls[cls.index("bool enableDataReadyInterrupt"):]
     fn = fn[:fn.index("\n        }")]
     assert "r8(0x0F)" in fn, "INT_PIN_CFG is written without reading it first"
-    assert "&" in fn, "the existing bits are not preserved"
+    assert "~0xF0" in fn, "the pin's mode bits are not all forced"
+
+
+def test_the_interrupt_is_pulsed_not_latched():
+    """INT1_LATCH_INT_EN (INT_PIN_CFG bit 5) must be CLEARED, not inherited.
+
+    Latched, the line goes high on the first sample and stays high, because
+    nothing in this driver reads INT_STATUS (0x1A) to clear it. That is exactly
+    one rising edge and then silence -- which getData() sees as a line that
+    fired once and died, and the staleness ceiling then papers over by reading
+    the bus anyway. A data-ready feature that silently degrades to polling is
+    the fault this whole change exists to remove.
+
+    It is clear today only because startSensor() writes 0x0F = 0x02 first.
+    Depending on that ordering is the same fragility as depending on it for the
+    magnetometer bypass, which is already a known trap on this part.
+    """
+    body = _read(os.path.join(IMU_DIR, "default_imu.h"))
+    start = body.index("class ICM20948IMU")
+    cls = body[start:body.index("\nclass ", start + 10)]
+    fn = cls[cls.index("bool enableDataReadyInterrupt"):]
+    fn = fn[:fn.index("\n        }")]
+    # ~0xF0 clears ACTL(7), OPEN(6), LATCH(5) and ANYRD_2CLEAR(4); bit 1
+    # BYPASS_EN survives.
+    assert "~0xF0" in fn
+    assert "~0xC0" not in fn, "only ACTL and OPEN are forced; LATCH is left to chance"
 
 
 def test_data_ready_is_multiplexed_not_a_singleton():
