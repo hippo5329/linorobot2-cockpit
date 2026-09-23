@@ -90,13 +90,25 @@ def test_a_stamp_gap_is_blamed_upstream_of_the_wire():
     assert "transport" not in out.split("--")[1], out
 
 
-def test_on_time_but_late_is_blamed_on_the_transport():
-    """Stamps at nominal, arrivals bunched: the board did its job."""
+def test_on_time_but_late_names_the_ambiguity_rather_than_a_culprit():
+    """Stamps at nominal, arrivals bunched: the board did its job -- but this
+    measurement cannot say who delayed them.
+
+    The arrival interval is timed in the TESTER, whose executor is
+    single-threaded and spins with a 0.2 s timeout while running the leg logic
+    and a 10 Hz TF lookup. "Produced on time and delivered late, so this is the
+    transport" was the first wording, and on the 2026-09-23 run it printed that
+    verdict on every leg -- against arrival gaps of 400 ms that this process
+    could have caused entirely by itself. A diagnostic that names the wrong
+    subsystem confidently is worse than one that says it does not know.
+    """
     n = N()
     n.scan_max_stamp_gap = 0.1
     n.scan_max_arrival_gap = 1.2
     out = _note()(n)
-    assert "this is the transport" in out, out
+    assert "cannot" in out and "told apart" in out, out
+    assert "so this is the transport" not in out, out
+    assert "executor" in out, "the reader is not told why the number is ambiguous"
 
 
 def test_no_scan_at_all_is_not_reported_as_steady():

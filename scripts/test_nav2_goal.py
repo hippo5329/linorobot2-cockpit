@@ -777,9 +777,19 @@ def _scan_gap_note(node, nominal_hz: float = 10.0) -> str:
             f"worst arrival interval {arrival_gap * 1000:.0f} ms "
             f"({node.scan_count} scans, {period * 1000:.0f} ms nominal)")
     if stamp_gap > period * 1.5 and arrival_gap <= stamp_gap * 1.2:
-        note += " -- the board stopped producing, so this is upstream of the wire"
+        note += " -- scans were not produced, so this is upstream of the wire"
     elif arrival_gap > stamp_gap * 1.5:
-        note += " -- produced on time and delivered late, so this is the transport"
+        # NOT "so this is the transport". The arrival interval is measured in
+        # THIS process, whose executor is single-threaded and spins with a
+        # 0.2 s timeout while also running the leg logic and a 10 Hz TF lookup.
+        # A late arrival here is the transport OR this tester being busy, and
+        # nothing on this side can separate them. Said as a fact plus its
+        # ambiguity, because the first version of this line named the transport
+        # outright and would have sent the next reader to tune DDS on the
+        # strength of the tester's own scheduling.
+        note += (" -- stamped on time and seen late, which is the transport or this "
+                 "tester's own single-threaded executor; measured here they cannot "
+                 "be told apart")
     return note
 
 
