@@ -283,12 +283,30 @@ def launch_setup(context, *args, **kwargs):
                 "visualize": False,
                 "enabled": True,
             },
-            "observation_sources": ["scan"],
+            # Two ways to hear "something is in front of me", not one. The
+            # LiDAR was the only obstacle input this stack had, so nothing
+            # could contradict it when it was wrong -- and the firmware has
+            # been publishing sensor_msgs/Range on `sonar` all along
+            # (mcu_env.py: use_fake_sonar defaults true) with no consumer
+            # anywhere: not a costmap layer, not here.
+            "observation_sources": ["scan", "sonar"],
             "scan": {
                 "type": "scan",
                 "topic": "scan",
                 "min_height": 0.15,
                 "max_height": 2.0,
+                "enabled": True,
+            },
+            # The firmware stamps Range with envPrefixed("sonar_link"), and
+            # gen_robot_description.py publishes that frame whether or not a
+            # sonar is fitted -- a source whose frame is not in the tree is
+            # dropped without a word.
+            "sonar": {
+                "type": "range",
+                "topic": "sonar",
+                # One point per degree across the beam; field_of_view is 30
+                # degrees, so 31 points, well under the monitor's ceiling.
+                "obstacles_angle": 0.0175,
                 "enabled": True,
             },
         }.items():

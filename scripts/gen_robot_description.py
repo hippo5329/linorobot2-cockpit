@@ -58,6 +58,11 @@ FOOTPRINT_FRAME = "base_footprint"
 BASE_FRAME = "base_link"
 IMU_FRAME = "imu_link"
 DEFAULT_LASER_FRAME = "laser"
+# The firmware stamps its Range messages with envPrefixed("sonar_link"), so the
+# description has to publish a frame by exactly that name or every consumer
+# drops the message when it fails to transform it -- silently, which is how a
+# sonar can publish at 10 Hz and reach nothing.
+DEFAULT_SONAR_FRAME = "sonar_link"
 
 WHEEL_JOINTS_2 = ("left", "right")
 WHEEL_JOINTS_4 = ("front_left", "front_right", "rear_left", "rear_right")
@@ -109,6 +114,17 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
         laser.setdefault(k, 0.0)
     laser.setdefault("frame", DEFAULT_LASER_FRAME)
 
+    # An ultrasonic looks forward from the front face, at axle height. A range
+    # sensor sunk into the body would read the chassis at its minimum range for
+    # ever, which the collision monitor would believe.
+    sonar = dict(geo.get("sonar") or {})
+    sonar.setdefault("x", round(_f(body["length"]) / 2.0, 4))
+    sonar.setdefault("y", 0.0)
+    sonar.setdefault("z", 0.0)
+    for k in ("roll", "pitch", "yaw"):
+        sonar.setdefault(k, 0.0)
+    sonar.setdefault("frame", DEFAULT_SONAR_FRAME)
+
     imu = dict(geo.get("imu") or {})
     for k in ("x", "y", "z", "roll", "pitch", "yaw"):
         imu.setdefault(k, 0.0)
@@ -117,7 +133,8 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
     mesh.setdefault("base", "")
     mesh.setdefault("wheel", "")
 
-    return {"body": body, "wheel": wheel, "casters": casters, "laser": laser, "imu": imu, "mesh": mesh}
+    return {"body": body, "wheel": wheel, "casters": casters, "laser": laser,
+            "sonar": sonar, "imu": imu, "mesh": mesh}
 
 
 def geometry_warnings(params: Dict[str, Any]) -> List[str]:
@@ -249,7 +266,8 @@ def wheel_positions(params: Dict[str, Any]) -> List[Tuple[str, float, float]]:
 def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
     kine = params.get("kinematics") or {}
     geo = effective_geometry(params)
-    body, wheel, casters, laser, imu, mesh = (geo[k] for k in ("body", "wheel", "casters", "laser", "imu", "mesh"))
+    body, wheel, casters, laser, sonar, imu, mesh = (
+        geo[k] for k in ("body", "wheel", "casters", "laser", "sonar", "imu", "mesh"))
     name = robot_name or (params.get("robot") or {}).get("name") or "linorobot2"
 
     radius = _f(kine.get("wheel_diameter")) / 2.0
@@ -301,6 +319,15 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
     ET.SubElement(robot, "link", name=laser_frame)
     _joint(robot, f"{laser_frame}_to_base_link", "fixed", BASE_FRAME, laser_frame,
            (laser["x"], laser["y"], laser["z"]), (laser["roll"], laser["pitch"], laser["yaw"]))
+
+    # The sonar frame, whether or not a sonar is fitted. It costs one static
+    # transform and it means a board that IS publishing Range is never dropped
+    # for want of a frame -- and the fake sonar is on by default
+    # (mcu_env.py: use_fake_sonar defaults true), so that is most boards.
+    sonar_frame = str(sonar.get("frame") or DEFAULT_SONAR_FRAME)
+    ET.SubElement(robot, "link", name=sonar_frame)
+    _joint(robot, f"{sonar_frame}_to_base_link", "fixed", BASE_FRAME, sonar_frame,
+           (sonar["x"], sonar["y"], sonar["z"]), (sonar["roll"], sonar["pitch"], sonar["yaw"]))
 
     ET.indent(robot, space="  ")
     return '<?xml version="1.0"?>\n' + ET.tostring(robot, encoding="unicode") + "\n"

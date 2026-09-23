@@ -342,11 +342,17 @@ nav2:
         enabled: true
       observation_sources:
       - scan
+      - sonar
       scan:
         type: scan
         topic: scan
         min_height: 0.15
         max_height: 2.0
+        enabled: true
+      sonar:
+        type: range
+        topic: sonar
+        obstacles_angle: 0.0175
         enabled: true
   docking_server:
     ros__parameters:
