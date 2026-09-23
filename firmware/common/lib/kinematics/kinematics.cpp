@@ -15,14 +15,60 @@
 #include "Arduino.h"
 #include "kinematics.h"
 
+// The radius the wheels' tangential speed acts at when the base turns.
+//
+// This used to be lr/2 for every base type, written once inline in
+// calculateRPM() and once more in getVelocities(). It is right for a
+// differential drive and wrong for the other two, and because the SAME wrong
+// radius is used to command the wheels and to read them back, a simulated
+// robot is perfectly self-consistent: fake wheels turn the command into an
+// RPM and the RPM back into a velocity, the error cancels, and odom agrees
+// with cmd_vel to three decimals. Every bench result to date is fake mode, so
+// nothing on the bench can see this. It appears the first time real wheels
+// touch a real floor.
+//
+//   DIFFERENTIAL_DRIVE   lr/2
+//       The ICR is the midpoint of the drive axle. Unchanged.
+//
+//   MECANUM              (lr + fr)/2
+//       The textbook (lx + ly). A mecanum wheel's rollers take the wheelbase
+//       into the yaw term, so ignoring fr under-commands the turn by a factor
+//       of (1 + fr/lr) -- on the shipped mecanum reference, lr 0.271 and fr
+//       0.18, that is 1.66x. Ask for 1.0 rad/s and a real base gives 0.60.
+//
+//   SKID_STEER           lr/2 * angular_scale
+//       Geometrically lr/2, like a differential drive: the four wheels sit at
+//       +/-lr/2 and the wheelbase does not enter the ideal model. What enters
+//       is that four driven wheels CANNOT pivot without sliding sideways. The
+//       scrub moves the real centres of rotation outboard, so the base turns
+//       slower than the ideal for the same wheel speeds -- equivalent to a
+//       track wider than the one you can measure with a tape.
+//
+//       How much wider depends on the tyres and the floor, so there is no
+//       honest default but 1.0 (the ideal). A real 4-wheel skid base measures
+//       roughly 1.1-1.5. It is a measurement, not a constant: command a 360
+//       degree turn, divide the angle the base actually turned by the angle
+//       odom claims, and put the ratio in kinematics.angular_scale.
+float Kinematics::rotationRadius(base robot_base, float wheels_y_distance,
+                                 float wheels_x_distance, float angular_scale)
+{
+    if (robot_base == MECANUM)
+        return (wheels_y_distance + wheels_x_distance) / 2.0;
+    if (robot_base == SKID_STEER)
+        return (wheels_y_distance / 2.0) * angular_scale;
+    return wheels_y_distance / 2.0;
+}
+
 Kinematics::Kinematics(base robot_base, int motor_max_rpm, float max_rpm_ratio,
                        float motor_operating_voltage, float motor_power_max_voltage,
-                       float wheel_diameter, float wheels_y_distance):
+                       float wheel_diameter, float wheels_y_distance,
+                       float wheels_x_distance, float angular_scale):
     base_platform_(robot_base),
     motor_max_rpm_(motor_max_rpm),
     max_rpm_ratio_(max_rpm_ratio),
     motor_operating_voltage_(motor_operating_voltage),
-    wheels_y_distance_(wheels_y_distance),
+    rotation_radius_(rotationRadius(robot_base, wheels_y_distance,
+                                    wheels_x_distance, angular_scale)),
     wheel_circumference_(PI * wheel_diameter),
     total_wheels_(getTotalWheels(robot_base))
 {
@@ -41,7 +87,7 @@ void Kinematics::setMeasuredVoltage(float measured_voltage)
 Kinematics::rpm Kinematics::calculateRPM(float linear_x, float linear_y, float angular_z)
 {
 
-    float tangential_vel = angular_z * (wheels_y_distance_ / 2.0);
+    float tangential_vel = angular_z * rotation_radius_;
 
     //convert m/s to m/min
     float linear_vel_x_mins = linear_x * 60.0;
@@ -53,30 +99,53 @@ Kinematics::rpm Kinematics::calculateRPM(float linear_x, float linear_y, float a
     float y_rpm = linear_vel_y_mins / wheel_circumference_;
     float tan_rpm = tangential_vel_mins / wheel_circumference_;
 
-    float a_x_rpm = fabs(x_rpm);
-    float a_y_rpm = fabs(y_rpm);
-    float a_tan_rpm = fabs(tan_rpm);
-
-    float xy_sum = a_x_rpm + a_y_rpm;
-    float xtan_sum = a_x_rpm + a_tan_rpm;
-
-    //calculate the scale value how much each target velocity
-    //must be scaled down in such cases where the total required RPM
-    //is more than the motor's max RPM
-    //this is to ensure that the required motion is achieved just with slower speed
-    if(xy_sum >= max_rpm_ && angular_z == 0)
+    // Scale the whole request down until the busiest wheel fits, so an
+    // unreachable command comes out as the SAME motion more slowly.
+    //
+    // This replaces two special cases that between them missed the one a
+    // mecanum base actually drives in. They were:
+    //
+    //     if (|x| + |y| >= max && angular_z == 0)        ... scale x and y
+    //     else if (|x| + |tan| >= max && linear_y == 0)  ... scale x and tan
+    //
+    // Each guard demands that one of the three components be EXACTLY zero.
+    // A differential drive always has linear_y exactly zero -- getRPM() assigns
+    // it -- so the second branch fires and the behaviour below is identical for
+    // 2wd and skid. A mecanum base is the case where all three are non-zero at
+    // once, which is the whole point of having one, and `angular_z == 0` is
+    // float equality on a controller output: Nav2 sends 1e-4 rad/s, not 0.
+    // Neither branch fires, nothing is scaled, and the four constrain() calls
+    // below clip whichever wheels are over the rail.
+    //
+    // Clipping one wheel is not "slower": it changes the ratio between the
+    // wheels, and for a mecanum the ratio IS the direction. A base asked to
+    // strafe diagonally at more than it can do would curve off the commanded
+    // heading instead of tracking it at reduced speed -- and keep its odometry
+    // straight-faced about it, because getVelocities() reads the clipped wheels
+    // back as whatever motion they really describe.
+    //
+    // The general rule subsumes both old cases exactly: with y == 0 the peak is
+    // |x| + |tan|, with tan == 0 it is |x| + |y|.
+    float peak = 0.0;
+    for (int i = 0; i < 4; i++)
     {
-        float vel_scaler = max_rpm_ / xy_sum;
+        // The same four combinations the motors are assigned below. The signs
+        // are what decides which wheel is worst, so they cannot be summarised
+        // as |x| + |y| + |tan| -- that would scale a base that is nowhere near
+        // its limit.
+        float w = (i == 0) ? (x_rpm - y_rpm - tan_rpm)
+                : (i == 1) ? (x_rpm + y_rpm + tan_rpm)
+                : (i == 2) ? (x_rpm + y_rpm - tan_rpm)
+                           : (x_rpm - y_rpm + tan_rpm);
+        w = fabs(w);
+        if (w > peak) peak = w;
+    }
+    if (peak > max_rpm_ && peak > 0.0)
+    {
+        float vel_scaler = max_rpm_ / peak;
 
         x_rpm *= vel_scaler;
         y_rpm *= vel_scaler;
-    }
-    
-    else if(xtan_sum >= max_rpm_ && linear_y == 0)
-    {
-        float vel_scaler = max_rpm_ / xtan_sum;
-
-        x_rpm *= vel_scaler;
         tan_rpm *= vel_scaler;
     }
 
@@ -138,7 +207,9 @@ Kinematics::velocities Kinematics::getVelocities(float rpm1, float rpm2, float r
 
     //convert average revolutions per minute to revolutions per second
     average_rps_a = ((float)(-rpm1 + rpm2 - rpm3 + rpm4) / total_wheels_) / 60.0;
-    vel.angular_z =  (average_rps_a * wheel_circumference_) / (wheels_y_distance_ / 2.0); //  rad/s
+    // The SAME radius that turned the command into wheel speeds turns them back,
+    // so a base cannot report a yaw rate it was never asked to produce.
+    vel.angular_z =  (average_rps_a * wheel_circumference_) / rotation_radius_; //  rad/s
 
     return vel;
 }
@@ -152,6 +223,11 @@ int Kinematics::getTotalWheels(base robot_base)
         case MECANUM:               return 4;
         default:                    return 2;
     }
+}
+
+float Kinematics::getRotationRadius()
+{
+    return rotation_radius_;
 }
 
 float Kinematics::getMaxRPM()

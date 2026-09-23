@@ -36,4 +36,21 @@
 #endif
 #endif
 
+// The wheelbase, front axle to rear axle. Zero is the honest answer for a
+// board that describes no robot: a 2wd base has no second axle, and it is the
+// value that leaves the rotation radius at lr/2 -- the behaviour every image
+// had before the wheelbase was read at all. A 4-wheel robot's env supplies the
+// real number.
+#ifndef FR_WHEELS_DISTANCE
+#define FR_WHEELS_DISTANCE 0.0
+#endif
+
+// Skid-steer scrub. 1.0 is the ideal differential model, which is what a 2wd
+// and a mecanum base use regardless. It is a measurement of tyres and floor,
+// not a constant, so an image that describes no robot must not ship a guess:
+// see Kinematics::rotationRadius for how to measure it.
+#ifndef ANGULAR_SCALE
+#define ANGULAR_SCALE 1.0
+#endif
+
 #endif

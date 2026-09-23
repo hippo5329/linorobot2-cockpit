@@ -51,7 +51,7 @@ one of them a particular robot is here:
                 motor_driver  pwm_freq  pwm_bits  pwm_min  pwm_max
                 kp  ki  kd  fake_wheel
 
-    kinematics  base  max_rpm  rpm_ratio  wheel_d  lr_dist
+    kinematics  base  max_rpm  rpm_ratio  wheel_d  lr_dist  fr_dist  angular_scale
                 motor_v  power_v
 
 Each key falls back to the macro the image was generated with, so a board with a
@@ -840,6 +840,8 @@ def hardware_env(params: dict) -> dict:
                      ("rpm_ratio", "max_rpm_ratio"),
                      ("wheel_d", "wheel_diameter"),
                      ("lr_dist", "lr_wheels_distance"),
+                     ("fr_dist", "fr_wheels_distance"),
+                     ("angular_scale", "angular_scale"),
                      ("motor_v", "motor_operating_voltage"),
                      ("power_v", "motor_power_max_voltage")):
         if kin.get(src) is not None:

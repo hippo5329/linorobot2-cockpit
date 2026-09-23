@@ -343,6 +343,10 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     wheel_diam = float(kine.get("wheel_diameter", 0.1))
     lr_dist = float(kine.get("lr_wheels_distance", 0.271))
     fr_dist = float(kine.get("fr_wheels_distance", 0.0))
+    # Skid-steer scrub: the ratio between the turn a chassis really makes and
+    # the turn its track width predicts. 1.0 is the ideal model and the only
+    # honest default -- see Kinematics::rotationRadius for how to measure it.
+    angular_scale = float(kine.get("angular_scale", 1.0))
     max_rpm = int(kine.get("max_rpm", 140))
     rpm_ratio = float(kine.get("max_rpm_ratio", 0.85))
     cpr = counts_per_rev(kine)
@@ -400,6 +404,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         f"#define WHEEL_DIAMETER {wheel_diam}",
         f"#define LR_WHEELS_DISTANCE {lr_dist}",
         f"#define FR_WHEELS_DISTANCE {fr_dist}",
+        f"#define ANGULAR_SCALE {angular_scale}",
         f"#define PWM_BITS {pwm_bits}",
         f"#define PWM_FREQUENCY {pwm_freq}",
         "",

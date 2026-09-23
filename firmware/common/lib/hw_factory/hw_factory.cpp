@@ -167,5 +167,17 @@ Kinematics *createKinematics(void)
                           envFloat("motor_v", MOTOR_OPERATING_VOLTAGE),
                           envFloat("power_v", MOTOR_POWER_MAX_VOLTAGE),
                           envFloat("wheel_d", WHEEL_DIAMETER),
-                          envFloat("lr_dist", LR_WHEELS_DISTANCE));
+                          envFloat("lr_dist", LR_WHEELS_DISTANCE),
+                          // The wheelbase. The header has emitted
+                          // FR_WHEELS_DISTANCE since the generator was written
+                          // and NOTHING read it: a mecanum base was turning on
+                          // its track alone, which under-commands yaw by
+                          // (1 + fr/lr). Now it reaches the one place that
+                          // needs it, with an env key beside it like every
+                          // other dimension.
+                          envFloat("fr_dist", FR_WHEELS_DISTANCE),
+                          // Skid-steer scrub, measured per chassis and floor.
+                          // 1.0 is the ideal (and what a 2wd or mecanum base
+                          // ignores); see Kinematics::rotationRadius.
+                          envFloat("angular_scale", ANGULAR_SCALE));
 }

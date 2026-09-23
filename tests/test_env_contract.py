@@ -27,6 +27,11 @@ MAXIMAL_CONFIG = {
     "robot": {"name": "maximal"},
     "kinematics": {"base_type": "2wd", "wheel_diameter": 0.1, "lr_wheels_distance": 0.3,
                    "max_rpm": 100, "counts_per_rev": 100, "pwm_bits": 8, "pwm_frequency": 1000,
+                   # The wheelbase and the skid-steer scrub. Neither belongs in a
+                   # reference config -- fr is 0 on a 2wd and the scrub is 1.0
+                   # until somebody measures their own chassis -- so this is the
+                   # only place the contract can see them written.
+                   "fr_wheels_distance": 0.18, "angular_scale": 1.25,
                    "pid": {"kp": 1, "ki": 0, "kd": 0}},
     "base_controller": {
         "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial", "console": "uart0",
