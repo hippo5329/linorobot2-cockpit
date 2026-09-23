@@ -492,6 +492,9 @@ bool destroyEntities();
 void fullStop();
 void moveBase();
 void publishData();
+// Defined below, called from loop(): the DATA_RDY verdict must not depend on
+// an agent, because on a shared-console board it is unreadable once one is up.
+static void reportDataReadyLine();
 void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
 void twistCallback(const void * msgin);
 #ifdef USE_STAMPED_CMD_VEL
@@ -1256,6 +1259,10 @@ void loop() {
         return;
     }
     fakeWallLedService();
+    // Not in publishData(): the ISR counts edges whether or not an agent
+    // exists, and on a board whose console shares the micro-ROS port the
+    // verdict is only readable BEFORE one connects.
+    reportDataReadyLine();
     diagCount(DIAG_LOOP);
     diagState((int)state);
     switch (state) 
@@ -1819,44 +1826,61 @@ void moveBase()
     was_clamped = hit_wall;
 }
 
+
+// The hardware verdict on a wired DATA_RDY line: how many edges the ISR
+// actually counted, and over how long. 0 means the wire is on a pin the chip
+// is not driving.
+//
+// This lived in publishData(), which does not run until the agent connects --
+// and that made it unreadable on exactly the boards that need it most. A Pico
+// 2 carries micro-ROS and its console on the SAME USB CDC, so the moment the
+// agent is up the line goes into the XRCE stream and is lost; before the agent
+// is up, publishData() never ran and it was never printed at all. The verdict
+// was therefore obtainable only on a board with a second UART -- the YB-EET01,
+// whose console is its own CP2102 -- which is not a property the measurement
+// should depend on.
+//
+// The ISR counts edges whether or not an agent exists, so the report does not
+// need one either. Called from loop(), in every state.
+//
+// Report the WINDOW, not a nominal one. On a Wi-Fi leg the agent takes longer
+// to join, and "in the first 5 s" is then right only by luck: measured on the
+// Yahboom, the same 200 Hz ODR printed 1001 edges on serial and 1576 over
+// Wi-Fi, and only the first divides out to the ODR. Printing the elapsed time
+// and the quotient makes it a rate that can be checked against the configured
+// ODR instead of a count to be squinted at.
+static void reportDataReadyLine()
+{
+    static bool int_reported = false;
+    if (int_reported || sim_imu || !imu || imu->intPin() < 0)
+        return;
+    if ((millis() - imu->intAttachedMs()) <= 5000)
+        return;
+    int_reported = true;
+    const uint32_t int_ms    = millis() - imu->intAttachedMs();
+    const uint32_t int_edges = imu->intEdges();
+    Serial.printf("[imu] data-ready line GPIO %d fired %lu times in %.1f s = %.1f Hz (%s)\n",
+                  imu->intPin(), (unsigned long)int_edges, int_ms / 1000.0f,
+                  int_edges * 1000.0f / (float)int_ms,
+                  int_edges ? "interrupt path live" : "never fired - polling");
+    // What the stamp correction is actually doing. The spread is the point: a
+    // constant age is a constant offset and harms nothing, a varying one is
+    // the jitter madgwick integrates the gyro through.
+    if (imu->ageCount())
+        Serial.printf("[imu] sample age from %s: %lu..%lu us, mean %lu over %lu samples "
+                      "(stamps dated back by this much)\n",
+                      imu->ageSource(),
+                      (unsigned long)imu->ageMinUs(), (unsigned long)imu->ageMaxUs(),
+                      (unsigned long)imu->ageMeanUs(), (unsigned long)imu->ageCount());
+    else
+        Serial.printf("[imu] sample age unavailable (%s): stamps are taken at publish\n",
+                      imu->ageSource());
+}
+
+
 void publishData()
 {
     static unsigned skip_dip = 0;
-    // The hardware verdict on a wired DATA_RDY line, once, at least five seconds
-    // in: how many edges the ISR actually counted, and over how long. 0 means
-    // the wire is on a pin the chip is not driving.
-    //
-    // Report the WINDOW, not a nominal one. This runs in the publish path, which
-    // does not start until the agent connects: 5.0 s after the attach on a serial
-    // leg where the agent is already waiting, but 7.9 s on a Wi-Fi leg that has
-    // to join an AP first. A line that says "in the first 5 s" is therefore right
-    // only by luck -- measured on the Yahboom, the same 200 Hz ODR printed 1001
-    // on serial and 1576 over Wi-Fi, and only the first divides out to the ODR.
-    // Printing the elapsed time and the quotient makes the number a rate that can
-    // be checked against the configured ODR instead of a count to be squinted at.
-    static bool int_reported = false;
-    if (!int_reported && !sim_imu && imu && imu->intPin() >= 0
-            && (millis() - imu->intAttachedMs()) > 5000) {
-        int_reported = true;
-        const uint32_t int_ms    = millis() - imu->intAttachedMs();
-        const uint32_t int_edges = imu->intEdges();
-        Serial.printf("[imu] data-ready line GPIO %d fired %lu times in %.1f s = %.1f Hz (%s)\n",
-                      imu->intPin(), (unsigned long)int_edges, int_ms / 1000.0f,
-                      int_edges * 1000.0f / (float)int_ms,
-                      int_edges ? "interrupt path live" : "never fired - polling");
-        // What the stamp correction is actually doing. The spread is the
-        // point: a constant age is a constant offset and harms nothing, a
-        // varying one is the jitter madgwick integrates the gyro through.
-        if (imu->ageCount())
-            Serial.printf("[imu] sample age from %s: %lu..%lu us, mean %lu over %lu samples "
-                          "(stamps dated back by this much)\n",
-                          imu->ageSource(),
-                          (unsigned long)imu->ageMinUs(), (unsigned long)imu->ageMaxUs(),
-                          (unsigned long)imu->ageMeanUs(), (unsigned long)imu->ageCount());
-        else
-            Serial.printf("[imu] sample age unavailable (%s): stamps are taken at publish\n",
-                          imu->ageSource());
-    }
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
 #endif

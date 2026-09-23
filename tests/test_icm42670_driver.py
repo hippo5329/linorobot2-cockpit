@@ -126,3 +126,35 @@ def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
     assert "is gone after the usb reset; cannot send the 1200-baud touch" in pulse
     assert "touched = (r.returncode == 0)" in pulse, "a failed stty is not a touch"
     assert "s.dtr = False" in pulse, "drop DTR explicitly; the core wants 1200 baud AND DTR low"
+
+
+def test_the_edge_verdict_does_not_require_an_agent():
+    """The DATA_RDY verdict is only readable when no agent is connected.
+
+    It lived in publishData(), which does not run until micro-ROS connects --
+    and a Pico 2 carries micro-ROS and its console on the SAME USB CDC. So the
+    moment the line could be printed, the port was carrying XRCE binary and it
+    was lost; before that, publishData() had never run. The measurement was
+    obtainable only on a board with a second UART (the YB-EET01, whose console
+    is its own CP2102), which is not a property the verdict should depend on.
+
+    The ISR counts edges whether or not an agent exists, so the report must not
+    need one. Found on the bench 2026-09-23 trying to prove the LSM6DSOX's INT1
+    on a plain Pico 2 -- which, note, runs the `w` firmware with no radio
+    fitted, so there is no udp4 escape route either.
+    """
+    m = _read(os.path.join(FW, "src", "main.cpp"))
+    assert "static void reportDataReadyLine()" in m, "the verdict is inlined again"
+    def body(sig):
+        """From a function's signature to the start of the next top-level
+        definition. Slicing on the first "\n}\n" cuts at the first nested
+        block that happens to close in column 1, which is not the function."""
+        start = m.index(sig)
+        rest = m[start + len(sig):]
+        ends = [rest.index(t) for t in ("\nvoid ", "\nstatic ") if t in rest]
+        return rest[:min(ends)] if ends else rest
+
+    assert "reportDataReadyLine();" in body("void loop() {"), \
+        "the verdict is not reported from loop()"
+    assert "reportDataReadyLine" not in body("void publishData()"), \
+        "the verdict is back in the agent-only path"
