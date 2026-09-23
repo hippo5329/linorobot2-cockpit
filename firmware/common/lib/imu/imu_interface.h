@@ -44,6 +44,14 @@
 #define GYRO_CAL_MAX_STDDEV 0.05f
 #endif
 
+#ifndef IMU_SAMPLE_AGE_MAX_US
+// The most a stamp may ever be moved backwards. Two sample periods at the
+// slowest rate this firmware publishes (50 Hz -> 20 ms) with room to spare: a
+// larger age is a fault, not a late read, and a fault must not be allowed to
+// place a message at an arbitrary time.
+#define IMU_SAMPLE_AGE_MAX_US 50000
+#endif
+
 #ifndef IMU_INT_STALE_MS
 #define IMU_INT_STALE_MS 200   // longer than this since the last read: read anyway
 #endif
@@ -68,18 +76,42 @@ class IMUInterface
         static void IMU_ISR_ATTR dataReadyISR();
         int int_pin_ = -1;
         volatile bool data_ready_ = false;
+        volatile uint32_t data_ready_us_ = 0;  // micros() at the edge that produced the pending sample
+        uint32_t sample_us_ = 0;               // micros() of the sample getData() last returned
+        bool sample_time_known_ = false;       // false until an edge has actually timed one
         volatile uint32_t int_edges_ = 0;      // every rising edge the ISR saw
         bool int_ever_ = false;
         bool int_configured_ = false;
         bool poll_fallback_ = false;
         uint32_t int_attached_ms_ = 0;
         uint32_t last_read_ms_ = 0;
+        uint32_t age_n_ = 0;
+        uint64_t age_sum_us_ = 0;
+        uint32_t age_min_us_ = 0xFFFFFFFFu;
+        uint32_t age_max_us_ = 0;
 
     protected:
         // Ask the chip to drive its DATA_RDY output. A driver that knows its
         // chip overrides this; the default admits it cannot, and getData()
         // then polls if the pin stays quiet.
         virtual bool enableDataReadyInterrupt() { return false; }
+
+        // How old the sample just read is, in microseconds, ACCORDING TO THE
+        // CHIP. Modern MEMS parts keep a monotonic counter and put its value
+        // in the FIFO beside the sample -- ICM-42670 (16-bit, ~1 us tick),
+        // LSM6DSOX (32-bit, 25 us tick), BMI270 (24-bit) -- so the sample can
+        // say when it was taken rather than when it was fetched.
+        //
+        // An AGE, not the counter itself, and that is the design decision
+        // worth defending. The chip's oscillator is not the MCU's and drifts
+        // against it, so turning a raw counter into a ROS stamp means keeping
+        // a linear fit that has to be re-anchored forever. An age is only ever
+        // used across one sample interval (~20 ms), where even a 2 % clock
+        // error is 0.4 us -- below the quantisation of everything downstream.
+        //
+        // 0 means "this driver cannot say", which is the default and is not
+        // the same as "the sample is new": see sampleAgeUs().
+        virtual uint32_t chipSampleAgeUs() { return 0; }
 
     protected:
         // Value-initialised: these objects are heap-allocated (createIMU does
@@ -262,6 +294,71 @@ class IMUInterface
         uint32_t intEdges() const { return int_edges_; }
         uint32_t intAttachedMs() const { return int_attached_ms_; }
 
+        // ---- when the sample was taken --------------------------------------
+        //
+        // The publisher stamps every message with one getTime() taken AFTER
+        // every sensor has been read, so an IMU sample carried the time the
+        // MCU got round to publishing it. That is the jitter this removes:
+        // unknown, load-dependent, and invisible -- and madgwick integrates
+        // the gyro over the interval between stamps (constant_dt: 0.0), so it
+        // lands directly in the heading.
+        //
+        // Two sources, best first:
+        //   * the chip's own counter, when the driver can read it;
+        //   * the DATA_RDY edge, which the ISR times. Universal to any chip
+        //     with the line wired, and already within a microsecond or two of
+        //     the conversion completing.
+        //
+        // 0 when neither is available -- no interrupt pin, or the line never
+        // fired and getData() is polling. The caller must treat 0 as "no
+        // correction", never as "brand new".
+        uint32_t sampleAgeUs()
+        {
+            const uint32_t chip = chipSampleAgeUs();
+            if (chip)
+                return chip > IMU_SAMPLE_AGE_MAX_US ? IMU_SAMPLE_AGE_MAX_US : chip;
+            if (!sample_time_known_)
+                return 0;
+            // Unsigned arithmetic, so the 32-bit micros() wrap costs nothing:
+            // the difference is right across it.
+            const uint32_t age = micros() - sample_us_;
+            // A sample older than this is not a late read, it is a stale flag
+            // from a line that stopped -- the staleness ceiling above will have
+            // read the bus anyway, and dating that read backwards would be a
+            // lie. Clamped rather than returned, so a fault cannot move a
+            // stamp by an arbitrary amount.
+            return age > IMU_SAMPLE_AGE_MAX_US ? IMU_SAMPLE_AGE_MAX_US : age;
+        }
+        bool sampleTimeKnown() const { return sample_time_known_; }
+
+        // Running statistics on the correction, so the bench can see the thing
+        // this feature exists to remove rather than take it on trust. The
+        // SPREAD is the number that matters: a constant age is a constant
+        // offset and harms nothing, while a varying one is the jitter that
+        // lands in madgwick's gyro integration.
+        void noteSampleAge(uint32_t age_us)
+        {
+            if (!age_us)
+                return;
+            age_n_++;
+            age_sum_us_ += age_us;
+            if (age_us < age_min_us_) age_min_us_ = age_us;
+            if (age_us > age_max_us_) age_max_us_ = age_us;
+        }
+        uint32_t ageCount() const { return age_n_; }
+        uint32_t ageMinUs()  const { return age_n_ ? age_min_us_ : 0; }
+        uint32_t ageMaxUs()  const { return age_n_ ? age_max_us_ : 0; }
+        uint32_t ageMeanUs() const { return age_n_ ? (uint32_t)(age_sum_us_ / age_n_) : 0; }
+        // Where the number came from, because the two sources are not equally
+        // good and a report that does not say which is being read is not
+        // evidence of anything.
+        const char *ageSource()
+        {
+            if (chipSampleAgeUs()) return "chip timestamp";
+            if (sample_time_known_) return "DATA_RDY edge";
+            return "none - stamped at publish";
+        }
+
         sensor_msgs__msg__Imu getData()
         {
             if (int_pin_ >= 0)
@@ -269,6 +366,11 @@ class IMUInterface
                 const uint32_t now = millis();
                 if (data_ready_)
                 {
+                    // Take the edge time with the flag, in that order: the ISR
+                    // writes the time BEFORE the flag, so a flag that is set
+                    // has a time to go with it.
+                    sample_us_ = data_ready_us_;
+                    sample_time_known_ = true;
                     data_ready_ = false;
                     int_ever_ = true;
                 }

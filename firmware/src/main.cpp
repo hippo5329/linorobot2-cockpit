@@ -1844,6 +1844,18 @@ void publishData()
                       imu->intPin(), (unsigned long)int_edges, int_ms / 1000.0f,
                       int_edges * 1000.0f / (float)int_ms,
                       int_edges ? "interrupt path live" : "never fired - polling");
+        // What the stamp correction is actually doing. The spread is the
+        // point: a constant age is a constant offset and harms nothing, a
+        // varying one is the jitter madgwick integrates the gyro through.
+        if (imu->ageCount())
+            Serial.printf("[imu] sample age from %s: %lu..%lu us, mean %lu over %lu samples "
+                          "(stamps dated back by this much)\n",
+                          imu->ageSource(),
+                          (unsigned long)imu->ageMinUs(), (unsigned long)imu->ageMaxUs(),
+                          (unsigned long)imu->ageMeanUs(), (unsigned long)imu->ageCount());
+        else
+            Serial.printf("[imu] sample age unavailable (%s): stamps are taken at publish\n",
+                          imu->ageSource());
     }
 #ifdef USE_ESP32_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
@@ -1927,8 +1939,30 @@ void publishData()
     odom_msg->header.stamp.sec = time_stamp.tv_sec;
     odom_msg->header.stamp.nanosec = time_stamp.tv_nsec;
 
-    imu_msg->header.stamp.sec = time_stamp.tv_sec;
-    imu_msg->header.stamp.nanosec = time_stamp.tv_nsec;
+    // The IMU gets its OWN stamp, dated back to when the sample was taken.
+    //
+    // time_stamp is read here, after every sensor on the bus has been polled,
+    // so using it for the IMU dates the sample to when the MCU got round to
+    // publishing it. The error is not constant -- it moves with bus traffic,
+    // with how many optional sensors are fitted, and with whatever else the
+    // loop did that cycle -- and madgwick integrates the gyro over the
+    // interval between stamps (constant_dt: 0.0 in bringup.launch.py), so it
+    // goes straight into the heading the EKF then takes as absolute.
+    //
+    // sampleAgeUs() answers from the chip's own timestamp counter where the
+    // driver can read one, and from the DATA_RDY edge otherwise. It returns 0
+    // when neither is available -- no interrupt pin, or a line that never
+    // fired -- and 0 here means "leave the stamp alone", which is exactly the
+    // behaviour every board had before this.
+    {
+        const uint32_t imu_age_us = imu->sampleAgeUs();
+        imu->noteSampleAge(imu_age_us);
+        int64_t imu_ns = (int64_t)time_stamp.tv_sec * 1000000000LL + time_stamp.tv_nsec
+                         - (int64_t)imu_age_us * 1000LL;
+        if (imu_ns < 0) imu_ns = 0;          // before the epoch sync landed
+        imu_msg->header.stamp.sec = (int32_t)(imu_ns / 1000000000LL);
+        imu_msg->header.stamp.nanosec = (uint32_t)(imu_ns % 1000000000LL);
+    }
 
     if (publish_mag)
     {
