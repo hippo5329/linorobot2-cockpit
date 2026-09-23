@@ -740,6 +740,8 @@ class LSM6DSOXIMU : public IMUInterface
         static const uint8_t REG_CTRL1_XL  = 0x10;   // accel ODR / full-scale
         static const uint8_t REG_CTRL2_G   = 0x11;   // gyro  ODR / full-scale
         static const uint8_t REG_CTRL3_C   = 0x12;   // BDU / IF_INC / SW_RESET
+        static const uint8_t REG_COUNTER_BDR1 = 0x0B; // bit 7 DRDY_PULSED
+        static const uint8_t REG_INT1_CTRL = 0x0D;   // bit 0 INT1_DRDY_XL, bit 1 INT1_DRDY_G
         static const uint8_t REG_CTRL10_C  = 0x19;   // TIMESTAMP_EN (bit 5)
         static const uint8_t REG_OUTX_L_G  = 0x22;   // gyro  X..Z (6 bytes)
         static const uint8_t REG_OUTX_L_A  = 0x28;   // accel X..Z (6 bytes)
@@ -813,6 +815,50 @@ class LSM6DSOXIMU : public IMUInterface
             writeReg(REG_CTRL10_C, 0x20);   // TIMESTAMP_EN — run the built-in sample counter
             delay(100);                     // let the digital filters settle
             return true;
+        }
+
+        // Drive INT1 on every new accelerometer sample.
+        //
+        // INT1, specifically: that is the pin this part brings out to the
+        // bench Pico 2's GPIO 2 (user, 2026-09-23). INT2 would need
+        // CTRL4_C.INT2_on_INT1 to reach the same wire and is not what is
+        // fitted, so routing there would produce a line that never fires and
+        // a silent fall back to polling.
+        //
+        // Three registers, and the middle one is the one that is easy to miss:
+        //
+        //   CTRL3_C     read-modify-written. H_LACTIVE (bit 5) and PP_OD
+        //               (bit 4) forced clear -> push-pull, active high, which
+        //               is what IMUInterface attaches on (RISING). The write
+        //               must preserve BDU and IF_INC, set by startSensor():
+        //               clearing IF_INC would break every multi-byte read this
+        //               driver makes.
+        //
+        //   COUNTER_BDR_REG1.DRDY_PULSED  a ~75 us pulse per sample instead of
+        //               a level that stays asserted until the data is read.
+        //               Level mode gives ONE rising edge and then nothing,
+        //               because this driver reads gyro and accel in separate
+        //               transactions and the condition is not cleared between
+        //               them -- getData() would see a line that fired once and
+        //               died, and the staleness ceiling would quietly turn the
+        //               whole feature back into polling. Same trap as the
+        //               ICM-20948's INT1_LATCH_INT_EN.
+        //
+        //   INT1_CTRL   accelerometer data-ready only. The gyro runs at the
+        //               same 104 Hz ODR off the same clock, so routing both
+        //               adds a second edge per sample and no information, and
+        //               getData() reads both regardless.
+        bool enableDataReadyInterrupt() override
+        {
+            const uint8_t ctrl3 = readReg(REG_CTRL3_C);
+            writeReg(REG_CTRL3_C, (uint8_t)(ctrl3 & ~0x30));
+            const uint8_t bdr = readReg(REG_COUNTER_BDR1);
+            writeReg(REG_COUNTER_BDR1, (uint8_t)(bdr | 0x80));
+            writeReg(REG_INT1_CTRL, 0x01);
+            // Read back: an I2C write that never landed is indistinguishable
+            // from a chip that will not drive the line, and only one of those
+            // is worth sending someone to look at the wiring for.
+            return (readReg(REG_INT1_CTRL) & 0x01) != 0;
         }
 
         // Built-in hardware timestamp: 32-bit free-running counter latched with
