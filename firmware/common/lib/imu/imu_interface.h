@@ -210,6 +210,29 @@ class IMUInterface
 
         bool init()
         {
+            // A valid identity rotation, for every driver that does not compute
+            // one. The field is zero-initialised, which is (0,0,0,0) -- not
+            // "no rotation" but NOT A ROTATION: norm 0, so anything that
+            // normalises divides by zero and RViz rejects the message outright.
+            //
+            // It mattered little while this message was only imu/data_raw,
+            // because madgwick ignores the orientation of its input. It matters
+            // now: on a robot with no magnetometer the base publishes imu/data
+            // itself, and that is the topic consumers read. Measured on the z13
+            // Pico 2 with an LSM6DSOX, 2026-09-23: /imu/data at 48.9 Hz with a
+            // quaternion norm of 0.0000.
+            //
+            // w = 1 and the rest zero is the honest value: this driver does not
+            // know the orientation, and identity is what "no correction" looks
+            // like to a consumer. The EKF does not fuse it either way -- with no
+            // magnetometer bringup.launch.py clears imu0_config[5].
+            //
+            // Drivers with real on-chip fusion (BNO085) overwrite all four.
+            imu_msg_.orientation.x = 0.0;
+            imu_msg_.orientation.y = 0.0;
+            imu_msg_.orientation.z = 0.0;
+            imu_msg_.orientation.w = 1.0;
+
             bool sensor_ok = startSensor();
             if(sensor_ok)
                 calibrateGyro();
