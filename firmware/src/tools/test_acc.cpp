@@ -270,6 +270,37 @@ void dump_record(const Kinematics::velocities *buf) {
     syslog(LOG_INFO, "IMU ACC %6.2f %6.2f m/s2", imu_max_acc_x, imu_min_acc_x);
 }
 
+
+// Spin the motors AND close the simulated loop.
+//
+// FakeEncoder::feed() is what turns a PWM into simulated wheel motion, and it
+// was called from main.cpp's moveBase() and nowhere else -- so on a fake-wheel
+// board this tool drove nothing at all. It still printed a full table: MAX VEL
+// 0.00 m/s beside MAX ACC 0.37 m/s2, which is encoder noise differentiated
+// rather than motion. A measurement tool that reports zeros as data is worse
+// than one that refuses, and the wiki tells people to set the velocity
+// smoother's limits from this output.
+//
+// A real encoder's feed() is a no-op (EncoderInterface's default body is
+// `(void)pwm;`), so the same call serves both and which one runs stays the env's
+// decision, not the compiler's -- the same reasoning main.cpp records at its own
+// feed() calls.
+//
+// One feed() per phase is enough: it latches the duty and integrates, and
+// record()'s getRPM() calls integrate again as they sample, so the model
+// advances across the whole run.
+static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
+{
+    motor1_controller->spin(pwm1);
+    motor2_controller->spin(pwm2);
+    motor3_controller->spin(pwm3);
+    motor4_controller->spin(pwm4);
+    motor1_encoder->feed(pwm1);
+    motor2_encoder->feed(pwm2);
+    motor3_encoder->feed(pwm3);
+    motor4_encoder->feed(pwm4);
+}
+
 void loop_() {
     if (!imu_msg) return;   // setup_ could not allocate; nothing to run
 
@@ -290,37 +321,29 @@ void loop_() {
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, HIGH);
 #endif
-        motor1_controller->spin((runs & 1) ? current_pwm_max : current_pwm_min);
-        motor2_controller->spin(current_pwm_max);
-        motor3_controller->spin((runs & 1) ? current_pwm_max : current_pwm_min);
-        motor4_controller->spin(current_pwm_max);
+        driveAll((runs & 1) ? current_pwm_max : current_pwm_min, current_pwm_max,
+                 (runs & 1) ? current_pwm_max : current_pwm_min, current_pwm_max);
         record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, LOW);
 #endif
-        motor1_controller->spin(0);
-        motor2_controller->spin(0);
-        motor3_controller->spin(0);
-        motor4_controller->spin(0);
+        driveAll(0, 0,
+                 0, 0);
         record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, HIGH);
 #endif
-        motor1_controller->spin((runs & 1) ? current_pwm_min : current_pwm_max);
-        motor2_controller->spin(current_pwm_min);
-        motor3_controller->spin((runs & 1) ? current_pwm_min : current_pwm_max);
-        motor4_controller->spin(current_pwm_min);
+        driveAll((runs & 1) ? current_pwm_min : current_pwm_max, current_pwm_min,
+                 (runs & 1) ? current_pwm_min : current_pwm_max, current_pwm_min);
         record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, LOW);
 #endif
-        motor1_controller->spin(0);
-        motor2_controller->spin(0);
-        motor3_controller->spin(0);
-        motor4_controller->spin(0);
+        driveAll(0, 0,
+                 0, 0);
         record(run_time / ticks, buf);
 
         Serial.printf("MAX PWM %6.1f %6.1f\n", current_pwm_max, current_pwm_min);

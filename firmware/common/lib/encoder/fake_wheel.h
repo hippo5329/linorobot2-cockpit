@@ -72,6 +72,43 @@
 #define FAKE_WHEEL_STALL_DUTY 0.04  // duty below which the motor cannot break static friction
 #endif
 
+// --- the gearbox -----------------------------------------------------------
+//
+// MOTOR_MAX_RPM is the OUTPUT speed, so the reduction itself is already folded
+// in and the model does not need the ratio. What it was missing is what a
+// gearbox costs:
+//
+//   efficiency   a spur reduction returns 70-80% of the torque put into it, so
+//                the driving term is scaled. Reflected inertia (N^2 * J_motor)
+//                stays lumped into FAKE_WHEEL_TAU_MS, which is where it belongs.
+//   Coulomb drag a gear train has a roughly CONSTANT breakaway/running torque
+//                loss, unlike the viscous term already here. It is why an
+//                unpowered gear motor stops quickly instead of coasting, and why
+//                a small duty produces no motion at all.
+#ifndef FAKE_GEAR_EFFICIENCY
+#define FAKE_GEAR_EFFICIENCY 0.75
+#endif
+#ifndef FAKE_WHEEL_COULOMB_RPM
+#define FAKE_WHEEL_COULOMB_RPM 12.0  // constant drag (RPM per second) while turning
+#endif
+
+// --- battery sag -----------------------------------------------------------
+//
+// V_bus = V_oc - I * R_internal, and for a brushed motor the current is
+// proportional to (no-load speed - current speed) -- the same term the driving
+// torque uses. So a hard acceleration browns out its own supply, and every
+// wheel shares one pack: this is the ONLY coupling between the four simulated
+// wheels, and without it four driven wheels cost nothing extra, which is why a
+// 4WD base used to accelerate exactly like a 2WD one.
+//
+// Expressed as the fraction of open-circuit voltage lost when all four wheels
+// are demanding full stall current, so it needs no pack chemistry: 0.25 means a
+// 20% sag at that worst case (1 / 1.25). Kinematics::setMeasuredVoltage() is the
+// real-robot counterpart; this is its simulated twin.
+#ifndef FAKE_BATT_SAG
+#define FAKE_BATT_SAG 0.25
+#endif
+
 // Mass and encoder noise are properties of THIS robot, not of the image, so
 // they come from the env with the macros as the fallback. Function-local
 // statics rather than globals: these are read inside a class used before
@@ -117,6 +154,36 @@ private:
     float wheel_rpm_ = 0.0;         // simulated wheel speed
     double ticks_ = 0.0;            // simulated tick accumulator
     unsigned long prev_update_time_ = 0;
+    int slot_ = -1;                 // which wheel this is, for the shared pack
+
+    // Every wheel's current demand, as a fraction of its own stall demand. The
+    // pack is shared, so the sag one wheel causes is felt by all of them --
+    // shared rather than per-instance for exactly that reason.
+    //
+    // A function-local static, not a static data member: this is a header-only
+    // class, the ESP32 core compiles as gnu++11 so there are no inline
+    // variables, and a static member would need an out-of-line definition in a
+    // .cpp this library does not have. The file already uses this idiom for
+    // fakeRobotMass() and says why -- these are read inside a class used before
+    // setup() finishes, where a global's initialisation order is not safe.
+    static float *demand()
+    {
+        static float d[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        return d;
+    }
+
+    // What the four wheels together are doing to the bus voltage, as a scale on
+    // the no-load speed. 1.0 with the robot at rest.
+    static float busScale()
+    {
+        float total = 0.0;
+        for (int i = 0; i < 4; i++)
+            total += demand()[i];
+        total *= 0.25;                      // mean across the four wheels
+        if (total < 0.0) total = 0.0;
+        if (total > 1.0) total = 1.0;
+        return 1.0f / (1.0f + (float)FAKE_BATT_SAG * total);
+    }
 
     // advance the wheel model to now
     void integrate()
@@ -137,15 +204,39 @@ private:
         // below the stall band the motor cannot hold the wheel against friction
         if (fabsf(duty_) < (float)FAKE_WHEEL_STALL_DUTY) no_load_rpm = 0.0;
 
-        // back-EMF: driving torque is proportional to the remaining speed error
-        float accel = (no_load_rpm - wheel_rpm_) / tau;
+        // The pack sags under the current the four wheels are drawing, and the
+        // no-load speed scales with the voltage that survives. Recorded BEFORE
+        // the scale is applied, so the demand this wheel reports is the demand
+        // it would make at full voltage -- otherwise the sag feeds back on
+        // itself and the whole thing converges on nothing.
+        if (slot_ >= 0 && slot_ < 4) {
+            const float stall = (float)MOTOR_MAX_RPM;
+            demand()[slot_] = stall > 0.0f ? fabsf(no_load_rpm - wheel_rpm_) / stall : 0.0f;
+        }
+        no_load_rpm *= busScale();
+
+        // back-EMF: driving torque is proportional to the remaining speed error,
+        // and the gearbox returns only part of it
+        float accel = (float)FAKE_GEAR_EFFICIENCY * (no_load_rpm - wheel_rpm_) / tau;
         // viscous friction always opposes motion
         accel -= wheel_rpm_ * (float)FAKE_WHEEL_FRICTION;
+        // ...and the gear train's constant drag, which does not scale with speed.
+        // Signed against motion, and never enough to drive the wheel backwards
+        // through zero: that would be a gearbox pushing the robot.
+        if (wheel_rpm_ > 0.0f)
+            accel -= (float)FAKE_WHEEL_COULOMB_RPM;
+        else if (wheel_rpm_ < 0.0f)
+            accel += (float)FAKE_WHEEL_COULOMB_RPM;
         // traction and current limit the achievable acceleration
         if (accel > (float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = (float)FAKE_WHEEL_MAX_ACCEL_RPM;
         if (accel < -(float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = -(float)FAKE_WHEEL_MAX_ACCEL_RPM;
 
+        const float was = wheel_rpm_;
         wheel_rpm_ += accel * dts;
+        // Coulomb drag brakes; it must not become a motor. A wheel that crossed
+        // zero in one step with no drive stops at zero instead of reversing.
+        if (no_load_rpm == 0.0 && was != 0.0f && (was > 0.0f) != (wheel_rpm_ > 0.0f))
+            wheel_rpm_ = 0.0;
         // an unpowered wheel settles rather than creeping forever
         if (no_load_rpm == 0.0 && fabsf(wheel_rpm_) < 0.5) wheel_rpm_ = 0.0;
 
@@ -156,6 +247,13 @@ private:
 public:
     FakeEncoder(int pin1, int pin2, int counts_per_rev, bool invert = false)
     {
+        // Which wheel this is, in construction order, so the shared pack can be
+        // told what each of them is drawing. A fifth encoder gets no slot and
+        // simply contributes no sag rather than corrupting someone else's.
+        static int next_slot = 0;
+        if (next_slot < 4)
+            slot_ = next_slot++;
+
         // The pins are deliberately ignored. Fake wheel mode exists for boards
         // with nothing wired, where the encoder pins are normally left unset
         // (-1); keying off them would leave every simulated wheel at 0 RPM,
