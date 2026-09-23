@@ -689,7 +689,17 @@ class LSM6DSOXIMU : public IMUInterface
         static const uint8_t REG_CTRL1_XL  = 0x10;   // accel ODR / full-scale
         static const uint8_t REG_CTRL2_G   = 0x11;   // gyro  ODR / full-scale
         static const uint8_t REG_CTRL3_C   = 0x12;   // BDU / IF_INC / SW_RESET
+        static const uint8_t REG_FIFO_CTRL3 = 0x09;  // BDR_GY[7:4] | BDR_XL[3:0]
+        static const uint8_t REG_FIFO_CTRL4 = 0x0A;  // ODR_TS[7:6] | ODR_T[5:4] | - | MODE[2:0]
         static const uint8_t REG_CTRL10_C  = 0x19;   // TIMESTAMP_EN (bit 5)
+        static const uint8_t REG_FIFO_STATUS1 = 0x3A; // DIFF_FIFO[7:0]
+        static const uint8_t REG_FIFO_STATUS2 = 0x3B; // [1:0] DIFF_FIFO[9:8], bit6 FIFO_OVR_IA
+        static const uint8_t REG_FIFO_TAG   = 0x78;  // tag byte, then 6 data bytes
+        // Tag values are in bits 7:3 of the tag byte (bits 2:1 TAG_CNT, bit 0
+        // parity). Confirmed against ST's own lsm6dsox_reg.h.
+        static const uint8_t TAG_GYRO      = 0x01;
+        static const uint8_t TAG_ACCEL     = 0x02;
+        static const uint8_t TAG_TIMESTAMP = 0x04;
         static const uint8_t REG_OUTX_L_G  = 0x22;   // gyro  X..Z (6 bytes)
         static const uint8_t REG_OUTX_L_A  = 0x28;   // accel X..Z (6 bytes)
         static const uint8_t REG_TIMESTAMP0 = 0x40;  // 32-bit sample counter (LSB first)
@@ -705,6 +715,12 @@ class LSM6DSOXIMU : public IMUInterface
 
         geometry_msgs__msg__Vector3 accel_;
         geometry_msgs__msg__Vector3 gyro_;
+
+        // The newest sample drained from the FIFO, and the hardware timestamp
+        // that came out of the same read. 0 means nothing has been drained yet.
+        uint32_t sample_ts_raw_ = 0;
+        bool fifo_ok_ = false;
+        uint32_t fifo_overruns_ = 0;
 
         void writeReg(uint8_t reg, uint8_t val)
         {
@@ -760,7 +776,26 @@ class LSM6DSOXIMU : public IMUInterface
             writeReg(REG_CTRL1_XL, 0x40);   // accel 104 Hz, +/-2 g
             writeReg(REG_CTRL2_G,  0x4C);   // gyro  104 Hz, +/-2000 dps
             writeReg(REG_CTRL10_C, 0x20);   // TIMESTAMP_EN — run the built-in sample counter
+
+            // The FIFO, and the reason this driver uses one at all.
+            //
+            // Reading the output registers directly takes THREE transactions --
+            // accel, gyro, then TIMESTAMP0 -- and nothing ties them together, so
+            // the timestamp can belong to a later sample than the data. The FIFO
+            // tags every word and interleaves a timestamp word, so a sample and
+            // its time come out of ONE read, latched by the part.
+            //
+            // BDR 104 Hz for both, matching CTRL1_XL/CTRL2_G: batching faster
+            // than the sensors produce would pad the FIFO with repeats, slower
+            // would discard samples inside the chip.
+            writeReg(REG_FIFO_CTRL3, 0x44);  // BDR_GY = BDR_XL = 0100 (104 Hz)
+            // ODR_TS = 01 -> a timestamp word every batch, so every drain has a
+            // time. MODE = 110 -> continuous: when it fills, the oldest go. That
+            // is the right end to lose from for a live sensor, and FIFO_OVR_IA
+            // tells us it happened rather than leaving it silent.
+            writeReg(REG_FIFO_CTRL4, 0x46);  // ODR_TS=01, MODE=110 (continuous)
             delay(100);                     // let the digital filters settle
+            fifo_ok_ = true;
             return true;
         }
 
@@ -778,31 +813,119 @@ class LSM6DSOXIMU : public IMUInterface
 
         double readTimestampSec() { return readTimestampRaw() * timestamp_lsb_s_; }
 
+        // Drain the FIFO, keeping the NEWEST of each kind.
+        //
+        // Newest, not averaged: the register path returned the newest sample, so
+        // this changes the timestamp and nothing else. Averaging the ~2 samples
+        // a 50 Hz publish sees at a 104 Hz ODR would be a free anti-alias, but
+        // it would also change every published value, and that is a separate
+        // decision from fixing the timestamp.
+        //
+        // Returns the number of words read. 0 is not an error -- a publish can
+        // land between samples -- and leaves the previous values in place.
+        int drainFifo()
+        {
+            uint8_t st[2] = {0, 0};
+            if (!readBlock(REG_FIFO_STATUS1, st, 2))
+                return 0;
+            if (st[1] & 0x40)               // FIFO_OVR_IA
+                fifo_overruns_++;
+            uint16_t words = (uint16_t)st[0] | ((uint16_t)(st[1] & 0x03) << 8);
+            // A cap, so one stall cannot turn into an unbounded burst of I2C in
+            // the publish path. The FIFO holds 512 words; at 104 Hz and a 50 Hz
+            // publish a healthy drain is 2-3 per sensor.
+            if (words > 64)
+                words = 64;
+            int read = 0;
+            for (uint16_t i = 0; i < words; i++)
+            {
+                uint8_t w[7] = {0};
+                if (!readBlock(REG_FIFO_TAG, w, 7))
+                    break;
+                read++;
+                const uint8_t tag = (uint8_t)(w[0] >> 3);
+                const int16_t x = (int16_t)(w[1] | (w[2] << 8));
+                const int16_t y = (int16_t)(w[3] | (w[4] << 8));
+                const int16_t z = (int16_t)(w[5] | (w[6] << 8));
+                if (tag == TAG_ACCEL)
+                {
+                    accel_.x = x * (double)accel_scale_ * g_to_accel_;
+                    accel_.y = y * (double)accel_scale_ * g_to_accel_;
+                    accel_.z = z * (double)accel_scale_ * g_to_accel_;
+                }
+                else if (tag == TAG_GYRO)
+                {
+                    gyro_.x = x * (double)gyro_scale_ * DEG_TO_RAD;
+                    gyro_.y = y * (double)gyro_scale_ * DEG_TO_RAD;
+                    gyro_.z = z * (double)gyro_scale_ * DEG_TO_RAD;
+                }
+                else if (tag == TAG_TIMESTAMP)
+                {
+                    // 32 bits, little-endian, in the first four data bytes.
+                    sample_ts_raw_ = (uint32_t)w[1] | ((uint32_t)w[2] << 8) |
+                                     ((uint32_t)w[3] << 16) | ((uint32_t)w[4] << 24);
+                }
+            }
+            return read;
+        }
+
+        // ONE drain per publish, and readGyroscope() is where it happens because
+        // that is the order IMUInterface::getData() calls the two in. Draining in
+        // both would read the FIFO twice per sample and hand the accelerometer a
+        // different sample from the gyro -- the same straddling this change
+        // exists to remove. Same shape as the QMI8658's single burst.
+        geometry_msgs__msg__Vector3 readGyroscope() override
+        {
+            if (fifo_ok_)
+                drainFifo();
+            else
+            {
+                uint8_t b[6] = {0};
+                readBlock(REG_OUTX_L_G, b, 6);
+                gyro_.x = (int16_t)(b[0] | (b[1] << 8)) * (double)gyro_scale_ * DEG_TO_RAD;
+                gyro_.y = (int16_t)(b[2] | (b[3] << 8)) * (double)gyro_scale_ * DEG_TO_RAD;
+                gyro_.z = (int16_t)(b[4] | (b[5] << 8)) * (double)gyro_scale_ * DEG_TO_RAD;
+            }
+            return gyro_;
+        }
+
         geometry_msgs__msg__Vector3 readAccelerometer() override
         {
+            if (fifo_ok_)
+                return accel_;          // the drain above already produced it
             uint8_t b[6] = {0};
             readBlock(REG_OUTX_L_A, b, 6);
-            int16_t ax = (int16_t)(b[0] | (b[1] << 8));
-            int16_t ay = (int16_t)(b[2] | (b[3] << 8));
-            int16_t az = (int16_t)(b[4] | (b[5] << 8));
-            accel_.x = ax * (double)accel_scale_ * g_to_accel_;
-            accel_.y = ay * (double)accel_scale_ * g_to_accel_;
-            accel_.z = az * (double)accel_scale_ * g_to_accel_;
+            accel_.x = (int16_t)(b[0] | (b[1] << 8)) * (double)accel_scale_ * g_to_accel_;
+            accel_.y = (int16_t)(b[2] | (b[3] << 8)) * (double)accel_scale_ * g_to_accel_;
+            accel_.z = (int16_t)(b[4] | (b[5] << 8)) * (double)accel_scale_ * g_to_accel_;
             return accel_;
         }
 
-        geometry_msgs__msg__Vector3 readGyroscope() override
+        // How old the sample is, from the part's own clock: the difference
+        // between the counter NOW and the timestamp latched with the sample, in
+        // 25 us ticks. This is the first implementation of chipSampleAgeUs() in
+        // the project -- the hook existed and every driver inherited the default
+        // 0, so the stamp correction has never actually run on any board.
+        //
+        // Both values come from the same counter, so no host/chip clock
+        // alignment is involved and the 32-bit wrap costs nothing: unsigned
+        // subtraction is right across it.
+        uint32_t chipSampleAgeUs() override
         {
-            uint8_t b[6] = {0};
-            readBlock(REG_OUTX_L_G, b, 6);
-            int16_t gx = (int16_t)(b[0] | (b[1] << 8));
-            int16_t gy = (int16_t)(b[2] | (b[3] << 8));
-            int16_t gz = (int16_t)(b[4] | (b[5] << 8));
-            gyro_.x = gx * (double)gyro_scale_ * DEG_TO_RAD;
-            gyro_.y = gy * (double)gyro_scale_ * DEG_TO_RAD;
-            gyro_.z = gz * (double)gyro_scale_ * DEG_TO_RAD;
-            return gyro_;
+            if (!fifo_ok_ || !sample_ts_raw_)
+                return 0;
+            const uint32_t now = readTimestampRaw();
+            if (!now)
+                return 0;
+            const uint32_t ticks = now - sample_ts_raw_;
+            // 25 us per tick. Guard the multiply: a garbage counter read would
+            // otherwise overflow into a plausible-looking small number.
+            if (ticks > (0xFFFFFFFFu / 25u))
+                return 0;
+            return ticks * 25u;
         }
+
+        uint32_t fifoOverruns() const { return fifo_overruns_; }
 };
 
 // ---------------------------------------------------------------------------
