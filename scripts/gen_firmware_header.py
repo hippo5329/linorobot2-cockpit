@@ -1016,7 +1016,25 @@ def bare_mcu_params(mcu: str) -> dict:
             # selected by the env like everything else.
             "transport": "serial",
             "baudrate": 921600,
-            "sensors": {},
+            # A bare module is the ABSENCE of a robot, and the honest default
+            # for a board with nothing wired is to simulate rather than to read
+            # chips that are not there: a freshly plugged board then talks,
+            # drives and produces a scan before a single wire exists, which is
+            # this project's default mode. Every one of these is an env key, so
+            # a real robot turns them off at flash time.
+            #
+            # Not design: no reference config is consulted for any of it. It was
+            # being inherited from the generated bare config, which is going
+            # away as a build input -- with `sensors: {}` here the released
+            # images would have come up expecting real hardware on a board with
+            # every pin set to -1.
+            "sensors": {
+                "use_fake_imu": True,
+                "use_fake_mag": True,
+                "use_fake_wheel": True,
+                "use_fake_env": True,
+                "use_fake_ld19": True,
+            },
             "pins": {
                 "motor1": dict(unset_motor), "motor2": dict(unset_motor),
                 "motor3": dict(unset_motor), "motor4": dict(unset_motor),
