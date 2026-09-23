@@ -582,6 +582,27 @@
     const statusEl = el("rosviz-status");
     const urlInput = el("rosviz-url");
     const topicsEl = el("rosviz-topics");
+    const poseEl = el("rosviz-pose");
+
+    // Say which pose the marker is. The filtered pose (what the EKF believes,
+    // corrected by SLAM) and the base's OWN odometry are different claims, and
+    // on a long leg they differ by more than a robot radius -- the Nav2 gate
+    // measures wall crossings on the raw pose precisely because the filtered one
+    // had already drifted inside the obstacle. A viewer that shows one and is
+    // read as the other gets trusted and is wrong.
+    function updatePoseLabel() {
+      if (!poseEl) return;
+      const src = viewer.poseSource;
+      if (!src) { poseEl.textContent = "pose: waiting"; return; }
+      if (src === "amcl") {
+        poseEl.textContent = "pose: /amcl_pose (AMCL, already in map)";
+        return;
+      }
+      const n = counts.tf;
+      poseEl.textContent = n
+        ? "pose: EKF /odom composed with map\u2192odom (filtered, in map)"
+        : "pose: EKF /odom, NO map\u2192odom yet (odom frame, not localised)";
+    }
 
     const counts = { map: 0, scan: 0, odom: 0, amcl: 0, tf: 0 };
 
@@ -628,16 +649,16 @@
       bridge.subscribe("/tf", "tf2_msgs/msg/TFMessage", (msg) => {
         for (const t of msg.transforms || []) {
           if (t.header.frame_id === "map" && t.child_frame_id === "odom") {
-            counts.tf++; updateTopicCounts(); viewer.setMapOdom(t.transform);
+            counts.tf++; updateTopicCounts(); viewer.setMapOdom(t.transform); updatePoseLabel();
           }
         }
       }, 200);
       bridge.subscribe("/odom", "nav_msgs/msg/Odometry", (msg) => {
-        counts.odom++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "odom");
+        counts.odom++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "odom"); updatePoseLabel();
       }, 100);
 
       bridge.subscribe("/amcl_pose", "geometry_msgs/msg/PoseWithCovarianceStamped", (msg) => {
-        counts.amcl++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "amcl");
+        counts.amcl++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "amcl"); updatePoseLabel();
       }, 200);
 
       bridge.advertise("/initialpose");
