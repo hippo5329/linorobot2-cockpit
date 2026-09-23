@@ -138,6 +138,24 @@
 #define LIDAR_SERIAL 1
 #endif
 
+// Where the UDP sink sends its frames. Both are read from the env at every
+// use -- `lidar_ip` and `lidar_port` -- so these are only the answer for a
+// board whose env has never been written. A released image carries no header
+// that could name a host, and must still compile the UDP sink: which sink is
+// used is an env decision, so every sink has to be present in the image.
+#ifndef LIDAR_SERVER_DEFAULT
+#define LIDAR_SERVER_DEFAULT IPAddress(192, 168, 1, 100)
+#endif
+#ifndef LIDAR_PORT_DEFAULT
+#define LIDAR_PORT_DEFAULT 8889
+#endif
+#ifndef LIDAR_SERVER
+#define LIDAR_SERVER envIP("lidar_ip", LIDAR_SERVER_DEFAULT)
+#endif
+#ifndef LIDAR_PORT
+#define LIDAR_PORT   envU16("lidar_port", LIDAR_PORT_DEFAULT)
+#endif
+
 class FakeLD19
 {
 public:

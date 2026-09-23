@@ -46,6 +46,20 @@
 #ifndef LIDAR_BAUDRATE
 #define LIDAR_BAUDRATE 230400
 #endif
+// Read from the env at every use; these answer only for a board whose env has
+// never been written. A released image names no host -- see fake_ld19.h.
+#ifndef LIDAR_SERVER_DEFAULT
+#define LIDAR_SERVER_DEFAULT IPAddress(192, 168, 1, 100)
+#endif
+#ifndef LIDAR_PORT_DEFAULT
+#define LIDAR_PORT_DEFAULT 8889
+#endif
+#ifndef LIDAR_SERVER
+#define LIDAR_SERVER envIP("lidar_ip", LIDAR_SERVER_DEFAULT)
+#endif
+#ifndef LIDAR_PORT
+#define LIDAR_PORT   envU16("lidar_port", LIDAR_PORT_DEFAULT)
+#endif
 #ifndef LIDAR_POWEROFF
 #define LIDAR_POWEROFF -1
 #endif
