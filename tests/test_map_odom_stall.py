@@ -47,21 +47,21 @@ def _func(name):
 def test_the_gap_is_sampled_inside_the_leg_loop():
     """Not in a callback: silence is the thing being measured."""
     src = _src()
-    assert "node.sample_map_odom_freshness()" in src
+    assert "_sample_map_odom(node)" in src
     # it must sit in the per-leg spin loop, not only at leg end
     loop = src[src.index("while time.time() - t0 < timeout:"):]
-    assert "sample_map_odom_freshness" in loop[:600], "not sampled while the leg runs"
+    assert "_sample_map_odom" in loop[:600], "not sampled while the leg runs"
 
 
 def test_a_failed_leg_reports_the_worst_gap():
     src = _src()
-    assert "node.map_odom_gap_note()" in src
+    assert "_map_odom_gap_note(node)" in src
 
 
 def test_the_note_names_the_tolerance_when_the_gap_reaches_it():
     """A 30 ms gap is normal jitter; 500 ms is the fault, and the line has to
     say which one it saw or the next reader repeats the tolerance-raising."""
-    fn = _func("map_odom_gap_note")
+    fn = _func("_map_odom_gap_note")
     body = ast.get_source_segment(_src(), fn)
     assert "transform tolerance" in body
     assert "SLAM stalled" in body
@@ -71,7 +71,7 @@ def test_the_note_names_the_tolerance_when_the_gap_reaches_it():
 def test_the_gap_tracks_stamps_not_wall_clock():
     """Wall-clock age would also grow while the robot is simply idle between
     legs; the stamp interval is what says the publisher stopped."""
-    fn = _func("sample_map_odom_freshness")
+    fn = _func("_sample_map_odom")
     body = ast.get_source_segment(_src(), fn)
     assert "header.stamp" in body
     assert "map_odom_max_gap" in body
@@ -79,15 +79,20 @@ def test_the_gap_tracks_stamps_not_wall_clock():
 
 def test_the_gap_logic_is_monotonic():
     """Replayed against a stalled publisher, the note must fire; against a
-    healthy 50 Hz one it must stay silent."""
+    healthy 50 Hz one it must stay silent.
+
+    Module-level and taking `node`, like _why/_gap/_where/_runaway: a method
+    would break every test that drives this file with a FakeNode, which is
+    exactly how it broke when first written.
+    """
     class Node:
         map_odom_max_gap = 0.0
         _last = None
-    fn = _func("map_odom_gap_note")
+    fn = _func("_map_odom_gap_note")
     src = ast.get_source_segment(_src(), fn)
     ns = {}
     exec(compile(ast.Module([fn], []), GOAL, "exec"), ns)
-    note = ns["map_odom_gap_note"]
+    note = ns["_map_odom_gap_note"]
 
     healthy = Node(); healthy.map_odom_max_gap = 0.021
     assert "transform tolerance" not in note(healthy)

@@ -393,54 +393,6 @@ class Nav2GoalTester(Node):
         except Exception:
             return None
 
-    def sample_map_odom_freshness(self):
-        """Record how long map->odom has gone without a new stamp.
-
-        This is the measurement the recurring `error_code=102` needed. The
-        message reads like a race --
-
-            Lookup would require extrapolation into the future. Requested time
-            X but the latest data is at X-0.018
-
-        -- eighteen milliseconds, which looks like the request simply arrived
-        between two 50 Hz publishes. It is not. nav2_util::transformPoseInTargetFrame
-        calls tf_buffer.transform(..., timeout) and tf2 raises
-        ExtrapolationException from that call ONLY after canTransform has
-        already waited the whole timeout: the tolerance in force is the local
-        costmap's 0.5 s, so the transform did not arrive for at least half a
-        second. The 18 ms is the age of the last stamp before the stall, not
-        the size of the gap.
-
-        So the thing to measure is the longest interval between map->odom
-        stamps, and whether it ever reaches the tolerance. slam_toolbox
-        publishes it at 50 Hz (transform_publish_period: 0.02); anything near
-        500 ms is the fault, and it belongs to SLAM, not to the controller.
-        """
-        if self.tf_buffer is None:
-            return
-        try:
-            tr = self.tf_buffer.lookup_transform(self.goal_frame, self.odom_frame,
-                                                 rclpy.time.Time())
-        except Exception:
-            return
-        stamp = tr.header.stamp.sec + tr.header.stamp.nanosec * 1e-9
-        if self._last_map_odom_stamp is not None and stamp > self._last_map_odom_stamp:
-            gap = stamp - self._last_map_odom_stamp
-            if gap > self.map_odom_max_gap:
-                self.map_odom_max_gap = gap
-        if self._last_map_odom_stamp is None or stamp > self._last_map_odom_stamp:
-            self._last_map_odom_stamp = stamp
-
-    def map_odom_gap_note(self, tolerance: float = 0.5) -> str:
-        """"" when map->odom kept up, or a note naming the worst stall."""
-        if self.map_odom_max_gap <= 0.0:
-            return ""
-        note = f"; map->odom's longest gap was {self.map_odom_max_gap * 1000:.0f} ms"
-        if self.map_odom_max_gap >= tolerance:
-            note += (f" -- at or past the {tolerance:.1f} s transform tolerance, "
-                     f"so SLAM stalled and the controller's TF error is a symptom")
-        return note
-
     def _odom_cb(self, msg: Odometry):
         if self.initial_odom is None:
             self.initial_odom = msg
@@ -646,6 +598,59 @@ def _runaway(node) -> bool:
     if xy is None:
         return False
     return math.hypot(xy[0], xy[1]) > RUNAWAY_RADIUS_M
+
+
+def _sample_map_odom(node):
+    """Record how long map->odom has gone without a new stamp.
+
+    This is the measurement the recurring `error_code=102` needed. The
+    message reads like a race --
+
+        Lookup would require extrapolation into the future. Requested time
+        X but the latest data is at X-0.018
+
+    -- eighteen milliseconds, which looks like the request simply arrived
+    between two 50 Hz publishes. It is not. nav2_util::transformPoseInTargetFrame
+    calls tf_buffer.transform(..., timeout) and tf2 raises
+    ExtrapolationException from that call ONLY after canTransform has
+    already waited the whole timeout: the tolerance in force is the local
+    costmap's 0.5 s, so the transform did not arrive for at least half a
+    second. The 18 ms is the age of the last stamp before the stall, not
+    the size of the gap.
+
+    So the thing to measure is the longest interval between map->odom
+    stamps, and whether it ever reaches the tolerance. slam_toolbox
+    publishes it at 50 Hz (transform_publish_period: 0.02); anything near
+    500 ms is the fault, and it belongs to SLAM, not to the controller.
+    """
+    if getattr(node, "tf_buffer", None) is None:
+        return
+    try:
+        tr = node.tf_buffer.lookup_transform(getattr(node, "goal_frame", "map"),
+                                             getattr(node, "odom_frame", "odom"),
+                                             rclpy.time.Time())
+    except Exception:
+        return
+    stamp = tr.header.stamp.sec + tr.header.stamp.nanosec * 1e-9
+    last = getattr(node, "_last_map_odom_stamp", None)
+    if last is not None and stamp > last:
+        gap = stamp - last
+        if gap > getattr(node, "map_odom_max_gap", 0.0):
+            node.map_odom_max_gap = gap
+    if last is None or stamp > last:
+        node._last_map_odom_stamp = stamp
+
+
+def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
+    """Empty when map->odom kept up, or a note naming the worst stall."""
+    worst = getattr(node, "map_odom_max_gap", 0.0)
+    if worst <= 0.0:
+        return ""
+    note = f"; map->odom's longest gap was {worst * 1000:.0f} ms"
+    if worst >= tolerance:
+        note += (f" -- at or past the {tolerance:.1f} s transform tolerance, "
+                 f"so SLAM stalled and the controller's TF error is a symptom")
+    return note
 
 
 def _where(node) -> str:
@@ -935,7 +940,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 # Sampled here rather than in a callback: the point is how long
                 # map->odom went WITHOUT a new stamp, and a transform that has
                 # stopped arriving fires no callback to notice it by.
-                node.sample_map_odom_freshness()
+                _sample_map_odom(node)
                 if node.goal_rejected:
                     print(f"❌ NAV2 GOAL REJECTED by bt_navigator on leg {i}/{n} "
                           f"({gx:.2f}, {gy:.2f}){_why(node)}.")
@@ -1023,7 +1028,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg"
-                          f"{node.map_odom_gap_note()}")
+                          f"{_map_odom_gap_note(node)}")
                 return False
             around = route_note()
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
