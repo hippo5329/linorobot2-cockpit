@@ -121,6 +121,24 @@ def test_rviz_novnc_never_uses_pkill():
     assert "pkill" not in cmd and "Xvfb :99" in cmd
 
 
+def test_rviz_novnc_installs_rviz2_before_running_it():
+    """The robot image has the rviz libraries but not the rviz2 executable.
+
+    rviz_common, rviz_default_plugins, rviz_rendering, rviz_ogre_vendor and
+    nav2_rviz_plugins all arrive as dependencies of the stack, which makes the
+    image look like it has RViz. It does not: `command -v rviz2` on a stock
+    image with ROS sourced answers nothing. The action guarded Xvfb, x11vnc and
+    websockify and not the one binary the whole feature is for, so it ran three
+    apt installs and then died on command-not-found.
+    """
+    cmd = actions.build("rviz_novnc", {"display": ":99", "novnc_port": 6080})
+    assert "ros-$ROS_DISTRO-rviz2" in cmd
+    # and the install must come before the run, or the guard buys nothing
+    assert cmd.index("ros-$ROS_DISTRO-rviz2") < cmd.index("DISPLAY=:99")
+    # a failed install must stop, not launch a viewer that cannot exist
+    assert "rviz2 is not installed and could not be installed" in cmd
+
+
 def test_docker_down_builds_compose():
     cmd = actions.build("docker_down", {"engine": "docker", "docker_dir": "/w/docker"})
     assert 'COMPOSE="docker compose"' in cmd and "cd /w/docker" in cmd and "down" in cmd

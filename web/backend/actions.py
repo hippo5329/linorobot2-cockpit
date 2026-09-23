@@ -476,6 +476,16 @@ def _rviz_novnc(a: Dict) -> str:
     rviz = (f"[ -f {shlex.quote(_path(cfg, 'rviz_config'))} ] && "
             f"rviz2 -d {shlex.quote(_path(cfg, 'rviz_config'))} || rviz2") if cfg else "rviz2"
     return f"{ros_setup_shell(distro)}; " + " && ".join([
+        # rviz2 itself, guarded like the three tools below it. The robot image
+        # carries the rviz LIBRARIES -- rviz_common, rviz_default_plugins,
+        # rviz_rendering, nav2_rviz_plugins, all pulled in as dependencies --
+        # but not the rviz2 EXECUTABLE, so this action installed Xvfb, x11vnc
+        # and noVNC and then died on command-not-found. Verified on a stock
+        # image, ROS sourced: rviz2 MISSING.
+        ("command -v rviz2 >/dev/null 2>&1 || "
+         "{ sudo apt-get install -y ros-$ROS_DISTRO-rviz2 && "
+         "source /opt/ros/$ROS_DISTRO/setup.bash 2>/dev/null; }"),
+        "command -v rviz2 >/dev/null 2>&1 || { echo 'rviz2 is not installed and could not be installed'; exit 1; }",
         "command -v Xvfb >/dev/null 2>&1 || sudo apt-get install -y xvfb",
         "command -v x11vnc >/dev/null 2>&1 || sudo apt-get install -y x11vnc",
         "command -v websockify >/dev/null 2>&1 || sudo apt-get install -y novnc websockify",
