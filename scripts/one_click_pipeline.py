@@ -532,13 +532,34 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
                 # 400 characters on a long global_costmap line and threw away
                 # the number the whole function exists to produce -- which is
                 # the very bug this reporter was written to fix, one level up.
-                exemplar[key] = msg[:400] + _tf_lateness(msg)
+                exemplar[key] = msg[:400] + _tf_frames(msg) + _tf_lateness(msg)
     if not counts:
         return "     (nav2.log logged no transform or path complaint)"
     out = ["     --- what Nav2 complained about (distinct, most frequent first) ---"]
     for key, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
         out.append(f"     {n:5d}x {exemplar[key]}")
     return "\n".join(out)
+
+
+def _tf_frames(msg: str) -> str:
+    """Which transform the lookup wanted, as a note, or "" when tf2 did not say.
+
+    tf2 puts the frames at the very END of the message -- "...when looking up
+    transform from frame [odom] to frame [map]" -- so the 400-character cut
+    that keeps the timestamps throws the frames away. On 2026-09-23 a 102 was
+    reported as a 20.9 ms future request "when looking " and the two candidate
+    publishers (slam_toolbox at 50 Hz for map->odom, the EKF at 50 Hz for
+    odom->base_link) could not be told apart, which is the difference between
+    a SLAM fault and a filter fault.
+
+    So the frames are lifted out and appended, exactly like the lateness.
+    """
+    m = re.search(r"looking up transform from frame \[([^\]]*)\] to frame \[([^\]]*)\]", msg)
+    if not m:
+        m = re.search(r"from frame \[?([A-Za-z0-9_/]+)\]? to frame \[?([A-Za-z0-9_/]+)\]?", msg)
+    if not m:
+        return ""
+    return f" [the lookup was {m.group(1)} -> {m.group(2)}]"
 
 
 def _tf_lateness(msg: str) -> str:

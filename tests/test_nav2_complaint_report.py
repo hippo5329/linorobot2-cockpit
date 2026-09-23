@@ -139,3 +139,29 @@ def test_every_monitor_action_is_extracted_not_just_the_stop(tmp_path):
         log.write_text(f"[collision_monitor-9] [INFO] [1.0] [collision_monitor]: {phrase}\n")
         out = ocp._nav2_complaints(str(log))
         assert phrase.split(" due to")[0].split(" for ")[0] in out, (phrase, out)
+
+
+def test_the_frames_survive_the_truncation(tmp_path):
+    """tf2 puts the frames at the END of the message, so the 400-character cut
+    that keeps the timestamps throws them away.
+
+    On 2026-09-23 a 102 came back as a 20.9 ms future request "when looking "
+    and the two 50 Hz publishers -- slam_toolbox for map->odom, the EKF for
+    odom->base_link -- could not be told apart. That is the difference between
+    a SLAM fault and a filter fault, and it was the one thing the line was
+    being read for.
+    """
+    long_prefix = "x" * 380
+    msg = ("[controller_server-5] [ERROR] [1.0] [RPPPathHandler]: " + long_prefix +
+           " Exception in transformPose: Lookup would require extrapolation into the "
+           "future.  Requested time 1790144829.902377 but the latest data is at time "
+           "1790144829.881487, when looking up transform from frame [odom] to frame [map]")
+    log = tmp_path / "nav2.log"
+    log.write_text(msg + "\n")
+    out = ocp._nav2_complaints(str(log))
+    assert "odom -> map" in out, out
+    assert "21 ms behind the request" in out, out
+
+
+def test_no_frame_note_when_tf2_did_not_name_them():
+    assert ocp._tf_frames("Failed to make progress") == ""
