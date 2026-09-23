@@ -63,27 +63,6 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 #include "encoder.h"
 #include "fake_wheel.h"
 #include "fake_ld19.h"
-// Which sink the synthetic scan takes when nothing has said -- a blank env and
-// a header that names no robot, which is exactly a released image on a board
-// nobody has configured yet. It is a property of the SILICON, not of a robot,
-// so it is decided here rather than generated:
-//
-// An RP2 carries the scan over micro-ROS and still holds the control loop --
-// measured on the bench 2026-09-20, /odom and /imu at 50.0 Hz with /raw_scan
-// at 85-100 Hz alongside -- so a bare Pico needs no wiring at all to produce
-// one. An ESP32 cannot: the same configuration drops every topic to 40-45 Hz
-// because 921600 baud is carrying the scan and the 50 Hz loop together (33 Hz
-// on a GenDrv that also reads four I2C sensors). Its scan has to leave by a
-// UART or the radio, and a bare ESP32 has neither wired, so `serial` is the
-// honest default rather than one that quietly halves the control rate.
-#ifndef LIDAR_COMM_DEFAULT
-#if defined(ARDUINO_ARCH_RP2040)
-#define LIDAR_COMM_DEFAULT "topic"
-#else
-#define LIDAR_COMM_DEFAULT "serial"
-#endif
-#endif
-
 // The synthetic scan can reach the host three ways, and running two at once
 // wastes a link that has no headroom to spare -- so exactly one is chosen, at
 // BOOT rather than at build time. The publisher below is compiled into every
