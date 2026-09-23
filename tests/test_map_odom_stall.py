@@ -135,3 +135,14 @@ def test_a_gap_under_the_sampling_resolution_is_not_reported_as_one():
     assert "kept up" in note(N()), note(N())
     N.map_odom_max_gap = 0.63
     assert "SLAM stalled" in note(N())
+
+
+def test_a_passing_run_reports_its_worst_gap_too():
+    """A failing leg saying 601 ms only says the stall happened. How close a
+    HEALTHY run comes to the 0.5 s tolerance is what says whether the margin is
+    comfortable or whether every green leg was one hiccup from red -- and that
+    decides whether raising the tolerance is evidence-based or another blind
+    raise like the three already in the reference configs."""
+    src = _src()
+    reached = src[src.index('f"NAV2 GOAL REACHED {n}/{n} legs'):]
+    assert "_map_odom_gap_note(node)" in reached[:600], "the passing line drops the gap"

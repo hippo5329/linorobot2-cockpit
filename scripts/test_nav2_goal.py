@@ -1074,8 +1074,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                       f"the robot "
                       f"arrived; continuing. The next goal sent to this stack may be "
                       f"rejected while the old one is still running.")
+        # The worst map->odom gap goes on the PASSING line too. A failing leg
+        # reporting 601 ms only says the stall happened; how close a healthy
+        # run comes to the 0.5 s tolerance is what says whether the margin is
+        # comfortable or whether every green leg was one hiccup from red.
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
-                       f"the obstacle wall and back home (within {goal_tolerance:.2f} m)")
+                       f"the obstacle wall and back home (within {goal_tolerance:.2f} m)"
+                       f"{_map_odom_gap_note(node)}")
 
     def verdict(headline: str) -> bool:
         """Every exit goes through here, so the motion rule cannot be skipped by one
