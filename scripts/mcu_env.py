@@ -748,6 +748,29 @@ def hardware_env(params: dict) -> dict:
                 continue
             env[key] = int(value) if cast is int else _num(value)
 
+    # How close the simulated robot's centre may come to a simulated wall.
+    #
+    # This used to be compiled in (#define FAKE_ROBOT_RADIUS), derived from the
+    # robot_radius of whatever reference config happened to build the image --
+    # so a released image carried one robot's dimensions and any other robot
+    # flashed with it clamped at the wrong distance. When the two disagree the
+    # failure is not cosmetic: at 0.20 m against a config planning with 0.26 m
+    # the clamp parks the robot INSIDE Nav2's own footprint, the cell is lethal,
+    # the planner will not plan out of it, and a soak sat there for 154
+    # consecutive goals while the planner emitted escape paths the controller
+    # refused. It is a robot fact, so it travels as an env key like the room.
+    #
+    # `simulation.robot_radius` overrides; otherwise it follows the largest
+    # radius the robot's own costmaps plan with, which is the number that has
+    # to agree.
+    radius = sim.get("robot_radius") if isinstance(sim, dict) else None
+    if radius is None:
+        radius = gen_firmware_header.nav2_robot_radius(params)
+    try:
+        env["fake_radius"] = _num(float(radius))
+    except (TypeError, ValueError):
+        pass
+
     env["fake_env"] = _bool(sensors.get("use_fake_env", False))
     # The simulated ultrasonic cone. Only ever used when the LiDAR emulator is
     # running (it raycasts from the same room) and no real sonar is wired, so

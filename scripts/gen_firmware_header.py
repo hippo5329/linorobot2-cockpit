@@ -677,8 +677,17 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # emitting correct escape paths the controller refuses to follow (measured:
     # 48 plans in 80 s, 1.2 mm of travel). Deriving it here means a config that
     # widens the robot widens the simulated one too.
-    lines.append(f"#define FAKE_ROBOT_RADIUS {nav2_robot_radius(params):.4f}f")
-    lines.append("")
+    #
+    # But only for a header generated FOR A ROBOT. A release image is built for
+    # a silicon and must describe no robot at all, so a bare header omits the
+    # define entirely: the value reaches the board as the `fake_radius` env key
+    # at flash time (scripts/mcu_env.py), like the room and the mass, and the
+    # emulator's own 0.30f stands only for a board with a blank env. Baking a
+    # number here would put one robot's dimensions in every other robot's
+    # image, which is the failure above with a different cause.
+    if params.get("nav2"):
+        lines.append(f"#define FAKE_ROBOT_RADIUS {nav2_robot_radius(params):.4f}f")
+        lines.append("")
 
     # LiDAR settings
     if lidar:

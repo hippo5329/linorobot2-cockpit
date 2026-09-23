@@ -33,7 +33,7 @@ def test_the_header_command_names_each_profile_own_distro():
     which is the same bug with an extra step."""
     import build_prebuilt
     for profile, (_cfg_stem, _env, distro, _desc) in build_prebuilt.PROFILES.items():
-        cmd = build_prebuilt.header_cmd("/tmp/whatever.yaml", distro)
+        cmd = build_prebuilt.header_cmd("pico2", distro)
         assert "--distro" in cmd, f"{profile}: header_cmd() dropped --distro"
         assert cmd[cmd.index("--distro") + 1] == distro, (
             f"{profile} is built for {distro} but header_cmd() asks for "
@@ -45,8 +45,8 @@ def test_the_builder_uses_that_command_rather_than_its_own():
     """header_cmd() is only a guard if build() actually calls it."""
     src = open(os.path.join(REPO_ROOT, "scripts", "build_prebuilt.py")).read()
     body = src[src.index("def build(profile"):]
-    assert "header_cmd(cfg, distro)" in body, (
-        "build() no longer calls header_cmd(cfg, distro); the tests above are then "
+    assert "header_cmd(mcu, distro)" in body, (
+        "build() no longer calls header_cmd(mcu, distro); the tests above are then "
         "checking a function nothing runs.")
     assert "gen_firmware_header.py" not in body, (
         "build() invokes gen_firmware_header.py directly again, bypassing header_cmd().")

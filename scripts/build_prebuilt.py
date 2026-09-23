@@ -49,7 +49,6 @@ import json
 import os
 import shutil
 import subprocess
-import yaml
 import sys
 import tarfile
 from datetime import datetime, timezone
@@ -60,23 +59,28 @@ import cockpit_paths  # noqa: E402
 PREBUILT_DIR = os.path.join(REPO_ROOT, "firmware", "prebuilt")
 BASE_DIR = os.path.join(REPO_ROOT, "firmware")
 
-# board -> (bare-config mcu, base pio env, description)
+# board -> (mcu, base pio env, description)
 #
-# Every release image is built from the GENERATED BARE MODULE for its silicon,
-# not from a reference robot. scripts/gen_bare_config.py: every pin -1, every
-# sensor faked, fake_ld19 on.
+# Every release image is built from ITS SILICON AND NOTHING ELSE: no config
+# file is read, no robot is described. gen_firmware_header.py --mcu.
 #
-# It used to build from pico2_mecanum and gendrv, and that leaked their wiring
-# into every board flashed with the release. Caught on the bench 2026-09-20: two
-# bare Picos came up printing
+# Twice now a design has leaked in through a path that looked clean:
 #
-#     [range] HC-SR04 trigger=27 echo=28 (interrupt driven)
+#   2026-09-20, directly. It built from pico2_mecanum and gendrv, and two bare
+#   Picos came up printing
+#       [range] HC-SR04 trigger=27 echo=28 (interrupt driven)
+#   and publishing /sonar, because the mecanum reference wires a sonar there
+#   and the header's TRIG_PIN/ECHO_PIN are the fallback when a config is silent.
 #
-# and publishing /sonar, because the mecanum reference wires a sonar there and
-# the header's TRIG_PIN/ECHO_PIN are the fallback when a config says nothing.
-# A released image must describe NO robot: the env partition is what turns it
-# into one. The wired designs are still tested -- they are what the bench flashes
-# for the sonar and real-IMU cases -- but they are not what ships.
+#   2026-09-23, through the generated bare config. "Generated, not read from
+#   config/reference" was true of the pins and false of everything else:
+#   gen_bare_config donates geometry/ekf/slam/nav2 from gendrv_config.yaml, so
+#   that design's costmap radius shipped in every image as FAKE_ROBOT_RADIUS.
+#
+# Both times the wrong robot's dimensions ended up in someone else's image. A
+# released image must describe NO robot: the env partition is what turns it
+# into one. The wired designs are still tested -- they are what the bench
+# flashes for the sonar and real-IMU cases -- but they are not what ships.
 BOARDS = {
     "pico2":   ("pico2",   "pico2w",  "RP2350, micro-ROS over USB serial (runs on Pico 2 and Pico 2 W)"),
     "pico":    ("pico",    "picow",   "RP2040, micro-ROS over USB serial (runs on Pico and Pico W)"),
@@ -194,13 +198,21 @@ def collect(profile, env, build_dir, out_dir):
     return files
 
 
-def header_cmd(cfg, distro):
+def header_cmd(mcu, distro):
     """The gen_firmware_header.py invocation for one profile.
+
+    --mcu, never --params: the image is built for a silicon and describes no
+    robot. It used to be built from a generated bare config, which sounds the
+    same and was not -- gen_bare_config donates its geometry/ekf/slam/nav2 from
+    config/reference/gendrv_config.yaml, so that design's costmap radius was
+    reaching every released image as #define FAKE_ROBOT_RADIUS. A reference
+    design is a robot someone can own, not a build input; every robot fact now
+    arrives through the env partition at flash time.
 
     A function rather than three lines inline, because the --distro argument is
     the entire /cmd_vel contract of the image and nothing downstream can detect
     it being wrong. gen_firmware_header.py resolves `stamped_cmd_vel: auto` --
-    which is what EVERY reference config says -- from this flag alone, falling
+    which is what EVERY robot config says -- from this flag alone, falling
     back to $ROS_DISTRO; the release runner that builds these images is a bare
     ubuntu with pip platformio and no ROS, so that fallback is the empty string.
     Omitting the flag shipped all four -lyrical images subscribing to plain
@@ -216,25 +228,17 @@ def header_cmd(cfg, distro):
     transport says nothing about whether it has credentials to leak.
     """
     return [sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
-            "--params", cfg, "--distro", distro, "--no-embed-secrets"]
+            "--mcu", mcu, "--distro", distro, "--no-embed-secrets"]
 
 
 def build(profile, keep_going=False):
     mcu, env, distro, description = PROFILES[profile]
     out_dir = os.path.join(PREBUILT_DIR, profile)
 
-    # Generated, not read from config/reference. The bare module IS the release
-    # image's configuration: no pins, no sensors, nothing claimed about a robot.
-    import gen_bare_config
-    cfg_dir = os.path.join(BASE_DIR, ".pio", "bare")
-    os.makedirs(cfg_dir, exist_ok=True)
-    cfg = os.path.join(cfg_dir, f"bare_{mcu}_config.yaml")
-    with open(cfg, "w") as fh:
-        yaml.safe_dump(gen_bare_config.bare_config(mcu), fh, sort_keys=False)
-
     print(f"\n=== {profile}  (bare {mcu} -> pio env {env})", flush=True)
 
-    sh(header_cmd(cfg, distro))
+    # No config file at all -- see header_cmd(). The silicon is the only input.
+    sh(header_cmd(mcu, distro))
 
     # Every image reads the env partition -- that is the whole configuration
     # model -- so every manifest records where it is.
@@ -247,16 +251,9 @@ def build(profile, keep_going=False):
     # flash_mcu.py checks for that key before writing one.
     uses_env = True
 
-    # What the config asks for by default, for the manifest's description.
-    try:
-        import yaml as _yaml
-        with open(cfg) as fh:
-            _sensors = ((_yaml.safe_load(fh) or {}).get("base_controller", {})
-                        or {}).get("sensors", {}) or {}
-        fake_mode = any(bool(_sensors.get(k)) for k in
-                        ("use_fake_wheel", "use_fake_imu", "use_fake_ld19"))
-    except Exception:
-        fake_mode = False
+    # A release image describes no robot, so it is neither fake nor real until
+    # an env is written to it. There is no config to read this from any more.
+    fake_mode = False
     sh(["pio", "run", "-d", BASE_DIR, "-e", env])
 
     build_dir = os.path.join(BASE_DIR, ".pio", "build", env)
@@ -325,12 +322,12 @@ def build(profile, keep_going=False):
         "config": f"generated bare module ({mcu})",
         "pio_env": env,
         "ros_distro": distro,
-        # Read from the config, not asserted. This was a hardcoded True while
-        # every release was built from a fake-mode reference; the RP2 and ESP32
-        # releases are built from real robot designs now (pico2_mecanum,
-        # gendrv), so the flag said the opposite of the truth. It is only a
-        # description anyway -- `fake_wheel`, `fake_ld19` and the rest are env
-        # keys, so any of these images can be either at run time.
+        # False because the image commits to nothing: `fake_wheel`, `fake_ld19`
+        # and the rest are env keys, so any of these images is fake or real at
+        # run time depending only on what was written to its env partition.
+        # (It was once hardcoded True, then read from whichever config built
+        # the image -- both were answering a question the image cannot have an
+        # opinion on.)
         "fake_mode": fake_mode,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "commit": git_commit(),
