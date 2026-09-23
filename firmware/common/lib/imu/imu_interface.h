@@ -55,6 +55,13 @@
 #ifndef IMU_INT_STALE_MS
 #define IMU_INT_STALE_MS 200   // longer than this since the last read: read anyway
 #endif
+
+// How many sensors may own a data-ready line at once. One trampoline is
+// generated per slot (see sources_), so this is a code-size cost, not a
+// runtime one.
+#ifndef IMU_INT_MAX_SOURCES
+#define IMU_INT_MAX_SOURCES 4
+#endif
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
 #define IMU_ISR_ATTR IRAM_ATTR
 #else
@@ -64,16 +71,41 @@
 class IMUInterface
 {
     private:
-        // One IMU per board, so one instance for the ISR to reach. Set by
-        // attachDataReady(); an ISR cannot carry a `this`.
-        static IMUInterface *instance_;       // defined in imu_interface.cpp (no C++17 inline variables on the ESP32 core)
+        // An ISR cannot carry a `this`, so the instance has to be reachable
+        // from a plain function. This used to be ONE static pointer --
+        // `instance_ = this` in attachDataReady() -- which quietly made
+        // data-ready a single-sensor feature: a second sensor attaching its
+        // line overwrote the first, and from then on every edge on EITHER pin
+        // marked the SECOND sensor's sample fresh. The first sensor would then
+        // sit on its staleness ceiling, reading the bus anyway, while the
+        // second returned samples it had not taken. Nothing printed.
+        //
+        // One board has one IMU today, so nothing has been wrong yet. But the
+        // magnetometer has its own DRDY line on several parts, the ICM-20948
+        // and MPU9250 break out two, and a second IMU is an ordinary thing to
+        // fit -- so the singleton is a trap rather than a simplification.
+        //
+        // A slot table with one trampoline per slot is the multiplexer.
+        // attachInterrupt() takes a bare function pointer on the AVR and RP2
+        // cores (only the ESP32 has attachInterruptArg), so the arity has to
+        // come from somewhere: N fixed trampolines, each closing over its own
+        // index. Four is the number of interrupt-capable sensors a linorobot
+        // board plausibly carries; asking for a fifth is refused out loud
+        // rather than silently ignored.
+        static IMUInterface *sources_[IMU_INT_MAX_SOURCES];   // defined in imu_interface.cpp (no C++17 inline variables on the ESP32 core)
+        int int_slot_ = -1;
         // Defined in imu_interface.cpp, not here: an IRAM_ATTR function that
         // is inline (a member defined in its class is) lands in a COMDAT
         // .iram1 section whose literal pool the Xtensa linker then places
         // AFTER the code -- "dangerous relocation: l32r: literal placed after
         // use", a link failure on every ESP32 image. Out of line it is an
         // ordinary IRAM function.
-        static void IMU_ISR_ATTR dataReadyISR();
+        static void IMU_ISR_ATTR dataReadyISR(int slot);
+        static void IMU_ISR_ATTR isrSlot0();
+        static void IMU_ISR_ATTR isrSlot1();
+        static void IMU_ISR_ATTR isrSlot2();
+        static void IMU_ISR_ATTR isrSlot3();
+        static void (*slotISR(int slot))();
         int int_pin_ = -1;
         volatile bool data_ready_ = false;
         volatile uint32_t data_ready_us_ = 0;  // micros() at the edge that produced the pending sample
@@ -281,9 +313,29 @@ class IMUInterface
             int_pin_ = pin;
             if (pin < 0)
                 return;
-            instance_ = this;
+            // Re-attaching the same object keeps its slot rather than
+            // consuming a second one; a board that reconfigures its IMU would
+            // otherwise exhaust the table by doing nothing wrong.
+            if (int_slot_ < 0) {
+                for (int i = 0; i < IMU_INT_MAX_SOURCES; i++) {
+                    if (sources_[i] == nullptr || sources_[i] == this) {
+                        int_slot_ = i;
+                        break;
+                    }
+                }
+            }
+            if (int_slot_ < 0) {
+                // Refused out loud. Silently polling would look identical to a
+                // line that never fires, and this is a wiring fact the person
+                // holding the board can fix.
+                Serial.printf("[imu] no interrupt slot free for pin %d (%d in use) - polling\n",
+                              pin, IMU_INT_MAX_SOURCES);
+                int_pin_ = -1;
+                return;
+            }
+            sources_[int_slot_] = this;
             pinMode(pin, INPUT);
-            attachInterrupt(digitalPinToInterrupt(pin), IMUInterface::dataReadyISR, RISING);
+            attachInterrupt(digitalPinToInterrupt(pin), slotISR(int_slot_), RISING);
             int_attached_ms_ = millis();
             last_read_ms_ = int_attached_ms_;
             int_configured_ = enableDataReadyInterrupt();

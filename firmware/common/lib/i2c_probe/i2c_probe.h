@@ -48,6 +48,14 @@ int i2cProbe(I2CDevice *out, int max_devices);
 // The first device of a category, or NULL. Categories are the strings above.
 const I2CDevice *i2cProbeFind(const I2CDevice *devs, int count, const char *category);
 
+// Fold a composite part's satellite address into the part itself: the
+// ICM-20948's AK09918 appears at 0x0C once the IMU has enabled bypass, and
+// looks exactly like a standalone chip to a scan. Called by i2cProbe() on its
+// own result; exposed so it can be driven with a table of devices in a test,
+// because the bus state that produces the duplicate (bypass already latched
+// from a previous boot) is not something a test can arrange.
+void i2cProbeFoldComposites(I2CDevice *devs, int count);
+
 // One line per device on Serial, in the same shape the diagnostic prints.
 void i2cProbePrint(const I2CDevice *devs, int count);
 

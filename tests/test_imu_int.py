@@ -62,9 +62,12 @@ def test_the_isr_only_sets_a_flag():
     # is inline lands in a COMDAT section whose literal pool the Xtensa linker
     # places after the code, and every ESP32 image fails to link.
     hdr = open(IFACE, encoding="utf-8").read()
-    assert re.search(r"static void IMU_ISR_ATTR dataReadyISR\(\);", hdr), "declare it; define it in the .cpp"
+    # The signature gained a slot argument when data-ready stopped being a
+    # single-sensor feature; what this test is about is that the ISR is
+    # DECLARED here and DEFINED out of line, not its arity.
+    assert re.search(r"static void IMU_ISR_ATTR dataReadyISR\(", hdr), "declare it; define it in the .cpp"
     src = open(ISR_CPP, encoding="utf-8").read()
-    isr = re.search(r"IMUInterface::dataReadyISR\(\)\s*\{(.*?)\}", src, re.S).group(1)
+    isr = re.search(r"IMUInterface::dataReadyISR\([^)]*\)\s*\{(.*?)\n\}", src, re.S).group(1)
     # "data_ready_" is the flag it sets; what must NOT be there is bus traffic.
     for forbidden in ("Wire", "readGyroscope", "readAccelerometer", "I2Cdev", "getData"):
         assert forbidden not in isr, f"{forbidden} inside the ISR: no I2C from an ISR"

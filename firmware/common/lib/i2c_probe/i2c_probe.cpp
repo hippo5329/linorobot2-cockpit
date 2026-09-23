@@ -204,7 +204,53 @@ int i2cProbe(I2CDevice *out, int max_devices)
         if (Wire.endTransmission() == 0)
             identify(sink, addr);
     }
+    i2cProbeFoldComposites(out, sink.count);
     return sink.count;
+}
+
+// A 9-axis part is ONE chip, and the scan cannot see that on its own.
+//
+// The ICM-20948 carries an AK09918 on its internal auxiliary bus. The comment
+// on its branch above says that bus never ACKs a main-bus scan -- true from a
+// power-on reset, and false for the rest of the board's life: the first thing
+// ICM20948IMU::startSensor() does is set INT_PIN_CFG BYPASS_EN, which wires
+// the AK09918 onto the main bus at 0x0C, and it stays there until something
+// clears the bit. So on any board that has run this firmware once, a rescan
+// sees 0x0C answer and identifies it as a STANDALONE AK09918.
+//
+// That is what the bench Pico 2 reported on 2026-09-23:
+//
+//   [0x0C] mag AK09918  driver ak09918      <- the ICM-20948's own, unlabelled
+//   [0x68] imu ICM20948 driver icm20948
+//   [0x68] mag AK09916  driver icm20948
+//
+// and i2cProbeFind() takes the FIRST match, so the magnetometer was selected
+// as a separate chip at the lower address. It happened to work -- both drivers
+// talk to 0x0C through the same bypass -- but only because IMU init runs
+// before MAG init and turns the bypass on. Reorder those two, or fit the part
+// on a board whose IMU is disabled, and the magnetometer goes silent with the
+// bus still ACKing at 0x0C and nothing to say why.
+//
+// So fold it: when the composite part is present, the satellite address is
+// ITS magnetometer, named for the chip it lives in.
+void i2cProbeFoldComposites(I2CDevice *devs, int count)
+{
+    bool has_icm20948 = false;
+    for (int i = 0; i < count; i++)
+        if (strcmp(devs[i].category, "imu") == 0 && strcmp(devs[i].driver, "icm20948") == 0)
+            has_icm20948 = true;
+    if (!has_icm20948)
+        return;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(devs[i].category, "mag") != 0 || devs[i].addr != 0x0C)
+            continue;
+        if (strcmp(devs[i].driver, "icm20948") == 0)
+            continue;                       // already the composite's entry
+        devs[i].model  = "AK09918";
+        devs[i].driver = "icm20948";
+        devs[i].macro  = "USE_ICM20948_MAG";
+        devs[i].desc   = "AK09918 magnetometer (inside the ICM-20948, via bypass at 0x0C)";
+    }
 }
 
 const I2CDevice *i2cProbeFind(const I2CDevice *devs, int count, const char *category)

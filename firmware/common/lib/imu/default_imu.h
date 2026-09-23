@@ -901,7 +901,11 @@ class ICM20948IMU: public IMUInterface
                 w8(0x06, 0x80); delay(20);        // PWR_MGMT_1: device reset
                 w8(0x06, 0x01);                   // PWR_MGMT_1: auto clock, wake
                 w8(0x07, 0x00);                   // PWR_MGMT_2: accel + gyro enabled
-                w8(0x0F, 0x02);                   // INT_PIN_CFG: BYPASS_EN -> AK09916 @ 0x0C
+                // INT_PIN_CFG. BYPASS_EN (0x02) exposes the AK09916 at 0x0C
+                // on the main bus; LATCH_INT_EN|INT_ANYRD_2CLEAR would hold
+                // the line until read, which this driver does not want -- the
+                // ISR counts rising edges and the read clears the source.
+                w8(0x0F, 0x02);
                 bank(2);
                 w8(0x01, 0x00);                   // GYRO_CONFIG_1: ±250 dps, DLPF off
                 w8(0x14, 0x00);                   // ACCEL_CONFIG : ±2 g,    DLPF off
@@ -909,6 +913,29 @@ class ICM20948IMU: public IMUInterface
                 return true;
             }
             return false;
+        }
+
+        // The ICM-20948 can drive INT1 on every new sample, and until now this
+        // driver never asked it to: enableDataReadyInterrupt() was inherited
+        // from IMUInterface, which returns false. A board with the line wired
+        // -- the bench Pico 2 has INT on GPIO 2 -- attached the ISR, waited a
+        // second for an edge that the chip was never told to produce, and fell
+        // back to polling with "data-ready pin 2 never fired in 1 s".
+        //
+        // INT_ENABLE_1 (bank 0, 0x11) bit 0 is RAW_DATA_0_RDY_EN. The pin's
+        // shape is INT_PIN_CFG (0x0F), already written by startSensor() for
+        // the magnetometer bypass: bit 1 is BYPASS_EN, bit 7 would be
+        // ACTIVE_LOW and bit 6 OPEN_DRAIN. Push-pull and active high is what
+        // IMUInterface attaches on (RISING), so the bits stay clear and the
+        // bypass bit is preserved rather than overwritten -- clobbering it
+        // here would turn the magnetometer off to turn the interrupt on.
+        bool enableDataReadyInterrupt() override
+        {
+            bank(0);
+            const uint8_t pin_cfg = r8(0x0F);
+            w8(0x0F, (uint8_t)(pin_cfg & ~0xC0));   // push-pull, active high; keep BYPASS_EN
+            w8(0x11, 0x01);                         // INT_ENABLE_1: RAW_DATA_0_RDY_EN
+            return r8(0x11) == 0x01;                // read back: the bus can fail silently
         }
 
         geometry_msgs__msg__Vector3 readAccelerometer() override

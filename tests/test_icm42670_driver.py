@@ -1,5 +1,6 @@
 """The ICM-42670-P driver: the part the Yahboom YB-EET01 V2.0 actually carries."""
 import os
+import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FW = os.path.join(ROOT, "firmware")
@@ -97,7 +98,10 @@ def test_the_interrupt_edge_count_is_reported_once():
     h = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.h"))
     assert "volatile uint32_t int_edges_" in h and "uint32_t intEdges() const" in h
     c = _read(os.path.join(FW, "common", "lib", "imu", "imu_interface.cpp"))
-    assert "instance_->int_edges_++;" in c
+    # The ISR counts every edge. Spelled `instance_->int_edges_++` while
+    # data-ready was a singleton; the counter is per-SOURCE now, so this asks
+    # that the increment is there rather than how the source is reached.
+    assert re.search(r"->int_edges_\+\+;", c), "the ISR no longer counts edges"
 
 
 def test_the_bootsel_touch_is_not_claimed_when_the_tty_is_gone():
