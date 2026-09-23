@@ -36,14 +36,26 @@ def _cfg(name):
         return yaml.safe_load(fh)
 
 
+def _reference_names():
+    """Discovered, never listed -- the set of shipped designs changes."""
+    import glob
+    return sorted(
+        os.path.basename(f)[: -len("_config.yaml")]
+        for f in glob.glob(os.path.join(ROOT, "config", "reference", "*_config.yaml"))
+    )
+
+
 def test_only_the_config_with_a_real_sonar_asks_for_it():
     on = _cfg("pico2_mecanum")["base_controller"]
     assert on["safety_stop"]["enabled"] is True
     pins = on["pins"]["sonar"]
     assert pins["trigger"] >= 0 and pins["echo"] >= 0, "armed without a sensor is theatre"
 
-    for name in ("yahboom_esp32s3", "esp32s3", "gendrv"):
+    for name in _reference_names():
         bc = _cfg(name)["base_controller"]
+        sonar = (bc.get("pins") or {}).get("sonar") or {}
+        if int(sonar.get("trigger", -1)) >= 0 and int(sonar.get("echo", -1)) >= 0:
+            continue                      # the one with a sensor, checked above
         assert not bc.get("safety_stop"), name
 
 

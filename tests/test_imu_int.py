@@ -16,7 +16,7 @@ import mcu_env  # noqa: E402
 import pin_catalog  # noqa: E402
 import gen_wiring_table  # noqa: E402
 
-YAHBOOM = os.path.join(REPO_ROOT, "config", "reference", "yahboom_esp32s3_config.yaml")
+YAHBOOM = os.path.join(REPO_ROOT, "config", "reference", "yb_eet01_config.yaml")
 MAIN = os.path.join(REPO_ROOT, "firmware", "src", "main.cpp")
 IFACE = os.path.join(REPO_ROOT, "firmware", "common", "lib", "imu", "imu_interface.h")
 ISR_CPP = os.path.join(REPO_ROOT, "firmware", "common", "lib", "imu", "imu_interface.cpp")
@@ -93,7 +93,7 @@ def test_yahboom_reference_loads_and_is_the_board():
     with open(YAHBOOM) as fh:
         d = yaml.safe_load(fh)
     bc = d["base_controller"]
-    assert d["robot"]["name"] == "yahboom_esp32s3" == bc["name"]
+    assert d["robot"]["name"] == "yb_eet01" == bc["name"]
     assert bc["mcu"] == "esp32s3" and bc["driver_type"] == "BTS7960"
     pins = bc["pins"]
     # the board's own pinout

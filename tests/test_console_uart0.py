@@ -91,11 +91,11 @@ def test_the_env_carries_the_key_and_refuses_nonsense():
 
 def test_the_yahboom_reference_and_preset_use_uart0():
     import yaml
-    with open(os.path.join(ROOT, "config", "reference", "yahboom_esp32s3_config.yaml")) as fh:
+    with open(os.path.join(ROOT, "config", "reference", "yb_eet01_config.yaml")) as fh:
         d = yaml.safe_load(fh)
     assert d["base_controller"]["console"] == "uart0"
     js = _read(os.path.join(ROOT, "web", "frontend", "app-presets.js"))
-    blk = js[js.index('id: "yahboom_esp32s3"'):]
+    blk = js[js.index('id: "yb_eet01"'):]
     blk = blk[:blk.index("id: \"crawler_esp32s3\"")]
     assert 'console: "uart0"' in blk
 

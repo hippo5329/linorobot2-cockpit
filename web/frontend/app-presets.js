@@ -377,7 +377,7 @@ const REFERENCE_DESIGNS = {
       }
     },
     {
-      id: "yahboom_esp32s3",
+      id: "yb_eet01",
       name: "Yahboom microROS Control Board (ESP32-S3, YB-EET01-V2.0)",
       mcu: "esp32s3",
       kinematics: "2wd",

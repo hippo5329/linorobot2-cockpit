@@ -5,6 +5,18 @@ import xml.etree.ElementTree as ET
 import gen_robot_description as grd
 
 
+def _reference_names():
+    """Discovered, never listed -- see tests/test_default_chassis.py."""
+    import glob
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    return sorted(
+        os.path.basename(f)[: -len("_config.yaml")]
+        for f in glob.glob(os.path.join(root, "config", "reference", "*_config.yaml"))
+    )
+
+
 def _tree(params):
     return ET.fromstring(grd.build_urdf(params))
 
@@ -76,7 +88,7 @@ def test_base_link_has_no_parent_in_the_urdf(reference):
     transform measurement into base_link" -- 7447 times in one GenDrv run, with
     the EKF pinned at (0, 0) while the base drove 4 m.
     """
-    for name in ("pico2_mecanum", "gendrv", "esp32s3", "yahboom_esp32s3"):
+    for name in _reference_names():
         root = _tree(reference(name))
         children = {j.find("child").get("link") for j in root.findall("joint")}
         assert "base_link" not in children, f"{name}: base_link has a URDF parent"

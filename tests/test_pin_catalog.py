@@ -115,6 +115,17 @@ def test_mecanum_config_warnings(reference):
     assert len([m for m in gh.config_warnings(wrapped) if m.startswith("mecanum base but")]) == 2
 
 
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _reference_names():
+    """Discovered, never listed -- the set of shipped designs changes."""
+    return sorted(
+        os.path.basename(f)[: -len("_config.yaml")]
+        for f in glob.glob(os.path.join(_REPO, "config", "reference", "*_config.yaml"))
+    )
+
+
 def _led(reference, name):
     pins = (reference(name).get("base_controller") or {}).get("pins") or {}
     return pins.get("led", -1)
@@ -125,10 +136,19 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
 
     A bench board in fake mode needs it as much as a real one: a simulated
     robot fails in the same ways, and with led: -1 it fails silently.
+
+    Each shipped design names the LED ITS OWN board wires, not one default:
+    these are three specific boards, and that is the whole reason they are
+    references. The generic DevKit pin (esp32s3: GPIO 48) is not a design and
+    lives where it belongs, in gen_firmware_header.bare_mcu_params -- it used
+    to be asserted here from esp32s3_config.yaml, a bare module that was
+    shipped as a reference and has been removed.
     """
-    assert _led(reference, "pico2_mecanum") == 25
-    assert _led(reference, "gendrv") == 2
-    assert _led(reference, "esp32s3") == 48
+    assert _led(reference, "pico2_mecanum") == 25     # Pico 2 onboard LED
+    assert _led(reference, "gendrv") == 2             # DevKit pin, N/C on the GenDrv
+    assert _led(reference, "yb_eet01") == 45          # YB-EET01-V2.0 status LED
+    for name in _reference_names():
+        assert _led(reference, name) >= 0, f"{name} would fail silently"
 
 
 def test_every_esp32_board_shares_one_led_pin(reference):

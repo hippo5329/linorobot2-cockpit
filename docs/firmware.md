@@ -339,7 +339,7 @@ and again after it, since the reset restores the defaults; `INT_STATUS` must the
 publishes exactly 0 rad/s: the base class zeroes any axis inside ±0.01 rad/s after the bias is
 removed, which is older than this driver and applies to every IMU.
 
-**The Yahboom microROS control board** (`config/reference/yahboom_esp32s3_config.yaml`,
+**The Yahboom microROS control board** (`config/reference/yb_eet01_config.yaml`,
 YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: ICM-42670-P at 0x68 on
 SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on M1 4/5 and M2 15/16 (the `pwm` enable
 is `-1`, tied high on the board), encoders 6/7 and 47/48, battery ADC on GPIO 3 for a 2S pack,
