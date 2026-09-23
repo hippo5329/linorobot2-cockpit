@@ -443,10 +443,23 @@ def test_the_runaway_radius_is_bigger_than_the_room_and_the_goals():
 
 
 def test_the_leg_is_abandoned_rather_than_watched_to_the_timeout():
+    """A robot that has left the room, or that Nav2 has given up on, must not
+    be watched for the rest of the 180 s window.
+
+    Written against the exact source text of one `break`, this went red the day
+    the loop was factored into await_arrival() and the breaks became returns --
+    a check that names its inputs. It asks about ORDER inside the wait loop
+    now: the runaway test has to come before the give-up-status test, because a
+    base that drove out of the room while Nav2 reported CANCELED must be
+    reported as a runaway and not as a cancel.
+    """
+    import ast
     src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
-    # checked in the drive loop, before the give-up-status check
-    assert src.index("if _runaway(node):\n                    break") < \
-           src.index("if node.goal_status in (5, 6) and not reached_goal():")
+    fn = next(f for f in ast.walk(ast.parse(src))
+              if isinstance(f, ast.FunctionDef) and f.name == "await_arrival")
+    body = ast.get_source_segment(src, fn)
+    assert "_runaway(node)" in body, "the wait loop no longer watches for a runaway"
+    assert body.index("_runaway(node)") < body.index("node.goal_status in (5, 6)")
     assert "RAN AWAY" in src
     assert "nothing in fake mode would" in src
 

@@ -91,6 +91,32 @@ STARTUP_ABORT_SEC = 5.0
 STARTUP_ABORT_DIST = 0.05
 STARTUP_SETTLE_SEC = 15.0
 
+# A PHANTOM SUCCESS: Nav2 reports the goal SUCCEEDED with the robot nowhere
+# near it. reached_goal() already refuses to believe the status over the
+# position -- see its docstring, and the Yahboom leg 2/8 of 2026-09-22 that was
+# "reached in 2 s, closest 2.830 m". What was missing is that the leg then sat
+# out the whole 180 s window waiting for an arrival that the stack had already
+# stopped driving towards, and failed the run on one such leg.
+#
+# Seen twice in the 2026-09-23 mecanum slice, both on lyrical: a GenDrv leg
+# SUCCEEDED 2.9 s after dispatch, 2.84 m away, 0.114 m travelled, with no
+# complaint logged at all; a YB-EET01 leg the same but after error_code 105.
+# Every goal in this tester is dispatched one MILLISECOND after the previous
+# leg's cancel returns a terminal status, and that 1 ms gap is on the passing
+# legs too -- which is the shape of a race in bt_navigator's unwinding, not of
+# a robot that cannot drive. The board's drive suite scored 8/8 both times.
+#
+# So: confirm it is not the tester's own pose lagging, stop waiting, and ask
+# once more per run. If the second attempt drives, the first was a phantom and
+# the line says so; if it fails again, the leg fails on its own evidence.
+PHANTOM_CONFIRM_SEC = 2.0
+PHANTOM_SETTLE_SEC = 5.0
+
+# Breathing room between one leg's terminal status and the next leg's dispatch.
+# Cheap insurance against the same race: a goal accepted while the tree is
+# still halting is the one that comes back instantly.
+LEG_SETTLE_SEC = 0.5
+
 # How far from home the robot may be before the leg is abandoned as a runaway.
 #
 # The simulated room is about 11.6 x 9.4 m (a saved map measured 232x188 cells
@@ -1020,6 +1046,44 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         pipeline then asks the base directly whether it still drives."""
         n = len(legs)
         retried_startup = False
+        retried_phantom = False
+
+        def await_arrival(t0: float) -> bool:
+            """Spin until this leg resolves. Returns whether the robot arrived.
+
+            ONE loop, shared by the first dispatch and both retries. It used to
+            be copied: the first copy sampled map->odom and watched for a
+            runaway, the retry's copy did neither -- so a retried leg was
+            measured by a weaker instrument than a first attempt, silently, and
+            a runaway on a retry would have been reported as a plain timeout.
+            """
+            phantom_since = None
+            while time.time() - t0 < timeout:
+                rclpy.spin_once(node, timeout_sec=0.2)
+                # Sampled here rather than in a callback: the point is how long
+                # map->odom went WITHOUT a new stamp, and a transform that has
+                # stopped arriving fires no callback to notice it by.
+                _sample_map_odom(node)
+                if node.goal_rejected:
+                    return False
+                if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
+                        and (moved() or not require_motion):
+                    return True
+                if _runaway(node):
+                    return False         # gone; see the report below
+                if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
+                    return False         # Nav2 gave up; waiting out the window adds nothing
+                if node.goal_status == 4 and not reached_goal():        # SUCCEEDED
+                    # A phantom -- but give the tester's OWN pose a moment to
+                    # catch up first. Breaking on the first sample would turn a
+                    # real arrival whose last /odom had not landed yet into a
+                    # failure, which is the mirror of the bug being fixed.
+                    if phantom_since is None:
+                        phantom_since = time.time()
+                    elif time.time() - phantom_since > PHANTOM_CONFIRM_SEC:
+                        return False
+            return False
+
         for i, (gx, gy) in enumerate(legs, 1):
             node.begin_leg(gx, gy)
             if not node.send_goal():
@@ -1038,26 +1102,12 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if not node.send_goal():
                     return False
             t0 = time.time()
-            arrived = False
-            while time.time() - t0 < timeout:
-                rclpy.spin_once(node, timeout_sec=0.2)
-                # Sampled here rather than in a callback: the point is how long
-                # map->odom went WITHOUT a new stamp, and a transform that has
-                # stopped arriving fires no callback to notice it by.
-                _sample_map_odom(node)
-                if node.goal_rejected:
-                    print(f"❌ NAV2 GOAL REJECTED by bt_navigator on leg {i}/{n} "
-                          f"({gx:.2f}, {gy:.2f}){_why(node)}.")
-                    return False
-                if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
-                        and (moved() or not require_motion):
-                    arrived = True
-                    break
-                if _runaway(node):
-                    break                # gone; see the report below
-                if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
-                    break                # Nav2 gave up; waiting out the window adds nothing
+            arrived = await_arrival(t0)
             took = time.time() - t0
+            if node.goal_rejected:
+                print(f"❌ NAV2 GOAL REJECTED by bt_navigator on leg {i}/{n} "
+                      f"({gx:.2f}, {gy:.2f}){_why(node)}.")
+                return False
             # An abort in the first seconds, with no plan and no motion, is the
             # stack still coming up -- not a navigation failure. The lifecycle
             # says "active" once every node has configured, which is before the
@@ -1081,15 +1131,31 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if not node.send_goal():
                     return False
                 t0 = time.time()
-                while time.time() - t0 < timeout:
-                    rclpy.spin_once(node, timeout_sec=0.2)
-                    if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
-                            and (moved() or not require_motion):
-                        arrived = True
-                        break
-                    if node.goal_status in (5, 6) and not reached_goal():
-                        break
+                arrived = await_arrival(t0)
                 took = time.time() - t0
+
+            # Nav2 said it arrived and the robot is not there. Ask once more.
+            if (not arrived and node.goal_status == 4 and not reached_goal()
+                    and start_gap_is_meaningful() and not retried_phantom):
+                retried_phantom = True
+                print(f"   leg {i}/{n}: Nav2 reported the goal SUCCEEDED after {took:.1f} s "
+                      f"with the robot {node.goal_dist_min:.3f} m away, having moved "
+                      f"{node.leg_max_dist:.3f} m. The position decides, so this leg has not "
+                      f"arrived. Waiting {PHANTOM_SETTLE_SEC:.0f} s and asking once more: if it "
+                      f"drives this time the first answer was a phantom, and if it does not, "
+                      f"the failure is the robot's.")
+                t_w = time.time()
+                while time.time() - t_w < PHANTOM_SETTLE_SEC:
+                    rclpy.spin_once(node, timeout_sec=0.2)
+                node.begin_leg(gx, gy)
+                if not node.send_goal():
+                    return False
+                t0 = time.time()
+                arrived = await_arrival(t0)
+                took = time.time() - t0
+                if arrived:
+                    print(f"   leg {i}/{n}: it drove on the second ask, so the first SUCCEEDED "
+                          f"was a phantom -- bt_navigator answering for a goal it never ran.")
             if not arrived:
                 if not start_gap_is_meaningful():
                     print(f"❌ NAV2 LEG {i}/{n} IS VACUOUS: began {node.goal_dist_start:.3f} m "
@@ -1157,6 +1223,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                       f"the robot "
                       f"arrived; continuing. The next goal sent to this stack may be "
                       f"rejected while the old one is still running.")
+            # A terminal status is bt_navigator answering, not bt_navigator
+            # finished: the tree is still halting behind it. Every goal in this
+            # tester went out ONE MILLISECOND after the previous cancel returned,
+            # and the legs that came back SUCCEEDED in 2.9 s without moving are
+            # the ones where that landed badly. Half a second against a 17 s leg
+            # costs nothing and removes the race from the measurement.
+            t_w = time.time()
+            while time.time() - t_w < LEG_SETTLE_SEC:
+                rclpy.spin_once(node, timeout_sec=0.05)
         # The worst map->odom gap goes on the PASSING line too. A failing leg
         # reporting 601 ms only says the stall happened; how close a healthy
         # run comes to the 0.5 s tolerance is what says whether the margin is
