@@ -23,9 +23,11 @@ into a 400, and the command is never run.
 """
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import shlex
+import sys
 import time
 from typing import Callable, Dict
 
@@ -284,6 +286,27 @@ def _nav2(a: Dict) -> str:
     return f"{ros_setup_shell(distro)}; {branches}"
 
 
+def _distro_stamps_cmd_vel(distro: str) -> bool:
+    """Does this distro put TwistStamped on /cmd_vel?
+
+    Asks gen_firmware_header, which is the file that decided
+    USE_STAMPED_CMD_VEL when the firmware was built. Two copies of that list
+    would disagree on exactly the distro nobody tested.
+    """
+    scripts = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        from gen_firmware_header import distro_stamps_cmd_vel
+    except Exception:
+        # Never let a teleop button fail on an import. Unstamped is the older
+        # contract and the one jazzy uses; guessing stamped here would break
+        # every jazzy robot to save a post-kilted one.
+        return False
+    return bool(distro_stamps_cmd_vel(distro))
+
+
 def _teleop(a: Dict) -> str:
     distro = _ident(a.get("distro"), "distro", "jazzy")
     axis_lin = _int(a.get("axis_linear"), "axis_linear", 0, 31, 1)
@@ -291,7 +314,17 @@ def _teleop(a: Dict) -> str:
     axis_ang = _int(a.get("axis_angular"), "axis_angular", 0, 31, 0)
     scale_ang = _num(a.get("scale_angular"), "scale_angular", 0.0, 100.0, 1.0)
     tmp = "/tmp/linorobot2_console_joy.yaml"
+    # The same contract the firmware was built to. nav2 1.4 (kilted) flipped
+    # TwistPublisher to TwistStamped, so kilted and later stamp /cmd_vel and
+    # jazzy and older do not; teleop_twist_joy has to match or the base hears
+    # nothing. With USE_STAMPED_CMD_VEL the firmware subscribes TwistStamped on
+    # /cmd_vel and moves the plain Twist subscriber to /cmd_vel_unstamped, so a
+    # plain Twist arrives as the wrong type on the right topic and is dropped
+    # in silence -- the joystick moves and the robot does not.
+    stamped = _distro_stamps_cmd_vel(distro)
+    stamped_line = f"    publish_stamped_twist: {'true' if stamped else 'false'}\n"
     yaml_body = (f"teleop_twist_joy_node:\n  ros__parameters:\n"
+                 f"{stamped_line}"
                  f"    axis_linear:\n      x: {axis_lin}\n"
                  f"    scale_linear:\n      x: {scale_lin}\n"
                  f"    axis_angular:\n      yaw: {axis_ang}\n"
