@@ -350,13 +350,13 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 1.8
-        max_angular_accel: 3.2
+        rotate_to_heading_angular_vel: 1.0
+        max_angular_accel: 1.5
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
         use_path_orientations: false
-        desired_linear_vel: 0.4
+        desired_linear_vel: 0.25
         lookahead_dist: 0.6
         min_lookahead_dist: 0.3
         max_lookahead_dist: 0.9
@@ -406,7 +406,7 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 1.0
+      max_rotational_vel: 0.8
       min_rotational_vel: 0.4
       rotational_acc_lim: 3.2
   velocity_smoother:
@@ -415,22 +415,41 @@ nav2:
       smoothing_frequency: 20.0
       scale_velocities: false
       feedback: OPEN_LOOP
+      # Sized to the MOTORS, not to what the planner would like.
+      #
+      # 140 rpm motors at max_rpm_ratio 0.85 give 119 rpm per wheel on 100 mm
+      # wheels. A combined translate-and-rotate costs linear + rotational wheel
+      # speed, and the old ceiling of 0.5 m/s with 2.5 rad/s asked for 203 rpm on
+      # the mecanum base -- 171% of what the motors have. The controller then
+      # commands what it cannot get, Kinematics scales the whole request down to
+      # fit, and tracking degrades: three mecanum legs left the room on
+      # 2026-09-23 (stamp 20260923-205120), all at leg 4/8, on both distros.
+      #
+      # It was always over budget -- 0.4 m/s with 1.8 rad/s is 123 rpm, 103% --
+      # and correcting the mecanum rotation radius to the textbook (lx + ly) made
+      # the same request cost 154 rpm, which is where it stopped being marginal.
+      #
+      # ONE set for all three drivetrains, sized to the worst of them: mecanum
+      # turns on (lr + fr)/2 = 0.2255 m where a differential base turns on
+      # lr/2 = 0.1355 m, so the same angular velocity costs it 66% more wheel
+      # speed. At 0.30 m/s and 1.2 rad/s the mecanum sits at 92% of budget as an
+      # envelope, and the controller's own 0.25 / 1.0 target at 76%.
       max_velocity:
-      - 0.5
+      - 0.3
       - 0.0
-      - 2.5
+      - 1.2
       min_velocity:
-      - -0.5
+      - -0.3
       - 0.0
-      - -2.5
+      - -1.2
       max_accel:
-      - 2.5
+      - 0.8
       - 0.0
-      - 3.2
+      - 1.5
       max_decel:
-      - -2.5
+      - -0.8
       - 0.0
-      - -3.2
+      - -1.5
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:
