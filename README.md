@@ -218,6 +218,33 @@ An IMU whose DATA_RDY line is wired (`pins.imu.int`) is read on its interrupt in
 with a logged fallback to polling if the line never fires; the Yahboom microROS control board
 reference (`yahboom_esp32s3_config.yaml`, ESP32-S3, INT on GPIO 41) is the first config that uses it.
 
+### Two wires worth adding
+
+Both are optional, both are cheap, and each removes an error the stack cannot otherwise
+see — the kind that never prints and reaches you as a map that will not sit still.
+
+**Wire the IMU's DATA_RDY line** (`pins.imu.int`) if the chip breaks it out. A polled IMU
+is sampled on the control loop's schedule rather than the sensor's, so every reading
+carries an unknown age and that age *jitters with loop load*. The filter fuses each one as
+if it were current. On the interrupt the sample time is known, and the bus is not spent
+learning that nothing has changed. The boot log tells you which path is live, with the
+measured edge rate to check against the configured ODR — so this is a claim you can verify
+rather than assume.
+
+**Fit and calibrate a magnetometer.** A wheeled robot's EKF fuses *velocities*, and
+velocities integrate: without an absolute reference the heading error only grows, and it
+grows into `map -> odom`, a transform nothing displays. The magnetometer is the only
+sensor here that knows which way is north. Calibration is not optional either — an
+uncorrected hard iron is worth several degrees on its own (7.4° for the offset the
+simulated robot carries). See `docs/ros2-stack.md` and the wiki's
+[Heading & Magnetometer Calibration](https://github.com/hippo5329/linorobot2-cockpit/wiki/Heading-and-Magnetometer-Calibration).
+
+Interrupt support is per driver, not per project: the generic path is in
+`IMUInterface`, and each chip needs its own `enableDataReadyInterrupt()`. The drivers are
+being worked through as boards with the line broken out reach the bench, so check the
+[pin matrix](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring)
+for where your sensor stands rather than assuming.
+
 To switch fake mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.
 

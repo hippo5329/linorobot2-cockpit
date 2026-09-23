@@ -225,6 +225,15 @@ visible rather than silently routed around. A chip this image has no driver for 
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
 
 ### An IMU with its interrupt wired is read when it says so, not when the timer fires
+**Recommended wherever the chip breaks the line out.** The error it removes is *jitter*,
+not shift: a polled sample carries an unknown age that varies with loop load, and the
+filter fuses it as if it were current. The magnetometer is the answer to shift (the
+one-way growth of heading with no absolute reference, `ros2-stack.md`); this is the answer
+to jitter, and they are different faults. Support is per driver — the generic path is in
+`IMUInterface`, each chip needs its own `enableDataReadyInterrupt()`, and the drivers are
+being worked through as boards with the line broken out reach the bench. Proven on
+hardware so far: ICM-42670-P. Implemented, not yet run on a real chip: MPU6050.
+
 `pins.imu.int` in the config (env key `imu_int`, header fallback `IMU_INT_PIN`, `-1` in every
 config that predates the key) names the GPIO the chip's DATA_RDY line is on. With it set, the
 ISR does one thing -- set a flag -- and `IMUInterface::getData()` only touches the bus when the
