@@ -95,8 +95,9 @@ def test_the_gap_logic_is_monotonic():
     note = ns["_map_odom_gap_note"]
 
     healthy = Node(); healthy.map_odom_max_gap = 0.021
-    assert "transform tolerance" not in note(healthy)
-    assert "21 ms" in note(healthy)
+    out = note(healthy)
+    assert "transform tolerance" not in out
+    assert "kept up" in out, out          # below the sampling resolution
 
     stalled = Node(); stalled.map_odom_max_gap = 0.63
     out = note(stalled)
@@ -104,3 +105,33 @@ def test_the_gap_logic_is_monotonic():
 
     quiet = Node(); quiet.map_odom_max_gap = 0.0
     assert note(quiet) == ""
+
+
+def test_the_sampler_is_rate_limited_so_it_cannot_perturb_the_leg():
+    """A diagnostic in the tester's hot loop is not free.
+
+    Written without a limit, this ran a TF lookup between the tester and every
+    callback it processes. The 2wd slice went 10/10 -> 6/10 on identical
+    firmware and images the first time it ran, two legs driving out of the
+    room. Causal or coincidental, it stopped being answerable -- which is the
+    failure: a diagnostic that can perturb what it measures poisons every
+    result after it.
+    """
+    body = ast.get_source_segment(_src(), _func("_sample_map_odom"))
+    assert "_last_map_odom_sample" in body, "the sampler is unlimited"
+    assert "0.1" in body, "no sampling interval"
+
+
+def test_a_gap_under_the_sampling_resolution_is_not_reported_as_one():
+    """At 10 Hz a 30 ms gap cannot be seen; reporting one as measured would
+    invent precision the sampler does not have."""
+    fn = _func("_map_odom_gap_note")
+    ns = {}
+    exec(compile(ast.Module([fn], []), GOAL, "exec"), ns)
+    note = ns["_map_odom_gap_note"]
+
+    class N:
+        map_odom_max_gap = 0.03
+    assert "kept up" in note(N()), note(N())
+    N.map_odom_max_gap = 0.63
+    assert "SLAM stalled" in note(N())

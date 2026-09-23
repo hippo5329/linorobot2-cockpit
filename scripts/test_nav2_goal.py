@@ -625,6 +625,23 @@ def _sample_map_odom(node):
     """
     if getattr(node, "tf_buffer", None) is None:
         return
+    # RATE-LIMITED, and that is not an optimisation.
+    #
+    # First written without this, called once per spin_once() in the leg loop,
+    # it put a TF lookup between the tester and every single callback it
+    # processes -- feedback, /plan, /odom, the lot. The 2wd slice went from
+    # 10/10 to 6/10 on identical firmware and images the first time it ran,
+    # with two legs driving out of the room. Whether the sampler caused that or
+    # merely coincided with it was no longer answerable, which is the whole
+    # problem: a diagnostic that can perturb the thing it measures makes every
+    # result afterwards arguable.
+    #
+    # 10 Hz is ample. The gap being hunted is half a SECOND in a 50 Hz
+    # transform; sampling faster than the fault cannot make it more visible.
+    now = time.time()
+    if now - getattr(node, "_last_map_odom_sample", 0.0) < 0.1:
+        return
+    node._last_map_odom_sample = now
     try:
         tr = node.tf_buffer.lookup_transform(getattr(node, "goal_frame", "map"),
                                              getattr(node, "odom_frame", "odom"),
@@ -646,6 +663,10 @@ def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
     worst = getattr(node, "map_odom_max_gap", 0.0)
     if worst <= 0.0:
         return ""
+    # Sampled at 10 Hz, so a gap is known to within ~100 ms and a reported
+    # value at or below that is "no stall seen", not a measurement.
+    if worst <= 0.12:
+        return f"; map->odom kept up (no gap over {worst * 1000:.0f} ms seen at 10 Hz sampling)"
     note = f"; map->odom's longest gap was {worst * 1000:.0f} ms"
     if worst >= tolerance:
         note += (f" -- at or past the {tolerance:.1f} s transform tolerance, "
