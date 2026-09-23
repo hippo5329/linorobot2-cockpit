@@ -1,0 +1,83 @@
+"""The forward hazard stop arms on a real sensor and never on a simulated one.
+
+main.cpp runs it every control cycle, below ROS:
+
+    if (safety_stop_on) {
+        const float range = rangeAheadOrNegative();
+        const bool blocked = (range >= 0.0f) && (range < safety_stop_range);
+        if (blocked && twist_msg.linear.x > 0.0) { linear.x = 0; linear.y = 0; }
+    }
+
+which is the one layer that still works when the ROS side is wedged, the link
+has dropped, or the planner is confident and wrong. nav2_collision_monitor
+cannot cover that case because it IS the ROS side.
+
+It had never been enabled anywhere: mcu_env defaulted it to "0" and no
+reference config, doc or test asked for it. Now the one config with a real
+HC-SR04 wired turns it on -- and fake mode turns it back off, because
+main.cpp's range_fake raycasts the simulated room and a hazard stop must not
+be exercised against an imaginary obstacle.
+"""
+import os
+import sys
+
+import yaml
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+
+import mcu_env  # noqa: E402
+
+MAIN = os.path.join(ROOT, "firmware", "src", "main.cpp")
+
+
+def _cfg(name):
+    with open(os.path.join(ROOT, "config", "reference", f"{name}_config.yaml"), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def test_only_the_config_with_a_real_sonar_asks_for_it():
+    on = _cfg("pico2_mecanum")["base_controller"]
+    assert on["safety_stop"]["enabled"] is True
+    pins = on["pins"]["sonar"]
+    assert pins["trigger"] >= 0 and pins["echo"] >= 0, "armed without a sensor is theatre"
+
+    for name in ("yahboom_esp32s3", "esp32s3", "gendrv"):
+        bc = _cfg(name)["base_controller"]
+        assert not bc.get("safety_stop"), name
+
+
+def test_a_faked_range_disarms_it_however_the_config_asks():
+    """Fake mode overriding an explicit setting is the established rule for
+    every other fake_* key."""
+    env = {"fake_ld19": "1", "fake_sonar": "1", "safety_stop": "1"}
+    assert mcu_env._truthy(env["fake_ld19"]) and mcu_env._truthy(env["fake_sonar"])
+    src = open(os.path.join(ROOT, "scripts", "mcu_env.py"), encoding="utf-8").read()
+    assert 'if _truthy(env.get("fake_ld19")) and _truthy(env.get("fake_sonar")):' in src
+    assert 'env["safety_stop"] = "0"' in src
+
+
+def test_the_rule_matches_the_firmwares_own():
+    """mcu_env mirrors range_fake; if one changes the other must."""
+    m = open(MAIN, encoding="utf-8").read()
+    assert 'range_fake = fake_lidar_on && envFlag("fake_sonar", true);' in m
+
+
+def test_only_forward_motion_is_blocked():
+    """A robot stopped against something must still be able to back off."""
+    m = open(MAIN, encoding="utf-8").read()
+    # the guard is on forward motion, and only x and y are zeroed
+    assert "if (blocked && twist_msg.linear.x > 0.0)" in m
+    blk = m[m.index("if (blocked && twist_msg.linear.x > 0.0)"):]
+    blk = blk[:blk.index("}")]
+    assert "twist_msg.linear.x = 0.0;" in blk and "twist_msg.linear.y = 0.0;" in blk
+    assert "angular" not in blk, "rotation must stay available to back off"
+
+
+def test_a_missing_sensor_never_brakes():
+    m = open(MAIN, encoding="utf-8").read()
+    blk = m[m.index("static inline float rangeAheadOrNegative"):]
+    blk = blk[:blk.index("void moveBase")]
+    assert "if (!publish_range)\n        return -1.0f;" in blk
+    # and -1 fails the >= 0 test at the call site
+    assert "(range >= 0.0f)" in m

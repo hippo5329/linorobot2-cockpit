@@ -109,6 +109,24 @@ base_controller:
     sonar:
       trigger: 27
       echo: 28
+  # The forward hazard stop, in the firmware, below ROS. It runs every control
+  # cycle, so it still works when the ROS side is wedged, the link has dropped
+  # or the planner is confident and wrong -- which is the case Nav2's own
+  # collision monitor cannot cover, because it IS the ROS side.
+  #
+  # Enabled here and nowhere else: this is the only reference config with a
+  # real HC-SR04 wired (GP27/GP28 above). A board with no sonar reports -1 and
+  # is never blocked, so enabling it there would be theatre.
+  #
+  # It only blocks FORWARD motion. Reverse and rotation stay available, or a
+  # robot that stopped against something would have no way to back off.
+  #
+  # Never armed against a simulated obstacle: mcu_env.py forces this off when
+  # the range is raycast out of the fake room, so a bench board running this
+  # config in fake mode behaves exactly as it did before.
+  safety_stop:
+    enabled: true
+    range_m: 0.25
 kinematics:
   base_type: mecanum
   stamped_cmd_vel: auto

@@ -271,6 +271,11 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
     return env
 
 
+def _truthy(v) -> bool:
+    """How the env spells yes: "1" from _bool, or a real True."""
+    return str(v).strip() in ("1", "true", "True")
+
+
 def _bool(value) -> str:
     return "1" if value else "0"
 
@@ -762,6 +767,19 @@ def hardware_env(params: dict) -> dict:
     else:
         env["safety_stop"] = _bool(safety) if safety is not None else "0"
         env["safety_stop_m"] = 0.25
+    # A REAL sensor only. main.cpp computes
+    #     range_fake = fake_lidar_on && envFlag("fake_sonar", true)
+    # and would happily brake on a range raycast out of the simulated room, so
+    # a bench board running a real robot's config in fake mode would behave
+    # differently from every other bench board -- and a hazard stop is the
+    # last thing that should be exercised against an imaginary obstacle.
+    #
+    # Same rule the firmware uses, mirrored here so the decision is visible in
+    # the env rather than implied by two flags. Fake mode overriding an
+    # explicit config setting is the established behaviour for every other
+    # fake_* key (see apply_sensor_mode).
+    if _truthy(env.get("fake_ld19")) and _truthy(env.get("fake_sonar")):
+        env["safety_stop"] = "0"
     # Track the speed ceiling against the live pack voltage (INA219 / divider)
     # rather than the static config voltage. OFF by default: it changes how the
     # robot feels as the battery sags, and wants a real load to be worth it.
