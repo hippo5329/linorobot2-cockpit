@@ -221,6 +221,22 @@ RUN pip install --no-cache-dir --ignore-installed \
 # to the bootloader, not a serial protocol, so there is no tty involved at all.
 RUN apt-get update && apt-get install -y --no-install-recommends libusb-1.0-0 \
     && rm -f /etc/apt/apt.conf.d/01proxy && rm -rf /var/lib/apt/lists/*
+# rviz2 -- the EXECUTABLE, 20 KB. Everything it needs is already in this image:
+# rviz_common, rviz_default_plugins, rviz_rendering, rviz_ogre_vendor and
+# nav2_rviz_plugins arrive as dependencies of the stack, and so do Qt,
+# libgl1-mesa-dri, libxkbcommon-x11-0 and libxcb-cursor0. Measured on the
+# published lyrical image: `apt-get install ros-$ROS_DISTRO-rviz2` reports one
+# new package, 20164 bytes to download, 122 KB installed, and the image goes
+# from 5.43 to 5.44 GB.
+#
+# So the viewer does not get an image of its own. A separate one measured
+# 1.63 GB and two more tags per distro -- four more manifests once arm64 lands
+# -- to save 20 KB here, and it left the headless noVNC path still needing
+# rviz2 on the robot. docker-compose.yml's `rviz` profile runs THIS image with
+# the host's display mounted; docker/rviz-entrypoint.sh is its entrypoint and
+# arrives with the rest of the repo at /ws.
+RUN apt-get update && apt-get install -y --no-install-recommends         ros-${ROS_DISTRO}-rviz2     && rm -f /etc/apt/apt.conf.d/01proxy && rm -rf /var/lib/apt/lists/*
+
 COPY --from=picotool-build /tmp/picotool/build/picotool /usr/local/bin/picotool
 
 # micro_ros_agent from the build stage, copied back to the SAME path it was built at. colcon's generated setup scripts

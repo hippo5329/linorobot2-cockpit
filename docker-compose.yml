@@ -141,6 +141,61 @@ services:
       - FASTDDS_DEFAULT_PROFILES_FILE=/ws/config/fastdds_service_qos.xml
     restart: unless-stopped
 
+  # Optional viewer for a machine WITH a screen. Not started by
+  # `docker compose up`; run it explicitly:
+  #
+  #   docker compose --profile rviz run --rm rviz                  # navigation
+  #   docker compose --profile rviz run --rm rviz --config slam
+  #
+  # THE SAME IMAGE as the cockpit, deliberately. The robot image already
+  # carries everything RViz needs -- rviz_common, rviz_default_plugins,
+  # rviz_rendering, rviz_ogre_vendor, nav2_rviz_plugins, Qt, mesa -- as
+  # dependencies of the stack, so adding the rviz2 executable to it cost
+  # 20164 bytes to download and took the image from 5.43 to 5.44 GB. A viewer
+  # image of its own measured 1.63 GB and two more tags per distro (four more
+  # manifests once arm64 lands) to save that 20 KB, and left the headless
+  # noVNC path still needing rviz2 on the robot.
+  #
+  # It joins the graph the way the cockpit does, and the four things that make
+  # that work are below -- host networking for multicast discovery, host IPC
+  # and /dev/shm for the shared-memory transport the costmaps need, and the
+  # same domain and RMW. The Fast DDS profile comes from the image, the same
+  # file and the same path the cockpit reads. Leave any of them out and this
+  # viewer cannot see a stack that has them: the failure is an empty window,
+  # not an error.
+  rviz:
+    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-jazzy}}
+    profiles: ["rviz"]
+    network_mode: host
+    ipc: host
+    entrypoint: ["/ws/docker/rviz-entrypoint.sh"]
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - XAUTHORITY=/run/xauth
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - FASTDDS_DEFAULT_PROFILES_FILE=/ws/config/fastdds_service_qos.xml
+      # Qt's xcb plugin, explicitly. A container that inherits
+      # XDG_SESSION_TYPE=wayland from a GNOME host otherwise tries the wayland
+      # plugin and exits with "could not load the Qt platform plugin" instead
+      # of falling back -- and a GNOME Wayland session serves X clients through
+      # Xwayland perfectly well, which is why the X socket below is the mount.
+      - QT_QPA_PLATFORM=xcb
+      # llvmpipe. The container usually has no usable GPU driver, and without
+      # this RViz starts and draws nothing.
+      - LIBGL_ALWAYS_SOFTWARE=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      # The cookie that makes the socket usable. ${XAUTHORITY} is empty on many
+      # desktops, where the file is ~/.Xauthority -- both spellings resolve to
+      # the same place through this default.
+      - ${XAUTHORITY:-~/.Xauthority}:/run/xauth:ro
+      - /dev/shm:/dev/shm
+      # Saved layouts live in a volume, not in the host's $HOME. The cockpit
+      # does not write to the machine it runs on.
+      - cockpit-rviz:/rviz
+    user: "${COCKPIT_UID:-1000}:${COCKPIT_GID:-1000}"
+
   # Optional firmware build environment. Not started by `docker compose up`;
   # run it explicitly: docker compose run --rm pio pio run -d firmware -e pico2
   # (-d firmware, because working_dir is /ws and platformio.ini lives one level
@@ -162,6 +217,7 @@ services:
     user: "${COCKPIT_UID:-1000}:${COCKPIT_GID:-1000}"
 
 volumes:
+  cockpit-rviz:
   cockpit-firmware:
   cockpit-build:
   cockpit-maps:
