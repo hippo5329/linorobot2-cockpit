@@ -56,6 +56,45 @@ def test_one_recurring_stall_counts_as_one_complaint(tmp_path):
     assert rows[0].strip().startswith("6x"), rows[0]
 
 
+PAST_LINE = (
+    "[planner_server-3] [INFO] [1790127735.742273636] [global_costmap.global_costmap]: Timed "
+    "out waiting for transform from base_link to map to become available, tf error: Lookup "
+    "would require extrapolation into the past.  Requested time 1790127734.581103 but the "
+    "earliest data is at time 1790127734.756795, when looking up transform from frame "
+    "[base_link] to frame [map]\n"
+)
+
+
+def test_the_past_direction_says_the_buffer_was_still_filling(tmp_path):
+    """Two directions, two meanings, and only one of them is "late".
+
+    "into the future" means the tree had not published recently enough.
+    "into the past" means the request predates the OLDEST entry -- the buffer
+    had not filled yet, which is a startup race, not a stall. tf2 prints the
+    earliest stamp rather than the latest for this case, and the first version
+    of this reporter matched only "the latest data is at" and silently added
+    nothing to the line that mattered most on a leg 1/8.
+    """
+    out = _report(tmp_path, [PAST_LINE])
+    # 1790127734.756795 - 1790127734.581103 = 0.175692 s
+    assert "the TF buffer began 176 ms after the request: it was still filling" in out
+    assert "earliest data is at time 1790127734.756795" in out
+
+
+def test_the_note_survives_a_line_long_enough_to_be_truncated(tmp_path):
+    """The annotation is appended AFTER the cut, never inside it.
+
+    Computing the note and then truncating the result put it past the limit on
+    a long global_costmap line and discarded the number the function exists to
+    produce -- the same fault, one level up, as the 160-character cut this
+    reporter was written to fix.
+    """
+    padded = PAST_LINE.replace("[global_costmap.global_costmap]",
+                               "[global_costmap.global_costmap" + "X" * 300 + "]")
+    out = _report(tmp_path, [padded])
+    assert "it was still filling" in out, out
+
+
 def test_a_line_without_two_stamps_is_left_alone(tmp_path):
     line = ("[planner_server-3] [INFO] [1790121447.525125131] [global_costmap]: Timed out "
             "waiting for transform from base_link to map to become available, tf error: x\n")

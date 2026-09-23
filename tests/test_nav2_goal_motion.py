@@ -336,6 +336,26 @@ def test_the_gap_and_the_error_both_reach_the_output(monkeypatch, capsys):
     assert "2.830 m from the goal" in out and "from 3.000 m at the start" in out, out
 
 
+def test_the_goal_is_stamped_zero_not_now():
+    """A goal in the map frame is a place, not an observation.
+
+    now() asks tf2 for a time that has not happened yet: map->odom comes from
+    SLAM and odom->base_link from the EKF at ~50 Hz, so the newest transform is
+    always some milliseconds older than the line that builds the goal. The
+    planner then fails to transform the end pose and aborts with 102 --
+    measured at FIVE milliseconds on 2026-09-23, and it has cost a leg in most
+    matrices this project has run. Raising planner_server's transform_tolerance
+    0.3 -> 0.5 -> 1.0 in the reference configs did not fix it and could not: a
+    tolerance cannot cover a request for a time that has not arrived.
+
+    tf2 reads a zero stamp as "the latest transform you have", which is what a
+    fixed place in the map wants.
+    """
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py"), encoding="utf-8").read()
+    assert "goal_msg.pose.header.stamp = rclpy.time.Time().to_msg()" in src
+    assert "goal_msg.pose.header.stamp = self.get_clock().now().to_msg()" not in src
+
+
 def test_nav2s_own_idea_of_the_gap_is_reported_beside_the_measured_one(monkeypatch, capsys):
     """Two numbers, because one of them cannot say where the fault is.
 

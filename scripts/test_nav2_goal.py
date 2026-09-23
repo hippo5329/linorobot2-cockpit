@@ -397,7 +397,31 @@ class Nav2GoalTester(Node):
         self.get_logger().info("Action server connected. Dispatching goal behind obstacle wall...")
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = "map"
-        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        # Time 0, not now(). A goal in the map frame is a PLACE, not an
+        # observation: (3.0, 0.0) is where it is at every instant, and tf2
+        # reads a zero stamp as "the latest transform you have".
+        #
+        # now() asks for the future and says so. map->odom comes from SLAM and
+        # odom->base_link from the EKF at ~50 Hz, so the newest TF is always
+        # some milliseconds OLDER than this line executes, and the planner's
+        # transform of the end pose throws:
+        #
+        #   ABORTED error_code=102 'Failed to transform end pose to global frame'
+        #   Lookup would require extrapolation into the future. Requested time
+        #   1790127458.311765 but the latest data is at 1790127458.307006
+        #
+        # Five milliseconds. It has cost a leg in most matrices this project
+        # has run, on every board and both distros, and it is why
+        # planner_server's transform_tolerance was raised 0.3 -> 0.5 -> 1.0 in
+        # the reference configs, each time with a comment about this exact
+        # message -- a tolerance cannot fix a request for a time that has not
+        # happened yet.
+        #
+        # The gate does not lose anything by this. If the tree were genuinely
+        # stale the zero stamp would quietly use old data, but the verdict is
+        # measured from map->base_link independently, so a stale transform
+        # shows up as a goal that was not reached, never as a false pass.
+        goal_msg.pose.header.stamp = rclpy.time.Time().to_msg()
         goal_msg.pose.pose.position.x = self.goal_x
         goal_msg.pose.pose.position.y = self.goal_y
         goal_msg.pose.pose.position.z = 0.0

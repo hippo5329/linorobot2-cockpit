@@ -516,7 +516,12 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
             key = re.sub(r"[0-9]+(?:\.[0-9]+)?", "N", msg)
             counts[key] = counts.get(key, 0) + 1
             if key not in exemplar:
-                exemplar[key] = _tf_lateness(msg)[:400]
+                # Truncate the MESSAGE, then append the note. Computing the
+                # note first and cutting the result put the annotation past
+                # 400 characters on a long global_costmap line and threw away
+                # the number the whole function exists to produce -- which is
+                # the very bug this reporter was written to fix, one level up.
+                exemplar[key] = msg[:400] + _tf_lateness(msg)
     if not counts:
         return "     (nav2.log logged no transform or path complaint)"
     out = ["     --- what Nav2 complained about (distinct, most frequent first) ---"]
@@ -526,7 +531,7 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
 
 
 def _tf_lateness(msg: str) -> str:
-    """Append how stale the TF tree was, when tf2 printed both stamps.
+    """How stale the TF tree was, as a note to append, or "" when tf2 said nothing.
 
     "extrapolation into the future" reads like a clock skew and is usually a
     stall: the lookup asked for a time the tree had not reached yet because
@@ -534,13 +539,24 @@ def _tf_lateness(msg: str) -> str:
     host, seconds is a publisher that stopped.
     """
     m = re.search(r"Requested time ([0-9.]+) but the latest data is at time ([0-9.]+)", msg)
+    if m:
+        try:
+            gap = float(m.group(1)) - float(m.group(2))
+        except ValueError:
+            return ""
+        return f"   [TF tree was {gap * 1000:.0f} ms behind the request]"
+    # The other direction, and the one that says "startup" rather than "late":
+    # tf2 reports the EARLIEST entry when the request predates the buffer, so
+    # the gap is how much history the buffer was still missing. Seen at 176 ms
+    # on a leg 1/8, where the tree had only just begun to fill.
+    m = re.search(r"Requested time ([0-9.]+) but the earliest data is at time ([0-9.]+)", msg)
     if not m:
-        return msg
+        return ""
     try:
-        gap = float(m.group(1)) - float(m.group(2))
+        gap = float(m.group(2)) - float(m.group(1))
     except ValueError:
-        return msg
-    return f"{msg}   [TF tree was {gap * 1000:.0f} ms behind the request]"
+        return ""
+    return f"   [the TF buffer began {gap * 1000:.0f} ms after the request: it was still filling]"
 
 
 def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
