@@ -81,7 +81,7 @@ def _bare_env(mcu, tmp_path):
 
 def test_gendrv_carries_the_boards_facts():
     env = _env("gendrv")
-    assert env["baud"] == 921600
+    assert env["baud"] == 1500000    # the runtime micro-ROS rate, not the upload rate
     assert env["transport"] == "serial"
     assert env["motor_driver"] == "bts7960"
     assert (env["m1_pwm"], env["m1_in_a"], env["m1_in_b"]) == (25, 21, 17)
@@ -95,12 +95,13 @@ def test_gendrv_carries_the_boards_facts():
 
 def test_dual_core_key_follows_the_config():
     # Booleans reach the env as "1"/"0" strings; pins and rates as ints.
-    # gendrv is the only shipped ESP32 reference now and it has dual core off,
-    # so the "on" case is built rather than read from a file.
-    assert str(_env("gendrv")["dual_core"]) == "0"         # use_dual_core: false
+    # Both cases are BUILT: reading the "off" case out of gendrv made this a
+    # test of that file, and it went red when gendrv turned dual core on.
     params = reference_params("gendrv")
     params["base_controller"]["use_dual_core"] = True
     assert str(_env_from_params(params)["dual_core"]) == "1"
+    params["base_controller"]["use_dual_core"] = False
+    assert str(_env_from_params(params)["dual_core"]) == "0"
     # RP2 has no dual-core port, so the key never reaches the env at all.
     assert "dual_core" not in _env("pico2_mecanum")
 

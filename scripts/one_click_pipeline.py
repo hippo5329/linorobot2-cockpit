@@ -225,6 +225,12 @@ SENSOR_TOPICS = {
 # board with nothing wired to its battery input.
 NOT_FITTED = {"", "none", "null", "off", "false", "no"}
 
+# The fastest rate esptool is asked to upload at, whatever the robot's runtime
+# micro-ROS rate is. Every ESP32 leg of the matrix has flashed at 921600; the
+# GenDrv's runtime rate is 1.5 M and there is no reason to put a proven upload
+# path at risk to match it.
+FLASH_BAUD_CEILING = 921600
+
 
 def sensor_topics(controller_cfg: dict) -> list:
     """Auxiliary topics the fitted sensors must publish, in a stable order.
@@ -1005,6 +1011,13 @@ def main():
     if serial_port != configured_port:
         print(f"  → {configured_port} -> {serial_port}")
     baudrate = controller_cfg.get("baudrate", 921600)
+    # The UPLOAD rate is not the runtime rate, and conflating them means raising
+    # one puts the other at risk. `baudrate` is what the firmware talks
+    # micro-ROS at and what the agent is given as -b; esptool only has to move
+    # the image once, and a flash that fails costs a whole leg. 921600 is the
+    # rate every ESP32 leg in the matrix has flashed at to date, so the ceiling
+    # keeps that proven path while the GenDrv's runtime rate goes to 1.5 M.
+    flash_baud = min(int(baudrate), FLASH_BAUD_CEILING)
 
     # Step 2: what the board needs, before anything is written to it. Three
     # answers, three costs: up to date -> nothing; config changed -> the 4 KB
@@ -1056,7 +1069,7 @@ def main():
                 print(f"  ✅ Board on the bus ({chip}) matches '{controller}'.")
 
         print(f"\n[2/6] [PROBE] Asking {serial_port} what it is already running...")
-        board = probe_board(pio_env, serial_port, baudrate, params_path, app="base",
+        board = probe_board(pio_env, serial_port, flash_baud, params_path, app="base",
                             prebuilt_dir=prebuilt_dir)
         for line in (board.get("_human") or "").splitlines():
             print(f"    {line}")
@@ -1137,7 +1150,7 @@ def main():
                    else "requested with --flash")
             print(f"\n[3/6] [FLASH] Updating the firmware on '{controller}' ({serial_port}) — {why}.")
             release_serial_port(serial_port)
-            if not flash_firmware(pio_env, serial_port, baudrate, params_path, controller,
+            if not flash_firmware(pio_env, serial_port, flash_baud, params_path, controller,
                                   source, prebuilt_dir, args):
                 print("\n==================================================================")
                 print(f"❌ [FLASH FAILED] Microcontroller firmware flash failed for '{controller}'!")
@@ -1152,7 +1165,7 @@ def main():
                    else "every run writes it, so the board cannot be running an env nobody chose")
             print(f"\n[3/6] [ENV] Writing the env block only — {why}. The firmware is not touched.")
             release_serial_port(serial_port)
-            if not write_env_only(pio_env, serial_port, baudrate, params_path, controller,
+            if not write_env_only(pio_env, serial_port, flash_baud, params_path, controller,
                                   timeout=args.flash_timeout, sensors=sensors_for_mode(args.mode)):
                 print("  ⚠️  The env block could not be written; the board keeps the one it has.")
                 failures.append("env block write")

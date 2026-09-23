@@ -19,8 +19,40 @@ base_controller:
   driver_type: BTS7960
   transport: serial
   serial_port: /dev/ttyUSB0
-  baudrate: 921600
-  use_dual_core: false
+  # 1.5 Mbaud, not the 921600 this shipped with. That was the bare-DevKit
+  # setting on the board the rest of the repo says needs the other one: README
+  # "an ESP32 at 921600 baud cannot carry a full LiDAR scan alongside the 50 Hz
+  # control loop ... at 1.5 Mbaud, which the GenDrv's CP2102N does, the scan
+  # runs at 78 Hz and the control topics stay at 50 Hz", and mcu_env.py
+  # "the GenDrv needs 1.5 Mbaud to carry four I2C sensors at 50 Hz, a bare
+  # DevKit is fine at 921600".
+  #
+  # Measured one core, radio off, best-effort QoS: 1.5 M 50.0/50.0 Hz,
+  # 921600 50.1/50.0 Hz -- so on the CONTROL topics alone 921600 was enough,
+  # which is how this went unnoticed. The bench leg does more than that
+  # measurement covered: the same core also synthesises an LD19 byte stream
+  # and feeds it out the LiDAR header at 230400, about 1.8 kB per rotation and
+  # roughly 78% of that UART. Whatever delays the loop stalls the scan, and a
+  # stalled scan is a frozen map->odom stamp -- the worst gap in the whole
+  # 2026-09-23 dataset, 1200 ms, was this leg.
+  #
+  # This is the micro-ROS RUNTIME rate: the firmware reads it as env `baud`
+  # and bringup.launch.py passes the same number to the agent as -b. It is not
+  # the esptool upload rate; see FLASH_BAUD_CEILING in one_click_pipeline.py.
+  baudrate: 1500000
+  # Dual core takes moveBase() off the core servicing micro-ROS -- 43 -> 49 Hz
+  # on this board with four sensors. It shipped false here and true on
+  # yb_eet01, with no reason recorded on either; db95512 says the serial ESP32
+  # references ship true on purpose, and this file predates that pass.
+  #
+  # HONEST CAVEAT: as long as `wifi.enabled` below is true, the firmware
+  # IGNORES this and prints that it did (main.cpp: controlTask's critical
+  # section disables interrupts on the core where the Wi-Fi driver and lwIP
+  # live; measured, the same binary froze inside a publish for 6 s with wifi=1).
+  # So on the bench's serial leg this is currently inert, and the radio running
+  # on a leg called "serial" is itself a candidate for the scan gaps. Setting
+  # it true now is the correct value for the board, not a fix by itself.
+  use_dual_core: true
   wifi:
     enabled: true
   telemetry:

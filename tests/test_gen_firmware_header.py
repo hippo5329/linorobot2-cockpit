@@ -19,7 +19,7 @@ def _header(reference, name, distro="jazzy"):
 
 def test_gendrv_pins_and_driver(reference):
     m = _header(reference, "gendrv")
-    assert m["BAUDRATE"] == "921600"
+    assert m["BAUDRATE"] == "1500000"     # the GenDrv's CP2102N rate; see the config
     assert "USE_BTS7960_MOTOR_DRIVER" in m
     assert (m["MOTOR1_PWM"], m["MOTOR1_IN_A"], m["MOTOR1_IN_B"]) == ("25", "21", "17")
     assert (m["MOTOR1_ENCODER_A"], m["MOTOR1_ENCODER_B"]) == ("34", "35")
@@ -29,17 +29,23 @@ def test_gendrv_pins_and_driver(reference):
 
 
 def test_dual_core_is_opt_in_and_esp32_only(reference):
-    """Both halves built from gendrv, because no shipped config turns it on.
+    """Both halves are built, not read from whichever file happens to set it.
 
-    The DevKit pair used to supply the "on" case; they were deleted on
-    2026-09-20 and gendrv (the surviving ESP32 reference) has it off. Asking
-    for it explicitly is the honest test anyway -- it is the config key that is
-    under test, not which file happens to set it.
+    This used gendrv as the "off" exemplar, which made it a test of that file
+    rather than of the key: when gendrv went to use_dual_core: true on
+    2026-09-23 the test went red having found nothing wrong. The key is what is
+    under test, so both cases are constructed.
     """
     on = reference("gendrv")
     on["base_controller"]["use_dual_core"] = True
     assert "USE_DUAL_CORE" in _macros(gh.generate_header(on, {}, None, True, "jazzy"))
-    assert "USE_DUAL_CORE" not in _header(reference, "gendrv")       # use_dual_core: false
+    off = reference("gendrv")
+    off["base_controller"]["use_dual_core"] = False
+    assert "USE_DUAL_CORE" not in _macros(gh.generate_header(off, {}, None, True, "jazzy"))
+    absent = reference("gendrv")
+    absent["base_controller"].pop("use_dual_core", None)
+    assert "USE_DUAL_CORE" not in _macros(gh.generate_header(absent, {}, None, True, "jazzy")), \
+        "dual core must be opt-in, never the default"
     # No RP2 port exists: the implementation is xTaskCreatePinnedToCore under
     # `#if defined(ESP32)`, so the macro is withheld whatever the config says.
     rp2 = reference("pico2_mecanum")
