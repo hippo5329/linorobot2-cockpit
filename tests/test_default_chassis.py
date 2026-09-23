@@ -28,6 +28,19 @@ DEFAULT_KINEMATICS = {"wheel_diameter": 0.1, "lr_wheels_distance": 0.271,
 ROBOT_RADIUS, INFLATION = 0.26, 0.55
 
 
+def _reference_names():
+    """Discovered, never listed.
+
+    A test that names its inputs goes red when the set legitimately changes
+    (esp32s3 was a bare module shipped as a reference and was removed), and --
+    worse -- stays green when a new reference is added that it never checks.
+    """
+    import glob
+    return sorted(
+        os.path.basename(f)[: -len("_config.yaml")]
+        for f in glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml"))
+    )
+
 def _refs():
     for path in sorted(glob.glob(os.path.join(REF, "*_config.yaml"))):
         with open(path) as fh:
@@ -193,10 +206,10 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import gen_bare_config
     refs = {n: yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{n}_config.yaml")))
-            for n in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum")}
+            for n in _reference_names()}
     refs["bare_pico"] = gen_bare_config.bare_config("pico")
     base = refs["gendrv"]
-    lateral = {  # the mecanum's only allowed differences
+    lateral = {  # the mecanum's allowed differences: it strafes
         ("ekf", "ekf_filter_node", "ros__parameters", "odom0_config"),
         ("nav2", "controller_server", "ros__parameters", "min_y_velocity_threshold"),
         ("nav2", "velocity_smoother", "ros__parameters", "max_velocity"),
@@ -204,6 +217,22 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         ("nav2", "velocity_smoother", "ros__parameters", "max_accel"),
         ("nav2", "velocity_smoother", "ros__parameters", "max_decel"),
     }
+    # ... and it is the one reference that wires an HC-SR04, which the
+    # collision monitor may then listen to. A sensor the robot has is exactly
+    # the kind of difference this template permits -- the point of one template
+    # is that two boards with the same hardware behave the same, not that a
+    # board with more hardware must ignore it. The allowance is derived from
+    # the pins rather than named, so it disappears if the sonar ever does.
+    sonar_keys = {
+        ("nav2", "collision_monitor", "ros__parameters", "observation_sources"),
+        ("nav2", "collision_monitor", "ros__parameters", "sonar"),
+    }
+    def _sonar_fitted(d):
+        pins = ((d.get("base_controller") or {}).get("pins") or {}).get("sonar") or {}
+        try:
+            return int(pins.get("trigger", -1)) >= 0 and int(pins.get("echo", -1)) >= 0
+        except (TypeError, ValueError):
+            return False
     def walk(a, b, path, out):
         if isinstance(a, dict) and isinstance(b, dict):
             for k in set(a) | set(b):
@@ -214,7 +243,9 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         diffs = []
         for sec in ("ekf", "slam", "nav2"):
             walk(base.get(sec), d.get(sec), (sec,), diffs)
-        allowed = lateral if name == "pico2_mecanum" else set()
+        allowed = set(lateral) if name == "pico2_mecanum" else set()
+        if _sonar_fitted(d) and not _sonar_fitted(base):
+            allowed |= sonar_keys
         bad = [p for p in diffs if p not in allowed]
         assert not bad, f"{name} drifts from the template at {bad[:6]}"
 
@@ -251,7 +282,7 @@ def test_the_gate_never_asks_for_tighter_than_nav2_promises():
     assert 'parser.add_argument("--goal-tolerance", type=float, default=None' in pipe
     assert 'checker.get("xy_goal_tolerance", 0.25)) + 0.05' in pipe
     import yaml
-    for name in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum"):
+    for name in _reference_names():
         d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
         checker = d["nav2"]["controller_server"]["ros__parameters"]["general_goal_checker"]
         assert checker["xy_goal_tolerance"] == 0.35, f"{name}: {checker['xy_goal_tolerance']}"
@@ -281,7 +312,7 @@ def test_a_real_imu_on_simulated_wheels_is_called_out():
     assert "NOT_FITTED = {" in pipe, "the not-fitted sentinel is named once"
     assert 'use_fake_wheel' in pipe and "A real IMU with simulated wheels" in pipe
     import yaml
-    for name in ("gendrv", "esp32s3", "yahboom_esp32s3", "pico2_mecanum"):
+    for name in _reference_names():
         d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
         ekf = d["ekf"]["ekf_filter_node"]["ros__parameters"]
         # index 11 is vyaw: both sources fuse it, which is what makes the mix bite

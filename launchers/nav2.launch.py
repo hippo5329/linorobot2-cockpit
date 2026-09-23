@@ -146,6 +146,32 @@ def _prefix_nav2_namespace(node, ns):
             _prefix_nav2_namespace(item, ns)
 
 
+def has_real_sonar(params) -> bool:
+    """Does this robot actually have an HC-SR04 wired?
+
+    The pins are the robot's own answer. The firmware reads the same two keys
+    and publishes /sonar from the hardware only when both are >= 0; a board
+    that reports -1 never drives a trigger line and never echoes one back.
+
+    This matters far more than it looks. A collision_monitor source that does
+    not publish does not degrade quietly -- it STOPS THE ROBOT, by design:
+
+        [collision_monitor]: Robot to stop due to invalid source.
+        Either due to data not published yet, or to lack of new data
+
+    That is the correct fail-safe for a sensor that died mid-drive. It is also
+    a robot that can never move if the sensor was never fitted. So the source
+    is declared from the pins, not from taste, and a config that asks for one
+    on a board with no pins is overruled below rather than obeyed.
+    """
+    pins = ((params or {}).get("base_controller") or {}).get("pins") or {}
+    sonar = pins.get("sonar") or {}
+    try:
+        return int(sonar.get("trigger", -1)) >= 0 and int(sonar.get("echo", -1)) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def launch_setup(context, *args, **kwargs):
     config_file = resolve_params_path(context)
     use_sim_time = context.launch_configurations.get("use_sim_time", "false")
@@ -260,6 +286,7 @@ def launch_setup(context, *args, **kwargs):
     # this stack's tree is map -> odom -> base_link per REP-105 and a frame that
     # is not in the description would fail every transform lookup).
     cm_params = nav2_data.setdefault("collision_monitor", {}).setdefault("ros__parameters", {})
+    sonar_fitted = has_real_sonar(params)
     if "observation_sources" not in cm_params:
         base_frame = params.get("slam", {}).get("base_frame", "base_link")
         for key, value in {
@@ -283,13 +310,14 @@ def launch_setup(context, *args, **kwargs):
                 "visualize": False,
                 "enabled": True,
             },
-            # Two ways to hear "something is in front of me", not one. The
-            # LiDAR was the only obstacle input this stack had, so nothing
-            # could contradict it when it was wrong -- and the firmware has
-            # been publishing sensor_msgs/Range on `sonar` all along
-            # (mcu_env.py: use_fake_sonar defaults true) with no consumer
-            # anywhere: not a costmap layer, not here.
-            "observation_sources": ["scan", "sonar"],
+            # Two ways to hear "something is in front of me", not one -- but
+            # only on a robot that has the second one. The LiDAR was the only
+            # obstacle input this stack had, so nothing could contradict it
+            # when it was wrong; a wired HC-SR04 does, at the range and the
+            # height a spinning LiDAR is worst at. On a board with no sonar
+            # pins the same entry is not a missing opinion, it is a parking
+            # brake -- see has_real_sonar().
+            "observation_sources": ["scan", "sonar"] if sonar_fitted else ["scan"],
             "scan": {
                 "type": "scan",
                 "topic": "scan",
@@ -311,6 +339,28 @@ def launch_setup(context, *args, **kwargs):
             },
         }.items():
             cm_params.setdefault(key, value)
+
+    # And the same rule over a config that declares the source itself. This is
+    # not tidiness: on 2026-09-23 a sonar source reached every bench board --
+    # the bench variants inherit the reference's whole Nav2 block and replace
+    # only base_controller, so the source travelled while the pins did not --
+    # and the monitor held all three drivetrains mid-route. The drive suite ran
+    # 8/8 on the same board seconds later, which is what a braked robot looks
+    # like from outside: the base is fine, something above it is saying stop.
+    #
+    # A config may not ask for a sensor the robot does not have, so the pins
+    # win and the launcher says so out loud rather than leaving a stopped robot
+    # to be diagnosed from a costmap.
+    if not sonar_fitted and "sonar" in (cm_params.get("observation_sources") or []):
+        cm_params["observation_sources"] = [
+            s for s in cm_params["observation_sources"] if s != "sonar"
+        ]
+        cm_params.pop("sonar", None)
+        print(
+            "[nav2] collision_monitor: dropping the `sonar` source -- this robot "
+            "reports no sonar pins (base_controller.pins.sonar), so the topic "
+            "would never publish and the monitor would stop the robot."
+        )
 
     # docking_server is the second node of that same class, and it surfaced only
     # once bt_navigator stopped aborting the stack first: it reads `dock_plugins`

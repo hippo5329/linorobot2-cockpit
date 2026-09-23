@@ -438,6 +438,15 @@ nav2:
         min_height: 0.15
         max_height: 2.0
         enabled: true
+      # The second obstacle input, and the only reference config that may ask
+      # for it: base_controller.pins.sonar above names a real HC-SR04 (GP27 /
+      # GP28). The launcher drops this source on a robot whose pins read -1,
+      # because a collision_monitor source that never publishes does not
+      # degrade -- it stops the robot, which is right for a sensor that died
+      # and wrong for one that was never fitted.
+      #
+      # One point per degree across the firmware's 30 degree cone, so 31
+      # points, well inside the monitor's ceiling.
       sonar:
         type: range
         topic: sonar
