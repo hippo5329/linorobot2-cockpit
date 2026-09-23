@@ -46,7 +46,10 @@ def _push(x, y, px, py):
 def test_the_clamp_takes_the_side_from_the_previous_pose():
     src = open(HEADER).read()
     sig = src[src.index("static void pushOffSegment"):][:400]
-    assert "float px, float py)" in sig, "the previous pose is an argument"
+    assert "float px, float py" in sig, "the previous pose is an argument"
+    # ... and the radius too, because the function is static and cannot read
+    # the member the env now fills (fake_radius).
+    assert "float r)" in sig, "the robot radius is an argument"
     body = src[src.index("static void pushOffSegment"):src.index("rangeAheadM")]
     assert "prev_side" in body and "(px - x1) * ux + (py - y1) * uy" in body
     call = src[src.index("if (wall_on_)"):src.index("if (wall_on_)") + 700]
