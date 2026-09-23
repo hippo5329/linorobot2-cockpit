@@ -210,6 +210,10 @@ def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bo
 # publisher is created only if the barometer answered. That is precisely the
 # failure worth catching on a real base, so it is required like the rest.
 SENSOR_TOPICS = {
+    # The firmware's raw IMU topic, not the filtered /imu/data: gravity is what
+    # proves an accelerometer is alive, and bringup runs madgwick with
+    # remove_gravity_vector: True, so /imu/data has none by design.
+    "imu":     ["/imu/data_raw"],
     "mag":     ["/imu/mag"],
     "current": ["/battery"],
     "env":     ["/pressure", "/temperature"],
@@ -497,19 +501,46 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
                      r"No valid path|Failed to make progress|invalid path|"
                      r"passed to lookupTransform argument)", re.I)
     counts: dict = {}
+    exemplar: dict = {}
     for line in lines:
         if pat.search(line):
             msg = line.strip()
             for cut in (" at line ", " [ERROR] ", " [WARN] "):
                 if cut in msg:
                     msg = msg.split(cut)[-1]
-            counts[msg[:160]] = counts.get(msg[:160], 0) + 1
+            # Two complaints are the same complaint when only their numbers
+            # differ. Counting the raw text instead split one recurring stall
+            # into one-of-each rows, and 160 characters of it cut the message
+            # off at "Requested time ... but t" -- losing the latest-data stamp,
+            # which is the whole of "by how much it was late".
+            key = re.sub(r"[0-9]+(?:\.[0-9]+)?", "N", msg)
+            counts[key] = counts.get(key, 0) + 1
+            if key not in exemplar:
+                exemplar[key] = _tf_lateness(msg)[:400]
     if not counts:
         return "     (nav2.log logged no transform or path complaint)"
     out = ["     --- what Nav2 complained about (distinct, most frequent first) ---"]
-    for msg, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
-        out.append(f"     {n:5d}x {msg}")
+    for key, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
+        out.append(f"     {n:5d}x {exemplar[key]}")
     return "\n".join(out)
+
+
+def _tf_lateness(msg: str) -> str:
+    """Append how stale the TF tree was, when tf2 printed both stamps.
+
+    "extrapolation into the future" reads like a clock skew and is usually a
+    stall: the lookup asked for a time the tree had not reached yet because
+    nothing had published since. The gap says which -- milliseconds is a busy
+    host, seconds is a publisher that stopped.
+    """
+    m = re.search(r"Requested time ([0-9.]+) but the latest data is at time ([0-9.]+)", msg)
+    if not m:
+        return msg
+    try:
+        gap = float(m.group(1)) - float(m.group(2))
+    except ValueError:
+        return msg
+    return f"{msg}   [TF tree was {gap * 1000:.0f} ms behind the request]"
 
 
 def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:

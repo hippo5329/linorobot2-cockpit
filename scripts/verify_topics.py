@@ -11,12 +11,12 @@
 #
 # Must pass before proceeding to SLAM mapping or Nav2 navigation.
 #
-# Auxiliary sensor topics -- /imu/mag, /battery, /pressure, /temperature -- are
-# reported but not required, because most robots do not carry those chips. On a
-# REAL base they are soldered on and named in the robot config, so the pipeline
-# passes them to --require:
+# Auxiliary sensor topics -- /imu/data_raw, /imu/mag, /battery, /pressure,
+# /temperature -- are reported but not required, because most robots do not
+# carry those chips. On a REAL base they are soldered on and named in the robot
+# config, so the pipeline passes them to --require:
 #
-#   verify_topics.py --require /imu/mag,/battery,/pressure,/temperature
+#   verify_topics.py --require /imu/data_raw,/imu/mag,/battery,/pressure,/temperature
 #
 # What --require checks is ADVERTISEMENT, not data. A board on the end of a USB
 # cable can say what it is fitted with long before there is an assembled robot
@@ -123,15 +123,47 @@ def _battery_range(msg):
     return True, f"{v:.2f} V"
 
 
-def _imu_range(msg):
+def _imu_raw_range(msg):
+    """The gravity check, and it belongs to /imu/data_raw alone.
+
+    An accelerometer measures specific force, so gravity is always there
+    whatever the board is doing: an IMU publishing zeros -- which passes any
+    rate check -- reads 0 and fails, and a board being picked up and waved
+    reads a few g and still passes.
+
+    This must NOT be asked of /imu/data. bringup.launch.py runs madgwick with
+    remove_gravity_vector: True, so the filtered topic carries gravity-free
+    acceleration by design and reads ~0.5 m/s^2 on a board sitting still. Both
+    topics used to arrive at one callback that filed them under "/imu/data",
+    so whichever came first decided this check: the same MPU6050 on the same
+    bench read 10.31 on jazzy and 0.57 on lyrical, ten minutes apart.
+    """
     a = msg.linear_acceleration
     m = math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
-    # Gravity is always there, whatever the board is doing. An IMU publishing
-    # zeros -- which passes any rate check -- reads 0 and fails; a board being
-    # picked up and waved reads a few g and still passes.
     if not (5.0 <= m <= 30.0):
         return False, f"|accel|={m:.2f} m/s^2 outside 5..30 (gravity alone is 9.81)"
     return True, f"|accel|={m:.2f} m/s^2"
+
+
+def _imu_filtered_range(msg):
+    """What /imu/data can be judged on once gravity has been taken out of it.
+
+    Its acceleration is a residual, so magnitude says nothing. Its orientation
+    does: madgwick publishes a unit quaternion, and a filter that never
+    converged -- or one fed nothing -- publishes an all-zero one, which is the
+    dead-stack case this row is here to catch. The EKF reads index 5 from
+    exactly this quaternion.
+    """
+    q = msg.orientation
+    n = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
+    if not math.isfinite(n) or abs(n - 1.0) > 0.05:
+        return False, f"orientation quaternion norm {n:.3f}, not 1 (madgwick has no estimate)"
+    a = msg.linear_acceleration
+    w = msg.angular_velocity
+    for name, v in (("accel", (a.x, a.y, a.z)), ("gyro", (w.x, w.y, w.z))):
+        if not all(math.isfinite(c) for c in v):
+            return False, f"{name} is not finite"
+    return True, f"|quat|={n:.3f} (gravity removed upstream, so |accel| is a residual)"
 
 
 RANGE_CHECKS = {
@@ -139,7 +171,8 @@ RANGE_CHECKS = {
     "/pressure": _pressure_range,
     "/temperature": _temperature_range,
     "/battery": _battery_range,
-    "/imu/data": _imu_range,
+    "/imu/data": _imu_filtered_range,
+    "/imu/data_raw": _imu_raw_range,
 }
 
 
@@ -191,8 +224,6 @@ class TopicVerifier(Node):
         self.create_subscription(Odometry, "/odom", self._odom_cb, sensor_qos)
         self.create_subscription(Imu, "/imu/data", self._imu_cb, reliable_qos)
         self.create_subscription(Imu, "/imu/data", self._imu_cb, sensor_qos)
-        self.create_subscription(Imu, "/imu/data_raw", self._imu_cb, reliable_qos)
-        self.create_subscription(Imu, "/imu/data_raw", self._imu_cb, sensor_qos)
         if self.check_scan:
             self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
 
@@ -205,11 +236,18 @@ class TopicVerifier(Node):
         # /imu/mag was missing here, which meant the magnetometer was the one
         # fitted sensor no test ever looked at.
         self.optional_samples: Dict[str, Optional[object]] = {
+            # The firmware's own IMU topic, before madgwick. It is here rather
+            # than in the rate-gated set above because this gate also runs on a
+            # board with no chip fitted, and because the value worth checking on
+            # it -- gravity -- is only meaningful on a real one (--require).
+            "/imu/data_raw": None,
             "/imu/mag": None,
             "/pressure": None,
             "/temperature": None,
             "/battery": None,
         }
+        self.create_subscription(Imu, "/imu/data_raw", self._imu_raw_cb, sensor_qos)
+        self.create_subscription(Imu, "/imu/data_raw", self._imu_raw_cb, reliable_qos)
         self.create_subscription(MagneticField, "/imu/mag", self._mag_cb, sensor_qos)
         self.create_subscription(MagneticField, "/imu/mag", self._mag_cb, reliable_qos)
         self.create_subscription(FluidPressure, "/pressure", self._pressure_cb, sensor_qos)
@@ -218,6 +256,9 @@ class TopicVerifier(Node):
         self.create_subscription(Temperature, "/temperature", self._temp_cb, reliable_qos)
         self.create_subscription(BatteryState, "/battery", self._battery_cb, sensor_qos)
         self.create_subscription(BatteryState, "/battery", self._battery_cb, reliable_qos)
+
+    def _imu_raw_cb(self, msg: Imu):
+        self.optional_samples["/imu/data_raw"] = msg
 
     def _mag_cb(self, msg: MagneticField):
         self.optional_samples["/imu/mag"] = msg
@@ -466,7 +507,9 @@ def main():
             if not in_range:
                 all_passed = False
 
-        if opt_topic == "/imu/mag":
+        if opt_topic == "/imu/data_raw":
+            opt_desc = format_imu(opt_sample)
+        elif opt_topic == "/imu/mag":
             m = opt_sample.magnetic_field
             opt_desc = (f"frame='{opt_sample.header.frame_id}', "
                         f"B=({m.x:.2e}, {m.y:.2e}, {m.z:.2e}) T")
