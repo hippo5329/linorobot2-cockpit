@@ -46,12 +46,16 @@ def test_it_routes_to_int1_not_int2():
 def test_the_data_ready_is_pulsed_not_level():
     """DRDY_PULSED (COUNTER_BDR_REG1 bit 7).
 
-    Level mode holds the line asserted until the data is read, and this driver
-    reads gyro and accel in SEPARATE transactions without clearing the
-    condition between them -- so there is one rising edge and then nothing.
-    getData() reads that as a line that fired once and died and the staleness
-    ceiling turns the feature back into polling, silently. The ICM-20948 had
-    the identical trap in INT1_LATCH_INT_EN.
+    The first version of this justified itself wrongly: "level mode never
+    clears the condition". It does clear, on the read of the output registers,
+    and Adafruit_LSM6DS drives INT1 in level mode and works.
+
+    The real reason is the START. In level mode a sample already pending when
+    attachDataReady() runs leaves INT1 ALREADY high. The ISR attaches on
+    RISING, so no edge arrives; getData() only touches the bus when the flag
+    says a sample is waiting, so nothing reads; so the line never falls and no
+    edge ever comes. It recovers via the 1 s fallback and IMU_INT_STALE_MS --
+    by polling, which is the thing the interrupt exists to avoid.
     """
     fn = _fn()
     assert "REG_COUNTER_BDR1" in fn

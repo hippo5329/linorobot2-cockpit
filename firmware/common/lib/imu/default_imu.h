@@ -836,13 +836,24 @@ class LSM6DSOXIMU : public IMUInterface
         //
         //   COUNTER_BDR_REG1.DRDY_PULSED  a ~75 us pulse per sample instead of
         //               a level that stays asserted until the data is read.
-        //               Level mode gives ONE rising edge and then nothing,
-        //               because this driver reads gyro and accel in separate
-        //               transactions and the condition is not cleared between
-        //               them -- getData() would see a line that fired once and
-        //               died, and the staleness ceiling would quietly turn the
-        //               whole feature back into polling. Same trap as the
-        //               ICM-20948's INT1_LATCH_INT_EN.
+        //
+        //               NOT because level mode fails to clear -- it does clear,
+        //               on the read of the output registers, so it would give
+        //               an edge per sample in steady state. Adafruit's
+        //               Adafruit_LSM6DS drives INT1 in the default level mode
+        //               and works.
+        //
+        //               The reason is the START. In level mode, if a sample is
+        //               already pending when attachDataReady() runs, INT1 is
+        //               ALREADY high and stays high until someone reads. The
+        //               ISR attaches on RISING, so there is no edge; getData()
+        //               only reads the bus when the flag says a sample is
+        //               waiting, so nothing reads; so the line never falls and
+        //               no edge ever comes. It recovers -- the 1 s fallback and
+        //               IMU_INT_STALE_MS both force a read -- but it recovers
+        //               by polling, which is the thing the interrupt exists to
+        //               avoid. A pulse per sample cannot deadlock that way and
+        //               costs nothing.
         //
         //   INT1_CTRL   accelerometer data-ready only. The gyro runs at the
         //               same 104 Hz ODR off the same clock, so routing both

@@ -279,7 +279,27 @@ def launch_setup(context, *args, **kwargs):
         # Nav2 thinks it is pointing. Measured at rest on a bare Pico 2 after an
         # hour: wheel yaw 59.4, EKF yaw 7.2. Every goal then veers, and with a
         # wall in the room it eventually parks itself there.
-        use_mag = (mag_sensor != "NONE") or bool(use_fake_mag)
+        #
+        # AUTO is not a promise of a magnetometer, and treating it as one costs
+        # the WHOLE imu topic. madgwick with use_mag=true synchronises
+        # /imu/data_raw against /imu/mag; if no magnetometer ever publishes, the
+        # filter never fires and /imu/data is silent -- so a 6-axis part under
+        # `mag: AUTO` produces no fused IMU at all, the topic verifier reports
+        # "NO DATA", and the run aborts before SLAM. Measured on the z13 Pico 2
+        # with an LSM6DSOX (accel+gyro only) on 2026-09-23.
+        #
+        # The two failure modes are not symmetric, which is what decides this:
+        # a wrong `true` yields NO /imu/data, a wrong `false` yields /imu/data
+        # without heading anchoring -- degraded, but a working stack that says
+        # so. So AUTO resolves to false and names what to do about it.
+        auto_mag = str(mag_sensor).strip().upper() in ("AUTO", "")
+        use_mag = (not auto_mag and str(mag_sensor).upper() != "NONE") or bool(use_fake_mag)
+
+    if auto_mag and not use_fake_mag:
+        print("[bringup] sensors.mag is AUTO: heading fusion is OFF. The bus decides "
+              "whether a magnetometer exists and this launch cannot see it, so fusing "
+              "would risk starving /imu/data entirely. Name the part (mag: AK09918) "
+              "to fuse it.")
 
     madgwick_arg = context.launch_configurations.get("madgwick", "")
     if madgwick_arg != "":
