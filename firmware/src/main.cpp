@@ -1983,10 +1983,23 @@ void publishData()
         EXECUTE_EVERY_N_MS(RANGE_TIMER, {
             if (range_fake)
             {
-                range_msg->range = fake_ld19->rangeAheadM();
+                // rangeAheadM() answers -1 for "nothing in the cone", which is
+                // the right answer for the hazard stop below ROS (a missing
+                // return must not brake the robot) and the WRONG one to put on
+                // the wire: nav2_collision_monitor rejects any Range outside
+                // [min_range, max_range] and treats a rejected source as a
+                // DEAD one -- "Robot to stop due to invalid source" -- so an
+                // open room reads exactly like a failed sensor and the robot
+                // never moves again. Clear is max_range, and it is inside the
+                // span. Same rule as the real sensor: see range.cpp.
+                const float ahead = fake_ld19->rangeAheadM();
                 range_msg->field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
-                range_msg->min_range = 0.02;
-                range_msg->max_range = 4.0;
+                range_msg->min_range = FAKE_SONAR_MIN_RANGE_M;
+                range_msg->max_range = FAKE_SONAR_MAX_RANGE_M;
+                range_msg->range =
+                    (ahead < 0.0f || ahead > FAKE_SONAR_MAX_RANGE_M) ? FAKE_SONAR_MAX_RANGE_M
+                    : (ahead < FAKE_SONAR_MIN_RANGE_M)               ? FAKE_SONAR_MIN_RANGE_M
+                                                                     : ahead;
                 range_msg->radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
             }
             else

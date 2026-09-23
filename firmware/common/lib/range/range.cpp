@@ -74,6 +74,33 @@ void echoPinISR()
 
 sensor_msgs__msg__Range range_msg_;
 
+// "Nothing within reach" is MAX_RANGE, never +INF and never 0.
+//
+// sensor_msgs/Range says a value outside [min_range, max_range] should be
+// discarded, and +INF was the honest way to say "no echo came back". But
+// nav2_collision_monitor does not merely discard it: Range::getSourceData()
+// returns false for an out-of-span reading, and a source that returns false is
+// an INVALID SOURCE, which makes the monitor stop the robot --
+//
+//     [collision_monitor]: Robot to stop due to invalid source.
+//
+// -- and log the reason at DEBUG, where nobody sees it. So a sonar facing an
+// open room, which is the safest possible situation, reads to Nav2 exactly
+// like a sonar that has died, and the robot never moves again. Measured on the
+// bench 2026-09-23: every leg stalled mid-route, the monitor latched on the
+// first reading with nothing in the cone, and the drive suite scored 8/8 on
+// the same board seconds later.
+//
+// MAX_RANGE says the true thing -- clear as far as I can see -- inside the
+// span, so the fail-safe still fires for a sensor that has genuinely stopped
+// publishing while an open room does not brake the robot.
+static inline float rangeClamped(float metres)
+{
+    if (!isfinite(metres) || metres > (float)MAX_RANGE) return (float)MAX_RANGE;
+    if (metres < (float)MIN_RANGE) return (float)MIN_RANGE;
+    return metres;
+}
+
 bool rangePresent() { return trig_pin >= 0 && echo_pin >= 0; }
 
 sensor_msgs__msg__Range getRange()
@@ -86,7 +113,7 @@ sensor_msgs__msg__Range getRange()
     // 1. Check for timeout if waiting for echo from far-away object
     if (sonar_state == SONAR_WAIT_ECHO_FALL || sonar_state == SONAR_TRIGGERED) {
         if ((now - echo_start_us) > TIMEOUT_US || (now - last_trigger_us) > TIMEOUT_US) {
-            range_msg_.range = +INFINITY;
+            range_msg_.range = (float)MAX_RANGE;   // no echo: clear, not broken
             sonar_state = SONAR_IDLE;
             new_reading_available = false;
         }
@@ -95,9 +122,9 @@ sensor_msgs__msg__Range getRange()
     // 2. If a valid reading arrived from ISR, update range
     if (new_reading_available) {
         if (echo_duration_us > 0) {
-            range_msg_.range = (float)(echo_duration_us * SOUND_SPEED / 2.0);
+            range_msg_.range = rangeClamped((float)(echo_duration_us * SOUND_SPEED / 2.0));
         } else {
-            range_msg_.range = +INFINITY;
+            range_msg_.range = (float)MAX_RANGE;   // out of bounds: clear, not broken
         }
         new_reading_available = false;
     }
@@ -141,12 +168,16 @@ void initRange(bool allow_hardware)
     range_msg_.field_of_view = FOV;
     range_msg_.min_range = MIN_RANGE;
     range_msg_.max_range = MAX_RANGE;
-    range_msg_.range = +INFINITY;
+    // Seeded clear rather than +INF: the first messages go out before any echo
+    // has come back, and an out-of-span reading is a stopped robot (above).
+    range_msg_.range = (float)MAX_RANGE;
 
     if (!rangePresent()) {
-        // Say so once. A silent /range that is always +INF looks identical to a
+        // Say so once. A /range that reads clear for ever looks identical to a
         // sensor pointing at open air, which is the failure this print exists
-        // to tell apart.
+        // to tell apart. (Nothing is published in that case -- main.cpp only
+        // creates the publisher when the pins resolved or the emulator runs --
+        // but the print is what makes a missing sonar visible at boot.)
         Serial.printf("[range] no sonar: trigger=%d echo=%d (set sonar_trig / sonar_echo)\n",
                       trig_pin, echo_pin);
         return;

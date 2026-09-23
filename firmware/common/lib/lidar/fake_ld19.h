@@ -85,6 +85,15 @@
 #ifndef FAKE_SONAR_CONE_DEG
 #define FAKE_SONAR_CONE_DEG 30.0f   // Ultrasonic beam width, full angle
 #endif
+// The span the simulated cone claims on /sonar. A reading outside it is not
+// "unknown" to nav2_collision_monitor, it is a broken sensor, so the publisher
+// clamps into this range rather than emitting -1 (see main.cpp).
+#ifndef FAKE_SONAR_MIN_RANGE_M
+#define FAKE_SONAR_MIN_RANGE_M 0.02f
+#endif
+#ifndef FAKE_SONAR_MAX_RANGE_M
+#define FAKE_SONAR_MAX_RANGE_M 4.0f
+#endif
 
 #ifndef FAKE_ROBOT_RADIUS
 // How close the simulated robot's CENTRE may get to a simulated wall.
@@ -248,6 +257,12 @@ private:
     float wall_y1_ = (float)FAKE_WALL_Y1;
     float wall_x2_ = (float)FAKE_WALL_X2;
     float wall_y2_ = (float)FAKE_WALL_Y2;
+    // How close the simulated robot's centre may come to a wall. A robot fact,
+    // so it arrives the way every other robot fact does -- through the env at
+    // flash time -- and NOT baked into the image: a released image is built
+    // for a silicon, not for a robot, and it cannot know what it will be
+    // bolted to. The macro is the fallback for a board with a blank env.
+    float robot_radius_ = (float)FAKE_ROBOT_RADIUS;
 
     // Current robot pose in global world frame
     float pose_x_ = 0.0f;
@@ -383,6 +398,7 @@ public:
         wall_y1_ = envFloat("fake_wall_y1", wall_y1_);
         wall_x2_ = envFloat("fake_wall_x2", wall_x2_);
         wall_y2_ = envFloat("fake_wall_y2", wall_y2_);
+        robot_radius_ = envFloat("fake_radius", robot_radius_);
     }
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
@@ -474,8 +490,8 @@ public:
     // Returns true when the pose had to be moved.
     bool clampToRoom(float &x, float &y) const
     {
-        const float lim_x = map_w_ * 0.5f - (float)FAKE_ROBOT_RADIUS;
-        const float lim_y = map_h_ * 0.5f - (float)FAKE_ROBOT_RADIUS;
+        const float lim_x = map_w_ * 0.5f - robot_radius_;
+        const float lim_y = map_h_ * 0.5f - robot_radius_;
         const float in_x = x, in_y = y;
         if (x > lim_x) x = lim_x;
         if (x < -lim_x) x = -lim_x;
@@ -495,7 +511,7 @@ public:
         return (x != in_x) || (y != in_y);
     }
 
-    // Push a point out to FAKE_ROBOT_RADIUS from a segment, if it is inside.
+    // Push a point out to the robot radius from a segment, if it is inside.
     // `px, py` is where the robot was last cycle, and it decides WHICH SIDE it
     // leaves by: taking that from the current position instead ejects a robot
     // whose centre has just crossed the line out of the FAR side -- through the
@@ -508,7 +524,7 @@ public:
                                float x1, float y1, float x2, float y2,
                                float px, float py)
     {
-        const float r = (float)FAKE_ROBOT_RADIUS;
+        const float r = robot_radius_;
         const float sx = x2 - x1, sy = y2 - y1;
         const float len2 = sx * sx + sy * sy;
 
