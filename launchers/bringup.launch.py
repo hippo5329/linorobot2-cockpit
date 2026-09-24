@@ -19,7 +19,7 @@ import yaml
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -395,6 +395,35 @@ def launch_setup(context, *args, **kwargs):
             parameters=[ekf_params_path],
             remappings=[("odometry/filtered", "odom")],
         ),
+        # 2b. The base itself, simulated on this computer.
+        #
+        # `fake_base` replaces the microcontroller entirely: no agent, no serial
+        # port, no board. It publishes odom/unfiltered and imu/data from the same
+        # wheel model the firmware runs (scripts/fake_base_node.py imports the
+        # transcription in drivetrain_report.py), so the rest of the stack -- EKF,
+        # SLAM, Nav2, and fake_laser_node raycasting from the odometry -- is
+        # unchanged and unaware.
+        #
+        # It is a diagnostic instrument and a CI leg, NOT a substitute for the
+        # board matrix: what it removes is micro-ROS, the transport and the
+        # board's timing, which is a large part of what those legs test. The gate
+        # stays on hardware.
+        Node(
+            condition=IfCondition(LaunchConfiguration("fake_base")),
+            executable=sys.executable,
+            arguments=[os.path.join(REPO_ROOT, "scripts", "fake_base_node.py")],
+            name="fake_base_node",
+            output="screen",
+            # The same config the rest of this launch was built from, and the
+            # same Twist-vs-TwistStamped decision Nav2 is making: Lyrical
+            # defaults to stamped, Jazzy to plain, and a base subscribing to the
+            # wrong one is silently deaf.
+            parameters=[{"params": config_file,
+                         "stamped_cmd_vel": (
+                             context.launch_configurations.get(
+                                 "distro", os.environ.get("ROS_DISTRO", "jazzy")
+                             ).strip().lower() == "lyrical")}],
+        ),
         # 3. Micro-ROS Agent (Serial or UDP)
         # ExecuteProcess, not Node, on purpose: launch_ros always appends "--ros-args"
         # (plus "-r __node:=..." when the node is named) to a Node's argv, and the
@@ -402,7 +431,12 @@ def launch_setup(context, *args, **kwargs):
         # "*** stack smashing detected ***" before it ever opens the serial port.
         # `ros2 run` passes the arguments through untouched.
         ExecuteProcess(
-            condition=IfCondition(LaunchConfiguration("micro_ros")),
+            # UnlessCondition on fake_base as well: with the base simulated there
+            # is no board for the agent to talk to, and an agent holding a serial
+            # port that nothing answers is a 30 s wait and a confusing log.
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration("micro_ros"), "'.lower() in ('true','1','yes') and ",
+                "'", LaunchConfiguration("fake_base"), "'.lower() not in ('true','1','yes')"])),
             cmd=["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
@@ -585,6 +619,13 @@ def generate_launch_description():
             "micro_ros",
             default_value="true",
             description="Start micro_ros_agent node",
+        ),
+        DeclareLaunchArgument(
+            "fake_base",
+            default_value="false",
+            description="Simulate the base on this computer instead of talking to a "
+                        "microcontroller: no agent, no serial port, no board. Diagnostic "
+                        "and CI use; the release gate still runs on hardware",
         ),
         DeclareLaunchArgument(
             "madgwick",
