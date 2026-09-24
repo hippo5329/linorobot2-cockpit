@@ -149,3 +149,46 @@ def test_coherence_is_unjudgeable_rather_than_false_without_inputs():
     node = _Node(**FALSE_RED)
     node._offset = None
     assert tng._pose_is_coherent(node) is None
+
+
+def test_an_unacknowledged_goal_is_not_scored_as_navigation():
+    """The third outcome of the acceptance handshake, which used to fall through.
+
+    `send_goal_async` resolves into exactly one of three states, and the retry
+    logic only ever handled two:
+
+        accepted   navigate, and judge what happens
+        rejected   wait and ask once more (a rejection right after the previous
+                   leg is the handshake, not the navigation)
+        NEITHER    ...fell straight through to await_arrival, which started the
+                   leg's clock on a goal bt_navigator had not taken yet
+
+    Round 157 of the 2026-09-24 soak is that third case: bt_navigator logged
+    `Timed out while waiting for action server to acknowledge goal request for
+    compute_path_to_pose`, and the leg was reported as a navigation failure
+    (`error_code=107`) after 0 s with 0.000 m traversed. The planner had no goal
+    to work on, so nothing in that verdict was about the robot.
+
+    This is a source-level check because the branch lives inside run_test's loop,
+    which needs a live action client to exercise; the rule is still worth pinning
+    down, and its absence is what the soak paid for.
+    """
+    import re
+
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "scripts", "test_nav2_goal.py"), encoding="utf-8").read()
+
+    assert "ACCEPT_GRACE_S" in src, "no grace period for a slow acknowledgement"
+    # The shape that matters: a `neither` test must exist BEFORE the rejection
+    # branch, so the fall-through cannot come back by someone reordering it.
+    neither = src.find("if not (node.goal_accepted or node.goal_rejected):")
+    rejected = src.find("if node.goal_rejected:\n                print(")
+    assert neither != -1, "the neither-accepted-nor-rejected case is unhandled again"
+    assert rejected == -1 or neither < rejected, \
+        "the unacknowledged case must be settled before the leg is judged"
+    # And it must refuse the leg rather than silently navigate on.
+    tail = src[neither:neither + 1600]
+    assert "NOT ACKNOWLEDGED" in tail, \
+        "an unacknowledged goal must be reported as such, not as a navigation failure"
+    assert "Nothing here is about the robot" in tail, \
+        "the line must say the verdict is not the robot's, or it will be read as one"

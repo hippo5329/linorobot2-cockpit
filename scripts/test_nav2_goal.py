@@ -134,6 +134,12 @@ LEG_SETTLE_SEC = 0.5
 # behaviour visible before there is a robot to be hurt by it.
 RUNAWAY_RADIUS_M = 6.0
 
+# How much longer to wait for bt_navigator to acknowledge a goal after the first
+# 5 s. Generous on purpose: the cost of waiting is seconds on one leg of a soak,
+# and the cost of not waiting is a red charged to the robot for a handshake that
+# was merely slow.
+ACCEPT_GRACE_S = 25.0
+
 # How much TF history has to exist before the first goal is dispatched, and how
 # long to wait for it. Lifecycle "active" says every node configured and
 # activated; it does not say the transform tree is assembled. Measured on
@@ -1248,6 +1254,28 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             t_acc = time.time()
             while time.time() - t_acc < 5 and not (node.goal_accepted or node.goal_rejected):
                 rclpy.spin_once(node, timeout_sec=0.2)
+            # The THIRD outcome, which used to fall through as though the goal were
+            # under way: neither accepted nor rejected within 5 s. That is a slow
+            # handshake, not a verdict -- bt_navigator logs it as "Timed out while
+            # waiting for action server to acknowledge goal request for
+            # compute_path_to_pose", and it cost round 157 of the 2026-09-24 soak.
+            # Falling through started the leg's clock on a goal the server had not
+            # yet taken, so the timeout was charged to navigation that had not begun.
+            # Wait the rest of the way instead: an unacknowledged goal is the
+            # handshake being slow, and the retry below is for a REFUSED one.
+            if not (node.goal_accepted or node.goal_rejected):
+                print(f"   leg {i}/{n}: no acknowledgement after 5 s; the handshake is "
+                      f"slow, not the navigation. Waiting up to {ACCEPT_GRACE_S:.0f} s more.")
+                t_g = time.time()
+                while time.time() - t_g < ACCEPT_GRACE_S and not (node.goal_accepted
+                                                                 or node.goal_rejected):
+                    rclpy.spin_once(node, timeout_sec=0.2)
+                if not (node.goal_accepted or node.goal_rejected):
+                    print(f"❌ NAV2 GOAL NOT ACKNOWLEDGED on leg {i}/{n} "
+                          f"({gx:.2f}, {gy:.2f}) after {5 + ACCEPT_GRACE_S:.0f} s: "
+                          f"bt_navigator never answered send_goal, so this leg never "
+                          f"started. Nothing here is about the robot.")
+                    return False
             if node.goal_rejected:
                 print(f"   leg {i}/{n}: bt_navigator rejected the goal; waiting 5 s and asking once more.")
                 t_w = time.time()
