@@ -222,6 +222,44 @@ def decode(blob: bytes) -> dict:
 
 
 # ---------------------------------------------------------------------- build
+def _refuse_pre_rename_config(params: dict, path: str) -> None:
+    """A config written before the sim_ rename must not be read as a blank one.
+
+    The simulation flags were `use_fake_*` until 2026-09-24. Every reader here tests
+    for the key by name (`if "use_sim_ld19" in sensors`), so an old config does not
+    fail -- the key is simply absent, the flag falls back to a compiled-in default,
+    and a bare module is flashed to expect hardware that is not fitted. That is the
+    exact shape this project keeps paying for: an unrecognised key is not an error,
+    it is a default silently taken.
+
+    Refusing rather than translating is deliberate. A silent translation would let
+    two spellings live indefinitely, and the second one only ever surfaces when
+    somebody has already spent an afternoon on a board that will not see its IMU.
+    The fix is one search-and-replace in the user's own file, so say exactly that.
+    """
+    stale = []
+
+    def walk(node, trail):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key.startswith("use_fake_"):
+                    stale.append(".".join(trail + [key]))
+                walk(value, trail + [str(key)])
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, trail)
+
+    walk(params, [])
+    if stale:
+        sys.exit(
+            f"mcu_env: {path} predates the sim_ rename and would be read as a config "
+            f"with NO simulation flags set.\n"
+            f"  found: {', '.join(sorted(stale))}\n"
+            f"  Rename use_fake_* to use_sim_* in that file (nothing else changed).\n"
+            f"  Refused rather than guessed: an absent flag is a compiled-in default, "
+            f"so a bare module would be flashed to expect hardware it does not have.")
+
+
 def env_from_config(params_path: str, secrets_path: str, default_host: str = None) -> dict:
     """The environment a robot config and its secrets.yaml imply.
 
@@ -231,6 +269,7 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
     """
     params = load_yaml(params_path)
     secrets = load_yaml(secrets_path)
+    _refuse_pre_rename_config(params, params_path)
     tgt = params.get("base_controller", {}) or {}
 
     wifi = secrets.get("wifi", {}) or {}
