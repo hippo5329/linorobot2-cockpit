@@ -249,3 +249,106 @@ def test_the_noise_constants_come_from_the_firmware_header():
     for key in ("gyro_bias", "gyro_drift", "gyro_noise", "accel_noise",
                 "scale_error", "noise_rpm"):
         assert f"d['{key}']" in src, key
+
+
+# --- the link ----------------------------------------------------------------
+#
+# The boardless stack passed an eight-leg run that three boards were failing,
+# and the difference is not the robot: the model, the kinematics, the limits and
+# the planner are the same code. What the host lacks is micro-ROS over a wire.
+# On a board /odom is STAMPED when the wheels were read and ARRIVES some
+# milliseconds later, and that gap is what the TF buffer, the EKF and the
+# controller contend with.
+
+def test_a_link_defaults_to_nothing():
+    """Zero delay, zero jitter, publish immediately -- so adding this changed no
+    existing result, including the 6/6 host matrix."""
+    w = fb.Wire()
+    assert w.instant
+    seen = []
+    w.send(0.0, lambda: seen.append("now"))
+    assert seen == ["now"], "a zero-delay link must not queue"
+
+
+def test_a_delayed_message_is_held_back_and_then_delivered():
+    w = fb.Wire(0.020)
+    seen = []
+    w.send(0.0, lambda: seen.append(1))
+    w.pump(0.010)
+    assert seen == [], "delivered early"
+    w.pump(0.021)
+    assert seen == [1]
+
+
+def test_the_link_never_reorders_even_when_jitter_exceeds_the_gap():
+    """A serial stream and an XRCE session deliver in order. Jitter varies the
+    gap between arrivals, not their order -- a link that shuffles packets is a
+    different fault, and modelling one would invent a failure the bench cannot
+    have."""
+    import random
+    random.seed(7)
+    w = fb.Wire(0.020, 0.050)          # jitter far wider than the 20 ms gap
+    seen = []
+    for i in range(20):
+        w.send(i * 0.02, (lambda n: lambda: seen.append(n))(i))
+    t = 0.0
+    while t < 2.0:
+        w.pump(t)
+        t += 0.002
+    assert len(seen) == 20, seen
+    assert seen == sorted(seen), "the link reordered"
+
+
+def test_jitter_actually_varies_the_arrivals():
+    import random
+    random.seed(3)
+    w = fb.Wire(0.050, 0.020)
+    gaps = []
+    prev = None
+    for i in range(30):
+        w.send(i * 0.02, lambda: None)
+    for due, _ in w.queue:
+        if prev is not None:
+            gaps.append(round(due - prev, 6))
+        prev = due
+    assert len(set(gaps)) > 1, "every gap identical -- jitter is not applied"
+
+
+def test_the_stamp_stays_the_sample_time():
+    """Publishing late with a late stamp hides the very thing this reproduces:
+    an extrapolation request into a buffer whose newest entry is older than the
+    controller expects, which is the shape of every 102/103 chased here."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    tick = src[src.index("def _tick"):]
+    # The stamp is taken once, from the clock, before anything is queued.
+    assert "stamp = now.to_msg()" in tick
+    assert "self.wire.send(" in tick
+    # ...and nothing re-stamps on the way out.
+    assert "header.stamp = self.get_clock" not in tick
+
+
+def test_the_tf_goes_through_the_same_link_as_the_odometry():
+    """A TF that arrives instantly while the odometry it describes is late is a
+    robot whose transform predicts the future."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    tick = src[src.index("def _tick"):]
+    assert "self.wire.send(mono, lambda m=t: self.tf.sendTransform(m))" in tick
+    assert "self.tf.sendTransform(t)" not in tick, "the TF bypasses the link"
+
+
+def test_the_link_uses_a_monotonic_clock():
+    """It models wall time on a wire. A simulated or stepped ROS clock would
+    stall the link rather than the robot."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    assert "time.monotonic()" in src
+
+
+def test_the_link_can_be_set_from_the_config_as_well_as_a_parameter():
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    assert 'declare_parameter("transport_delay_ms"' in src
+    assert 'declare_parameter("transport_jitter_ms"' in src
+    assert 'sim.get(key, 0.0)' in src, "the config's simulation block is ignored"

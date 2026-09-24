@@ -30,6 +30,7 @@ import math
 import os
 import random
 import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
@@ -178,6 +179,65 @@ def target_rpm(d, vx, vy, wz):
     return [min(max(w, -max_rpm), max_rpm) for w in combos]
 
 
+class Wire:
+    """The link between the board and the computer: latency, and jitter on it.
+
+    Why this exists. The boardless stack passed an eight-leg Nav2 run that three
+    boards were failing, and the difference is not the robot -- the model, the
+    kinematics, the limits and the planner are all the same code. What the host
+    does not have is micro-ROS over a serial or Wi-Fi link: on a board, `/odom`
+    is STAMPED when the wheels were read and ARRIVES some milliseconds later,
+    and that gap is what the TF buffer, the EKF and the controller actually
+    contend with. A publisher with zero latency is a robot nobody can build.
+
+    Two properties of a real link are modelled, and one is deliberately not:
+
+      delay    the stamp stays the SAMPLE time and the message is held back.
+               Publishing late with a late stamp would hide the very thing this
+               reproduces -- an extrapolation request into a buffer whose newest
+               entry is older than the controller expects, which is the shape of
+               every 102/103 this project has chased.
+      jitter   the gap between arrivals varies. Bus contention, the agent's
+               scheduling, the board's loop competing with the radio.
+      ORDER    is preserved, always. A serial stream and an XRCE session deliver
+               in order; a link that reorders is a different fault and modelling
+               one here would invent a failure the bench cannot have. Jitter
+               therefore moves each arrival no earlier than the one before it.
+
+    Defaults to zero -- no delay, no jitter, publish immediately -- so it changes
+    nothing until somebody asks for it. The number to put here is a MEASURED
+    round-trip on a board, and nobody has measured one yet; sweeping it is how
+    you find out how much latency the stack tolerates before the gate goes red.
+    """
+
+    def __init__(self, delay_s=0.0, jitter_s=0.0):
+        self.delay = max(float(delay_s), 0.0)
+        self.jitter = max(float(jitter_s), 0.0)
+        self.queue = []
+        self.last_due = 0.0
+
+    @property
+    def instant(self):
+        return self.delay <= 0.0 and self.jitter <= 0.0
+
+    def send(self, now, publish):
+        if self.instant:
+            publish()
+            return
+        due = now + self.delay + random.uniform(-self.jitter, self.jitter)
+        # In order, never earlier than the previous message. This is the whole
+        # difference between "a slow link" and "a link that shuffles packets",
+        # and only the first one is real here.
+        due = max(due, self.last_due, now)
+        self.last_due = due
+        self.queue.append((due, publish))
+
+    def pump(self, now):
+        while self.queue and self.queue[0][0] <= now:
+            _, publish = self.queue.pop(0)
+            publish()
+
+
 class FakeBaseNode(Node):
     def __init__(self):
         super().__init__("fake_base_node")
@@ -185,6 +245,10 @@ class FakeBaseNode(Node):
         self.declare_parameter("stamped_cmd_vel", False)
         self.declare_parameter("rate", 50.0)          # CONTROL_TIMER, 50 Hz
         self.declare_parameter("publish_tf", True)
+        # Milliseconds, because that is the unit anybody reasoning about a
+        # serial link thinks in. -1 means "take it from the config".
+        self.declare_parameter("transport_delay_ms", -1.0)
+        self.declare_parameter("transport_jitter_ms", -1.0)
 
         path = str(self.get_parameter("params").value)
         if not path or not os.path.isfile(path):
@@ -215,6 +279,19 @@ class FakeBaseNode(Node):
         else:
             self.create_subscription(Twist, "cmd_vel", self._cmd, 10)
 
+        # The link, from the ROS parameter if given, else from the robot's own
+        # `simulation` block, else zero -- the same precedence every other knob
+        # in this project follows.
+        sim = (params.get("base_controller") or {}).get("simulation") or {}
+
+        def _link(param, key):
+            got = float(self.get_parameter(param).value)
+            if got < 0.0:
+                got = float(sim.get(key, 0.0) or 0.0)
+            return max(got, 0.0) / 1000.0
+
+        self.wire = Wire(_link("transport_delay_ms", "transport_delay_ms"),
+                         _link("transport_jitter_ms", "transport_jitter_ms"))
         self.imu = FakeIMU(self.d)
         self.cmd = (0.0, 0.0, 0.0)
         self.cmd_time = self.get_clock().now()
@@ -226,7 +303,10 @@ class FakeBaseNode(Node):
         self.get_logger().info(
             f"fake base: {self.d['base']}, {self.d['wheels']} wheels, "
             f"{self.d['mass']:.1f} kg, turns on {self.d['radius']:.4f} m, "
-            f"budget {self.d['command_rpm']:.0f} rpm, at {rate:.0f} Hz")
+            f"budget {self.d['command_rpm']:.0f} rpm, at {rate:.0f} Hz"
+            + ("" if self.wire.instant else
+               f", link {self.wire.delay * 1000:.0f} +/- "
+               f"{self.wire.jitter * 1000:.0f} ms"))
 
     def _cmd(self, msg):
         self.cmd = (msg.linear.x, msg.linear.y, msg.angular.z)
@@ -238,6 +318,11 @@ class FakeBaseNode(Node):
 
     def _tick(self):
         now = self.get_clock().now()
+        # The wire runs on a monotonic clock, not the ROS one: it models wall
+        # time on a wire, and a simulated or stepped ROS clock would stall the
+        # link rather than the robot.
+        mono = time.monotonic()
+        self.wire.pump(mono)
         # The firmware's 200 ms command timeout. Without it a node that stops
         # publishing leaves the simulated robot driving for ever, which is a
         # failure mode the board does not have and would send someone hunting a
@@ -277,7 +362,7 @@ class FakeBaseNode(Node):
         odom.twist.twist.linear.x = meas_x
         odom.twist.twist.linear.y = meas_y
         odom.twist.twist.angular.z = meas_wz
-        self.odom_pub.publish(odom)
+        self.wire.send(mono, lambda m=odom: self.odom_pub.publish(m))
 
         imu = Imu()
         imu.header.stamp = stamp
@@ -289,7 +374,7 @@ class FakeBaseNode(Node):
         imu.angular_velocity.z = gyro_z
         imu.linear_acceleration.x = accel_x
         imu.linear_acceleration.z = 9.81
-        self.imu_pub.publish(imu)
+        self.wire.send(mono, lambda m=imu: self.imu_pub.publish(m))
         self.prev_vx = meas_x
 
         if self.tf is not None:
@@ -303,7 +388,11 @@ class FakeBaseNode(Node):
             t.transform.rotation.y = qy
             t.transform.rotation.z = qz
             t.transform.rotation.w = qw
-            self.tf.sendTransform(t)
+            # Through the SAME link. A TF that arrives instantly while the
+            # odometry it describes is late is not a robot -- it is a robot
+            # whose transform predicts the future, and it would paper over
+            # exactly the extrapolation the delay is here to reproduce.
+            self.wire.send(mono, lambda m=t: self.tf.sendTransform(m))
 
 
 def main():
