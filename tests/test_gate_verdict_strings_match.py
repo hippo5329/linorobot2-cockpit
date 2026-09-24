@@ -112,3 +112,26 @@ def test_a_verdict_does_not_name_the_firmware_with_a_pair_of_expansions():
                 continue
             assert not (":+" in line and ":-" in line), (
                 f"{name}:{i} picks a name with a :+/:- pair, which expands to both")
+
+
+def test_the_gate_says_which_attempt_a_leg_passed_on():
+    """Ten green has never meant the same thing for every leg.
+
+    one_leg.sh gives the RP2 legs two attempts, for one documented reason: a
+    board wedged in checkSerialReset()'s while(1) reboots on its watchdog in
+    ~8 s, so a second attempt meets a recovered board. No other leg in the
+    matrix gets one, and gate_check.sh printed PASS either way -- so the
+    first-pass rate was invisible.
+
+    Classified across the bench's history, the failed RP2 first attempts are 4
+    FLASH FAILED against 39 goal NOT REACHED, 22 RAN AWAY, 22 other pipeline
+    exits and 6 stacks that never activated: the retry was absorbing 93
+    navigation and stack failures, one of which was the simulated-wheel
+    integration defect. Narrowing it is a policy decision. Reporting it is not.
+    """
+    src = _read("gate_check.sh")
+    assert "attempt " in src and "PASS on attempt" in src, \
+        "the verdict no longer names the attempt a leg passed on"
+    assert "retried=$((retried+1))" in src, "retries are not counted"
+    assert "only on a second attempt" in src, \
+        "the slice summary does not say how many legs needed a retry"
