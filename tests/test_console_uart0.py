@@ -46,6 +46,13 @@ def test_every_translation_unit_that_prints_reaches_the_wrapper():
     for dirpath, _, files in os.walk(FW):
         if ".pio" in dirpath or os.sep + "examples" in dirpath:
             continue
+        # firmware/host/ is the robot computer, not a board: there is no
+        # CDC-vs-UART0 choice to make there, and `Serial` in its shim IS stdout
+        # (that is the shim's whole job). The wrapper this test guards only
+        # exists where a board has two possible consoles. Scoped to host/shim so
+        # a real translation unit can never hide behind it.
+        if os.path.join("host", "shim") in dirpath:
+            continue
         for f in files:
             if not f.endswith((".cpp", ".h", ".ino")):
                 continue

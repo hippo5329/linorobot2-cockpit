@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lino_host_probe</name>
+  <version>0.0.1</version>
+  <description>A genuine micro-ROS UDP4 client on Linux, to verify the transport.</description>
+  <maintainer email="hippo5329@gmail.com">Thomas Chou</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rcl</depend>
+  <depend>rclc</depend>
+  <depend>rmw_microxrcedds</depend>
+  <depend>microxrcedds_client</depend>
+  <depend>std_msgs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
