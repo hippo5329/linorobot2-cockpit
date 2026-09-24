@@ -135,8 +135,8 @@ def launch_setup(context, *args, **kwargs):
 
     lidar_cfg = controller.get("lidar", {})
     # A robot whose config carries no lidar: block has no scan source at all.
-    # On a 921600-baud serial ESP32 that is the only supported fake-mode shape:
-    # the fake LD19 cannot ride the micro-ROS link and a bare DevKit has no
+    # On a 921600-baud serial ESP32 that is the only supported sim-mode shape:
+    # the sim LD19 cannot ride the micro-ROS link and a bare DevKit has no
     # LIDAR_RXD bridge, so the robot runs teleop only. Starting a driver anyway
     # would leave it blocked forever on an empty tty and publish no /scan.
     robot_has_lidar = bool(lidar_cfg)
@@ -167,12 +167,12 @@ def launch_setup(context, *args, **kwargs):
     )
     effective_lidar_comm_mode = "udp_server" if lidar_comm_mode in ("udp", "udp_server") else lidar_comm_mode
 
-    # Should the host-side fake laser (the "virtual room") stand in for a real
-    # driver? Only when the scan is meant to be faked (use_fake_ld19), and:
+    # Should the host-side sim laser (the "virtual room") stand in for a real
+    # driver? Only when the scan is meant to be simd (use_sim_ld19), and:
     #   - the comm mode is not a real serial tty, or
     #   - it *is* serial but that tty is absent.
     # A `serial` comm_mode says LD19 packets arrive on a real port, and on the
-    # gendrv bench the ESP32 itself emits fake_ld19 out LIDAR_RXD into a
+    # gendrv bench the ESP32 itself emits sim_ld19 out LIDAR_RXD into a
     # USB-serial bridge -- so when that bridge is present the real driver must
     # read it, and routing to the host node would bypass the very driver path
     # under test. But a *bare* module has only its one micro-ROS USB and no such
@@ -181,8 +181,8 @@ def launch_setup(context, *args, **kwargs):
     # bench. Falling back to the virtual room only when the port is absent keeps
     # the bench-with-a-bridge case byte-identical while letting a bare module
     # preview SLAM/Nav2 in pure simulation.
-    use_host_fake_laser = (
-        controller.get("sensors", {}).get("use_fake_ld19", False)
+    use_host_sim_laser = (
+        controller.get("sensors", {}).get("use_sim_ld19", False)
         and (
             effective_lidar_comm_mode != "serial"
             or not os.path.exists(lidar_port)
@@ -249,22 +249,22 @@ def launch_setup(context, *args, **kwargs):
                              ("world_frame", "odom"), ("map_frame", "map")):
             rp[key] = frame_prefix + str(rp.get(key, default))
     imu_sensor = controller.get("sensors", {}).get("imu", "NONE")
-    use_fake_imu = controller.get("sensors", {}).get("use_fake_imu", False)
-    has_imu = (imu_sensor != "NONE") or use_fake_imu
+    use_sim_imu = controller.get("sensors", {}).get("use_sim_imu", False)
+    has_imu = (imu_sensor != "NONE") or use_sim_imu
 
     mag_sensor = controller.get("sensors", {}).get("mag", "NONE")
-    use_fake_mag = controller.get("sensors", {}).get("use_fake_mag", False)
+    use_sim_mag = controller.get("sensors", {}).get("use_sim_mag", False)
     use_mag_arg = context.launch_configurations.get("use_mag", "")
     if use_mag_arg != "":
         use_mag = (use_mag_arg.lower() in ("true", "1", "yes"))
     else:
         # The simulated magnetometer is fused, not just published. This used to
-        # read `mag_sensor != "NONE" and not use_fake_mag`, which excluded the
-        # fake mag on purpose -- from the era when it pointed along +X and gave
-        # madgwick a fixed 90-degree error (see FakeIMUFromWheels::applyMag).
+        # read `mag_sensor != "NONE" and not use_sim_mag`, which excluded the
+        # sim mag on purpose -- from the era when it pointed along +X and gave
+        # madgwick a fixed 90-degree error (see SimIMUFromWheels::applyMag).
         # The mag now points North and is rotated by the wheel heading for
         # exactly one reason: to anchor heading fusion to the simulated room.
-        # Left out of the fusion, madgwick integrates the gyro alone, the fake
+        # Left out of the fusion, madgwick integrates the gyro alone, the sim
         # gyro's bias walks onto its +-0.004 rad/s clamp and stays there
         # (13.7 deg/min), the EKF takes madgwick's yaw as absolute, and the
         # body -- which follows the WHEEL yaw -- ends up 52 degrees from where
@@ -285,9 +285,9 @@ def launch_setup(context, *args, **kwargs):
         # without heading anchoring -- degraded, but a working stack that says
         # so. So AUTO resolves to false and names what to do about it.
         auto_mag = str(mag_sensor).strip().upper() in ("AUTO", "")
-        use_mag = (not auto_mag and str(mag_sensor).upper() != "NONE") or bool(use_fake_mag)
+        use_mag = (not auto_mag and str(mag_sensor).upper() != "NONE") or bool(use_sim_mag)
 
-    if auto_mag and not use_fake_mag:
+    if auto_mag and not use_sim_mag:
         print("[bringup] sensors.mag is AUTO: heading fusion is OFF. The bus decides "
               "whether a magnetometer exists and this launch cannot see it, so fusing "
               "would risk starving /imu/data entirely. Name the part (mag: AK09918) "
@@ -356,7 +356,7 @@ def launch_setup(context, *args, **kwargs):
                 # ENU: x east, y north, z up (StatelessOrientation::
                 # computeOrientation). It is imu_filter_madgwick's default
                 # TODAY, and the default it derives heading from is exactly what
-                # FakeIMUFromWheels::applyMag points its world field along
+                # SimIMUFromWheels::applyMag points its world field along
                 # (+Y = north). Pinned rather than inherited because this
                 # package's default was NWU before it was ENU, and a silent
                 # change of convention turns every fused heading 90 degrees
@@ -397,11 +397,11 @@ def launch_setup(context, *args, **kwargs):
         ),
         # 2b. The base itself, simulated on this computer.
         #
-        # `fake_base` replaces the microcontroller entirely: no agent, no serial
+        # `sim_base` replaces the microcontroller entirely: no agent, no serial
         # port, no board. It publishes odom/unfiltered and imu/data from the same
-        # wheel model the firmware runs (scripts/fake_base_node.py imports the
+        # wheel model the firmware runs (scripts/sim_base_node.py imports the
         # transcription in drivetrain_report.py), so the rest of the stack -- EKF,
-        # SLAM, Nav2, and fake_laser_node raycasting from the odometry -- is
+        # SLAM, Nav2, and sim_laser_node raycasting from the odometry -- is
         # unchanged and unaware.
         #
         # It is a diagnostic instrument and a CI leg, NOT a substitute for the
@@ -409,10 +409,10 @@ def launch_setup(context, *args, **kwargs):
         # board's timing, which is a large part of what those legs test. The gate
         # stays on hardware.
         Node(
-            condition=IfCondition(LaunchConfiguration("fake_base")),
+            condition=IfCondition(LaunchConfiguration("sim_base")),
             executable=sys.executable,
-            arguments=[os.path.join(REPO_ROOT, "scripts", "fake_base_node.py")],
-            name="fake_base_node",
+            arguments=[os.path.join(REPO_ROOT, "scripts", "sim_base_node.py")],
+            name="sim_base_node",
             output="screen",
             # The same config the rest of this launch was built from, and the
             # same Twist-vs-TwistStamped decision Nav2 is making: Lyrical
@@ -431,12 +431,12 @@ def launch_setup(context, *args, **kwargs):
         # "*** stack smashing detected ***" before it ever opens the serial port.
         # `ros2 run` passes the arguments through untouched.
         ExecuteProcess(
-            # UnlessCondition on fake_base as well: with the base simulated there
+            # UnlessCondition on sim_base as well: with the base simulated there
             # is no board for the agent to talk to, and an agent holding a serial
             # port that nothing answers is a 30 s wait and a confusing log.
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration("micro_ros"), "'.lower() in ('true','1','yes') and ",
-                "'", LaunchConfiguration("fake_base"), "'.lower() not in ('true','1','yes')"])),
+                "'", LaunchConfiguration("sim_base"), "'.lower() not in ('true','1','yes')"])),
             cmd=["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
@@ -535,15 +535,15 @@ def launch_setup(context, *args, **kwargs):
                 Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
                     executable=sys.executable,
-                    arguments=[os.path.join(REPO_ROOT, "scripts", "fake_laser_node.py")],
-                    name="fake_laser_node",
+                    arguments=[os.path.join(REPO_ROOT, "scripts", "sim_laser_node.py")],
+                    name="sim_laser_node",
                     output="screen",
                     parameters=[{"frame_id": laser_frame,
                                  "offset_x": float(geometry["laser"]["x"])}],
                 )
                 # The virtual room stands in for the driver on a bare bench; see
-                # use_host_fake_laser above for why a present serial port is not.
-                if use_host_fake_laser
+                # use_host_sim_laser above for why a present serial port is not.
+                if use_host_sim_laser
                 else Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
                     package="ldlidar_stl_ros2",
@@ -621,7 +621,7 @@ def generate_launch_description():
             description="Start micro_ros_agent node",
         ),
         DeclareLaunchArgument(
-            "fake_base",
+            "sim_base",
             default_value="false",
             description="Simulate the base on this computer instead of talking to a "
                         "microcontroller: no agent, no serial port, no board. Diagnostic "

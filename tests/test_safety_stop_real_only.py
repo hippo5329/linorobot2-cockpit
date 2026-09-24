@@ -14,8 +14,8 @@ cannot cover that case because it IS the ROS side.
 
 It had never been enabled anywhere: mcu_env defaulted it to "0" and no
 reference config, doc or test asked for it. Now the one config with a real
-HC-SR04 wired turns it on -- and fake mode turns it back off, because
-main.cpp's range_fake raycasts the simulated room and a hazard stop must not
+HC-SR04 wired turns it on -- and sim mode turns it back off, because
+main.cpp's range_sim raycasts the simulated room and a hazard stop must not
 be exercised against an imaginary obstacle.
 """
 import os
@@ -59,20 +59,20 @@ def test_only_the_config_with_a_real_sonar_asks_for_it():
         assert not bc.get("safety_stop"), name
 
 
-def test_a_faked_range_disarms_it_however_the_config_asks():
-    """Fake mode overriding an explicit setting is the established rule for
-    every other fake_* key."""
-    env = {"fake_ld19": "1", "fake_sonar": "1", "safety_stop": "1"}
-    assert mcu_env._truthy(env["fake_ld19"]) and mcu_env._truthy(env["fake_sonar"])
+def test_a_simd_range_disarms_it_however_the_config_asks():
+    """Sim mode overriding an explicit setting is the established rule for
+    every other sim_* key."""
+    env = {"sim_ld19": "1", "sim_sonar": "1", "safety_stop": "1"}
+    assert mcu_env._truthy(env["sim_ld19"]) and mcu_env._truthy(env["sim_sonar"])
     src = open(os.path.join(ROOT, "scripts", "mcu_env.py"), encoding="utf-8").read()
-    assert 'if _truthy(env.get("fake_ld19")) and _truthy(env.get("fake_sonar")):' in src
+    assert 'if _truthy(env.get("sim_ld19")) and _truthy(env.get("sim_sonar")):' in src
     assert 'env["safety_stop"] = "0"' in src
 
 
 def test_the_rule_matches_the_firmwares_own():
-    """mcu_env mirrors range_fake; if one changes the other must."""
+    """mcu_env mirrors range_sim; if one changes the other must."""
     m = open(MAIN, encoding="utf-8").read()
-    assert 'range_fake = fake_lidar_on && envFlag("fake_sonar", true);' in m
+    assert 'range_sim = sim_lidar_on && envFlag("sim_sonar", true);' in m
 
 
 def test_only_forward_motion_is_blocked():

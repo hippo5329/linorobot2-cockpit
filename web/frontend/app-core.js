@@ -660,10 +660,10 @@ async function refreshStatus() {
       }
     }
 
-    if (s.fake_mode_active !== undefined && !window.hasSyncedFakeMode) {
-      window.hasSyncedFakeMode = true;
-      if (typeof updateFakeModeUI === "function") {
-        updateFakeModeUI(s.fake_mode_active);
+    if (s.sim_mode_active !== undefined && !window.hasSyncedSimMode) {
+      window.hasSyncedSimMode = true;
+      if (typeof updateSimModeUI === "function") {
+        updateSimModeUI(s.sim_mode_active);
       }
     }
     if (typeof updateBringupSummary === "function") {

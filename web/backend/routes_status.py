@@ -152,10 +152,10 @@ def get_status(controller: Optional[str] = None):
     board_id = _board_id_for_port(detected_port) if mcu_detected else None
 
     ctrl_sensors = controller.get("sensors", {}) or {}
-    fake_mode_active = bool(
-        ctrl_sensors.get("use_fake_wheel") or
-        ctrl_sensors.get("use_fake_imu") or
-        ctrl_sensors.get("use_fake_ld19")
+    sim_mode_active = bool(
+        ctrl_sensors.get("use_sim_wheel") or
+        ctrl_sensors.get("use_sim_imu") or
+        ctrl_sensors.get("use_sim_ld19")
     )
 
     # Ask the same list the bringup command itself sources, or the two disagree:
@@ -220,7 +220,7 @@ def get_status(controller: Optional[str] = None):
         "board_id": board_id,
         "host_ip": ports_info.get("host_ip", ""),
         "config_dir": display_path(CONFIG_DIR),
-        "fake_mode_active": fake_mode_active,
+        "sim_mode_active": sim_mode_active,
         "ros_distro": active_distro,
         "ros_distro_configured": configured,
         "ros_distro_override": distro_override,

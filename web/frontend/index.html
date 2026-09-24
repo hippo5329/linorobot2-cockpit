@@ -62,7 +62,7 @@
       <div class="preset-selector-group" title="Reference Build Presets — updates dynamically according to detected MCU type">
         <label for="preset-select" class="preset-label">⚡ Reference Build:</label>
         <select id="preset-select" class="preset-select">
-          <option value="bare" selected>🧩 Bare Module — all pins N/C (Safe Default / Fake Mode)</option>
+          <option value="bare" selected>🧩 Bare Module — all pins N/C (Safe Default / Sim Mode)</option>
         </select>
       </div>
 
@@ -74,7 +74,7 @@
       </button>
     </div>
 
-    <!-- Right Stack: Workflow Settings (ROS 2 Distro, Mode [Fake Default], Agent Engine, Registry, Detected MCU) -->
+    <!-- Right Stack: Workflow Settings (ROS 2 Distro, Mode [Sim Default], Agent Engine, Registry, Detected MCU) -->
     <div class="workflow-settings-stack">
       <div id="hdr-settings-rows" class="hdr-settings-rows" hidden>
       <div class="hdr-wf-row">
@@ -96,10 +96,10 @@
             <option value="podman">Podman</option>
           </select>
         </div>
-        <div class="hdr-field hdr-wf-field" title="Pipeline &amp; Bringup Mode (Fake / Zero-Wiring is Default)">
+        <div class="hdr-field hdr-wf-field" title="Pipeline &amp; Bringup Mode (Sim / Zero-Wiring is Default)">
           <label for="hdr-pipeline-mode">🚀 Sim/Real:</label>
           <select id="hdr-pipeline-mode" class="hdr-select">
-            <option value="fake" selected>Fake / Zero-Wiring (Default)</option>
+            <option value="sim" selected>Sim / Zero-Wiring (Default)</option>
             <option value="real">Real Hardware (Sensors &amp; Motors)</option>
             <option value="auto">Auto (detect by controller)</option>
           </select>
@@ -208,17 +208,17 @@
       </div>
     </div>
 
-    <!-- Fake Mode Simulation Preview Card (Active by Default) -->
-    <div class="card" id="fake-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
+    <!-- Sim Mode Simulation Preview Card (Active by Default) -->
+    <div class="card" id="sim-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:1.3rem;">✨</span>
-          <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="fake-mode-card-title">Fake Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
+          <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="sim-mode-card-title">Sim Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
         </div>
-        <span class="badge-pill badge-ok" id="fake-mode-state-badge" style="font-size:0.72rem; padding:2px 8px; font-weight:700;">Zero-Wiring Default ON</span>
+        <span class="badge-pill badge-ok" id="sim-mode-state-badge" style="font-size:0.72rem; padding:2px 8px; font-weight:700;">Zero-Wiring Default ON</span>
       </div>
-      <p class="hint" id="fake-mode-desc" style="color:#cbd5e1; margin:8px 0; line-height:1.5;">
-        Linorobot2 defaults to safe <b>Fake Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_FAKE_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_FAKE_IMU</code>), and simulated planar LiDAR scans (<code>USE_FAKE_LD19</code>).
+      <p class="hint" id="sim-mode-desc" style="color:#cbd5e1; margin:8px 0; line-height:1.5;">
+        Linorobot2 defaults to safe <b>Sim Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_SIM_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_SIM_IMU</code>), and simulated planar LiDAR scans (<code>USE_SIM_LD19</code>).
         This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.
       </p>
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px; margin-top:10px;">
@@ -234,12 +234,12 @@
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
         <div style="display:flex; gap:8px; align-items:center;">
-          <button type="button" id="btn-toggle-fake-mode" class="btn btn-secondary" title="Toggle Fake Mode off to begin designing real hardware">
-            ⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design
+          <button type="button" id="btn-toggle-sim-mode" class="btn btn-secondary" title="Toggle Sim Mode off to begin designing real hardware">
+            ⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design
           </button>
         </div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <button type="button" id="btn-jump-preview" class="btn btn-secondary btn-sm" title="Jump to SLAM &amp; Nav tab to preview mapping and navigation in fake simulation">
+          <button type="button" id="btn-jump-preview" class="btn btn-secondary btn-sm" title="Jump to SLAM &amp; Nav tab to preview mapping and navigation in sim simulation">
             🚀 Jump to SLAM / Nav2 Preview ➔
           </button>
         </div>
@@ -279,7 +279,7 @@
         </div>
 
         <!-- Motor performance, computed from the firmware's own drivetrain model
-             (firmware/common/lib/encoder/fake_wheel.h) rather than pi*d*rpm/60:
+             (firmware/common/lib/encoder/sim_wheel.h) rather than pi*d*rpm/60:
              a brushed DC torque-speed curve, gearbox efficiency, Coulomb drag,
              the pack's lagging sag and the bridge's losses. This is the answer
              flashing test_acc and driving the board used to be needed for. -->
@@ -325,7 +325,7 @@
              from -- it is what the robot does in the second a manoeuvre lasts,
              where the cards above are the asymptote it converges on given
              longer. Flashing test_acc is no longer how these are obtained; on a
-             fake-wheel board the tool now refuses and points here. -->
+             sim-wheel board the tool now refuses and points here. -->
         <div class="hud-subhead">
           <span class="hud-subtitle">📈 Simulated <code>test_acc</code> run</span>
           <span class="hint" style="margin:0;">what the tool would print — 20 ms samples, 1 s phases, no board</span>
@@ -569,7 +569,7 @@
       <div class="form-section">
         <h3 class="section-title">Load &amp; Drivetrain Losses</h3>
         <p class="hint" style="margin-bottom:12px;">Feeds the performance HUD at the top of this
-          tab, and the simulated drivetrain on a fake-wheel board. Leave a field blank to keep the
+          tab, and the simulated drivetrain on a sim-wheel board. Leave a field blank to keep the
           firmware's own default (shown as the placeholder). A heavier robot is slower AND sags its
           pack for longer, which is why the two numbers move together.</p>
         <div class="form-grid">
@@ -797,7 +797,7 @@
             <label for="cfg-imu" class="form-label">IMU <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
             <select id="cfg-imu" class="form-select font-mono">
               <option value="NONE">None</option>
-              <option value="FAKE">FAKE — simulated 6-DOF</option>
+              <option value="SIM">SIM — simulated 6-DOF</option>
               <option value="MPU6050">MPU6050 — 6-axis (0x68/0x69)</option>
               <option value="MPU9150">MPU9150 — 9-axis (MPU6050 silicon)</option>
               <option value="MPU9250">MPU9250 — 9-axis (0x68/0x69)</option>
@@ -813,7 +813,7 @@
             <label for="cfg-mag" class="form-label">Magnetometer <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
             <select id="cfg-mag" class="form-select font-mono">
               <option value="NONE">None</option>
-              <option value="FAKE">FAKE — simulated field</option>
+              <option value="SIM">SIM — simulated field</option>
               <option value="HMC5883L">HMC5883L (0x1E)</option>
               <option value="QMC5883L">QMC5883L (0x0D)</option>
               <option value="AK8963">AK8963 — inside an MPU9250</option>
@@ -831,7 +831,7 @@
             driver even when the selection above says otherwise — so a wrong choice
             costs a log line, not a boot loop. These values are what the board falls
             back to when nothing answers. Swapping an IMU needs no rebuild: every
-            driver is compiled into the image. Use <em>Fake Mode</em> below to force
+            driver is compiled into the image. Use <em>Sim Mode</em> below to force
             the simulated sensors on a board with nothing wired.
           </p>
           <p class="hint" style="margin:6px 0 0;">
@@ -961,24 +961,24 @@
         <p class="input-hint">Enables virtual software sensors on bench when physical sensors are not yet wired.</p>
         <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px,1fr));">
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
-            <input type="checkbox" id="chk-fake-imu" checked>
-            <span>Fake IMU</span>
+            <input type="checkbox" id="chk-sim-imu" checked>
+            <span>Sim IMU</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
-            <input type="checkbox" id="chk-fake-mag" checked>
-            <span>Fake Mag</span>
+            <input type="checkbox" id="chk-sim-mag" checked>
+            <span>Sim Mag</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
-            <input type="checkbox" id="chk-fake-wheel" checked>
-            <span>Fake Wheels</span>
+            <input type="checkbox" id="chk-sim-wheel" checked>
+            <span>Sim Wheels</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
-            <input type="checkbox" id="chk-fake-ld19" checked>
-            <span>Fake LD19</span>
+            <input type="checkbox" id="chk-sim-ld19" checked>
+            <span>Sim LD19</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
-            <input type="checkbox" id="chk-fake-env">
-            <span>Fake Env</span>
+            <input type="checkbox" id="chk-sim-env">
+            <span>Sim Env</span>
           </label>
         </div>
       </div>
@@ -1639,22 +1639,22 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
   <section class="tab-pane" id="tab-slam-nav">
 
-    <!-- Fake Mode Preview Callout in SLAM & Nav -->
-    <div class="card fake-mode-preview-callout" id="slam-fake-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
+    <!-- Sim Mode Preview Callout in SLAM & Nav -->
+    <div class="card sim-mode-preview-callout" id="slam-sim-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
         <div style="flex:1; min-width:280px;">
           <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Transition · Autonomy Preview</span>
           <h3 style="margin:4px 0 0; font-size:1.05rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
-            <span>✨ Finished Previewing Map / SLAM / Nav2 in Fake Mode?</span>
-            <span class="badge-pill badge-ok" id="slam-fake-mode-badge" style="font-size:0.72rem; padding:2px 8px;">Zero-Wiring Simulation Active</span>
+            <span>✨ Finished Previewing Map / SLAM / Nav2 in Sim Mode?</span>
+            <span class="badge-pill badge-ok" id="slam-sim-mode-badge" style="font-size:0.72rem; padding:2px 8px;">Zero-Wiring Simulation Active</span>
           </h3>
           <p class="hint" style="margin:4px 0 0; color:#cbd5e1;">
-            Once you have verified the simulated Map, SLAM, and Nav2 navigation on your bench, switch Fake Mode <b>OFF</b> to transition into detailed physical hardware design: motor drivers, encoder resolutions, physical pin matrices, and low-level diagnostic tests.
+            Once you have verified the simulated Map, SLAM, and Nav2 navigation on your bench, switch Sim Mode <b>OFF</b> to transition into detailed physical hardware design: motor drivers, encoder resolutions, physical pin matrices, and low-level diagnostic tests.
           </p>
         </div>
         <div>
-          <button type="button" class="btn btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700; padding:9px 18px;" title="Disable fake simulation and start real hardware design">
-            ⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design ➔
+          <button type="button" class="btn btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700; padding:9px 18px;" title="Disable sim simulation and start real hardware design">
+            ⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design ➔
           </button>
         </div>
       </div>
@@ -1686,7 +1686,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </label>
       </div>
       <p class="hint">The <b>Teleop</b> view is the one to use with a bare module running
-        <code>USE_FAKE_WHEEL</code> firmware: the fixed frame is <code>odom</code>, so the robot
+        <code>USE_SIM_WHEEL</code> firmware: the fixed frame is <code>odom</code>, so the robot
         is seen driving away from where it started, with odometry arrows tracing the path it
         thinks it took. Bare <code>rviz2</code> opens with nothing configured and will look
         empty while you drive.</p>
@@ -1981,7 +1981,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         terminal for <code>teleop_twist_keyboard</code>. Drag the stick (or use the arrow
         keys / WASD while it has focus) and the cockpit publishes <code>/cmd_vel</code> at
         20&nbsp;Hz. Pair it with the <b>Teleop</b> RViz view to watch the robot move,
-        which on a bare module running <code>USE_FAKE_WHEEL</code> firmware is the whole
+        which on a bare module running <code>USE_SIM_WHEEL</code> firmware is the whole
         robot: cmd_vel drives the simulated wheels and the odometry comes back.</p>
       <p class="hint"><b>Deadman built in</b> -- the robot is commanded to zero if this
         page stops sending for half a second, so closing the tab or losing Wi-Fi stops
@@ -2158,7 +2158,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
         <label>Bringup Mode
           <select id="cockpit-pipeline-mode" style="min-width:180px;">
-            <option value="fake" selected>Fake / Zero-Wiring (Default)</option>
+            <option value="sim" selected>Sim / Zero-Wiring (Default)</option>
             <option value="real">Real Physical Sensors via I2C</option>
             <option value="auto">Auto (detect by controller)</option>
           </select>
@@ -2204,16 +2204,16 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
 
       <!-- Post-Preview Hardware Design Callout -->
-      <div id="cockpit-fake-mode-banner" style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div id="cockpit-sim-mode-banner" style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div style="flex:1; min-width:260px;">
           <div style="display:flex; align-items:center; gap:6px;">
             <span style="font-weight:700;font-size:0.88rem;color:#38bdf8;">✨ Finished Previewing 1-Click Autonomy?</span>
-            <span class="badge-pill badge-ok" id="cockpit-fake-mode-badge" style="font-size:0.7rem; padding:1px 6px;">Fake Mode Active</span>
+            <span class="badge-pill badge-ok" id="cockpit-sim-mode-badge" style="font-size:0.7rem; padding:1px 6px;">Sim Mode Active</span>
           </div>
-          <span style="font-size:0.8rem;color:#cbd5e1;display:block;margin-top:2px;">Switch Fake Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
+          <span style="font-size:0.8rem;color:#cbd5e1;display:block;margin-top:2px;">Switch Sim Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
         </div>
         <button type="button" class="btn btn-sm btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4);font-weight:700;">
-          ⚡ Switch Fake OFF &amp; Design Hardware ➔
+          ⚡ Switch Sim OFF &amp; Design Hardware ➔
         </button>
       </div>
     </div>

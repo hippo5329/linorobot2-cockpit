@@ -1,6 +1,6 @@
 """The simulated base is the firmware's model, not a second one.
 
-scripts/fake_base_node.py publishes odom/unfiltered and imu/data from this
+scripts/sim_base_node.py publishes odom/unfiltered and imu/data from this
 computer, so SLAM and Nav2 run with no microcontroller. That is only worth
 having if it behaves like the board -- an instrument that disagrees with the
 thing it stands in for sends people hunting bugs that are not there.
@@ -22,7 +22,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
 import drivetrain_report as dr  # noqa: E402
-import fake_base_node as fb  # noqa: E402
+import sim_base_node as fb  # noqa: E402
 
 REF = os.path.join(REPO_ROOT, "config", "reference")
 
@@ -106,7 +106,7 @@ def test_the_wheels_are_read_back_through_the_kinematics():
     Here the yaw rate must come from the WHEELS, so a mecanum's (lr+fr)/2 and a
     differential's lr/2 produce measurably different motion for the same wheels.
     """
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     tick = src[src.index("def _tick"):]
     assert "dr._velocities(" in tick, "the base must read its wheels back"
@@ -141,7 +141,7 @@ def test_the_command_times_out_like_the_firmware():
     publisher that stops leaves the simulated robot driving for ever -- a failure
     mode the board does not have, which would send someone hunting a controller
     bug that is not there."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     assert "200_000_000" in src
     firmware = open(os.path.join(REPO_ROOT, "firmware", "src", "main.cpp"),
@@ -151,17 +151,17 @@ def test_the_command_times_out_like_the_firmware():
 
 
 def test_it_does_not_carry_its_own_wheel_model():
-    """One copy of the model. A second would drift from fake_wheel.h silently,
+    """One copy of the model. A second would drift from sim_wheel.h silently,
     and this node exists to be believed."""
-    src = _code_only(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
+    src = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
     assert "import drivetrain_report as dr" in src
     assert "dr._Wheel(" in src and "dr._Pack(" in src
-    for token in ("FAKE_", "gear_eff", "battery_sag", "math.exp"):
+    for token in ("SIM_", "gear_eff", "battery_sag", "math.exp"):
         assert token not in src, f"the node appears to model the wheel itself: {token}"
 
 
 def test_the_pid_is_the_firmwares_including_anti_windup():
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     step = src[src.index("    def step(self, target_rpm"):src.index("def target_rpm")]
     assert "i_max = pwm_max / abs(self.ki)" in step
@@ -171,19 +171,19 @@ def test_the_pid_is_the_firmwares_including_anti_windup():
 def test_bringup_can_run_without_a_board():
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py"),
                   encoding="utf-8").read()
-    assert '"fake_base"' in launch
-    assert "fake_base_node.py" in launch
+    assert '"sim_base"' in launch
+    assert "sim_base_node.py" in launch
     # ...and the agent must NOT start, or it holds a serial port nothing answers.
     agent = launch[launch.index("micro_ros_agent\"] + micro_ros_args") - 900:]
     agent = agent[:agent.index("micro_ros_agent\"] + micro_ros_args")]
-    assert "fake_base" in agent, "the agent still starts when the base is simulated"
+    assert "sim_base" in agent, "the agent still starts when the base is simulated"
 
 
 def test_the_node_is_installed_with_the_package():
-    """It runs from share/, like fake_laser_node."""
+    """It runs from share/, like sim_laser_node."""
     cmake = open(os.path.join(REPO_ROOT, "CMakeLists.txt"), encoding="utf-8").read()
     assert "scripts" in cmake
-    assert os.path.isfile(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
+    assert os.path.isfile(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
 
 
 # --- the sensors, not just the motion ---------------------------------------
@@ -205,12 +205,12 @@ def test_the_reported_wheel_speed_carries_the_boards_noise():
 
 def test_the_gyro_has_a_bias_and_it_is_bounded():
     d, _ = _rig()
-    imu = fb.FakeIMU(d)
+    imu = fb.SimIMU(d)
     for _ in range(20000):                       # far longer than any run
         imu.read(0.0, 0.0, 0.02)
         assert abs(imu.gyro_bias) <= d["gyro_bias"] + 1e-9
     # ...and it actually wandered, rather than sitting at zero.
-    walked = any(abs(fb.FakeIMU(d).read(0.0, 0.0, 0.02)[0]) > 0 for _ in range(5))
+    walked = any(abs(fb.SimIMU(d).read(0.0, 0.0, 0.02)[0]) > 0 for _ in range(5))
     assert walked
 
 
@@ -218,18 +218,18 @@ def test_the_random_walk_rate_does_not_depend_on_the_call_rate():
     """The step scales with sqrt(dt), so a node at 50 Hz and one at 200 Hz drift
     at the same rate. Getting this wrong makes the instrument's drift a function
     of its own timer."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     assert "math.sqrt(max(dt, 0.0))" in src
     firmware = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
-                                 "fake_wheel.h"), encoding="utf-8").read()
+                                 "sim_wheel.h"), encoding="utf-8").read()
     assert "const float rw = sqrtf(dt);" in firmware
 
 
 def test_the_gyro_reading_is_the_firmwares_expression():
     """angular_z * k + bias + noise, with k the scale-factor error."""
     d, _ = _rig()
-    imu = fb.FakeIMU(d)
+    imu = fb.SimIMU(d)
     imu.gyro_bias = 0.0
     readings = [imu.read(1.0, 0.0, 0.0)[0] for _ in range(400)]   # dt 0 -> no walk
     mean = sum(readings) / len(readings)
@@ -242,7 +242,7 @@ def test_the_noise_constants_come_from_the_firmware_header():
     for key in ("noise_rpm", "gyro_bias", "gyro_drift", "gyro_noise",
                 "accel_noise", "scale_error"):
         assert key in d, key
-    src = _code_only(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
+    src = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
     for literal in ("0.004", "0.0015", "0.003", "0.03912"):
         assert literal not in src, f"{literal} is restated instead of parsed"
     # ...and every one of them is reached through the parsed table.
@@ -318,7 +318,7 @@ def test_the_stamp_stays_the_sample_time():
     """Publishing late with a late stamp hides the very thing this reproduces:
     an extrapolation request into a buffer whose newest entry is older than the
     controller expects, which is the shape of every 102/103 chased here."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     tick = src[src.index("def _tick"):]
     # The stamp is taken once, from the clock, before anything is queued.
@@ -331,7 +331,7 @@ def test_the_stamp_stays_the_sample_time():
 def test_the_tf_goes_through_the_same_link_as_the_odometry():
     """A TF that arrives instantly while the odometry it describes is late is a
     robot whose transform predicts the future."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     tick = src[src.index("def _tick"):]
     assert "self.wire.send(mono, lambda m=t: self.tf.sendTransform(m))" in tick
@@ -345,7 +345,7 @@ def test_the_base_does_not_publish_a_transform_by_default():
     forcing madgwick's publish_tf false, and here it silently invalidated a
     latency sweep: the EKF's fresh transform masked this node's delayed one, so
     legs at 800 and 1200 ms appeared to navigate against 0.2-0.5 s tolerances."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     assert 'declare_parameter("publish_tf", False)' in src
 
@@ -361,13 +361,13 @@ def test_the_base_does_not_publish_a_transform_by_default():
 def test_the_link_uses_a_monotonic_clock():
     """It models wall time on a wire. A simulated or stepped ROS clock would
     stall the link rather than the robot."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     assert "time.monotonic()" in src
 
 
 def test_the_link_can_be_set_from_the_config_as_well_as_a_parameter():
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+    src = open(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"),
                encoding="utf-8").read()
     assert 'declare_parameter("transport_delay_ms"' in src
     assert 'declare_parameter("transport_jitter_ms"' in src

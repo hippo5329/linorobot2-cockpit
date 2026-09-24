@@ -58,9 +58,9 @@ sensor_msgs__msg__BatteryState *battery_msg = nullptr;
 sensor_msgs__msg__Range *range_msg = nullptr;
 
 // Pointers, built in setup() from what is on the bus -- not the macro types the
-// config header chose. A tool compiled against `IMU` reported the FAKE driver's
+// config header chose. A tool compiled against `IMU` reported the SIM driver's
 // zeros on a board with a real MPU6050 answering at 0x68, because the image it
-// lives in was built for a robot whose config says `imu: FAKE`. One image serves
+// lives in was built for a robot whose config says `imu: SIM`. One image serves
 // every board of a family (AGENTS.md §10), so a diagnostic that takes its sensor
 // from the build is diagnosing the build, not the board.
 IMUInterface *imu = nullptr;

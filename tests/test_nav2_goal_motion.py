@@ -203,7 +203,7 @@ def test_the_loop_waits_for_a_base_that_starts_moving_late(monkeypatch):
 def test_odometry_drift_does_not_count_as_responding(monkeypatch):
     """The reason the rule is on velocity and not displacement.
 
-    A fake-mode board standing still reported vel_lin=0.006 m/s and
+    A sim-mode board standing still reported vel_lin=0.006 m/s and
     vel_ang=0.036 rad/s on the bench. Integrated over a 25-second goal window
     that is 0.15 m of "travel" and 0.9 rad of "rotation" -- past any displacement
     threshold small enough to be worth setting, and past the 0.02 m / 0.05 rad
@@ -461,7 +461,7 @@ def test_the_leg_is_abandoned_rather_than_watched_to_the_timeout():
     assert "_runaway(node)" in body, "the wait loop no longer watches for a runaway"
     assert body.index("_runaway(node)") < body.index("node.goal_status in (5, 6)")
     assert "RAN AWAY" in src
-    assert "nothing in fake mode would" in src
+    assert "nothing in sim mode would" in src
 
 
 def test_a_failed_leg_says_where_it_ended_and_in_which_frame():
@@ -718,7 +718,7 @@ def test_a_crossing_within_its_own_error_bar_of_the_end_claims_nothing(monkeypat
 
 def test_the_goal_distance_is_measured_in_the_frame_the_goal_was_sent_in():
     """A leg "reached" its goal 2.829 m away: the robot had hit the wall, the
-    fake wheels slipped, the EKF's odom walked on, and SLAM absorbed the
+    sim wheels slipped, the EKF's odom walked on, and SLAM absorbed the
     difference into map->odom. Nav2 was right that it had arrived; the gate was
     comparing an odom-frame pose with a map-frame goal. The pose now comes from
     map -> base_link, with the frame named in the verdict so the two can never

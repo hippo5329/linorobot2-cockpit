@@ -184,8 +184,8 @@ def api_robot_urdf():
     return PlainTextResponse(gen_robot_description.build_urdf(params), media_type="application/xml")
 
 
-@app.post("/api/hardware/fake_mode")
-async def api_toggle_fake_mode(request: Request):
+@app.post("/api/hardware/sim_mode")
+async def api_toggle_sim_mode(request: Request):
     data = await json_body(request)
     enabled = bool(data.get("enabled", False))
     params = load_params()
@@ -193,12 +193,12 @@ async def api_toggle_fake_mode(request: Request):
     controller_name = data.get("controller") or ctrl.get("name") or "pico2"
 
     sensors = ctrl.setdefault("sensors", {})
-    sensors["use_fake_wheel"] = enabled
-    sensors["use_fake_imu"] = enabled
-    sensors["use_fake_ld19"] = enabled
-    sensors["use_fake_mag"] = enabled
-    if "use_fake_env" in sensors or not enabled:
-        sensors["use_fake_env"] = enabled
+    sensors["use_sim_wheel"] = enabled
+    sensors["use_sim_imu"] = enabled
+    sensors["use_sim_ld19"] = enabled
+    sensors["use_sim_mag"] = enabled
+    if "use_sim_env" in sensors or not enabled:
+        sensors["use_sim_env"] = enabled
 
     save_params(params)
     res = regenerate_firmware_headers(controller_name)
@@ -206,7 +206,7 @@ async def api_toggle_fake_mode(request: Request):
         "success": True,
         "enabled": enabled,
         "controller": controller_name,
-        "message": f"Fake simulation mode {'enabled' if enabled else 'disabled'} for [{controller_name}].",
+        "message": f"Sim simulation mode {'enabled' if enabled else 'disabled'} for [{controller_name}].",
         "header_stdout": res.stdout,
     }
 
@@ -517,7 +517,7 @@ def api_configs():
 # until now the only way to see it was to flash test_acc and drive the board.
 #
 # It is computed HERE rather than in the browser on purpose. scripts/
-# drivetrain_report.py parses the model's constants out of fake_wheel.h, so the
+# drivetrain_report.py parses the model's constants out of sim_wheel.h, so the
 # HUD moves when the firmware moves; a JavaScript reimplementation would be a
 # second opinion about the robot that drifts silently from the first. Same rule
 # as the report itself, one layer up.

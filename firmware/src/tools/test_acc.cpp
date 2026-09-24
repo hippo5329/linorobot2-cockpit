@@ -118,7 +118,7 @@ unsigned total_motors = 4;
 
 // Set when the env says the wheels are simulated. loop_() then prints where to
 // get the answer instead of driving nothing and tabulating the result.
-bool fake_wheels = false;
+bool sim_wheels = false;
 
 void setup_()
 {
@@ -165,9 +165,9 @@ void setup_()
         Serial.printf("[+] IMU %s initialized.\n", imu_name);
     mag->init();
 
-    // A fake-wheel board has nothing to measure. Checked here, after
+    // A sim-wheel board has nothing to measure. Checked here, after
     // initMcuEnv(), because it is the env that decides -- not the build.
-    fake_wheels = wheelsAreFake();
+    sim_wheels = wheelsAreSim();
 
     if(Kinematics::LINO_BASE == Kinematics::DIFFERENTIAL_DRIVE)
     {
@@ -282,16 +282,16 @@ void dump_record(const Kinematics::velocities *buf) {
 // Spin the motors. Four calls, one place, because five call sites drifted.
 //
 // It does NOT drive the simulated wheels, and that is deliberate: this tool is
-// for a robot with motors on it. FakeEncoder::feed() was called here for a
-// while so that a fake-mode run produced a full table instead of zeros -- but
+// for a robot with motors on it. SimEncoder::feed() was called here for a
+// while so that a sim-mode run produced a full table instead of zeros -- but
 // the table it produced was a measurement OF THE SIMULATOR, taken on an MCU,
 // over a serial line, after a flash. The simulator is a host-side model whose
-// constants live in fake_wheel.h, so the honest way to read it is to run it on
+// constants live in sim_wheel.h, so the honest way to read it is to run it on
 // the host: scripts/drivetrain_report.py steps the same equations on
 // test_acc's own 20 ms / 1 s profile and prints the same four lines in
 // milliseconds, with no board involved.
 //
-// So a fake-wheel board is refused in setup_() rather than answered. What is
+// So a sim-wheel board is refused in setup_() rather than answered. What is
 // left here is the real measurement: a real motor's real acceleration, which is
 // the only thing a board can tell you that the model cannot.
 static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
@@ -362,7 +362,7 @@ void stopAll()
     delay(700);                          // let the wheels actually stop
 }
 
-// The smallest PWM that turns the wheel. FAKE_WHEEL_STALL_DUTY is a guess at 4%;
+// The smallest PWM that turns the wheel. SIM_WHEEL_STALL_DUTY is a guess at 4%;
 // this is the real number, and it differs per wheel because stiction does.
 void deadzone()
 {
@@ -498,9 +498,9 @@ void run()
 void loop_() {
     if (!imu_msg) return;   // setup_ could not allocate; nothing to run
 
-    // Refuse rather than answer. With fake wheels there is no motor to
+    // Refuse rather than answer. With sim wheels there is no motor to
     // accelerate: every number below would be a property of the simulated
-    // drivetrain in fake_wheel.h, measured the hard way. The host runs that
+    // drivetrain in sim_wheel.h, measured the hard way. The host runs that
     // model directly, on this tool's own 20 ms / 1 s profile, from the robot's
     // config -- including the terms a board cannot vary without a reflash
     // (mass, gear efficiency, pack sag, driver losses).
@@ -508,16 +508,16 @@ void loop_() {
     // Saying so once and stopping is the point. Printing a table would invite
     // somebody to tune a velocity smoother from a number that describes a
     // simulator, and the wiki tells people to tune it from this output.
-    if (fake_wheels) {
+    if (sim_wheels) {
         Serial.println("[test_acc] the env says these wheels are simulated "
-                       "(fake_wheel=1), so there is nothing here to measure.");
+                       "(sim_wheel=1), so there is nothing here to measure.");
         Serial.println("[test_acc] the same model, run on the host, with this "
                        "robot's config:");
         Serial.println("[test_acc]     python3 scripts/drivetrain_report.py "
                        "--params <robot>_config.yaml");
         Serial.println("[test_acc] or open the Config Studio's Kinematics HUD. "
                        "For a real measurement, flash a robot with motors.");
-        syslog(LOG_INFO, "test_acc refused: fake_wheel=1, nothing to measure");
+        syslog(LOG_INFO, "test_acc refused: sim_wheel=1, nothing to measure");
         delay(10000);
         return;
     }

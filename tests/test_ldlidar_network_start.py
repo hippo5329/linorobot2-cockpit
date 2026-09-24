@@ -77,7 +77,7 @@ static uint8_t crc8(const uint8_t *d, int len) {
 }
 static void put16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 
-static uint16_t point_idx = 0, fake_ms = 0;
+static uint16_t point_idx = 0, sim_ms = 0;
 static uint16_t range_mm(float deg) {
     float r = deg * (float)M_PI / 180.0f, best = 1e9f, half = 2.0f;
     float c = cosf(r), s = sinf(r);
@@ -99,11 +99,11 @@ static void build_pack(uint8_t *pkt) {
         pkt[6 + i * 3 + 2] = inten;
     }
     put16(&pkt[42], (uint16_t)(fmodf(end_deg, 360.0f) * 100.0f));
-    put16(&pkt[44], fake_ms);
+    put16(&pkt[44], sim_ms);
     pkt[46] = crc8(pkt, 46);
     point_idx += POINTS_PER_PACK;
     if (point_idx >= POINTS_PER_REV) point_idx -= POINTS_PER_REV;
-    fake_ms = (uint16_t)((fake_ms + 3) % 30000);
+    sim_ms = (uint16_t)((sim_ms + 3) % 30000);
 }
 
 int main(int argc, char **argv) {

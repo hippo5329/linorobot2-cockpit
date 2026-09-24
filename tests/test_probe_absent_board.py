@@ -9,7 +9,7 @@ the board happens to be carrying, and says "Nothing to write: the board already
 runs this build with this config" while doing it.
 
 That is what happened to a pico2 bench in the rc-20260919 release test. Its env
-block had never been written, so `fake_wheel` was not set, so the firmware's
+block had never been written, so `sim_wheel` was not set, so the firmware's
 pose reset at the micro-ROS session did not fire, so the emulator was still
 parked where an earlier run had left it: odom x=4.800 against a room wall five
 metres out, /scan minimum 0.20 m. Nav2 accepted the goal and then issued 41

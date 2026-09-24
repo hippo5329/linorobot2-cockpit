@@ -120,16 +120,16 @@ def render(params: dict) -> str:
 
     named = [(k, v) for k, v in (("IMU", sensors.get("imu")), ("Magnetometer", sensors.get("mag")),
                                  ("Environment", sensors.get("env")), ("Current", sensors.get("current")))
-             if v and str(v).upper() not in ("NONE", "FAKE")]
-    if named or sensors.get("use_fake_wheel") or sensors.get("use_fake_imu"):
+             if v and str(v).upper() not in ("NONE", "SIM")]
+    if named or sensors.get("use_sim_wheel") or sensors.get("use_sim_imu"):
         out += ["## Sensors", ""]
         for k, v in named:
             out.append(f"- {k}: `{v}` on the I2C bus")
-        fakes = [n for n, f in (("wheels", "use_fake_wheel"), ("IMU", "use_fake_imu"),
-                                ("magnetometer", "use_fake_mag"), ("LiDAR", "use_fake_ld19"))
+        sims = [n for n, f in (("wheels", "use_sim_wheel"), ("IMU", "use_sim_imu"),
+                                ("magnetometer", "use_sim_mag"), ("LiDAR", "use_sim_ld19"))
                  if sensors.get(f)]
-        if fakes:
-            out.append(f"- Simulated: {', '.join(fakes)}")
+        if sims:
+            out.append(f"- Simulated: {', '.join(sims)}")
         out.append("")
 
     findings = pin_catalog.check_config(params)

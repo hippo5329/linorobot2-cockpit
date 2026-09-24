@@ -236,7 +236,7 @@ def sensor_topics(controller_cfg: dict) -> list:
     """Auxiliary topics the fitted sensors must publish, in a stable order.
 
     A sensor counts as fitted when the config NAMES A CHIP for it AND does not
-    ask for the fake version -- `use_fake_mag: true` means the driver is
+    ask for the sim version -- `use_sim_mag: true` means the driver is
     synthesising values, which is a different thing to verify and never a real
     chip on the bus.
 
@@ -252,7 +252,7 @@ def sensor_topics(controller_cfg: dict) -> list:
             continue
         if isinstance(chip, str) and chip.strip().lower() in NOT_FITTED:
             continue
-        if sensors.get(f"use_fake_{key}"):
+        if sensors.get(f"use_sim_{key}"):
             continue
         topics.extend(tops)
     return topics
@@ -833,12 +833,12 @@ def probe_board(pio_env: str, port: str, baud: int, params_path: str,
 def sensors_for_mode(mode: str):
     """What --mode means for the env block's sensor flags.
 
-    fake forces every fake_* flag on and real forces them off, whatever the
+    sim forces every sim_* flag on and real forces them off, whatever the
     config says; auto lets the YAML stand. This is the whole meaning of the
-    switch: a config that describes a real LD19 run in fake mode used to reach
-    the board with fake_ld19 0, and /scan then structurally could not arrive.
+    switch: a config that describes a real LD19 run in sim mode used to reach
+    the board with sim_ld19 0, and /scan then structurally could not arrive.
     """
-    return {"fake": "fake", "real": "real"}.get(mode)
+    return {"sim": "sim", "real": "real"}.get(mode)
 
 
 def write_env_only(pio_env: str, port: str, baud: int, params_path: str,
@@ -881,7 +881,7 @@ def main():
                         help="Override the robot's base controller / PlatformIO env (e.g. pico2, gendrv)")
     parser.add_argument("--distro", default=_default_distro, choices=["jazzy", "lyrical", "rolling", "auto"],
                         help="ROS 2 distribution")
-    parser.add_argument("--mode", default="fake", choices=["fake", "auto", "real"], help="Bringup mode (default: fake)")
+    parser.add_argument("--mode", default="sim", choices=["sim", "auto", "real"], help="Bringup mode (default: sim)")
     parser.add_argument("--firmware", default="auto", choices=["auto", "build", "prebuilt"],
                         help="Where the image comes from: a local `pio run` (build), the release image "
                              "for this env (prebuilt), or build-if-PlatformIO-is-here (auto, default)")
@@ -937,7 +937,7 @@ def main():
                              "0 = a single one-way goal.")
     parser.add_argument("--no-pose-reset", dest="pose_reset", action="store_false",
                         help="do not return the simulated robot to the origin between the "
-                             "drive suite and SLAM (fake mode only; a real base is never touched)")
+                             "drive suite and SLAM (sim mode only; a real base is never touched)")
     parser.add_argument("--require-goal", action="store_true",
                         help="the Nav2 goal must actually be reached -- judged by the "
                              "displacement from the goal pose, with Nav2's error_code "
@@ -976,7 +976,7 @@ def main():
         with open(bare_path, "w") as fh:
             yaml.safe_dump(gen_bare_config.bare_config(bare_mcu.group(1)), fh, sort_keys=False)
         print(f"[0/6] [CONFIG] {os.path.basename(bare_path)} regenerated from the bare rule "
-              f"(one default chassis, every sensor faked, LED on).")
+              f"(one default chassis, every sensor simd, LED on).")
 
     params_path = select_robot_config(args.robot, args.controller)
     with open(params_path, "r") as f:
@@ -997,20 +997,20 @@ def main():
     controller = args.controller or controller_cfg.get("name") or "pico2"
     is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")
     has_lidar = bool(controller_cfg.get("lidar", {}).get("model")) or \
-        controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
+        controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
 
     # On a real base the sensors are soldered to the board and named in the
     # config, so their topics are evidence, not options. The firmware probes the
     # I2C bus at boot and adopts the drivers for what answered (i2cProbeSelect),
     # which is exactly why a silent topic has to fail: without this the run went
     # green with a dead magnetometer, because every auxiliary topic was optional
-    # everywhere. In FAKE mode the list stays empty -- there is no chip to be
+    # everywhere. In SIM mode the list stays empty -- there is no chip to be
     # silent about.
     required_aux = sensor_topics(controller_cfg) if is_real else []
 
     print("==================================================================")
     print(f"🚀 Linorobot2 Cockpit 1-Click Pipeline [robot: {robot_name}, controller: {controller}, "
-          f"distro: {args.distro}, mode: {'REAL' if is_real else 'FAKE'}]")
+          f"distro: {args.distro}, mode: {'REAL' if is_real else 'SIM'}]")
     print(f"   Config: {params_path}")
     if required_aux:
         fitted = controller_cfg.get("sensors", {})
@@ -1019,14 +1019,14 @@ def main():
         print(f"   Sensors (must publish): {roster}")
         print(f"   Required topics: {', '.join(required_aux)}")
         if fitted.get("imu") and str(fitted["imu"]).lower() not in NOT_FITTED \
-                and controller_cfg.get("sensors", {}).get("use_fake_wheel", False):
+                and controller_cfg.get("sensors", {}).get("use_sim_wheel", False):
             print("   ⚠️ A real IMU with simulated wheels: this EKF fuses vyaw from BOTH "
                   "odom/unfiltered and imu/data, and a board on a bench reports "
-                  "gyro=(0, 0, 0) while the fake wheels report a turn. The filtered "
+                  "gyro=(0, 0, 0) while the sim wheels report a turn. The filtered "
                   "heading is then pulled toward zero on every IMU sample and lags the "
                   "simulated one, so a Nav2 goal from this combination measures the "
                   "bench, not the robot. Measured: the same board and config reach "
-                  "8/8 legs in fake mode and stall ~1.6 m short in auto, on both distros.")
+                  "8/8 legs in sim mode and stall ~1.6 m short in auto, on both distros.")
     if args.topics_only:
         print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> Drive")
     else:
@@ -1160,7 +1160,7 @@ def main():
     # which compares against what THIS host recorded -- so a board carrying an env
     # from an older config, another host, or a --skip-flash run kept it, and the
     # run silently tested a description nobody had chosen. That is exactly how a
-    # GenDrv leg "passed" with fake_ld19 off: it inherited an older env with the
+    # GenDrv leg "passed" with sim_ld19 off: it inherited an older env with the
     # emulator on. The block is 4 KB and the application image is untouched, so
     # the write is cheaper than the doubt.
     want_env = bool(board) and not args.skip_flash
@@ -1246,7 +1246,7 @@ def main():
             print("  ⚠️  --skip-flash also skips the env block, so this run tests whatever")
             print("      description the board is already carrying -- possibly written by an")
             print("      older config, another host, or another run. A GenDrv leg passed this")
-            print("      way with fake_ld19 off, inheriting an env that had the emulator on.")
+            print("      way with sim_ld19 off, inheriting an env that had the emulator on.")
             print("      A release leg must not use it.")
 
         # Step 4: bringup and the topic gate
@@ -1291,13 +1291,13 @@ def main():
             # WHO publishes /scan decides the wait, not which transport micro-ROS
             # happens to use. This keyed on `transport` and cost the GenDrv's serial
             # leg on both distros: micro-ROS on a cable, but the scan produced by the
-            # BOARD's fake_ld19 out GPIO 4 into a second USB bridge, where the real
+            # BOARD's sim_ld19 out GPIO 4 into a second USB bridge, where the real
             # ldlidar driver gives the port ~3 s, dies, and respawns every 2 s while
             # the board is still rebooting from the flash this run just did. 15 s is
             # not enough for that, and the 90 s the udp path gets is not a property of
             # Wi-Fi -- it is a property of the board being the source.
             #
-            # The host's virtual room is the only fast case: fake_laser_node publishes
+            # The host's virtual room is the only fast case: sim_laser_node publishes
             # as soon as it starts. Mirror bringup.launch.py's own choice of when it
             # stands in, so the two cannot drift apart.
             lidar_cfg = controller_cfg.get("lidar", {}) or {}
@@ -1307,7 +1307,7 @@ def main():
             # server mode, whoever produces the frames, and is decided FIRST; only
             # then can the host room stand in for an absent serial port.
             host_room = (lidar_mode not in ("udp", "udp_server")
-                         and controller_cfg.get("sensors", {}).get("use_fake_ld19", False)
+                         and controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
                          and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
             scan_wait = 15 if host_room else 90
             print(f"  Waiting for the first /scan (up to {scan_wait} s)...")
@@ -1507,7 +1507,7 @@ def main():
                 # puts the fault above the base.
         if args.drive_test:
             # Rates prove the board TALKS; only driving proves it MOVES, and moves
-            # the way it was told -- the FakeEncoder invert and the PID windup each
+            # the way it was told -- the SimEncoder invert and the PID windup each
             # shipped perfect 50 Hz topics on a base that spun in place or pinned a
             # rail. Every pass runs the drive manoeuvres unless --no-drive-test, and a
             # failure is recorded but not fatal. They run HERE, after the goal,

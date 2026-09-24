@@ -2,12 +2,12 @@
 // firmware's own sources compile natively, unmodified.
 //
 // WHY A SHIM AND NOT A PORT. The host target exists to run micro-ROS over UDP4
-// like a board does -- that is the one layer scripts/fake_base_node.py cannot
+// like a board does -- that is the one layer scripts/sim_base_node.py cannot
 // test, and its own SKILL.md lists "micro-ROS, the serial and Wi-Fi transports"
 // among what it removes. If the host build reimplemented the model or the
 // transport, it would be a second copy of both, and a second copy of the wheel
 // model is the one thing that would make the instrument lie
-// (tests/test_fake_base_node.py exists to prevent exactly that). So instead of
+// (tests/test_sim_base_node.py exists to prevent exactly that). So instead of
 // porting the firmware to Linux, this emulates the small Arduino surface the
 // firmware actually uses, and the firmware sources are compiled as they are.
 //
@@ -16,7 +16,7 @@
 //   PID.h         none
 //   odometry.h    none (its micro_ros_utilities/nav_msgs includes are satisfied
 //                 by the micro-ROS host client library)
-//   fake_wheel.h  micros(), random(), map()
+//   sim_wheel.h  micros(), random(), map()
 //   uros_transport.cpp  Serial.print*/printf, and the WiFiUDP surface in WiFiUdp.h
 //
 // Anything a future firmware change needs will fail to COMPILE here, which is the
@@ -48,7 +48,7 @@
 // ---------------------------------------------------------------- time
 // A board's millis()/micros() count from boot. clock_gettime(CLOCK_MONOTONIC)
 // is the same quantity; the epoch is taken at first call so the numbers start
-// near zero as they do on a board, which matters because fake_wheel.h stores
+// near zero as they do on a board, which matters because sim_wheel.h stores
 // `unsigned long` timestamps and compares differences.
 inline uint64_t _lino_host_now_us()
 {
@@ -74,7 +74,7 @@ inline void delayMicroseconds(unsigned int us)
 }
 
 // ---------------------------------------------------------------- maths
-// Arduino's map() is integer arithmetic and truncates; fake_wheel.h relies on
+// Arduino's map() is integer arithmetic and truncates; sim_wheel.h relies on
 // that, so this must NOT be a floating-point convenience.
 inline long map(long x, long in_min, long in_max, long out_min, long out_max)
 {

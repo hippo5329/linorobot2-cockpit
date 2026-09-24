@@ -12,7 +12,7 @@ This has leaked twice, both times through something that looked clean:
   2026-09-23  built from the GENERATED bare config, which sounds design-free
               and is not: gen_bare_config donates geometry/ekf/slam/nav2 from
               config/reference/gendrv_config.yaml, so that design's costmap
-              radius shipped in every image as #define FAKE_ROBOT_RADIUS.
+              radius shipped in every image as #define SIM_ROBOT_RADIUS.
 
 So the test is not "does the build mention a reference" -- both leaks would
 have passed that. It generates the header the release actually builds with and
@@ -64,7 +64,7 @@ def test_no_reference_design_value_reaches_the_image(tmp_path):
     assert radii, "no reference designs to check against"
     for mcu in MCUS:
         hdr = _bare_header(mcu, tmp_path)
-        assert "FAKE_ROBOT_RADIUS" not in hdr, (
+        assert "SIM_ROBOT_RADIUS" not in hdr, (
             f"{mcu}: the image carries a robot's dimensions; it is flashed to every robot")
         for r in radii:
             assert r not in hdr, f"{mcu}: a reference design's radius {r} reached the image"
@@ -78,20 +78,20 @@ def test_the_radius_reaches_the_board_as_an_env_key_instead(tmp_path):
     secrets = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
     for f in sorted(glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml"))):
         env = mcu_env.env_from_config(f, secrets, "192.0.2.1")
-        assert "fake_radius" in env, os.path.basename(f)
-        assert float(env["fake_radius"]) > 0, os.path.basename(f)
+        assert "sim_radius" in env, os.path.basename(f)
+        assert float(env["sim_radius"]) > 0, os.path.basename(f)
 
 
 def test_the_emulator_reads_that_key_rather_than_the_macro():
-    src = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "fake_ld19.h"),
+    src = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "sim_ld19.h"),
                encoding="utf-8").read()
-    assert 'robot_radius_ = envFloat("fake_radius", robot_radius_);' in src
+    assert 'robot_radius_ = envFloat("sim_radius", robot_radius_);' in src
     # The macro survives as the member's initialiser -- the fallback for a
     # board with a blank env -- and nowhere else: every use of the radius must
     # read the member, or the env key silently does nothing.
-    decl = 'float robot_radius_ = (float)FAKE_ROBOT_RADIUS;'
+    decl = 'float robot_radius_ = (float)SIM_ROBOT_RADIUS;'
     assert decl in src
-    assert src.count("FAKE_ROBOT_RADIUS") == 3, (
+    assert src.count("SIM_ROBOT_RADIUS") == 3, (
         "expected the #ifndef, the #define and the initialiser only; "
         "a clamp still reads the macro")
 

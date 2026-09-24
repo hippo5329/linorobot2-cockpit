@@ -357,7 +357,7 @@ jobs:
             # pair (esp32_config / esp32_wifi_config) was deleted on
             # 2026-09-20: they described the same silicon as gendrv and
             # differed only in keys the env partition decides at boot --
-            # transport, lidar_comm, wifi, the fake flags.
+            # transport, lidar_comm, wifi, the sim flags.
             esp32*)  cfg=config/reference/gendrv_config.yaml ;;
             # Every RP2 env -- pico, picow, pico2, pico2w and their _lyrical
             # twins -- builds from the one mecanum reference. The header is
@@ -371,7 +371,7 @@ jobs:
       - name: Build (never `pio run -t upload`)
         run: pio run -d firmware -e ${{ matrix.env }}
       # A real LiDAR forwarded over UDP is `USE_LIDAR_UDP` WITHOUT
-      # `USE_FAKE_LD19`, which is the whole of lidar.cpp -- and no reference
+      # `USE_SIM_LD19`, which is the whole of lidar.cpp -- and no reference
       # config produces that combination, so nothing here had ever compiled the
       # file. It is a supported path (the LD19 driver was forked for it), and a
       # guard added to its UART callback in d398f9a would have gone unbuilt.
@@ -385,7 +385,7 @@ jobs:
           python3 scripts/gen_firmware_header.py --params "$RUNNER_TEMP/udp_real.yaml" \
             --distro jazzy --no-embed-secrets
           grep -q 'define USE_LIDAR_UDP' firmware/include/custom/lino_base_config.h
-          ! grep -q 'define USE_FAKE_LD19' firmware/include/custom/lino_base_config.h
+          ! grep -q 'define USE_SIM_LD19' firmware/include/custom/lino_base_config.h
           pio run -d firmware -e esp32
 
   ros2:

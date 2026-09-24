@@ -254,12 +254,46 @@ static void loadEnv(void)
 
 #endif
 
+// The `fake_` -> `sim_` rename made the env a versioned contract for the first
+// time, and the failure mode it opens is the quiet one this project keeps paying
+// for: an env key the firmware does not recognise is not an error, it is a
+// compiled-in default silently taken. A board carrying a pre-rename image would
+// therefore boot, look healthy, and run with every simulation flag at its default
+// -- which on a released image means it would try to talk to hardware that is not
+// there, on a bench where nothing is.
+//
+// The project rule is already that every flash writes a fresh env, so this should
+// never fire. That is exactly why it is worth printing: the run where it does fire
+// is the run where somebody reused one.
+static void warnAboutPreRenameKeys(void)
+{
+    if (!env_valid || !env_data)
+        return;
+    int stale = 0;
+    const char *first = NULL;
+    for (size_t pos = 0; pos < ENV_DATA_LEN && env_data[pos]; ) {
+        const char *entry = &env_data[pos];
+        const size_t elen = strnlen(entry, ENV_DATA_LEN - pos);
+        if (strncmp(entry, "fake_", 5) == 0) {
+            if (!first) first = entry;
+            stale++;
+        }
+        pos += elen + 1;
+    }
+    if (stale)
+        Serial.printf("[env] WARNING: %d key(s) still use the old `fake_` prefix "
+                      "(e.g. %.32s). This env predates the sim_ rename, so every "
+                      "renamed key is at its COMPILED-IN default. Rewrite it with "
+                      "scripts/mcu_env.py.\n", stale, first);
+}
+
 void initMcuEnv(void)
 {
     if (env_loaded)
         return;
     env_loaded = true;
     loadEnv();
+    warnAboutPreRenameKeys();
 }
 
 bool mcuEnvValid(void)

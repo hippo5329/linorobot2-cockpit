@@ -1,7 +1,7 @@
 """The host target reads the SAME env image a board is flashed with.
 
 `firmware/host/` runs the robot computer as a micro-ROS client so that the one
-layer `scripts/fake_base_node.py` cannot exercise -- micro-ROS over UDP4 -- is
+layer `scripts/sim_base_node.py` cannot exercise -- micro-ROS over UDP4 -- is
 under test without silicon. That is only worth anything if the host is configured
 the way a board is, which means `mcu_env.cpp` must read a real 4096-byte image
 from `scripts/mcu_env.py`, CRC and 0xFF padding and all.
@@ -47,7 +47,7 @@ int main(void)
     printf("transport=%s\n", envGet("transport", "<absent>"));
     printf("base=%s\n", envGet("base", "<absent>"));
     printf("wheel_d=%.6f\n", envFloat("wheel_d", -1.0f));
-    printf("fake_wheel=%d\n", (int)envFlag("fake_wheel", false));
+    printf("sim_wheel=%d\n", (int)envFlag("sim_wheel", false));
     printf("missing=%s\n", envGet("no_such_key", "<fallback>"));
     printf("envIP=%s\n", envIP("agent_ip", IPAddress(0, 0, 0, 0)).c_str());
     return 0;
@@ -119,7 +119,7 @@ def test_the_firmware_reads_the_flashers_image(reader, tmp_path):
     assert got["base"] == "2wd"
     # Typed accessors, not just envGet: a float and a flag.
     assert abs(float(got["wheel_d"]) - 0.1) < 1e-6
-    assert got["fake_wheel"] in ("0", "1")
+    assert got["sim_wheel"] in ("0", "1")
     # An absent key must yield the caller's fallback, never an empty string --
     # every accessor is documented as safe to call without checking validity.
     assert got["missing"] == "<fallback>"
@@ -200,3 +200,38 @@ def test_a_short_or_corrupt_image_is_refused(reader, tmp_path):
     absent = tmp_path / "does-not-exist.bin"
     rc, out = _read(reader, absent, tmp_path)
     assert rc != 0 and "INVALID" in out, "a missing image must be refused"
+
+
+def test_a_pre_rename_env_is_called_out_loudly(reader, tmp_path):
+    """An unrecognised env key is a silent default, so the rename needs a siren.
+
+    The simulation keys were `fake_*` until 2026-09-24. Nothing in the on-flash
+    format is versioned, so new firmware handed an old image does not fail: every
+    renamed key is simply absent, `envFlag("sim_wheel", SIM_WHEEL_DEFAULT)` returns
+    the compiled default, and the board boots looking perfectly healthy while
+    running a configuration nobody chose. On a released image that means reaching
+    for hardware that is not fitted.
+
+    The project rule is already that every flash writes a fresh env, so this should
+    never fire -- which is exactly why it has to be loud when it does.
+    """
+    image = _build_image(tmp_path, transport="udp4")
+    blob = bytearray(image.read_bytes())
+
+    # Forge a pre-rename image: rename one key back, in place, and re-CRC it the
+    # way the writer would. Editing the bytes rather than pinning a fixture keeps
+    # this independent of which keys exist today.
+    body = bytes(blob[4:])
+    assert b"sim_wheel=" in body, "the current writer should emit sim_wheel"
+    body = body.replace(b"sim_wheel=", b"fake_wheel", 1)  # same length, so layout holds
+    import zlib
+    forged = tmp_path / "pre-rename.bin"
+    forged.write_bytes((zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "little") + body)
+
+    rc, out = _read(reader, forged, tmp_path)
+    # It must still LOAD -- refusing outright would strand anyone debugging an old
+    # board -- but it must say so.
+    assert rc == 0, f"a pre-rename image should still parse, not fail:\n{out}"
+    assert "WARNING" in out and "fake_" in out, (
+        "new firmware read a pre-rename env without a word of complaint; every "
+        f"renamed key was at its compiled-in default:\n{out}")

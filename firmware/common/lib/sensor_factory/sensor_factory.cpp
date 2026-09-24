@@ -20,7 +20,7 @@ template <typename T> static IMUInterface *makeIMU(void) { return new T(); }
 template <typename T> static MAGInterface *makeMAG(void) { return new T(); }
 
 static const IMUEntry IMU_TABLE[] = {
-    {"fake",     makeIMU<FakeIMU>},
+    {"sim",     makeIMU<SimIMU>},
     {"gy85",     makeIMU<GY85IMU>},
     {"mpu6050",  makeIMU<MPU6050IMU>},
     {"mpu9150",  makeIMU<MPU6050IMU>},   // same silicon as far as this driver is concerned
@@ -33,7 +33,7 @@ static const IMUEntry IMU_TABLE[] = {
 };
 
 static const MAGEntry MAG_TABLE[] = {
-    {"fake",     makeMAG<FakeMAG>},
+    {"sim",     makeMAG<SimMAG>},
     {"hmc5883l", makeMAG<HMC5883LMAG>},
     {"ak8963",   makeMAG<AK8963MAG>},
     {"ak8975",   makeMAG<AK8975MAG>},
@@ -47,7 +47,7 @@ const char *defaultIMUName(void)
 #ifdef IMU_DEFAULT_NAME
     return IMU_DEFAULT_NAME;
 #else
-    return "fake";
+    return "sim";
 #endif
 }
 
@@ -56,7 +56,7 @@ const char *defaultMAGName(void)
 #ifdef MAG_DEFAULT_NAME
     return MAG_DEFAULT_NAME;
 #else
-    return "fake";
+    return "sim";
 #endif
 }
 
@@ -69,9 +69,9 @@ IMUInterface *createIMU(const char *name)
                 return IMU_TABLE[i].make();
             }
         }
-        Serial.printf("[sensors] unknown IMU '%s' — falling back to fake\n", name);
+        Serial.printf("[sensors] unknown IMU '%s' — falling back to sim\n", name);
     }
-    return new FakeIMU();
+    return new SimIMU();
 }
 
 MAGInterface *createMAG(const char *name)
@@ -83,7 +83,7 @@ MAGInterface *createMAG(const char *name)
                 return MAG_TABLE[i].make();
             }
         }
-        Serial.printf("[sensors] unknown MAG '%s' — falling back to fake\n", name);
+        Serial.printf("[sensors] unknown MAG '%s' — falling back to sim\n", name);
     }
-    return new FakeMAG();
+    return new SimMAG();
 }

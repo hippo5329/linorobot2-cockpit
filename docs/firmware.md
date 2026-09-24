@@ -178,32 +178,32 @@ A soak found two defects that a single-goal gate structurally cannot see, both i
 simulation, both with the same shape: two numbers describing one robot were set independently and
 disagreed.
 
-**The wall clamp.** `fake_ld19.h:clampToRoom()` holds the simulated robot's centre
-`FAKE_ROBOT_RADIUS` from any wall — it has always collided, and corrects odometry to match. But that
+**The wall clamp.** `sim_ld19.h:clampToRoom()` holds the simulated robot's centre
+`SIM_ROBOT_RADIUS` from any wall — it has always collided, and corrects odometry to match. But that
 radius was a hardcoded `0.20f` while the shipped configs plan with `robot_radius` 0.22–0.26 m, so
 the clamp parked the robot **inside Nav2's own footprint**: a lethal costmap cell the planner will
 not plan out of. Measured: the planner replans 48 times in 80 s, every plan a clean route away from
 the wall, and the controller executes none — 1.2 mm of travel; one board sat there for 154
 consecutive goals. `Spin` cannot help because rotating does not change which cell the robot
 occupies, and the base itself was fine — commanded directly it rotated and reversed out.
-`scripts/gen_firmware_header.py` now derives `FAKE_ROBOT_RADIUS` from the largest `robot_radius`
+`scripts/gen_firmware_header.py` now derives `SIM_ROBOT_RADIUS` from the largest `robot_radius`
 either costmap plans with, plus 5 cm so the robot never stops exactly on the boundary; the firmware
 fallback is 0.30f, above every shipped radius. Verified by driving into the room boundary: it stops
 at exactly `5.0 − 0.31` and `3.0 − 0.31`.
 
-**The heading.** `FakeIMUFromWheels::applyMag` rotates a world field into the body frame by the
+**The heading.** `SimIMUFromWheels::applyMag` rotates a world field into the body frame by the
 wheel heading for one purpose — to give Madgwick an absolute heading that agrees with the room.
-Two separate decisions then silenced it: `bringup.launch.py` excluded the fake mag from fusion
-(`... and not use_fake_mag`, a leftover from when the field pointed +X), and `mcu_env.py` derived
+Two separate decisions then silenced it: `bringup.launch.py` excluded the sim mag from fusion
+(`... and not use_sim_mag`, a leftover from when the field pointed +X), and `mcu_env.py` derived
 `pub_mag` from `mag: NONE` so the firmware never published it. Madgwick therefore integrated the
-gyro alone, the fake gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
+gyro alone, the sim gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
 and the EKF, which takes Madgwick's yaw as *absolute* and only the wheels' yaw *rate*, inherited it.
 (That last clause described the intent, not the code: `imu0_config` did not fuse absolute yaw in any
 shipped config until 2026-09-23. It does now — `docs/ros2-stack.md`, "The heading needs an anchor".)
 Measured at rest, read from inside the stack's own DDS environment: wheel yaw 59.4°, EKF 7.2° after
 an hour. The body follows the wheels and Nav2 steers by the EKF, so goals veer (a held heading of
 0.2° moved at 67°) and the robot eventually finds the wall. Both halves now agree: `use_mag` is true
-for a real mag *or* the fake one, and `use_fake_mag` sets `pub_mag=1`. `NONE` means "no chip"; it
+for a real mag *or* the sim one, and `use_sim_mag` sets `pub_mag=1`. `NONE` means "no chip"; it
 must not also mean "silence the simulation of one". Fixing only the launcher half made it *worse* —
 Madgwick with a magnetometer waits for `imu/data_raw` and `imu/mag` as a synchronised pair, so with
 nothing on `/imu/mag` it published nothing and `/imu/data` went to 0 Hz — which is why the two ship
@@ -211,7 +211,7 @@ together and why the fix was measured before it was cut.
 
 ### `base` reads the I2C bus before it believes the config
 The scan and the WHO_AM_I table live in **`firmware/common/lib/i2c_probe`**, not inside the
-`i2c_detect` tool, because both need them. On a real robot (`app=base`, wheels not fake — override
+`i2c_detect` tool, because both need them. On a real robot (`app=base`, wheels not simulated — override
 with the `i2c_scan` env key) `setup()` probes the bus, prints every address that answered, and hands
 the detected driver names to the sensor factories.
 
@@ -288,13 +288,13 @@ the 24-bit sample counter, temperature, six axes. `readGyroscope()` does the bur
 `readAccelerometer()` hands back the other half of it, which is the order `getData()` calls
 them in. `tests/test_qmi8658_driver.py` pins each of these.
 
-**Fake wheels do not imply a fake IMU.** Skipping the I2C sensors whenever `use_fake_wheel: true`
+**Sim wheels do not imply a sim IMU.** Skipping the I2C sensors whenever `use_sim_wheel: true`
 would be right for a bare module with nothing on the bus and wrong for a board with no encoders and
 a real IMU: `/imu/data_raw` would be the simulation at 50 Hz and the driver you meant to test would
-never run. Only the sensors that are themselves fake are synthesised from the simulated wheels (`sim_imu = fake_wheels && imu_is_fake`, likewise
-the magnetometer): a real IMU the config or the bus names is initialised with fake wheels
+never run. Only the sensors that are themselves sim are synthesised from the simulated wheels (`imu_from_wheels = sim_wheels && imu_is_sim`, likewise
+the magnetometer): a real IMU the config or the bus names is initialised with sim wheels
 too, and one that fails to init on such a board falls back to the
-simulation with `[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU`
+simulation with `[imu] init FAILED on a sim-wheel board - falling back to the simulated IMU`
 rather than the fatal LED loop. The bus probe also prints reg 0x00 / 0x0F / 0x75 for a device
 it cannot name, so an unfamiliar chip is identified from the boot log.
 
@@ -527,7 +527,7 @@ rather than extending it, so a value in `[base_pico2]` is silently dropped.
 
 ### A tool must take its sensors from the bus, not from the build
 `test_sensors` declared `IMU imu; MAG mag;` — the macro types the config header chose — so in a
-shared image built for a robot whose config says `imu: FAKE` it reported the fake driver's zeros on
+shared image built for a robot whose config says `imu: SIM` it reported the sim driver's zeros on
 a board with a real MPU6050 answering at 0x68. Any application that reads a sensor goes through
 `createIMU()`/`createMAG()` and `i2cProbeSelect()`, the same two calls `base` makes. A diagnostic
 that takes its sensor from the build is diagnosing the build.
@@ -542,10 +542,10 @@ wrong chip. When auditing a tool for this, grep for the macro types **`IMU `/`MA
 in `firmware/src/tools/*.cpp` — the declaration is the whole bug, and it reads as ordinary until you
 know the rule.
 
-**Fake mode is a `base` feature and stops there.** `use_fake_*` exists so a bare module with nothing
+**Sim mode is a `base` feature and stops there.** `use_sim_*` exists so a bare module with nothing
 wired can still bring a ROS 2 stack up; every other application in the image is a bench diagnostic
-for a REAL robot, and a fake sensor or a simulated wheel is worth nothing to it. So do not "add fake
-support" to a tool, and do not read a tool's output as evidence about fake mode — if a tool reports
+for a REAL robot, and a sim sensor or a simulated wheel is worth nothing to it. So do not "add sim
+support" to a tool, and do not read a tool's output as evidence about sim mode — if a tool reports
 zeros, the question is what is on the bus, not which simulation is selected.
 
 ### Generate the header for the robot you are about to flash
@@ -580,7 +580,7 @@ addresses, so "which machine?" becomes a configuration value that can be wrong i
 | what the board dials | key (`config/secrets.yaml`) | default port | why |
 |---|---|---|---|
 | micro-ROS agent | `micro_ros.agent_ip` | 8888 | `micro_ros_agent` is a ROS 2 node, and docs/flashing.md puts the ROS 2 runtime on the robot |
-| fake/real LiDAR | inherits `agent_ip` | 8889 | the LiDAR driver is a ROS 2 node too |
+| sim/real LiDAR | inherits `agent_ip` | 8889 | the LiDAR driver is a ROS 2 node too |
 | syslog receiver | `telemetry.syslog_server` | 5140 / 514 | could be either side — but put it with the others |
 
 The LiDAR needs no key of its own: `mcu_env.py:254` is
@@ -735,9 +735,9 @@ afternoon's audit (2026-09-19) found, in this repo:
 - `pins.battery.r1` / `r2` saved by Config Studio for years and read by nothing; the firmware
   used a `BATTERY_ADJUST` macro no file defined, so a config with a battery pin did not build.
   `battery_pin bat_r1 bat_r2 bat_min bat_max bat_cap` are env keys now, read by `battery.cpp`.
-- The LiDAR emulator was a build macro only (`USE_FAKE_LD19`). A prebuilt image is built from
-  a fake-mode reference, so every real robot that flashed it raycast a room and streamed it.
-  `fake_ld19=0` in the env (from `sensors.use_fake_ld19`) switches it off; `lidar_x` tells it
+- The LiDAR emulator was a build macro only (`USE_SIM_LD19`). A prebuilt image is built from
+  a sim-mode reference, so every real robot that flashed it raycast a room and streamed it.
+  `sim_ld19=0` in the env (from `sensors.use_sim_ld19`) switches it off; `lidar_x` tells it
   where on the robot to raycast from (`geometry.laser.x`, the same number the URDF uses).
 - `telemetry.ota_port` had a field in the UI and no reader; `ota_port` is read now.
 - `/api/ai/deploy_robot` wrote `kinematics.track_width` and `wheelbase`; the firmware reads
@@ -754,11 +754,11 @@ and CI fails with its name.
 
 
 ### The diagnostic UART and the LiDAR emulator cannot both have UART1
-`diagBegin()` and `FakeLD19::begin()` both do `new HardwareSerial(LIDAR_SERIAL)`. On an ESP32
+`diagBegin()` and `SimLD19::begin()` both do `new HardwareSerial(LIDAR_SERIAL)`. On an ESP32
 that is one peripheral behind two objects, and the second `begin()` simply re-points it: diag
 starts first (`setup()`, before the env's LiDAR pin is read), the emulator starts second, so the
 emulator wins the pin and the diagnostic stream goes nowhere — with nothing said either way.
-Every diagnostic run so far happened to have `fake_ld19=0`, which is why it never showed.
+Every diagnostic run so far happened to have `sim_ld19=0`, which is why it never showed.
 
 `diagBegin()` now refuses instead: with the emulator compiled in, enabled, and holding a UART
 sink (`lidar_rx >= 0`), it prints `diag_tx=<n> ignored: the LiDAR emulator owns UART<n>` and
@@ -773,7 +773,7 @@ lwIP and lwIP has no tcpip thread until the Wi-Fi stack starts one: without the 
 Two other senders had no such guard and were only safe by accident, because `initWifis()` used
 to block until the radio was up, so nothing after it ever ran without one.
 
-Both are reachable now. `FakeLD19::flushUdp()` and `lidar.cpp`'s UART receive callback check
+Both are reachable now. `SimLD19::flushUdp()` and `lidar.cpp`'s UART receive callback check
 `WiFi.status()` on every call and drop the buffer when it is down — checked at send time, not at
 `begin()`, because the radio can arrive long after `setup()`. This is not hypothetical on a
 released image: the published `esp32` firmware is built from the Wi-Fi profile
@@ -855,16 +855,16 @@ table the config engine uses. Without it a config that names its IMU still
 ships the firmware's `1e-5` placeholder, which reads as "this sensor is
 nearly perfect".
 
-The simulated room is configuration because **fake mode is the default here**:
+The simulated room is configuration because **sim mode is the default here**:
 a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 12 kg robot does not accelerate like a 3.5 kg one.
 
 ### The simulated drivetrain is a brushed DC gear motor, not a ramp
 
-`fake_wheel.h` used to move the wheel toward its commanded RPM with a first-order
+`sim_wheel.h` used to move the wheel toward its commanded RPM with a first-order
 lag, which made every robot equally capable: four driven wheels accelerated
 exactly like two, and a 12 kg base like a 3.5 kg one. That is not a motor, and
-the difference matters because **fake mode gates the release** — a Nav2 limit that
+the difference matters because **sim mode gates the release** — a Nav2 limit that
 a real robot cannot meet has to fail on the bench, not in October.
 
 So the model is the motor's actual torque–speed line, and each term is separate
@@ -873,9 +873,9 @@ because each behaves differently:
 | term | env key | what it is |
 | --- | --- | --- |
 | torque–speed | — | `accel ∝ (no_load_rpm − wheel_rpm)`: a brushed DC motor's torque falls linearly from stall to no-load, so acceleration dies as the wheel approaches its commanded speed and is greatest from rest. |
-| gearbox efficiency | `gear_efficiency` | a spur reduction returns 70–80% of the torque put in, so it scales the driving term. Reflected inertia (`N²·J_motor`) stays lumped into `FAKE_WHEEL_TAU_MS`, where it belongs. |
+| gearbox efficiency | `gear_efficiency` | a spur reduction returns 70–80% of the torque put in, so it scales the driving term. Reflected inertia (`N²·J_motor`) stays lumped into `SIM_WHEEL_TAU_MS`, where it belongs. |
 | Coulomb drag | `gear_drag_rpm` | a gear train's loss is roughly **constant**, not proportional to speed. It is why an unpowered gear motor stops instead of coasting, and why a small duty produces no motion at all. Guarded so it can never push the wheel backwards through zero. |
-| viscous drag | — | `FAKE_WHEEL_FRICTION`, proportional to current RPM; bearings and the motor's own windage. |
+| viscous drag | — | `SIM_WHEEL_FRICTION`, proportional to current RPM; bearings and the motor's own windage. |
 | pack sag | `battery_sag`, `battery_sag_tau_ms` | `V_bus = V_oc − I·R_internal`, and for a brushed motor the current is proportional to the same `(no_load − ω)` term the torque uses — so a hard acceleration browns out its own supply. One pack, four wheels: **this is the only coupling between the simulated wheels.** It is also *lagged*: internal resistance drops the voltage at once but the chemistry polarises over hundreds of ms, so a **held** load sags deeper than a brief one. That is the real reason a heavy robot suffers more than its peak current suggests — being heavy means drawing that current for longer. |
 | driver loss | `driver_drop`, `driver_resistance` | the bridge keeps some of the voltage. A fixed fraction (body-diode / V_ce floor, worst at low duty) plus a current-proportional one (R_ds(on) and the shunt) that follows the current **instantly**, unlike the pack. Two terms rather than one fudge factor because their time constants differ. |
 | current limiter | `motor_stall_amps`, `driver_current_limit` | many small drivers chop at a fixed current — a TB6612 around 1.2 A per channel, an AT8236 or DRV8871 set by a sense resistor. It caps **torque**, not speed, so it bites hardest from rest at full duty and is barely engaged near top speed: a limited robot is *sluggish, not slow*. `0` means none fitted. |
@@ -903,7 +903,7 @@ Four consequences are worth stating, because each was a mistake first:
   cliff and 2wd is sitting on its. A margin is headroom by definition, and
   spending it because a measurement says you could is how you find the edge.
 - **Only the *ratio* of limit to stall current matters.** The model carries the
-  motor's torque capability in `FAKE_WHEEL_TAU_MS`; the amps only say at what
+  motor's torque capability in `SIM_WHEEL_TAU_MS`; the amps only say at what
   current that torque arrives. So a motor drawing twice the current for the same
   torque is hurt exactly twice as much by the same driver. The tempting reading —
   "a bigger motor behind a small driver changes nothing" — is *not* what this
@@ -925,15 +925,15 @@ matter: the tool samples at 20 ms and differentiates the samples, it drives raw
 PWM in 1 s phases so the pack's sag has a specific amount of time to develop, and
 it gets the stop distance by integrating the coast, which no closed form gives.
 
-So `drivetrain_report.py` transcribes `FakeEncoder::integrate()` and `busScale()`
+So `drivetrain_report.py` transcribes `SimEncoder::integrate()` and `busScale()`
 — same terms, same order, same clamps, same shared pack — and runs them on
 `test_acc.cpp`'s own profile, printing the same four lines the tool prints. It is
-noiseless on purpose: `getRPM()` adds ±`FAKE_WHEEL_NOISE_RPM` and the tool
+noiseless on purpose: `getRPM()` adds ±`SIM_WHEEL_NOISE_RPM` and the tool
 differentiates it, which is about 0.4 m/s² of pure instrument error in the board's
 `MAX ACC` column.
 
 Given that, **flashing `test_acc` is no longer how these numbers are obtained.**
-On a fake-wheel board the tool now refuses and points at the host script, because
+On a sim-wheel board the tool now refuses and points at the host script, because
 what it would otherwise print is a measurement *of the simulator*, taken over a
 serial line after a flash, unable to vary mass or gearing without another one. It
 remains the right tool for a robot with motors on it — and then it is how this
@@ -981,7 +981,7 @@ request actually saturates.
 
 Two rules keep it honest:
 
-- **The model constants are parsed from `fake_wheel.h`, never copied.** A tool
+- **The model constants are parsed from `sim_wheel.h`, never copied.** A tool
   that restates another file's numbers drifts from it silently and then describes
   a robot that does not exist. If a macro is renamed the report exits rather than
   guessing.
@@ -1004,7 +1004,7 @@ two driver losses and the current limiter are editable fields right below it.
 
 It is computed server-side (`POST /api/drivetrain/performance`, which calls
 `drivetrain_report.py`) rather than in the browser. A JavaScript reimplementation
-would be a second opinion about the robot that drifts from `fake_wheel.h`
+would be a second opinion about the robot that drifts from `sim_wheel.h`
 silently — the same rule the report itself follows by parsing its constants out
 of the header instead of restating them.
 
@@ -1073,7 +1073,7 @@ robot, because a single-robot stack is usually run without a prefix at all.
 
 So `envPrefixed()` lives in `mcu_env`, beside the env reader it depends on, and
 every frame the firmware stamps goes through it: `odom` and `base_footprint` in
-the odometry, `imu_link` in the IMU, the magnetometer and the fake wheels,
+the odometry, `imu_link` in the IMU, the magnetometer and the sim wheels,
 `sonar_link` in the range driver, `base_link` on the environmental sensors.
 `topicName()` is now just its old name.
 
@@ -1089,7 +1089,7 @@ ever stamped with a literal that nothing re-stamps.
 
 Auditing those sites turned up an older bug with nothing to do with namespaces.
 The **simulated** sonar fills `range_msg` field by field in `main.cpp` and never
-touched the header, so every fake-mode board -- which is the default -- published
+touched the header, so every sim-mode board -- which is the default -- published
 `/sonar` with an **empty** `frame_id`, a Range message no consumer can place
 anywhere. The real path assigns the whole message from `getRange()`, which
 carries the frame the range driver set, and was never affected. It went unseen
@@ -1124,7 +1124,7 @@ cannot fragment anything. What moved:
 | what | was | now |
 |---|---|---|
 | `topicName()` arena | 640 B of `.bss` | `malloc` on the first *prefixed* name; nothing when `topic_prefix` is unset |
-| `FakeLD19 fake_ld19` | a static instance | `new` only when `fake_lidar_on` |
+| `SimLD19 sim_ld19` | a static instance | `new` only when `sim_lidar_on` |
 | the micro-ROS messages, executor and `Odometry` | static objects | allocated in `setup()` under `if (micro_ros)`, `rclErrorLoop()` if the allocation fails |
 | `test_sensors`, `test_acc`, `bno085_cal` working sets | file-scope buffers and driver objects | `calloc` / `new` in each tool's `setup_()`, with a null guard in `loop_()` |
 

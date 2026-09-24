@@ -3,9 +3,9 @@
 On a real robot the right-hand side is mirrored, so the motor driver inverts
 what it drives and the encoder inverts what it reads. The two cancel.
 
-In fake mode there is no motor: the pins are -1, MotorInterface::spin() returns
+In sim mode there is no motor: the pins are -1, MotorInterface::spin() returns
 without touching anything, and nothing applies the motor half of that pair --
-but FakeEncoder::feed() was still applying the encoder half. Wheel 2 ran
+but SimEncoder::feed() was still applying the encoder half. Wheel 2 ran
 backwards whenever wheel 1 ran forwards, so the simulated robot spun on the
 spot instead of driving.
 
@@ -28,27 +28,27 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
-FAKE = os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder", "fake_wheel.h")
+SIM = os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder", "sim_wheel.h")
 
 
-def _fake_encoder_src():
-    src = open(FAKE).read()
-    i = src.index("class FakeEncoder")
+def _sim_encoder_src():
+    src = open(SIM).read()
+    i = src.index("class SimEncoder")
     j = src.find("\nclass ", i + 1)
     return src[i: j if j > 0 else len(src)]
 
 
 def test_the_simulated_wheel_does_not_apply_invert():
-    body = _fake_encoder_src()
+    body = _sim_encoder_src()
     assert "invert_" not in body, (
-        "FakeEncoder keeps an invert flag again -- in fake mode nothing applies "
+        "SimEncoder keeps an invert flag again -- in sim mode nothing applies "
         "the MOTOR inversion, so applying the encoder's makes wheel 2 run "
         "backwards and the robot spins instead of driving")
     assert "(void)invert;" in body, "invert should be explicitly ignored, and said so"
 
 
 def test_it_still_ignores_the_pins():
-    body = _fake_encoder_src()
+    body = _sim_encoder_src()
     assert "(void)pin1;" in body and "(void)pin2;" in body
 
 

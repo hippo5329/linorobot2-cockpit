@@ -30,13 +30,13 @@ def _src():
         return fh.read()
 
 
-def _decide(mag_sensor, use_fake_mag):
+def _decide(mag_sensor, use_sim_mag):
     """Run the launcher's own expression against a sensors block."""
     src = _src()
     start = src.index("        auto_mag = ")
     end = src.index("\n", src.index("use_mag = (not auto_mag"))
     snippet = src[start:end]
-    ns = {"mag_sensor": mag_sensor, "use_fake_mag": use_fake_mag}
+    ns = {"mag_sensor": mag_sensor, "use_sim_mag": use_sim_mag}
     exec(snippet.replace("        ", "", 1).replace("\n        ", "\n"), {}, ns)
     return ns["use_mag"]
 
@@ -59,7 +59,7 @@ def test_none_is_still_not_fused():
 
 
 def test_the_simulated_magnetometer_is_still_fused():
-    """Unchanged, and load-bearing: without it madgwick integrates the fake
+    """Unchanged, and load-bearing: without it madgwick integrates the sim
     gyro alone, its bias walks onto the clamp, and the body ends up 52 degrees
     from where Nav2 thinks it points (measured on a bare Pico 2)."""
     assert _decide("NONE", True) is True

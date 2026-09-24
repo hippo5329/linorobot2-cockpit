@@ -98,7 +98,7 @@ cd /src
 for spec in "live:8888:udp4" "dead:8899:udp4" "serialcfg:8888:serial" "altport:8877:udp4"; do
   name=${spec%%:*}; rest=${spec#*:}; port=${rest%%:*}; tr=${rest##*:}
   python3 scripts/mcu_env.py build --params config/reference/yb_eet01_config.yaml \
-      --secrets /nonexistent.yaml --host-ip 127.0.0.1 --sensors fake \
+      --secrets /nonexistent.yaml --host-ip 127.0.0.1 --sensors sim \
       --set transport=$tr --set agent_port=$port \
       --out $L/env_$name.bin >/dev/null 2>&1
   echo "  env_$name.bin  transport=$tr agent_port=$port  $(stat -c%s $L/env_$name.bin) bytes"

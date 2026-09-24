@@ -6,7 +6,7 @@
 #include "mcu_env.h"
 #include "default_motor.h"
 #include "encoder.h"
-#include "fake_wheel.h"
+#include "sim_wheel.h"
 
 // Per-motor env keys are built rather than listed: m1_pwm, m2_pwm, ... Four
 // motors times six settings is twenty-four names, and spelling each one out
@@ -50,17 +50,17 @@ class RealEncoder : public EncoderInterface
         Encoder enc_;
 };
 
-#ifndef FAKE_WHEEL_DEFAULT
-#define FAKE_WHEEL_DEFAULT false
+#ifndef SIM_WHEEL_DEFAULT
+#define SIM_WHEEL_DEFAULT false
 #endif
 
-bool wheelsAreFake(void)
+bool wheelsAreSim(void)
 {
     initMcuEnv();
     // One line, one default. This was an #ifdef choosing which fallback to
     // pass -- the same call twice -- so the build still decided what a blank
-    // env meant. FAKE_WHEEL_DEFAULT carries the config's intent as a value.
-    return envFlag("fake_wheel", FAKE_WHEEL_DEFAULT);
+    // env meant. SIM_WHEEL_DEFAULT carries the config's intent as a value.
+    return envFlag("sim_wheel", SIM_WHEEL_DEFAULT);
 }
 
 EncoderInterface *createEncoder(int index)
@@ -74,8 +74,8 @@ EncoderInterface *createEncoder(int index)
     snprintf(key, sizeof(key), "m%d_enc_inv", index);
     const bool invert = envFlag(key, ENC_INV[i]);
 
-    if (wheelsAreFake())
-        return new FakeEncoder(pin_a, pin_b, cpr, invert);
+    if (wheelsAreSim())
+        return new SimEncoder(pin_a, pin_b, cpr, invert);
     return new RealEncoder(pin_a, pin_b, cpr, invert);
 }
 

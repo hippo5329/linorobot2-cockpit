@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
 
 def _sysfs(tmp_path, devices):
-    """Build a fake /sys/bus/usb/devices. devices: {name: (vid, [ifclass, ...])}"""
+    """Build a sim /sys/bus/usb/devices. devices: {name: (vid, [ifclass, ...])}"""
     root = tmp_path / "sys" / "bus" / "usb" / "devices"
     root.mkdir(parents=True)
     for name, (vid, classes) in devices.items():

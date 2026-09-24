@@ -26,9 +26,9 @@
 
 
 
-#ifndef MAG // use fake mag when there is no real mag
-    #define USE_FAKE_MAG
-    #define MAG FakeMAG
+#ifndef MAG // use sim mag when there is no real mag
+    #define USE_SIM_MAG
+    #define MAG SimMAG
 #endif
 
 // No `#define MAG <class>` chain below any more.

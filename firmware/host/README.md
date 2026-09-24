@@ -3,12 +3,12 @@
 A board is a configuration, not a build — and this takes that one step further. The
 **host target** runs the firmware's own model and its own micro-ROS transport on the robot
 computer, speaking **UDP4 to `micro_ros_agent` exactly as an ESP32 does over Wi-Fi**. No
-microcontroller, no USB cable, and — unlike `scripts/fake_base_node.py` — no bypassing of
+microcontroller, no USB cable, and — unlike `scripts/sim_base_node.py` — no bypassing of
 micro-ROS.
 
-## Why, given `fake_base_node.py` already exists
+## Why, given `sim_base_node.py` already exists
 
-`fake_base_node.py` is an rclpy node: it publishes `odom/unfiltered` and `imu/data` straight
+`sim_base_node.py` is an rclpy node: it publishes `odom/unfiltered` and `imu/data` straight
 into DDS. Its own skill documentation is explicit about the cost — it removes *"micro-ROS,
 the serial and Wi-Fi transports, the board's timing, its 4 KB env partition"* — which is why
 a green boardless matrix cannot gate a cut, and why a boardless pass beside a red bench leg
@@ -23,7 +23,7 @@ replacement: the gate stays on hardware.
 
 The firmware sources are compiled **unmodified**. That is the whole point — a second copy of
 the wheel model is the one thing that would make the instrument lie, and
-`tests/test_fake_base_node.py` exists to prevent exactly that. Rather than port the firmware
+`tests/test_sim_base_node.py` exists to prevent exactly that. Rather than port the firmware
 to Linux, `shim/` emulates the small Arduino surface it actually uses, measured rather than
 guessed:
 
@@ -32,7 +32,7 @@ guessed:
 | `kinematics.h` | nothing (includes `Arduino.h`, calls none of it) |
 | `PID.h` | nothing |
 | `odometry.h` | nothing — its `micro_ros_utilities`/`nav_msgs` includes come from the micro-ROS client library |
-| `fake_wheel.h` | `micros()`, `random()`, `map()` |
+| `sim_wheel.h` | `micros()`, `random()`, `map()` |
 | `uros_transport.cpp` | the `Print`/`Stream` hierarchy, `Serial`, `IPAddress`, and nine `WiFiUDP` methods |
 | `mcu_env.cpp` | `Serial.printf`, `IPAddress::fromString` |
 | `diag.cpp` | `Stream *` with `print`/`printf`, `millis()` |
@@ -155,9 +155,9 @@ the transport (the firmware's four functions, under `RMW_UXRCE_TRANSPORT=custom`
 `tests/test_host_target_is_not_a_second_copy.py` guarding both from the desk — no container, no
 board.
 
-**Still to do** before this is a fake base rather than a transport instrument: the probe
+**Still to do** before this is a sim base rather than a transport instrument: the probe
 publishes an `Int32`, not `/odom` and `/imu/data`. The model headers compile against the shim
-(`kinematics.h` needs nothing from Arduino at all; `fake_wheel.h` needs `micros`, `random`,
+(`kinematics.h` needs nothing from Arduino at all; `sim_wheel.h` needs `micros`, `random`,
 `map`, all present), so what remains is to build the base application itself on this target and
 register it as a leg — the point at which "like a mcu" becomes literally true. It still will
 not cover the board's loop timing, the real flash, or the serial link, so **the gate stays on

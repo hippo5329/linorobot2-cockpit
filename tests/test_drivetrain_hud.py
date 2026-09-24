@@ -9,7 +9,7 @@ more: /api/drivetrain/performance runs the same model.
 
 Which creates exactly one new way to be wrong, and it is the one this file
 guards: a JavaScript reimplementation of the motor model. The browser would then
-hold a second opinion about the robot, drifting from fake_wheel.h silently, and
+hold a second opinion about the robot, drifting from sim_wheel.h silently, and
 a HUD that is confidently wrong is worse than the arithmetic it replaced. So the
 numbers are computed server-side by scripts/drivetrain_report.py, which parses
 its constants out of the firmware.
@@ -62,7 +62,7 @@ def test_the_browser_does_not_reimplement_the_motor_model():
     # The performance half only; everything above it is the old arithmetic
     # HUD, which is allowed to do arithmetic.
     perf = _hud_block()
-    assert "FAKE_" not in perf, "a firmware model constant reached the browser"
+    assert "SIM_" not in perf, "a firmware model constant reached the browser"
 
     # No maths beyond formatting. exp/pow/sqrt would be the torque-speed curve
     # or the sag lag; round and toFixed are how a number becomes a label.

@@ -492,7 +492,7 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
 
 
 @app.get("/api/workflow/one-click/stream")
-def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "fake", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None):
+def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None):
     # `robot` is not optional decoration: without it the pipeline resolves the
     # config from --controller alone, and where two robots declare the same
     # base_controller it takes the alphabetically first one. Measured with
@@ -507,7 +507,7 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
     params = load_params()
     selected_controller = controller or get_controller_name(params, "pico2")
     pipeline_script = os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")
-    m_str = mode or "fake"
+    m_str = mode or "sim"
 
     d_str = distro
     if not d_str:

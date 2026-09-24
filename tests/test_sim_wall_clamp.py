@@ -1,6 +1,6 @@
 """The simulated wall must push the robot back the way it came.
 
-`pushOffSegment` moved the robot to FAKE_ROBOT_RADIUS from the wall along the
+`pushOffSegment` moved the robot to SIM_ROBOT_RADIUS from the wall along the
 direction from the wall to WHERE IT IS NOW. A centre that has just crossed the
 line -- 8 mm of travel per 50 Hz cycle at 0.4 m/s -- is then on the far side, so
 the "push off" put it down BEHIND the wall. Measured on the bench: a GenDrv
@@ -8,7 +8,7 @@ rounding the wall's end at y = -1.40 was placed at x = 2.83, and Nav2 then drove
 to a goal it should not have been able to reach.
 
 The side now comes from the previous pose. These cases are a transcription of
-the C++ (firmware/common/lib/lidar/fake_ld19.h) rather than a run of it, so the
+the C++ (firmware/common/lib/lidar/sim_ld19.h) rather than a run of it, so the
 first test checks that the source still has the shape they describe.
 """
 
@@ -16,7 +16,7 @@ import math
 import os
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HEADER = os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "fake_ld19.h")
+HEADER = os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "sim_ld19.h")
 R, X1, Y1, X2, Y2 = 0.30, 2.0, -1.5, 2.0, 1.5
 
 
@@ -48,7 +48,7 @@ def test_the_clamp_takes_the_side_from_the_previous_pose():
     sig = src[src.index("static void pushOffSegment"):][:400]
     assert "float px, float py" in sig, "the previous pose is an argument"
     # ... and the radius too, because the function is static and cannot read
-    # the member the env now fills (fake_radius).
+    # the member the env now fills (sim_radius).
     assert "float r)" in sig, "the robot radius is an argument"
     body = src[src.index("static void pushOffSegment"):src.index("rangeAheadM")]
     assert "prev_side" in body and "(px - x1) * ux + (py - y1) * uy" in body

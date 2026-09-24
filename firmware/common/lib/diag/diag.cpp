@@ -34,17 +34,17 @@ void diagBegin(void)
     // peripheral: whichever starts last owns the pin and the other goes
     // silently nowhere. Turning both on has never meant anything, so say so
     // instead of leaving the operator to wonder which instrument is lying.
-    const char *fake = envGet("fake_ld19", NULL);
-    const bool fake_on = (fake && *fake)
-        ? !(strcmp(fake, "0") == 0 || strcasecmp(fake, "false") == 0
-            || strcasecmp(fake, "no") == 0)
-        : (bool)FAKE_LD19_DEFAULT;
+    const char *sim = envGet("sim_ld19", NULL);
+    const bool sim_on = (sim && *sim)
+        ? !(strcmp(sim, "0") == 0 || strcasecmp(sim, "false") == 0
+            || strcasecmp(sim, "no") == 0)
+        : (bool)SIM_LD19_DEFAULT;
     // Same defaulting as main.cpp: the env's pin, else the header's, and a
     // negative pin means the emulator has no UART sink at all.
     const int lidar_rx = envInt("lidar_rx", LIDAR_RXD);
-    if (fake_on && lidar_rx >= 0) {
+    if (sim_on && lidar_rx >= 0) {
         Serial.printf("[diag] diag_tx=%d ignored: the LiDAR emulator owns UART%d "
-                      "(set fake_ld19=0 to use the diagnostic UART)\r\n", tx, LIDAR_SERIAL);
+                      "(set sim_ld19=0 to use the diagnostic UART)\r\n", tx, LIDAR_SERIAL);
         return;
     }
     const uint32_t baud = envU32("diag_baud", 230400);

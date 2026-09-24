@@ -25,7 +25,7 @@ PID              *createPID(void);
 Kinematics       *createKinematics(void);
 
 // Whether this boot simulates the wheels. Read once; the control loop and the
-// fake IMU both need the same answer.
-bool wheelsAreFake(void);
+// sim IMU both need the same answer.
+bool wheelsAreSim(void);
 
 #endif // HW_FACTORY_H

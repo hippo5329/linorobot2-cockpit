@@ -7,7 +7,7 @@
 #
 # Enforces:
 # 1. Parenthesized PWM_MAX cast: ((float)(pow(2, PWM_BITS) - 1))
-# 2. Bare-board fake IMU / fake MAG definitions to prevent I2C bus stall timeouts
+# 2. Bare-board sim IMU / sim MAG definitions to prevent I2C bus stall timeouts
 # 3. Base controller selection (gendrv, pico, pico2) -- one per robot config
 # ==============================================================================
 
@@ -26,7 +26,7 @@ DEFAULT_ROBOT = "pico2_mecanum"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402
 import pin_catalog  # noqa: E402
-import gen_robot_description  # noqa: E402  (geometry: the fake LiDAR raycasts from the configured pose)
+import gen_robot_description  # noqa: E402  (geometry: the sim LiDAR raycasts from the configured pose)
 DEFAULT_PARAMS = cockpit_paths.robot_config_path()
 DEFAULT_SECRETS = cockpit_paths.secrets_path()
 DEFAULT_OUT = os.path.join(REPO_ROOT, "firmware", "include", "custom", "lino_base_config.h")
@@ -101,8 +101,8 @@ RP2_MCUS = ("pico", "picow", "pico2", "pico2w")
 # so stopping at exactly robot_radius leaves the robot on the boundary, where
 # rounding decides whether it is stuck. A few centimetres of daylight costs
 # nothing in a 10 x 6 m room.
-FAKE_RADIUS_MARGIN_M = 0.05
-FAKE_RADIUS_FALLBACK_M = 0.20
+SIM_RADIUS_MARGIN_M = 0.05
+SIM_RADIUS_FALLBACK_M = 0.20
 
 
 def nav2_robot_radius(params: dict) -> float:
@@ -123,8 +123,8 @@ def nav2_robot_radius(params: dict) -> float:
             continue
         best = max(best, r)
     if best <= 0.0:
-        return FAKE_RADIUS_FALLBACK_M
-    return best + FAKE_RADIUS_MARGIN_M
+        return SIM_RADIUS_FALLBACK_M
+    return best + SIM_RADIUS_MARGIN_M
 
 
 def check_pico_family_transport(params, controller_name):
@@ -273,7 +273,7 @@ def config_warnings(params: dict) -> list:
         mv = vs.get("max_velocity")
         if isinstance(mv, list) and len(mv) > 1 and float(mv[1]) == 0:
             out.append("mecanum base but nav2 velocity_smoother.max_velocity[1] (vy) is 0")
-    # A simulated LiDAR still has to leave the chip. fake_ld19 in `serial` mode
+    # A simulated LiDAR still has to leave the chip. sim_ld19 in `serial` mode
     # does not publish a topic -- it synthesises LD19 frames and clocks them OUT
     # of LIDAR_RXD, so the pin has to be wired to something that reads them (a
     # USB-serial bridge, or the host UART). Unwired, /scan is silent and nothing
@@ -282,11 +282,11 @@ def config_warnings(params: dict) -> list:
     tgt = params.get("base_controller") or {}
     lidar = tgt.get("lidar") or {}
     sensors = tgt.get("sensors") or {}
-    if sensors.get("use_fake_ld19") and str(lidar.get("comm_mode", "")).lower() == "serial":
+    if sensors.get("use_sim_ld19") and str(lidar.get("comm_mode", "")).lower() == "serial":
         rx = lidar.get("rx_pin", -1)
         where = f"GPIO {rx}" if isinstance(rx, int) and rx >= 0 else "the LIDAR_RXD pin (unset)"
         out.append(
-            f"use_fake_ld19 with lidar.comm_mode 'serial' transmits synthetic LD19 frames "
+            f"use_sim_ld19 with lidar.comm_mode 'serial' transmits synthetic LD19 frames "
             f"out of {where}: wire it to a serial bridge or the host UART, or /scan stays "
             f"silent. Use comm_mode 'topic' to publish the scan over micro-ROS instead.")
     # An IMU whose absolute yaw is not fused leaves the EKF dead-reckoning its
@@ -296,13 +296,13 @@ def config_warnings(params: dict) -> list:
     # this row unset -- madgwick -137.3 deg, wheels -129.1 deg, and the map
     # viewer drawing the scan 5-8 deg off the walls it had just built.
     #
-    # The magnetometer exists to anchor exactly this (FakeIMUFromWheels::applyMag
+    # The magnetometer exists to anchor exactly this (SimIMUFromWheels::applyMag
     # rotates a world field by the wheel heading for no other reason), and
     # linorobot2_hardware's wiki specifies imu0 as yaw, vyaw, ax, ay.
     ekf = node_params(params.get("ekf"), "ekf_filter_node")
     imu0 = ekf.get("imu0_config")
     if isinstance(imu0, list) and len(imu0) > 5 and not imu0[5]:
-        if sensors.get("imu", "NONE") != "NONE" or sensors.get("use_fake_imu"):
+        if sensors.get("imu", "NONE") != "NONE" or sensors.get("use_sim_imu"):
             out.append(
                 "an IMU is fitted but ekf imu0_config[5] (absolute yaw) is false: the EKF "
                 "integrates yaw rate with nothing to correct it, and the heading error ends "
@@ -595,12 +595,12 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # the same binary can be re-pointed at different silicon by writing `imu=`
     # into the env. Lowercase, matching the YAML spelling, so the config, the env
     # and the firmware all name a sensor identically.
-    imu_name = "fake" if sensors.get("use_fake_imu", False) else str(sensors.get("imu", "fake")).lower()
-    mag_name = "fake" if sensors.get("use_fake_mag", False) else str(sensors.get("mag", "fake")).lower()
+    imu_name = "sim" if sensors.get("use_sim_imu", False) else str(sensors.get("imu", "sim")).lower()
+    mag_name = "sim" if sensors.get("use_sim_mag", False) else str(sensors.get("mag", "sim")).lower()
     if imu_name in ("none", ""):
-        imu_name = "fake"
+        imu_name = "sim"
     if mag_name in ("none", ""):
-        mag_name = "fake"
+        mag_name = "sim"
     lines.extend([
         "// --- Runtime transport selection (env key `transport`) ---",
         "// The transport is installed at boot by initUrosTransport(); this is only",
@@ -628,7 +628,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
 
     # Defaults, not gates.
     #
-    # These used to be `#define USE_FAKE_*`, and every one of them decided at
+    # These used to be `#define USE_SIM_*`, and every one of them decided at
     # BUILD time something that belongs to a robot: whether the wheels are
     # simulated, whether the barometer is. An image built without them could
     # never be told to simulate, and one built with them could never be told to
@@ -639,33 +639,33 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # its env key is absent, so a board with a blank env still behaves exactly
     # as its config describes.
     lines.extend([
-        f"#define FAKE_IMU_DEFAULT {'true' if sensors.get('use_fake_imu', False) else 'false'}",
-        f"#define FAKE_MAG_DEFAULT {'true' if sensors.get('use_fake_mag', False) else 'false'}",
-        f"#define FAKE_WHEEL_DEFAULT {'true' if sensors.get('use_fake_wheel', False) else 'false'}",
-        f"#define FAKE_ENV_DEFAULT {'true' if sensors.get('use_fake_env', False) else 'false'}",
+        f"#define SIM_IMU_DEFAULT {'true' if sensors.get('use_sim_imu', False) else 'false'}",
+        f"#define SIM_MAG_DEFAULT {'true' if sensors.get('use_sim_mag', False) else 'false'}",
+        f"#define SIM_WHEEL_DEFAULT {'true' if sensors.get('use_sim_wheel', False) else 'false'}",
+        f"#define SIM_ENV_DEFAULT {'true' if sensors.get('use_sim_env', False) else 'false'}",
     ])
 
-    # The MCU-side fake scan and the host-side one are separate things. Bringup
-    # launches scripts/fake_laser_node.py off sensors.use_fake_ld19, whereas this
+    # The MCU-side sim scan and the host-side one are separate things. Bringup
+    # launches scripts/sim_laser_node.py off sensors.use_sim_ld19, whereas this
     # define makes the firmware raycast the room itself and stream it as raw_scan
     # over the micro-ROS link. That stream does not fit alongside the 50 Hz
     # control loop on a 921600-baud serial ESP32 (README, "Wi-Fi Transport &
-    # LiDAR UDP in Fake Mode"), so an explicit lidar.use_fake_ld19 overrides the
+    # LiDAR UDP in Sim Mode"), so an explicit lidar.use_sim_ld19 overrides the
     # sensors flag and leaves the synthesis on the host.
-    if isinstance(lidar, dict) and "use_fake_ld19" in lidar:
-        mcu_fake_ld19 = bool(lidar.get("use_fake_ld19"))
+    if isinstance(lidar, dict) and "use_sim_ld19" in lidar:
+        mcu_sim_ld19 = bool(lidar.get("use_sim_ld19"))
     else:
-        mcu_fake_ld19 = bool(sensors.get("use_fake_ld19", False))
+        mcu_sim_ld19 = bool(sensors.get("use_sim_ld19", False))
     # Same: a default, not a gate. The emulator is compiled into every image
     # (12,396 bytes of flash and 4,084 of RAM on an ESP32, measured) so that
-    # `fake_ld19` in the env can turn it on for a bench board and off for the
+    # `sim_ld19` in the env can turn it on for a bench board and off for the
     # robot that same image later becomes.
-    lines.append(f"#define FAKE_LD19_DEFAULT {'true' if mcu_fake_ld19 else 'false'}")
+    lines.append(f"#define SIM_LD19_DEFAULT {'true' if mcu_sim_ld19 else 'false'}")
     # The emulator raycasts from where the config says the LiDAR sits, so /scan
     # and the TF tree agree (a 12 cm mismatch smeared the map by 0.196 m median
     # once). The env key lidar_x overrides at run time.
     laser = gen_robot_description.effective_geometry(params)["laser"]
-    lines.append(f"#define FAKE_LIDAR_OFFSET_X {float(laser['x'])}f")
+    lines.append(f"#define SIM_LIDAR_OFFSET_X {float(laser['x'])}f")
     # How close the simulated robot may get to a simulated wall, taken from the
     # SAME radius Nav2 plans with. These must not be set independently: the
     # emulator's own default was 0.20 m while the shipped configs plan with
@@ -679,13 +679,13 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     #
     # But only for a header generated FOR A ROBOT. A release image is built for
     # a silicon and must describe no robot at all, so a bare header omits the
-    # define entirely: the value reaches the board as the `fake_radius` env key
+    # define entirely: the value reaches the board as the `sim_radius` env key
     # at flash time (scripts/mcu_env.py), like the room and the mass, and the
     # emulator's own 0.30f stands only for a board with a blank env. Baking a
     # number here would put one robot's dimensions in every other robot's
     # image, which is the failure above with a different cause.
     if params.get("nav2"):
-        lines.append(f"#define FAKE_ROBOT_RADIUS {nav2_robot_radius(params):.4f}f")
+        lines.append(f"#define SIM_ROBOT_RADIUS {nav2_robot_radius(params):.4f}f")
         lines.append("")
 
     # LiDAR settings
@@ -693,12 +693,12 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         # LIDAR_RXD is only meaningful when the MCU has a UART role in the scan
         # path, and which modes those are depends on who generates the scan:
         #   topic          -> none; the scan travels as raw_scan over micro-ROS
-        #   udp  + fake    -> none; the synthetic scan goes straight out on UDP
+        #   udp  + sim    -> none; the synthetic scan goes straight out on UDP
         #   udp  + real    -> the MCU taps the physical LiDAR here and forwards
         #                     it to the UDP server (the real-robot exception:
         #                     everywhere else a real LiDAR plugs into the robot
         #                     PC by USB and the MCU never sees it)
-        #   serial + fake  -> the MCU emits an emulated LD19 out this pin, which
+        #   serial + sim  -> the MCU emits an emulated LD19 out this pin, which
         #                     on the gendrv bench feeds a USB-serial bridge
         # Zeroing it for every UDP mode, as this once did, silently disabled the
         # real esp32-wifi wiring.
@@ -907,10 +907,10 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
 
         lines.append("// --- LiDAR UDP Streaming ---")
         # USE_LIDAR_UDP now means ONLY "forward a real LiDAR's bytes over UDP",
-        # which is lidar.cpp's path and is already gated `&& !USE_FAKE_LD19`.
+        # which is lidar.cpp's path and is already gated `&& !USE_SIM_LD19`.
         # The emulator's UDP sink must not depend on it, or the transport goes
         # back to being a property of the build.
-        if lidar.get("comm_mode") in ("udp", "udp_server") and not mcu_fake_ld19:
+        if lidar.get("comm_mode") in ("udp", "udp_server") and not mcu_sim_ld19:
             lines.append("#define USE_LIDAR_UDP")
         lines.extend([
             f"#define LIDAR_SERVER_DEFAULT IPAddress({srv_octets[0]}, {srv_octets[1]}, {srv_octets[2]}, {srv_octets[3]})",
@@ -1028,11 +1028,11 @@ def bare_mcu_params(mcu: str) -> dict:
             # images would have come up expecting real hardware on a board with
             # every pin set to -1.
             "sensors": {
-                "use_fake_imu": True,
-                "use_fake_mag": True,
-                "use_fake_wheel": True,
-                "use_fake_env": True,
-                "use_fake_ld19": True,
+                "use_sim_imu": True,
+                "use_sim_mag": True,
+                "use_sim_wheel": True,
+                "use_sim_env": True,
+                "use_sim_ld19": True,
             },
             "pins": {
                 "motor1": dict(unset_motor), "motor2": dict(unset_motor),
@@ -1040,7 +1040,7 @@ def bare_mcu_params(mcu: str) -> dict:
                 "encoder1": dict(unset_enc), "encoder2": dict(unset_enc),
                 "encoder3": dict(unset_enc), "encoder4": dict(unset_enc),
                 "i2c": {"sda": -1, "scl": -1},
-                # A bare module still has its onboard LED, and fake mode drives
+                # A bare module still has its onboard LED, and sim mode drives
                 # the real one: a board on a bench should blink out of the box.
                 # Everything else stays N/C.
                 "led": {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32,

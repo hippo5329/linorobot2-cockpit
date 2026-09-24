@@ -4,7 +4,7 @@ A sensor name is written down in three places that cannot import each other:
 sensor_factory.cpp dispatches on it, the Sensors tab offers it, and the I2C
 probe emits it as the name to adopt when the chip answers. Nothing links them,
 so a driver can be added to the firmware and stay unreachable from the UI, or
-an option can be offered that falls back to `fake` at boot with only a serial
+an option can be offered that falls back to `sim` at boot with only a serial
 line to say so.
 
 These tests are that link.
@@ -49,7 +49,7 @@ def test_the_probe_only_adopts_names_the_factory_knows():
     """i2cProbeSelect() overrides the config with the probe's `driver` string.
 
     If that string is not a factory row, detection silently downgrades a real
-    sensor to the fake one -- the worst outcome available, because the bus was
+    sensor to the sim one -- the worst outcome available, because the bus was
     read correctly and the answer was then thrown away.
     """
     # Only the imu/mag roles go through sensor_factory. The "current" and "env"

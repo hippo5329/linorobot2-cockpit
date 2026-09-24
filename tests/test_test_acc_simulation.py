@@ -7,7 +7,7 @@ simulation, because it produces numbers people will tune a velocity smoother
 from and there is no longer a board in the loop to contradict it.
 
 So this file pins the transcription to the two files it transcribes: the timing
-and measurement rules to test_acc.cpp, the physics to fake_wheel.h.
+and measurement rules to test_acc.cpp, the physics to sim_wheel.h.
 """
 import math
 import os
@@ -139,7 +139,7 @@ def test_the_measured_speed_sits_below_the_asymptote():
 
 
 def test_a_stalled_duty_band_still_produces_a_run():
-    """FAKE_WHEEL_STALL_DUTY is read from the header; a rename would make every
+    """SIM_WHEEL_STALL_DUTY is read from the header; a rename would make every
     wheel stall at full PWM and the report would show a robot that cannot move."""
     d = _d()
     assert 0.0 < d["stall_duty"] < 0.5
@@ -197,7 +197,7 @@ def test_the_limiter_barely_touches_top_speed():
 def test_only_the_ratio_of_limit_to_stall_current_matters():
     """What the amps actually buy you.
 
-    The model carries the motor's torque capability in FAKE_WHEEL_TAU_MS, and
+    The model carries the motor's torque capability in SIM_WHEEL_TAU_MS, and
     the current only says at what current that torque arrives. So the limiter's
     effect is `limit / stall`, and nothing else: a motor drawing twice the
     current for the same torque is hurt exactly twice as much by the same
@@ -251,9 +251,9 @@ def test_the_firmware_and_the_host_apply_it_the_same_way():
     A firmware that instead derated no_load_rpm would make a limited robot slow
     rather than sluggish."""
     src = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
-                            "fake_wheel.h"), encoding="utf-8").read()
+                            "sim_wheel.h"), encoding="utf-8").read()
     body = src[src.index("void integrate()"):src.index("public:")]
-    assert "ilim_scale * fakeGearEfficiency()" in body, "the limiter must scale the torque"
+    assert "ilim_scale * simGearEfficiency()" in body, "the limiter must scale the torque"
     assert "demand()[slot_] = ifrac * ilim_scale;" in body, "the pack must see the limited current"
     # ...and never the speed target.
     assert "no_load_rpm *= ilim_scale" not in body

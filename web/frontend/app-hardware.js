@@ -148,7 +148,7 @@ async function loadHardwareConfig() {
 
     // 3. Sensors
     const elImu = document.getElementById("cfg-imu");
-    if (elImu) elImu.value = sensors.imu || (sensors.use_fake_imu ? "FAKE" : "NONE");
+    if (elImu) elImu.value = sensors.imu || (sensors.use_sim_imu ? "SIM" : "NONE");
 
     const elMag = document.getElementById("cfg-mag");
     if (elMag) elMag.value = sensors.mag || "NONE";
@@ -193,16 +193,16 @@ async function loadHardwareConfig() {
     const elEnv = document.getElementById("cfg-env");
     if (elEnv) elEnv.value = sensors.env || "NONE";
 
-    const chkFakeImu = document.getElementById("chk-fake-imu");
-    if (chkFakeImu) chkFakeImu.checked = !!sensors.use_fake_imu;
-    const chkFakeMag = document.getElementById("chk-fake-mag");
-    if (chkFakeMag) chkFakeMag.checked = !!sensors.use_fake_mag;
-    const chkFakeWheel = document.getElementById("chk-fake-wheel");
-    if (chkFakeWheel) chkFakeWheel.checked = !!sensors.use_fake_wheel;
-    const chkFakeLd19 = document.getElementById("chk-fake-ld19");
-    if (chkFakeLd19) chkFakeLd19.checked = !!sensors.use_fake_ld19;
-    const chkFakeEnv = document.getElementById("chk-fake-env");
-    if (chkFakeEnv) chkFakeEnv.checked = !!sensors.use_fake_env;
+    const chkSimImu = document.getElementById("chk-sim-imu");
+    if (chkSimImu) chkSimImu.checked = !!sensors.use_sim_imu;
+    const chkSimMag = document.getElementById("chk-sim-mag");
+    if (chkSimMag) chkSimMag.checked = !!sensors.use_sim_mag;
+    const chkSimWheel = document.getElementById("chk-sim-wheel");
+    if (chkSimWheel) chkSimWheel.checked = !!sensors.use_sim_wheel;
+    const chkSimLd19 = document.getElementById("chk-sim-ld19");
+    if (chkSimLd19) chkSimLd19.checked = !!sensors.use_sim_ld19;
+    const chkSimEnv = document.getElementById("chk-sim-env");
+    if (chkSimEnv) chkSimEnv.checked = !!sensors.use_sim_env;
 
     // 4. Pin Matrix
     const elLed = document.getElementById("pin-led");
@@ -407,7 +407,7 @@ function updateKinematicsHUD() {
 // way to see it was to flash test_acc and drive the board.
 //
 // The model is NOT reimplemented here. /api/drivetrain/performance runs
-// scripts/drivetrain_report.py, which parses its constants out of fake_wheel.h --
+// scripts/drivetrain_report.py, which parses its constants out of sim_wheel.h --
 // so this HUD and the firmware cannot disagree about the robot. A JS copy would
 // be a second opinion that drifts silently, which is the exact fault the report
 // was written to avoid.
@@ -1051,18 +1051,18 @@ async function saveCurrentHardwareConfig() {
       }
     },
     sensors: {
-      // NONE, not FAKE, when the control is absent -- and it is absent now that
+      // NONE, not SIM, when the control is absent -- and it is absent now that
       // I2C sensors are detected at boot. NONE means "not declared, find it";
-      // FAKE would mean "simulate one", which is a different robot.
+      // SIM would mean "simulate one", which is a different robot.
       imu: document.getElementById("cfg-imu")?.value || "NONE",
       mag: document.getElementById("cfg-mag")?.value || "NONE",
       current: document.getElementById("cfg-battery")?.value || "NONE",
       env: document.getElementById("cfg-env")?.value || "NONE",
-      use_fake_imu: !!document.getElementById("chk-fake-imu")?.checked,
-      use_fake_mag: !!document.getElementById("chk-fake-mag")?.checked,
-      use_fake_wheel: !!document.getElementById("chk-fake-wheel")?.checked,
-      use_fake_ld19: !!document.getElementById("chk-fake-ld19")?.checked,
-      use_fake_env: !!document.getElementById("chk-fake-env")?.checked,
+      use_sim_imu: !!document.getElementById("chk-sim-imu")?.checked,
+      use_sim_mag: !!document.getElementById("chk-sim-mag")?.checked,
+      use_sim_wheel: !!document.getElementById("chk-sim-wheel")?.checked,
+      use_sim_ld19: !!document.getElementById("chk-sim-ld19")?.checked,
+      use_sim_env: !!document.getElementById("chk-sim-env")?.checked,
     },
     pins: {
       led: parsePin("pin-led", -1),

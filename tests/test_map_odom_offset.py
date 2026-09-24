@@ -1,7 +1,7 @@
 """How far SLAM's correction wanders, measured before it causes an abort.
 
 map->odom is SLAM's correction to the wheels. On a simulated robot in a
-10 x 6 m room it should stay small: the fake LiDAR sees a room that matches the
+10 x 6 m room it should stay small: the sim LiDAR sees a room that matches the
 wheels exactly, so there is nothing for the correction to correct.
 
 On the 2026-09-23 mecanum slice (stamp 20260923-170733) a leg aborted with

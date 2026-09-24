@@ -433,7 +433,7 @@ to it by name has to be told.** Its params sections, its lifecycle manager's `no
 any full topic or frame name written into a config file.
 
 ### A bare module has no LiDAR tty, so the virtual room runs on the robot computer
-`use_fake_ld19` says a scan is simulated; it does not say *where*. Two benches want different
+`use_sim_ld19` says a scan is simulated; it does not say *where*. Two benches want different
 answers, and picking the wrong one either bypasses the code under test or leaves the stack with
 no `/scan` at all:
 
@@ -444,12 +444,12 @@ no `/scan` at all:
   the serial driver dies on the missing port, `/scan` never comes, and SLAM and Nav2 sit there
   waiting — on the configuration that is supposed to be the easiest one to run.
 
-So the host emulator (`scripts/fake_laser_node.py`) takes over only when the scan is faked
+So the host emulator (`scripts/sim_laser_node.py`) takes over only when the scan is simd
 **and** either the mode is not serial or the configured port does not exist:
 
 ```python
-use_host_fake_laser = (
-    controller.get("sensors", {}).get("use_fake_ld19", False)
+use_host_sim_laser = (
+    controller.get("sensors", {}).get("use_sim_ld19", False)
     and (effective_lidar_comm_mode != "serial" or not os.path.exists(lidar_port))
 )
 ```

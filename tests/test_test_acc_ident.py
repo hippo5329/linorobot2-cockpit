@@ -139,12 +139,12 @@ def test_it_runs_once_not_once_per_run():
     assert "if (!identified)" in src
 
 
-def test_identification_is_skipped_on_a_fake_wheel_board():
+def test_identification_is_skipped_on_a_sim_wheel_board():
     """It must sit AFTER the refusal: there is nothing to identify, and the
     host models it better than a serial line can report it."""
     src = open(ACC, encoding="utf-8").read()
     loop = src[src.index("void loop_()"):]
-    assert loop.index("if (fake_wheels)") < loop.index("ident::run()")
+    assert loop.index("if (sim_wheels)") < loop.index("ident::run()")
 
 
 def test_no_trace_is_stored_for_the_closed_loop_pass():

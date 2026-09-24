@@ -1,6 +1,6 @@
 """The simulator must not park the robot inside Nav2's own footprint.
 
-`clampToRoom()` holds the simulated robot's centre `FAKE_ROBOT_RADIUS` from a
+`clampToRoom()` holds the simulated robot's centre `SIM_ROBOT_RADIUS` from a
 wall. Nav2 refuses to plan out of a cell its footprint overlaps. So if the
 simulator's radius is smaller than Nav2's `robot_radius`, the simulation itself
 places the robot in a lethal cell — and nothing gets it out.
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import gen_firmware_header as gfh  # noqa: E402
 
 REF = os.path.join(REPO_ROOT, "config", "reference")
-FAKE_LD19 = os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "fake_ld19.h")
+SIM_LD19 = os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "sim_ld19.h")
 
 
 def reference_configs():
@@ -62,9 +62,9 @@ def test_simulator_radius_clears_nav2_footprint(name, params):
 
 def test_the_firmware_fallback_clears_every_shipped_radius():
     """An image built without a generated header must still be safe."""
-    src = open(FAKE_LD19, encoding="utf-8").read()
-    m = re.search(r"#define FAKE_ROBOT_RADIUS\s+([0-9.]+)f", src)
-    assert m, "FAKE_ROBOT_RADIUS fallback is gone"
+    src = open(SIM_LD19, encoding="utf-8").read()
+    m = re.search(r"#define SIM_ROBOT_RADIUS\s+([0-9.]+)f", src)
+    assert m, "SIM_ROBOT_RADIUS fallback is gone"
     fallback = float(m.group(1))
     worst = max((max(nav2_radii(p)) for _, p in reference_configs() if nav2_radii(p)),
                 default=0.0)
@@ -91,4 +91,4 @@ def test_the_larger_of_the_two_costmaps_wins():
 
 
 def test_a_config_with_no_nav2_still_builds():
-    assert gfh.nav2_robot_radius({}) == gfh.FAKE_RADIUS_FALLBACK_M
+    assert gfh.nav2_robot_radius({}) == gfh.SIM_RADIUS_FALLBACK_M

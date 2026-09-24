@@ -3,8 +3,8 @@
 The history here is two mistakes in opposite directions, and the second is the
 instructive one.
 
-First, FakeEncoder::feed() was called from main.cpp's moveBase() and nowhere
-else, so on a fake-wheel board test_acc drove nothing -- and still printed a
+First, SimEncoder::feed() was called from main.cpp's moveBase() and nowhere
+else, so on a sim-wheel board test_acc drove nothing -- and still printed a
 full table:
 
     MAX VEL   0.00   0.00 m/s    0.03 rad/s
@@ -19,17 +19,17 @@ table filled with plausible numbers. And that was the second mistake, because
 those numbers were a measurement OF THE SIMULATOR -- taken on an MCU, over a
 serial line, after a flash, and unable to vary the terms that matter (mass, gear
 efficiency, pack sag, driver losses) without another one. The model lives in
-fake_wheel.h and the host can simply run it: scripts/drivetrain_report.py steps
+sim_wheel.h and the host can simply run it: scripts/drivetrain_report.py steps
 the same equations on this tool's own 20 ms / 1 s profile.
 
-So the rule is now: with fake wheels, print where the answer comes from and
+So the rule is now: with sim wheels, print where the answer comes from and
 stop. Which matters for the same reason the first bug did -- the project wiki
 tells people to set the velocity smoother's max_velocity and max_accel "according
 to test_acc test result", so anything this tool prints will be used to configure
 a robot.
 
 main.cpp is the opposite case and must keep feeding: the simulated wheels are
-what makes a fake-mode Nav2 run move, and that is the bench's whole gate.
+what makes a sim-mode Nav2 run move, and that is the bench's whole gate.
 """
 import os
 import re
@@ -77,12 +77,12 @@ def test_no_spin_site_bypasses_the_helper():
     assert "motor1_controller->spin(" not in after, "a spin site bypasses driveAll"
 
 
-def test_a_fake_wheel_board_is_refused_before_any_motor_is_spun():
+def test_a_sim_wheel_board_is_refused_before_any_motor_is_spun():
     """The refusal has to come first. Falling through to the run would drive the
     motor pins of a board whose config says it has none."""
     s = _src(ACC)
     loop = s[s.index("void loop_()"):]
-    guard = loop.index("if (fake_wheels)")
+    guard = loop.index("if (sim_wheels)")
     assert guard < loop.index("driveAll("), "the guard runs after the first drive"
     assert "return;" in loop[guard:loop.index("driveAll(")]
 
@@ -100,20 +100,20 @@ def test_the_env_decides_not_the_build():
     """One image serves a bare module and a wired robot; an #ifdef here would
     put the decision in whichever config generated the header."""
     s = _src(ACC)
-    assert "wheelsAreFake()" in s
-    acc_guard = s[s.index("fake_wheels = wheelsAreFake();") - 400:]
-    assert "#ifdef" not in acc_guard[:acc_guard.index("wheelsAreFake();")]
+    assert "wheelsAreSim()" in s
+    acc_guard = s[s.index("sim_wheels = wheelsAreSim();") - 400:]
+    assert "#ifdef" not in acc_guard[:acc_guard.index("wheelsAreSim();")]
 
 
 def test_the_guard_is_set_after_the_env_is_read():
-    """wheelsAreFake() calls initMcuEnv() itself, but reading it before the tool
+    """wheelsAreSim() calls initMcuEnv() itself, but reading it before the tool
     has probed the bus would order the banner lines confusingly."""
     s = _src(ACC)
-    assert s.index("initMcuEnv();") < s.index("fake_wheels = wheelsAreFake();")
+    assert s.index("initMcuEnv();") < s.index("sim_wheels = wheelsAreSim();")
 
 
 def test_main_still_feeds_the_simulated_wheels():
-    """The control loop is the remaining caller and must stay one: fake mode is
+    """The control loop is the remaining caller and must stay one: sim mode is
     how every Nav2 leg on the bench moves."""
     m = _src(MAIN)
     for n in (1, 2, 3, 4):

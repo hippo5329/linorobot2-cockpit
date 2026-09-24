@@ -125,14 +125,14 @@ def test_bare_config_has_no_real_pins(tmp_path):
     """
     for mcu in ("pico", "pico2", "esp32", "esp32s3"):
         env = _bare_env(mcu, tmp_path)
-        assert str(env["fake_wheel"]) == "1", mcu
-        # There is no fake_imu key: the IMU is chosen by name at runtime
-        # (sensor_factory), and "fake" is the name of the simulated driver.
-        assert str(env["imu"]).lower() == "fake", mcu
-        assert str(env["fake_ld19"]) == "1", mcu
+        assert str(env["sim_wheel"]) == "1", mcu
+        # There is no sim_imu key: the IMU is chosen by name at runtime
+        # (sensor_factory), and "sim" is the name of the simulated driver.
+        assert str(env["imu"]).lower() == "sim", mcu
+        assert str(env["sim_ld19"]) == "1", mcu
         assert all(env[f"m{i}_pwm"] == -1 for i in range(1, 5)), mcu
         # No battery, no environmental sensor -- but the simulated magnetometer
-        # IS published. use_fake_mag rotates a world field to the room heading
+        # IS published. use_sim_mag rotates a world field to the room heading
         # for one purpose, anchoring madgwick, and `mag: NONE` here means "no
         # chip", not "silence the simulation of one". The old expectation of
         # pub_mag == 0 was the bug: /imu/mag had no publisher, madgwick with a
@@ -154,10 +154,10 @@ def test_redact_hides_the_psk():
     assert r["wifi_psk"] != "hunter2" and r["wifi_ssid"] == "bench"
 
 
-def test_battery_fake_lidar_and_geometry_reach_the_env():
+def test_battery_sim_lidar_and_geometry_reach_the_env():
     env = _env("pico2_mecanum")
     assert (env["battery_pin"], env["bat_r1"], env["bat_r2"]) == (26, 30000, 7500)
-    assert env["fake_ld19"] == "0"          # a real LD19 on the robot computer
+    assert env["sim_ld19"] == "0"          # a real LD19 on the robot computer
     assert "lidar_x" in env
     # gendrv drives a real LD19 now (the merge with gendrv_real), so flip the
     # flag on a copy: what is under test is that the emulator raycasts from the
@@ -165,37 +165,37 @@ def test_battery_fake_lidar_and_geometry_reach_the_env():
     # Every default config now shares one chassis with the laser at the base
     # origin, so state the pose here: what is under test is that the emulator
     # raycasts from the config's LiDAR pose, not what that pose happens to be.
-    params = _with(reference_params("gendrv"), sensors={"use_fake_ld19": True})
+    params = _with(reference_params("gendrv"), sensors={"use_sim_ld19": True})
     params.setdefault("geometry", {}).setdefault("laser", {})["x"] = 0.12
-    fake = _env_from_params(params)
-    assert fake["fake_ld19"] == "1"
-    assert float(fake["lidar_x"]) == 0.12   # the emulator raycasts from the config's LiDAR pose
-    assert "pwm_min" not in fake and "pwm_max" not in fake   # derived from pwm_bits on the board
+    sim = _env_from_params(params)
+    assert sim["sim_ld19"] == "1"
+    assert float(sim["lidar_x"]) == 0.12   # the emulator raycasts from the config's LiDAR pose
+    assert "pwm_min" not in sim and "pwm_max" not in sim   # derived from pwm_bits on the board
 
 
-def test_fake_mode_overrides_a_config_that_names_real_hardware():
-    """--mode fake means simulate what the bench lacks, whatever the YAML says.
+def test_sim_mode_overrides_a_config_that_names_real_hardware():
+    """--mode sim means simulate what the bench lacks, whatever the YAML says.
 
-    gendrv_config.yaml describes a real LD19 on GPIO 4 (use_fake_ld19: false).
-    Under --mode fake the env still carried fake_ld19 0, the board emitted
+    gendrv_config.yaml describes a real LD19 on GPIO 4 (use_sim_ld19: false).
+    Under --mode sim the env still carried sim_ld19 0, the board emitted
     nothing on the LiDAR bridge, and /scan could never arrive -- both distros.
     """
     env = _env("gendrv")
-    assert env["fake_ld19"] == "0" and env["imu"] != "fake"      # the config, as written
-    changed = mcu_env.apply_sensor_mode(env, "fake")
-    assert env["fake_ld19"] == "1" and env["fake_wheel"] == "1" and env["fake_env"] == "1"
-    assert env["imu"] == "fake" and env["mag"] == "fake"
-    assert "fake_ld19" in changed and "imu" in changed
-    # the LED is not a sensor: fake mode drives the real one
+    assert env["sim_ld19"] == "0" and env["imu"] != "sim"      # the config, as written
+    changed = mcu_env.apply_sensor_mode(env, "sim")
+    assert env["sim_ld19"] == "1" and env["sim_wheel"] == "1" and env["sim_env"] == "1"
+    assert env["imu"] == "sim" and env["mag"] == "sim"
+    assert "sim_ld19" in changed and "imu" in changed
+    # the LED is not a sensor: sim mode drives the real one
     assert env.get("led") == mcu_env.env_from_config(
         os.path.join(REF, "gendrv_config.yaml"), SECRETS_EXAMPLE, "192.0.2.1").get("led")
 
 
 def test_real_mode_restores_the_named_drivers_and_config_mode_is_a_no_op():
     env = _env("gendrv")
-    mcu_env.apply_sensor_mode(env, "fake")
+    mcu_env.apply_sensor_mode(env, "sim")
     mcu_env.apply_sensor_mode(env, "real", os.path.join(REF, "gendrv_config.yaml"))
-    assert env["fake_ld19"] == "0" and env["fake_wheel"] == "0"
+    assert env["sim_ld19"] == "0" and env["sim_wheel"] == "0"
     assert env["imu"] == "qmi8658" and env["mag"] == "ak09918"
     untouched = _env("gendrv")
     assert mcu_env.apply_sensor_mode(dict(untouched), "config") == []
@@ -204,7 +204,7 @@ def test_real_mode_restores_the_named_drivers_and_config_mode_is_a_no_op():
 
 def test_the_pipeline_and_the_flasher_carry_the_mode_to_the_env():
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
-    assert 'return {"fake": "fake", "real": "real"}.get(mode)' in pipe
+    assert 'return {"sim": "sim", "real": "real"}.get(mode)' in pipe
     assert pipe.count('argv += ["--sensors", sensors]') == 2, "both flash paths must forward it"
     assert "sensors=sensors_for_mode(args.mode)" in pipe
     flash = open(os.path.join(REPO_ROOT, "scripts", "flash_mcu.py")).read()

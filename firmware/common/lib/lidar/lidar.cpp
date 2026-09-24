@@ -23,11 +23,11 @@
 #include <string.h>
 
 // Forwarding a PHYSICAL LiDAR's bytes to a UDP server. The gate was
-// `#if defined(USE_LIDAR_UDP) && !defined(USE_FAKE_LD19)`, which made this an
+// `#if defined(USE_LIDAR_UDP) && !defined(USE_SIM_LD19)`, which made this an
 // either/or decided by the build: an image that carried the emulator could
 // never forward a real LiDAR, and an image that forwarded one could never
 // simulate. Both now compile, and initLidar() picks at boot from `lidar_comm`
-// and `fake_ld19`.
+// and `sim_ld19`.
 //
 // The remaining gate is ARCHITECTURE: this needs WiFiUdp and a spare
 // HardwareSerial, neither of which exists on a bare RP2040/RP2350.
@@ -47,7 +47,7 @@
 #define LIDAR_BAUDRATE 230400
 #endif
 // Read from the env at every use; these answer only for a board whose env has
-// never been written. A released image names no host -- see fake_ld19.h.
+// never been written. A released image names no host -- see sim_ld19.h.
 #ifndef LIDAR_SERVER_DEFAULT
 #define LIDAR_SERVER_DEFAULT IPAddress(192, 168, 1, 100)
 #endif
@@ -137,17 +137,17 @@ void initLidar(void) {
   poweronLidar();
 
   // Forward only when this board is the tap for a REAL LiDAR going out over
-  // UDP. `fake_ld19` means the scan is synthesised instead, and the emulator
+  // UDP. `sim_ld19` means the scan is synthesised instead, and the emulator
   // owns the same UART -- starting both would leave whichever began last
   // holding the pin.
   const char *comm_mode = envGet("lidar_comm", LIDAR_COMM_DEFAULT);
-  const bool fake = envFlag("fake_ld19", FAKE_LD19_DEFAULT);
-  forwarding = (lidar_rx >= 0) && !fake
+  const bool sim = envFlag("sim_ld19", SIM_LD19_DEFAULT);
+  forwarding = (lidar_rx >= 0) && !sim
                && (strcasecmp(comm_mode, "udp") == 0
                    || strcasecmp(comm_mode, "udp_server") == 0);
   if (!forwarding) {
-    Serial.printf("[lidar] UDP forwarder off (rx=%d fake_ld19=%d comm=%s)\n",
-                  lidar_rx, (int)fake, comm_mode);
+    Serial.printf("[lidar] UDP forwarder off (rx=%d sim_ld19=%d comm=%s)\n",
+                  lidar_rx, (int)sim, comm_mode);
     return;
   }
 

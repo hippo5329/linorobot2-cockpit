@@ -38,7 +38,7 @@ MAXIMAL_CONFIG = {
         "qos": "reliable", "use_dual_core": True, "boot_delay": 2,
         "telemetry": {"ota_port": 3232},
         "sensors": {"imu": "auto", "mag": "auto", "current": "INA219", "env": "BMP280",
-                    "use_fake_ld19": True},
+                    "use_sim_ld19": True},
         "lidar": {"model": "ld19", "comm_mode": "serial", "rx_pin": 4, "baudrate": 230400},
         "pins": {"i2c": {"sda": 1, "scl": 2}, "led": 3,
                  "gpio_out": [{"pin": 5, "level": 1}], "gpio_out_late": "6=1",
@@ -137,7 +137,7 @@ def test_every_run_writes_the_env_block():
     want_env keyed on the probe calling it stale, and the probe compares against
     what THIS host recorded -- so a board carrying an env from an older config,
     another host, or a --skip-flash run kept it. A GenDrv leg "passed" that way
-    with fake_ld19 off, inheriting an older env that had the emulator on.
+    with sim_ld19 off, inheriting an older env that had the emulator on.
     """
     src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "want_env = bool(board) and not args.skip_flash" in src, \

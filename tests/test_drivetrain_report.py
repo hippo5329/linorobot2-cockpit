@@ -7,7 +7,7 @@ to fit, and tracking degrades -- three mecanum legs left the room on 2026-09-23
 before anyone looked at the motors. The arithmetic is not hard; it was never
 written down.
 
-The report's model constants are PARSED from fake_wheel.h rather than restated,
+The report's model constants are PARSED from sim_wheel.h rather than restated,
 because a tool that copies the model's numbers drifts from it silently and then
 describes a robot that does not exist.
 """
@@ -45,9 +45,9 @@ def test_the_model_constants_come_from_the_firmware():
         assert key in d, key
     # and they are the firmware's values, not a copy
     src = open(os.path.join(ROOT, "firmware", "common", "lib", "encoder",
-                            "fake_wheel.h"), encoding="utf-8").read()
-    assert f"FAKE_GEAR_EFFICIENCY {d['gear_eff']}" in src
-    assert f"FAKE_BATT_SAG {d['sag']}" in src
+                            "sim_wheel.h"), encoding="utf-8").read()
+    assert f"SIM_GEAR_EFFICIENCY {d['gear_eff']}" in src
+    assert f"SIM_BATT_SAG {d['sag']}" in src
 
 
 def test_a_missing_constant_is_refused_rather_than_guessed():
@@ -55,7 +55,7 @@ def test_a_missing_constant_is_refused_rather_than_guessed():
     does not exist."""
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".h", delete=False) as fh:
-        fh.write("#define FAKE_WHEEL_TAU_MS 150\n")
+        fh.write("#define SIM_WHEEL_TAU_MS 150\n")
         path = fh.name
     with pytest.raises(SystemExit):
         dr.model_defaults(path)

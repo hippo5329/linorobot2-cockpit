@@ -33,7 +33,7 @@ one of them a particular robot is here:
                 lidar_ip   lidar_port  lidar_rx  lidar_baud
 
     runtime     dual_core  i2c_scan  pub_mag  pub_battery  pub_env  best_effort  console
-                fake_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
+                sim_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
                 ota_port
                 diag_tx  diag_baud   (a second UART that prints the loop's
@@ -49,7 +49,7 @@ one of them a particular robot is here:
     drivetrain  m<N>_pwm  m<N>_in_a  m<N>_in_b  m<N>_inv
                 m<N>_enc_a  m<N>_enc_b  m<N>_cpr  m<N>_enc_inv   (N = 1..4)
                 motor_driver  pwm_freq  pwm_bits  pwm_min  pwm_max
-                kp  ki  kd  fake_wheel
+                kp  ki  kd  sim_wheel
 
     kinematics  base  max_rpm  rpm_ratio  wheel_d  lr_dist  fr_dist  angular_scale
                 motor_v  power_v
@@ -207,6 +207,17 @@ def decode(blob: bytes) -> dict:
         if "=" in text:
             key, _, value = text.partition("=")
             env[key] = value
+    # The simulation keys were `fake_*` before 2026-09-24. Reading such an image is
+    # fine -- `print` and `set` both should work on one -- but it must not be
+    # mistaken for a current one: the firmware no longer recognises those keys, so
+    # every one of them is a compiled-in default silently taken on the board.
+    stale = sorted(k for k in env if k.startswith("fake_"))
+    if stale:
+        print(f"[mcu_env] WARNING: this image predates the sim_ rename; {len(stale)} "
+              f"key(s) still use `fake_` ({', '.join(stale[:4])}"
+              f"{', ...' if len(stale) > 4 else ''}). Current firmware ignores them. "
+              "Rebuild the image with `mcu_env.py build` rather than editing it.",
+              file=sys.stderr)
     return env
 
 
@@ -280,23 +291,23 @@ def _bool(value) -> str:
     return "1" if value else "0"
 
 
-SENSOR_MODES = ("config", "fake", "real")
+SENSOR_MODES = ("config", "sim", "real")
 
 
 def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
     """Force the env's sensor flags to a MODE, whatever the config said.
 
-    "fake" is what the pipeline's --mode fake means: simulate everything the
+    "sim" is what the pipeline's --mode sim means: simulate everything the
     bench does not have. It used to leave the config's flags alone, so
-    gendrv_config.yaml -- a real LD19 on GPIO 4, use_fake_ld19: false -- went to
-    the board with fake_ld19 0 under --mode fake, emitted nothing on the LiDAR
+    gendrv_config.yaml -- a real LD19 on GPIO 4, use_sim_ld19: false -- went to
+    the board with sim_ld19 0 under --mode sim, emitted nothing on the LiDAR
     bridge, and /scan structurally could not arrive, on both distros. A mode
-    called fake that waits for hardware the bench lacks is the config's mode
+    called sim that waits for hardware the bench lacks is the config's mode
     with a misleading label.
 
     "real" is the opposite. "config" (or None) lets the YAML stand -- that is
     --mode auto, and what the real-sensor legs use. The status LED is not a
-    sensor and is never touched: fake mode drives the real one.
+    sensor and is never touched: sim mode drives the real one.
 
     Returns the keys it changed, so the caller can say so in the transcript.
     """
@@ -305,17 +316,17 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
     if mode not in SENSOR_MODES:
         raise ValueError(f"sensor mode must be one of {SENSOR_MODES}, not {mode!r}")
     before = dict(env)
-    if mode == "fake":
-        env["imu"] = "fake"
-        env["mag"] = "fake"
-        env["fake_wheel"] = "1"
-        env["fake_ld19"] = "1"
-        env["fake_env"] = "1"
+    if mode == "sim":
+        env["imu"] = "sim"
+        env["mag"] = "sim"
+        env["sim_wheel"] = "1"
+        env["sim_ld19"] = "1"
+        env["sim_env"] = "1"
     else:
-        env["fake_wheel"] = "0"
-        env["fake_ld19"] = "0"
-        env["fake_env"] = "0"
-        # A driver can only be un-faked if the config names one.
+        env["sim_wheel"] = "0"
+        env["sim_ld19"] = "0"
+        env["sim_env"] = "0"
+        # A driver can only be un-simd if the config names one.
         sensors = {}
         if params_path:
             import yaml
@@ -323,7 +334,7 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
                 sensors = (yaml.safe_load(fh) or {}).get("base_controller", {}).get("sensors", {}) or {}
         for field in ("imu", "mag"):
             name = str(sensors.get(field, "")).strip()
-            if name and name.upper() not in ("AUTO", "NONE", "OFF", "DISABLE", "FAKE"):
+            if name and name.upper() not in ("AUTO", "NONE", "OFF", "DISABLE", "SIM"):
                 env[field] = name.lower()
     return [k for k in env if env.get(k) != before.get(k)]
 
@@ -395,7 +406,7 @@ def hardware_env(params: dict) -> dict:
     # Which sensor topics this robot publishes. A chip answering the I2C probe
     # is not on its own a reason to spend link budget on it: `mag: NONE` in the
     # config means "do not publish /imu/mag", even on a board that carries an
-    # AK09918. This is what makes "only the fake IMU, nothing else" expressible
+    # AK09918. This is what makes "only the sim IMU, nothing else" expressible
     # on the 921600 boards, where six publishers at 50 Hz do not fit.
     #   auto (or the key left out)  the I2C probe decides
     #   NONE / off / disable        never publish, even though the chip is there
@@ -412,22 +423,22 @@ def hardware_env(params: dict) -> dict:
         env[key] = 0 if value in ("NONE", "OFF", "DISABLE", "FALSE") else 1
 
     # The simulated magnetometer is a publisher by intent. A bare module says
-    # `mag: NONE` -- there is no chip -- and `use_fake_mag: true`, and the rule
-    # above read the first and set pub_mag=0, so the fake field the firmware
-    # rotates to the room heading (FakeIMUFromWheels::applyMag, built for one
+    # `mag: NONE` -- there is no chip -- and `use_sim_mag: true`, and the rule
+    # above read the first and set pub_mag=0, so the sim field the firmware
+    # rotates to the room heading (SimIMUFromWheels::applyMag, built for one
     # purpose: to anchor madgwick) was computed and never sent. /imu/mag had no
-    # publisher at all. bringup.launch.py now fuses the fake mag, and madgwick
+    # publisher at all. bringup.launch.py now fuses the sim mag, and madgwick
     # with a magnetometer waits for imu/data_raw AND imu/mag as a synchronised
     # pair -- so with nothing on /imu/mag it published nothing, /imu/data went
     # to 0 Hz and the EKF was left blind. Measured 2026-09-22. `NONE` means
     # "no chip"; it must not also mean "silence the simulation of one".
-    if sensors.get("use_fake_mag"):
+    if sensors.get("use_sim_mag"):
         env["pub_mag"] = 1
 
     # `imu: auto` / `mag: auto` mean the same thing one level down: take whatever
     # answered the bus. The probe is what decides, so ask for it explicitly --
-    # otherwise a board with fake wheels skips the scan (see all_fake in
-    # main.cpp) and "auto" would quietly mean "fake".
+    # otherwise a board with sim wheels skips the scan (see all_sim in
+    # main.cpp) and "auto" would quietly mean "sim".
     if str(sensors.get("imu", "")).strip().upper() == "AUTO" or \
        str(sensors.get("mag", "")).strip().upper() == "AUTO":
         env["i2c_scan"] = 1
@@ -446,14 +457,14 @@ def hardware_env(params: dict) -> dict:
     if lidar_cfg.get("baudrate") is not None:
         env["lidar_baud"] = int(lidar_cfg["baudrate"])
     # Whether the board runs the LiDAR emulator at all. It was a build macro
-    # only, so a prebuilt image (built from a fake-mode reference) raycast its
+    # only, so a prebuilt image (built from a sim-mode reference) raycast its
     # room and streamed it on every robot that flashed it, real LiDAR or not.
-    # An explicit lidar.use_fake_ld19 outranks the sensors flag, as in the
+    # An explicit lidar.use_sim_ld19 outranks the sensors flag, as in the
     # header generator.
-    if isinstance(lidar_cfg, dict) and "use_fake_ld19" in lidar_cfg:
-        env["fake_ld19"] = _bool(lidar_cfg["use_fake_ld19"])
-    elif "use_fake_ld19" in sensors:
-        env["fake_ld19"] = _bool(sensors["use_fake_ld19"])
+    if isinstance(lidar_cfg, dict) and "use_sim_ld19" in lidar_cfg:
+        env["sim_ld19"] = _bool(lidar_cfg["use_sim_ld19"])
+    elif "use_sim_ld19" in sensors:
+        env["sim_ld19"] = _bool(sensors["use_sim_ld19"])
     # Where the emulator raycasts from: the LiDAR's place on the robot, the
     # same number the URDF puts the laser frame at.
     laser = gen_firmware_header.gen_robot_description.effective_geometry(params)["laser"]
@@ -465,7 +476,7 @@ def hardware_env(params: dict) -> dict:
         env["i2c_scl"] = i2c["scl"]
         env["i2c_clock"] = i2c.get("clock", 400000)
     # The status LED. It is the only feedback an assembled robot gives before
-    # micro-ROS is up -- boot, agent-waiting, IMU failure and the fake-wall
+    # micro-ROS is up -- boot, agent-waiting, IMU failure and the sim-wall
     # contact are all blink patterns -- so it must travel with the board rather
     # than with whichever robot's header the image was compiled from. -1 means
     # no LED is wired (the Waveshare GenDrv), and the firmware then touches no pin.
@@ -530,24 +541,24 @@ def hardware_env(params: dict) -> dict:
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
 
-    # --- sensors. Fake wins: a config asking for a fake IMU on a board that
+    # --- sensors. Sim wins: a config asking for a sim IMU on a board that
     # also names a QMI8658 wants the simulation, not the chip.
-    # `auto` and `NONE` both come out as "fake" on the wire: it is the only name
+    # `auto` and `NONE` both come out as "sim" on the wire: it is the only name
     # createIMU()/createMAG() are guaranteed to accept, and for `auto` the I2C
     # probe overwrites it a moment later. Writing "none" or "auto" verbatim used
     # to reach the firmware as an unknown driver, which it reported and then
-    # fell back to fake anyway -- the same outcome, with a warning that looked
+    # fell back to sim anyway -- the same outcome, with a warning that looked
     # like a fault.
-    def _driver_name(field, fake_flag):
-        if sensors.get(fake_flag):
-            return "fake"
-        value = str(sensors.get(field, "fake")).strip()
+    def _driver_name(field, sim_flag):
+        if sensors.get(sim_flag):
+            return "sim"
+        value = str(sensors.get(field, "sim")).strip()
         if value.upper() in ("AUTO", "NONE", "OFF", "DISABLE", ""):
-            return "fake"
+            return "sim"
         return value.lower()
 
-    env["imu"] = _driver_name("imu", "use_fake_imu")
-    env["mag"] = _driver_name("mag", "use_fake_mag")
+    env["imu"] = _driver_name("imu", "use_sim_imu")
+    env["mag"] = _driver_name("mag", "use_sim_mag")
 
     # --- transport and radio
     env["transport"] = tgt.get("transport", "serial")
@@ -588,12 +599,12 @@ def hardware_env(params: dict) -> dict:
         "BTS7960": "bts7960",
         "ESC": "esc",
     }.get(driver, "generic2")
-    env["fake_wheel"] = _bool(sensors.get("use_fake_wheel", False))
+    env["sim_wheel"] = _bool(sensors.get("use_sim_wheel", False))
     # The rest of the runtime flags that used to be compile-time macros. Each
     # one is a firmware behaviour that a config can now ask for WITHOUT a
-    # rebuild -- but only if it reaches the partition, and `fake_env` did not:
+    # rebuild -- but only if it reaches the partition, and `sim_env` did not:
     # env.cpp fell back to the image's compiled default forever, so a bench
-    # board flashed with a fake-mode image reported a synthetic 25 C / 1013 hPa
+    # board flashed with a sim-mode image reported a synthetic 25 C / 1013 hPa
     # as a "BMP280" no matter what its config said.
     # --- covariance, and the simulated world -------------------------------
     #
@@ -720,43 +731,43 @@ def hardware_env(params: dict) -> dict:
         except (TypeError, ValueError):
             pass
 
-    # The simulated world. Fake mode is this project's DEFAULT, so the room the
+    # The simulated world. Sim mode is this project's DEFAULT, so the room the
     # emulator raycasts and the mass it accelerates are configuration, not
     # constants -- a Nav2 test wants to move the obstacle wall without
     # rebuilding, and a 20 kg robot does not accelerate like a 3.5 kg one.
     sim = tgt.get("simulation") or {}
     if isinstance(sim, dict):
-        for key, cast in (("fake_map_w", float), ("fake_map_h", float),
-                          ("fake_wall", int), ("fake_wall_x1", float),
-                          ("fake_wall_y1", float), ("fake_wall_x2", float),
-                          ("fake_wall_y2", float), ("fake_mass", float),
-                          ("fake_noise_rpm", float), ("fake_gear_eff", float),
-                          ("fake_coulomb", float), ("fake_sag", float),
-                          ("fake_sag_tau", float), ("fake_drv_drop", float),
-                          ("fake_drv_r", float), ("fake_stall_a", float),
-                          ("fake_ilimit_a", float)):
-            src = {"fake_map_w": "map_width", "fake_map_h": "map_height",
-                   "fake_wall": "wall_obstacle", "fake_wall_x1": "wall_x1",
-                   "fake_wall_y1": "wall_y1", "fake_wall_x2": "wall_x2",
-                   "fake_wall_y2": "wall_y2", "fake_mass": "robot_mass",
-                   "fake_noise_rpm": "wheel_noise_rpm",
+        for key, cast in (("sim_map_w", float), ("sim_map_h", float),
+                          ("sim_wall", int), ("sim_wall_x1", float),
+                          ("sim_wall_y1", float), ("sim_wall_x2", float),
+                          ("sim_wall_y2", float), ("sim_mass", float),
+                          ("sim_noise_rpm", float), ("sim_gear_eff", float),
+                          ("sim_coulomb", float), ("sim_sag", float),
+                          ("sim_sag_tau", float), ("sim_drv_drop", float),
+                          ("sim_drv_r", float), ("sim_stall_a", float),
+                          ("sim_ilimit_a", float)):
+            src = {"sim_map_w": "map_width", "sim_map_h": "map_height",
+                   "sim_wall": "wall_obstacle", "sim_wall_x1": "wall_x1",
+                   "sim_wall_y1": "wall_y1", "sim_wall_x2": "wall_x2",
+                   "sim_wall_y2": "wall_y2", "sim_mass": "robot_mass",
+                   "sim_noise_rpm": "wheel_noise_rpm",
                    # The drivetrain's losses. Sweeping these is how you find out
                    # which one a navigation failure was sensitive to, and it must
                    # not cost a firmware build per value.
-                   "fake_gear_eff": "gear_efficiency",
-                   "fake_coulomb": "gear_drag_rpm",
-                   "fake_sag": "battery_sag",
+                   "sim_gear_eff": "gear_efficiency",
+                   "sim_coulomb": "gear_drag_rpm",
+                   "sim_sag": "battery_sag",
                    # The pack's sag LAGS -- a held load sags deeper than a brief
                    # one -- and the bridge keeps some of the voltage for itself,
                    # instantly rather than with the pack's chemistry.
-                   "fake_sag_tau": "battery_sag_tau_ms",
-                   "fake_drv_drop": "driver_drop",
-                   "fake_drv_r": "driver_resistance",
+                   "sim_sag_tau": "battery_sag_tau_ms",
+                   "sim_drv_drop": "driver_drop",
+                   "sim_drv_r": "driver_resistance",
                    # Many small drivers chop at a fixed current, which caps
                    # TORQUE rather than speed -- the one limit that bites hardest
                    # from rest, where a robot is judged. 0 means none fitted.
-                   "fake_stall_a": "motor_stall_amps",
-                   "fake_ilimit_a": "driver_current_limit"}[key]
+                   "sim_stall_a": "motor_stall_amps",
+                   "sim_ilimit_a": "driver_current_limit"}[key]
             if sim.get(src) is None:
                 continue
             try:
@@ -767,7 +778,7 @@ def hardware_env(params: dict) -> dict:
 
     # How close the simulated robot's centre may come to a simulated wall.
     #
-    # This used to be compiled in (#define FAKE_ROBOT_RADIUS), derived from the
+    # This used to be compiled in (#define SIM_ROBOT_RADIUS), derived from the
     # robot_radius of whatever reference config happened to build the image --
     # so a released image carried one robot's dimensions and any other robot
     # flashed with it clamped at the wrong distance. When the two disagree the
@@ -784,15 +795,15 @@ def hardware_env(params: dict) -> dict:
     if radius is None:
         radius = gen_firmware_header.nav2_robot_radius(params)
     try:
-        env["fake_radius"] = _num(float(radius))
+        env["sim_radius"] = _num(float(radius))
     except (TypeError, ValueError):
         pass
 
-    env["fake_env"] = _bool(sensors.get("use_fake_env", False))
+    env["sim_env"] = _bool(sensors.get("use_sim_env", False))
     # The simulated ultrasonic cone. Only ever used when the LiDAR emulator is
     # running (it raycasts from the same room) and no real sonar is wired, so
     # the firmware gates it anyway; this says whether the bench wants it.
-    env["fake_sonar"] = _bool(sensors.get("use_fake_sonar", True))
+    env["sim_sonar"] = _bool(sensors.get("use_sim_sonar", True))
     # Short brake: both half-bridges to the same rail so the windings damp the
     # rotor, instead of coasting. On by default -- that is what the code has
     # always been written to do, though the macro that selected it was emitted
@@ -808,17 +819,17 @@ def hardware_env(params: dict) -> dict:
         env["safety_stop"] = _bool(safety) if safety is not None else "0"
         env["safety_stop_m"] = 0.25
     # A REAL sensor only. main.cpp computes
-    #     range_fake = fake_lidar_on && envFlag("fake_sonar", true)
+    #     range_sim = sim_lidar_on && envFlag("sim_sonar", true)
     # and would happily brake on a range raycast out of the simulated room, so
-    # a bench board running a real robot's config in fake mode would behave
+    # a bench board running a real robot's config in sim mode would behave
     # differently from every other bench board -- and a hazard stop is the
     # last thing that should be exercised against an imaginary obstacle.
     #
     # Same rule the firmware uses, mirrored here so the decision is visible in
-    # the env rather than implied by two flags. Fake mode overriding an
+    # the env rather than implied by two flags. Sim mode overriding an
     # explicit config setting is the established behaviour for every other
-    # fake_* key (see apply_sensor_mode).
-    if _truthy(env.get("fake_ld19")) and _truthy(env.get("fake_sonar")):
+    # sim_* key (see apply_sensor_mode).
+    if _truthy(env.get("sim_ld19")) and _truthy(env.get("sim_sonar")):
         env["safety_stop"] = "0"
     # Track the speed ceiling against the live pack voltage (INA219 / divider)
     # rather than the static config voltage. OFF by default: it changes how the
@@ -827,7 +838,7 @@ def hardware_env(params: dict) -> dict:
     if rpm_track is not None:
         env["rpm_track_voltage"] = _bool(rpm_track)
     # Per-motor stall / encoder-loss guard. OFF by default: it needs real
-    # encoders (a FakeEncoder always tracks the command), and a mistuned floor
+    # encoders (a SimEncoder always tracks the command), and a mistuned floor
     # could stop a slow-ramping robot. `stall_detect` enables it; `stall_ms` is
     # how long a commanded-but-not-counting wheel is tolerated (200-10000 ms);
     # `stall_rpm_floor` is the |rpm| below which a wheel counts as not turning.
@@ -893,8 +904,8 @@ def main():
     b.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                    help="override or add a variable (repeatable)")
     b.add_argument("--sensors", choices=SENSOR_MODES, default="config",
-                   help="fake: simulate every sensor whatever the config says (the "
-                        "pipeline's --mode fake); real: the opposite; config: let the "
+                   help="sim: simulate every sensor whatever the config says (the "
+                        "pipeline's --mode sim); real: the opposite; config: let the "
                         "YAML stand (--mode auto). The status LED is never touched.")
 
     p = sub.add_parser("print", help="decode an env image")

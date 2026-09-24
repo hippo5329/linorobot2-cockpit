@@ -63,7 +63,7 @@ def test_every_imu_in_the_factory_has_a_row():
     names = re.findall(r'\{"(\w[\w-]*)",\s*makeIMU<', table)
     rows = " ".join(_doc_rows())
     for name in names:
-        if name in ("fake", "mpu9150", "mpu6500"):
+        if name in ("sim", "mpu9150", "mpu6500"):
             continue                     # simulated, or an alias of a listed row
         key = {"icm42670": "ICM-42670", "icm20948": "ICM-20948",
                "lsm6dsox": "LSM6DSOX", "qmi8658": "QMI8658",

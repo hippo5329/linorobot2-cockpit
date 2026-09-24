@@ -17,7 +17,7 @@
 # IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
 # inspector will say so if you use them). The LiDAR header is UART1, TX GPIO 17
 # / RX GPIO 18, sold with an MS200, which the shipped LD-series driver does not
-# speak; the scan below is the fake one until a supported LiDAR is attached.
+# speak; the scan below is the sim one until a supported LiDAR is attached.
 #
 # Kinematics below are the default-chassis placeholders every config starts
 # from -- set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
@@ -52,7 +52,7 @@ base_controller:
     # scan on the same wire as the 50 Hz control topics pulls every rate down
     # (46.5 Hz measured). The emulated LD19 goes out the LiDAR header instead
     # (UART1: TX 17, RX 18 -- the MS200 connector); with nothing plugged in
-    # there, bringup's host fake laser stands in, as on the bare ESP32.
+    # there, bringup's host sim laser stands in, as on the bare ESP32.
     comm_mode: serial
     rx_pin: 18
     raw_scan_topic: raw_scan
@@ -65,12 +65,12 @@ base_controller:
     mag: NONE
     current: NONE
     env: NONE
-    use_fake_imu: false
-    use_fake_mag: true
-    use_fake_wheel: false
-    use_fake_ld19: true
-    use_fake_env: true
-  # The simulated world. Written out in full because fake mode is the default:
+    use_sim_imu: false
+    use_sim_mag: true
+    use_sim_wheel: false
+    use_sim_ld19: true
+    use_sim_env: true
+  # The simulated world. Written out in full because sim mode is the default:
   # on a bench run these ARE the robot. Every key is optional -- absent, the
   # firmware keeps its compiled default, which is the value shown here.
   # robot_radius is omitted on purpose: it follows the costmaps' robot_radius.
@@ -440,7 +440,7 @@ nav2:
       #
       # regenerates these, and saving the robot in the cockpit rewrites them,
       # unless kinematics.auto_nav2_limits is false. The numbers come from the
-      # drivetrain model in firmware/common/lib/encoder/fake_wheel.h, run on
+      # drivetrain model in firmware/common/lib/encoder/sim_wheel.h, run on
       # test_acc's own 1 s profile -- so they follow the wheels, the load, the
       # gearing and the pack rather than somebody's judgement about one chassis.
       #

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# fake_base_node.py — the robot's base, simulated on the robot computer
+# sim_base_node.py — the robot's base, simulated on the robot computer
 #
-# The other half of scripts/fake_laser_node.py. That one already raycasts the
+# The other half of scripts/sim_laser_node.py. That one already raycasts the
 # 10x6 m room and publishes /scan from /odom; this publishes the /odom, so the
 # whole stack -- SLAM, Nav2, the map -- runs with no microcontroller, no USB
 # cable and no micro-ROS agent.
@@ -18,13 +18,13 @@
 # instrument and a CI leg, and the gate stays on hardware.
 #
 # THE MODEL IS NOT REIMPLEMENTED HERE. scripts/drivetrain_report.py already
-# carries a transcription of FakeEncoder::integrate(), the shared battery, and
+# carries a transcription of SimEncoder::integrate(), the shared battery, and
 # PID::compute() with its anti-windup, all checked against the firmware by
 # tests/test_test_acc_simulation.py and tests/test_pid_auto_tune.py. This node
 # imports them. A second copy of the wheel model is the one thing that would
 # make this instrument lie.
 #
-#   ros2 run ... fake_base_node.py --ros-args -p params:=<robot>_config.yaml
+#   ros2 run ... sim_base_node.py --ros-args -p params:=<robot>_config.yaml
 # ==============================================================================
 import math
 import os
@@ -69,7 +69,7 @@ def _quat_from_yaw(yaw):
 
 
 def _noise(peak):
-    """fakeWheelNoise(): uniform on +/-peak, which is what the board uses."""
+    """simWheelNoise(): uniform on +/-peak, which is what the board uses."""
     return random.uniform(-peak, peak)
 
 
@@ -78,7 +78,7 @@ def _clamp_bias(v, limit):
     return max(min(v, limit), -limit)
 
 
-class FakeIMU:
+class SimIMU:
     """The board's simulated IMU, output and all.
 
     This matters more than it looks. The first version of this node published a
@@ -145,7 +145,7 @@ class Wheels:
             # on the board, where the other three call busScale() in the same
             # microsecond and its dt is zero.
             wheel.step(dt, i == 0)
-        # getRPM() adds +/-FAKE_WHEEL_NOISE_RPM to what it REPORTS, so the
+        # getRPM() adds +/-SIM_WHEEL_NOISE_RPM to what it REPORTS, so the
         # odometry -- and therefore SLAM and Nav2 -- sees a noisy wheel. The PID
         # above reads wheel.rpm directly, which is what the board does too:
         # feed() and getRPM() are separate calls and only the latter is noisy.
@@ -238,9 +238,9 @@ class Wire:
             publish()
 
 
-class FakeBaseNode(Node):
+class SimBaseNode(Node):
     def __init__(self):
-        super().__init__("fake_base_node")
+        super().__init__("sim_base_node")
         self.declare_parameter("params", "")
         self.declare_parameter("stamped_cmd_vel", False)
         self.declare_parameter("rate", 50.0)          # CONTROL_TIMER, 50 Hz
@@ -269,13 +269,13 @@ class FakeBaseNode(Node):
 
         path = str(self.get_parameter("params").value)
         if not path or not os.path.isfile(path):
-            raise SystemExit("fake_base_node: -p params:=<robot>_config.yaml is required "
+            raise SystemExit("sim_base_node: -p params:=<robot>_config.yaml is required "
                              f"(got {path!r})")
         with open(path, encoding="utf-8") as fh:
             params = yaml.safe_load(fh) or {}
         self.d = dr.drivetrain(params)
         if self.d["circ"] <= 0 or self.d["max_rpm"] <= 0:
-            raise SystemExit("fake_base_node: kinematics.wheel_diameter and max_rpm "
+            raise SystemExit("sim_base_node: kinematics.wheel_diameter and max_rpm "
                              "must be positive")
         self.wheels = Wheels(self.d, (params.get("kinematics") or {}).get("pid") or {})
 
@@ -309,7 +309,7 @@ class FakeBaseNode(Node):
 
         self.wire = Wire(_link("transport_delay_ms", "transport_delay_ms"),
                          _link("transport_jitter_ms", "transport_jitter_ms"))
-        self.imu = FakeIMU(self.d)
+        self.imu = SimIMU(self.d)
         self.cmd = (0.0, 0.0, 0.0)
         self.cmd_time = self.get_clock().now()
         self.x = self.y = self.yaw = 0.0
@@ -318,7 +318,7 @@ class FakeBaseNode(Node):
         self.dt = 1.0 / rate
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
-            f"fake base: {self.d['base']}, {self.d['wheels']} wheels, "
+            f"sim base: {self.d['base']}, {self.d['wheels']} wheels, "
             f"{self.d['mass']:.1f} kg, turns on {self.d['radius']:.4f} m, "
             f"budget {self.d['command_rpm']:.0f} rpm, at {rate:.0f} Hz"
             + ("" if self.wire.instant else
@@ -419,7 +419,7 @@ def main():
         print(f"  interpreter: {sys.executable}", file=sys.stderr)
         return 1
     rclpy.init()
-    node = FakeBaseNode()
+    node = SimBaseNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

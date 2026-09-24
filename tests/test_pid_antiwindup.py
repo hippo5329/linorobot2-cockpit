@@ -7,8 +7,8 @@ equality on a noisy measurement, so in practice it never fired.
 Found on the bench 2026-09-20 with an instrumented build, on a GenDrv board
 commanded to hold still:
 
-    DBG cmd=0.00,0.00 req=0.0,0.0 rpm=-139.5,138.4 pwm=-1023,1023 fake=1
-    DBG cmd=0.25,0.00 req=31.4,31.4 rpm=-138.4,139.6 pwm=-1023,1023 fake=1
+    DBG cmd=0.00,0.00 req=0.0,0.0 rpm=-139.5,138.4 pwm=-1023,1023 sim=1
+    DBG cmd=0.25,0.00 req=31.4,31.4 rpm=-138.4,139.6 pwm=-1023,1023 sim=1
 
 Both wheels pinned at opposite rails at the 140 rpm maximum while the request
 was zero, and asking for 31.4 rpm changed nothing -- the integral term alone

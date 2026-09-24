@@ -3,16 +3,16 @@
 Two rules, one from the user on 2026-09-24: *"if a key is not entered in env we
 will use default value; config yaml will show them in full."*
 
-The firmware is deliberately tolerant -- `envFloat("fake_sag", FAKE_BATT_SAG)`
+The firmware is deliberately tolerant -- `envFloat("sim_sag", SIM_BATT_SAG)`
 keeps the compiled default when the key is absent, which is what lets a blank env
 boot a freshly flashed board. That tolerance is exactly why the config has to be
-explicit: fake mode is this project's default, so on every bench run the room,
+explicit: sim mode is this project's default, so on every bench run the room,
 the mass and the drivetrain losses ARE the robot, and a config listing only the
 overrides describes none of it. Someone sweeping `battery_sag` should be able to
 see what they are sweeping from.
 
 The failure this guards against is the boring one: a term is added to
-fake_wheel.h, plumbed through mcu_env.py, and never appears in a config, so it is
+sim_wheel.h, plumbed through mcu_env.py, and never appears in a config, so it is
 configurable in principle and invisible in practice. Three keys
 (battery_sag_tau_ms, driver_drop, driver_resistance) reached exactly that state
 before this test existed.
@@ -41,7 +41,7 @@ DERIVED = {"robot_radius"}
 def _keys_the_writer_maps():
     """Every `simulation.<key>` mcu_env.py knows how to write."""
     src = open(os.path.join(REPO_ROOT, "scripts", "mcu_env.py"), encoding="utf-8").read()
-    start = src.index('src = {"fake_map_w"')
+    start = src.index('src = {"sim_map_w"')
     end = src.index("}[key]", start)
     table = src[start:end]
     return {v for v in yaml.safe_load("{" + table.split("{", 1)[1] + "}").values()}
@@ -91,8 +91,8 @@ def test_the_generator_reads_the_headers_rather_than_restating_them():
     """
     import pytest
     original = gbc.SIM_DEFAULTS
-    gbc.SIM_DEFAULTS = (("battery_sag", "encoder/fake_wheel.h", "FAKE_BATT_SAG", float),
-                        ("bogus", "encoder/fake_wheel.h", "FAKE_NO_SUCH_MACRO", float))
+    gbc.SIM_DEFAULTS = (("battery_sag", "encoder/sim_wheel.h", "SIM_BATT_SAG", float),
+                        ("bogus", "encoder/sim_wheel.h", "FAKE_NO_SUCH_MACRO", float))
     try:
         got = gbc.bare_simulation()
         assert "battery_sag" in got, "a readable macro must still be read"
@@ -107,7 +107,7 @@ def test_a_missing_firmware_tree_does_not_stop_a_bringup():
     """The failure mode that cost a matrix: gen_bare_config runs during bringup,
     so it must degrade rather than exit however broken its inputs are."""
     original = gbc.SIM_DEFAULTS
-    gbc.SIM_DEFAULTS = (("battery_sag", "no/such/header.h", "FAKE_BATT_SAG", float),)
+    gbc.SIM_DEFAULTS = (("battery_sag", "no/such/header.h", "SIM_BATT_SAG", float),)
     try:
         assert gbc.bare_simulation() == {}
     finally:
@@ -125,8 +125,8 @@ def test_an_absent_key_is_not_written_so_the_firmware_default_stands():
                              "lr_wheels_distance": 0.3, "max_rpm": 100,
                              "counts_per_rev": 100}}
     env = mcu_env.hardware_env(params)
-    for key in ("fake_gear_eff", "fake_coulomb", "fake_sag", "fake_sag_tau",
-                "fake_drv_drop", "fake_drv_r", "fake_mass"):
+    for key in ("sim_gear_eff", "sim_coulomb", "sim_sag", "sim_sag_tau",
+                "sim_drv_drop", "sim_drv_r", "sim_mass"):
         assert key not in env, f"{key} written from a config that never mentioned it"
 
 

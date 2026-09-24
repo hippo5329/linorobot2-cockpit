@@ -21,7 +21,7 @@ into — and you drive it from any browser on the network.
 - **One config file per robot**, kept in your own git repository outside this one.
 - **The board says what it runs.** Every boot prints its application, distro, build date and
   git revision; the cockpit only reflashes a board that actually differs.
-- **Nothing about a robot is compiled in.** Pins, sensors, transport, baud, the fake-sensor
+- **Nothing about a robot is compiled in.** Pins, sensors, transport, baud, the sim-sensor
   flags, the LiDAR sink, the sonar, the motor brake mode — all of it comes from a 4 KB `env`
   flash partition and can be changed on a flashed board without a compiler. The firmware's
   remaining `#if`s are about the silicon or the ROS 2 distro's message ABI, nothing else.
@@ -38,7 +38,7 @@ breaks:
 |---|---|
 | [Installation & Docker](https://github.com/hippo5329/linorobot2-cockpit/wiki/Installation-and-Docker) | get it running |
 | [The One-Click Pipeline](https://github.com/hippo5329/linorobot2-cockpit/wiki/The-One-Click-Pipeline) | what the button actually does |
-| [Fake Mode & the Bare Module](https://github.com/hippo5329/linorobot2-cockpit/wiki/Fake-Mode-and-the-Bare-Module) | the whole stack on an unwired board |
+| [Sim Mode & the Bare Module](https://github.com/hippo5329/linorobot2-cockpit/wiki/Sim-Mode-and-the-Bare-Module) | the whole stack on an unwired board |
 | [Web UI Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide) | every tab |
 | [Pin Matrix & Wiring](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring) | wire a real board |
 | [The Env Partition & Prebuilt Images](https://github.com/hippo5329/linorobot2-cockpit/wiki/The-Env-Partition-and-Prebuilt-Images) | how config reaches the board |
@@ -148,7 +148,7 @@ python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --
 | **flash** | write the firmware image to the board |
 | **agent** | `micro_ros_agent`, the bridge between the board's serial port and ROS 2 |
 | **bringup** | starting the ROS 2 nodes that turn the board's data into `/odom`, TF and `/scan` |
-| **fake mode** | the firmware simulating wheels, IMU and a LiDAR room, so a bare board runs the whole pipeline |
+| **sim mode** | the firmware simulating wheels, IMU and a LiDAR room, so a bare board runs the whole pipeline |
 | **description** | the robot's URDF — body, wheels, where the LiDAR and IMU sit — generated from your config at every bringup into `generated/` next to it; `robot_state_publisher` broadcasts it as the TF tree |
 
 ## How it is put together
@@ -164,7 +164,7 @@ python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --
 
 **The firmware** (`firmware/`) is the low-level motor controller and sensor interface. It
 subscribes to `/cmd_vel`, drives the wheels with PID, and publishes `/odom/unfiltered`,
-`/imu/data` and, in fake mode, a LiDAR scan. One image per board carries the robot firmware
+`/imu/data` and, in sim mode, a LiDAR scan. One image per board carries the robot firmware
 *and* every diagnostic application (`test_sensors`, `test_motors`, `test_acc`, `i2c_detect`,
 `bno085_cal`, `adc_calibrate`); which one boots is a key in a 4 KB `env` flash block, not a
 build.
@@ -192,7 +192,7 @@ base_controller:
   serial_port: /dev/ttyACM0
   baudrate: 921600
   topic_prefix: ""       # set it, and this robot's topics and frames move under /<prefix>/
-  sensors: {imu: FAKE, use_fake_imu: true, use_fake_mag: true, use_fake_wheel: true, use_fake_ld19: true}
+  sensors: {imu: SIM, use_sim_imu: true, use_sim_mag: true, use_sim_wheel: true, use_sim_ld19: true}
   pins: {motor1: {pwm: -1, in_a: -1, in_b: -1}, ...}   # -1 = not connected
 kinematics: {base_type: 2wd, wheel_diameter: 0.152, lr_wheels_distance: 0.271, max_rpm: 140, ...}
 geometry: {body: {...}, wheel: {...}, laser: {x: 0.12, z: 0.10, frame: laser}, imu: {...}}   # the URDF
@@ -232,7 +232,7 @@ The IMU is read by polling on every board, at the control loop's rate. Where a c
 FIFO with its own timestamp counter, that carries the sample time with the sample and needs
 no extra wiring.
 
-To switch fake mode off and describe real hardware, use Config Studio or edit
+To switch sim mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.
 
 ### The URDF is generated from your config
@@ -257,7 +257,7 @@ geometry:
 Config Studio edits these on the Base tab ("Body & Sensor Placement"). A config from
 before this block gets one derived from its kinematics by `scripts/migrate_config_schema.py`,
 written into the file so the numbers are yours to correct. The LiDAR driver stamps `/scan`
-with `geometry.laser.frame`, and in fake mode the emulator raycasts from `geometry.laser.x`,
+with `geometry.laser.frame`, and in sim mode the emulator raycasts from `geometry.laser.x`,
 so the scan and the transform always agree. Warnings you get for free: a LiDAR inside the
 body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than the body.
 
@@ -277,7 +277,7 @@ Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robo
 A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
 the pin matrix, I2C bus, LiDAR pin and baud, micro-ROS transport and credentials all live in
 the `env` flash partition, not the binary. A robot is a configuration, not a build: the pin
-matrix, `comm_mode`, the sonar pins, the fake-sensor flags, the motor brake mode and the
+matrix, `comm_mode`, the sonar pins, the sim-sensor flags, the motor brake mode and the
 forward safety stop are all env keys. The only conditionals in the firmware are about the
 silicon (ESP32 vs RP2) or the ROS 2 distro's message ABI.
 
@@ -303,7 +303,7 @@ than the cable.
 
 The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
 ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
-before micro-ROS is up, and a bench board in fake mode needs it as much as a wired one. The
+before micro-ROS is up, and a bench board in sim mode needs it as much as a wired one. The
 RP2 design assumes non-W hardware and keeps GP25; on an actual W board GP25 belongs to the
 CYW43 bus, so those set `led` in the env. GPIO 2 on an ESP32 is also a strapping pin, so the
 pin checker warns about it; that is correct and harmless here, since an LED to ground pulls
@@ -373,29 +373,29 @@ want touched; **Force firmware update** rewrites even a matching image.
 
 ---
 
-## Fake mode
+## Sim mode
 
-Fake mode is what makes a bare board useful. Under `base_controller.sensors`:
+Sim mode is what makes a bare board useful. Under `base_controller.sensors`:
 
 | key | emulates | how |
 |---|---|---|
-| `use_fake_wheel` | motors and encoders | software kinematics with motor inertia, responds to `/cmd_vel`, resets pose on every agent connection |
-| `use_fake_imu` | 6-DoF IMU | synthetic acceleration, angular rate from the simulated heading; no I2C traffic. Bias, drift, scale error and noise are those of a typical real chip, and the covariance it publishes is derived from that noise rather than declared separately |
-| `use_fake_mag` | magnetometer | field vector tracking the simulated heading, sized and noised like a typical real part, with a hard-iron offset so a calibration has something to find. Removed by default, so the simulated robot starts where a real one does after `robot_calibration`; `mag_bias 0,0,0` in the env puts it back to uncalibrated |
-| `use_fake_ld19` | 360° LD19 LiDAR | raycast of a 10 m × 6 m room with an interior wall, on the MCU (`raw_scan`, a UART, or UDP) or on the robot computer (`scripts/fake_laser_node.py`); both raycast from `geometry.laser.x`. On the MCU it is also the env key `fake_ld19`, so a prebuilt image built with the emulator in is silent on a real robot |
-| `use_fake_env` | barometer | sea-level pressure and 25 °C |
-| `use_fake_sonar` | ultrasonic range | raycast ahead from the same room, drives the firmware's safety stop |
+| `use_sim_wheel` | motors and encoders | software kinematics with motor inertia, responds to `/cmd_vel`, resets pose on every agent connection |
+| `use_sim_imu` | 6-DoF IMU | synthetic acceleration, angular rate from the simulated heading; no I2C traffic. Bias, drift, scale error and noise are those of a typical real chip, and the covariance it publishes is derived from that noise rather than declared separately |
+| `use_sim_mag` | magnetometer | field vector tracking the simulated heading, sized and noised like a typical real part, with a hard-iron offset so a calibration has something to find. Removed by default, so the simulated robot starts where a real one does after `robot_calibration`; `mag_bias 0,0,0` in the env puts it back to uncalibrated |
+| `use_sim_ld19` | 360° LD19 LiDAR | raycast of a 10 m × 6 m room with an interior wall, on the MCU (`raw_scan`, a UART, or UDP) or on the robot computer (`scripts/sim_laser_node.py`); both raycast from `geometry.laser.x`. On the MCU it is also the env key `sim_ld19`, so a prebuilt image built with the emulator in is silent on a real robot |
+| `use_sim_env` | barometer | sea-level pressure and 25 °C |
+| `use_sim_sonar` | ultrasonic range | raycast ahead from the same room, drives the firmware's safety stop |
 
 **Every one of these is an env key, not a build switch.** The config value is only the
-default a board falls back to with a blank env: `fake_wheel`, `fake_ld19`, `fake_env`,
-`fake_sonar` and the IMU/mag names can all be changed on a flashed board without a compiler.
+default a board falls back to with a blank env: `sim_wheel`, `sim_ld19`, `sim_env`,
+`sim_sonar` and the IMU/mag names can all be changed on a flashed board without a compiler.
 The same binary is a bench simulator or a real robot depending on four bytes in the env
 partition.
 
 **Where the scan is raycast follows the wiring, not the config.** A board whose emulated
 LD19 goes out a real serial bridge is read by the real LiDAR driver, because that is the path
 worth testing; a bare module has no such tty, so the room runs on the robot computer instead
-(`scripts/fake_laser_node.py`) and `/scan` arrives anyway. Both raycast from
+(`scripts/sim_laser_node.py`) and `/scan` arrives anyway. Both raycast from
 `geometry.laser.x`, so the scan and the transform agree either way — and a module with nothing
 soldered to it still reaches SLAM and Nav2.
 
@@ -404,7 +404,7 @@ not just motion.
 
 ### The simulated drivetrain is a real motor, and the whole stack can run without a board
 
-`use_fake_wheel` is not a ramp toward the commanded speed. It is a brushed DC gear motor:
+`use_sim_wheel` is not a ramp toward the commanded speed. It is a brushed DC gear motor:
 torque falling linearly from stall to no-load, a gearbox that returns 70–80% of it, constant
 gear drag, viscous friction, one battery shared by four wheels whose sag *lags*, the bridge's
 fixed and current-proportional losses, and an optional driver current limiter in amps. So a
@@ -423,9 +423,9 @@ python3 scripts/drivetrain_report.py --params config/reference/gendrv_config.yam
 tells you what those motors can deliver — top speed, acceleration from rest and once the pack
 has sagged, the rotation radius with the rule that produced it — and whether the Nav2 limits
 in that same config are asking for more than the robot has. It parses the model's constants
-out of `fake_wheel.h` rather than restating them, and it prints what `test_acc` *would*
+out of `sim_wheel.h` rather than restating them, and it prints what `test_acc` *would*
 measure by running the model on that tool's own 20 ms sampling. Which means **you no longer
-flash a board to find those numbers**; on a fake-wheel board `test_acc` says so and points
+flash a board to find those numbers**; on a sim-wheel board `test_acc` says so and points
 here.
 
 The Nav2 velocity limits and `max_rpm_ratio` are derived from it on save
@@ -433,8 +433,8 @@ The Nav2 velocity limits and `max_rpm_ratio` are derived from it on save
 yaw ceiling took a drivetrain from ten green legs to seven, twice, because the shipped
 tuning had no margin.
 
-And `scripts/fake_base_node.py` puts the same model on the robot computer, so `ros2 launch
-linorobot2_cockpit bringup.launch.py fake_base:=true` brings up EKF, SLAM, Nav2 and the goal
+And `scripts/sim_base_node.py` puts the same model on the robot computer, so `ros2 launch
+linorobot2_cockpit bringup.launch.py sim_base:=true` brings up EKF, SLAM, Nav2 and the goal
 test **with no microcontroller at all** — for config questions, sweeps and CI. It is not a
 substitute for hardware: it removes micro-ROS, both transports, the board's timing and the
 flash, which is most of what a hardware run tests.
@@ -450,8 +450,8 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 |---|---|---|
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` or `imu/data_raw` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/mag` only with a magnetometer (`PUBLISH_MAG`) |
-| `raw_scan` | `std_msgs/UInt8MultiArray` | fake LD19 on the MCU |
-| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or faked. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A faked range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
+| `raw_scan` | `std_msgs/UInt8MultiArray` | sim LD19 on the MCU |
+| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
 above moves under `/lino1/` — on the board, which builds both its topic names *and* the

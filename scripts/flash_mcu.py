@@ -1466,8 +1466,8 @@ def main() -> int:
     parser.add_argument("--env", default="pico2", help="PlatformIO environment (e.g. pico2, esp32)")
     parser.add_argument("--port", default="/dev/ttyACM0", help="Serial port of the base controller")
     parser.add_argument("--baud", type=int, default=921600, help="Upload baudrate")
-    parser.add_argument("--sensors", choices=("config", "fake", "real"), default=None,
-                        help="force the env's sensor flags: fake simulates everything "
+    parser.add_argument("--sensors", choices=("config", "sim", "real"), default=None,
+                        help="force the env's sensor flags: sim simulates everything "
                              "whatever the config says, real is the opposite, config "
                              "(default) lets the YAML stand. The status LED is never touched.")
     parser.add_argument("--app", default=None,

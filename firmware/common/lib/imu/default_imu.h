@@ -218,14 +218,14 @@ class MPU9250IMU: public IMUInterface
         }
 };
 
-class FakeIMU: public IMUInterface 
+class SimIMU: public IMUInterface 
 {
     private:
         geometry_msgs__msg__Vector3 accel_;
         geometry_msgs__msg__Vector3 gyro_;
 
     public:
-        FakeIMU()
+        SimIMU()
         {
         }
 

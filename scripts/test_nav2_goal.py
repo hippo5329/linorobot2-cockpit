@@ -4,7 +4,7 @@
 #
 # Directives Compliance:
 # - Validates Nav2 planning and execution in virtual room with obstacle wall.
-# - Obstacle wall geometry: x = 2.0m, y from -1.5m to +1.5m (fake_ld19.h).
+# - Obstacle wall geometry: x = 2.0m, y from -1.5m to +1.5m (sim_ld19.h).
 # - Goal behind obstacle wall: (x=3.0m, y=0.0m), and with --round-trips N the
 #   robot then drives back to home (0, 0) and out again, N times: every leg must
 #   arrive, and every leg that crosses the wall must have planned around it.
@@ -76,11 +76,11 @@ def _status_name(status: int) -> str:
     return _STATUS_NAMES.get(int(status), f"status {status}")
 
 
-# The obstacle wall of the simulated room (fake_ld19.h defaults).
+# The obstacle wall of the simulated room (sim_ld19.h defaults).
 WALL_X = 2.0
 WALL_HALF_SPAN = 1.5
 # How close to an end a crossing may be and still be a robot rounding the
-# corner rather than one driving through the face. A disc of FAKE_ROBOT_RADIUS
+# corner rather than one driving through the face. A disc of SIM_ROBOT_RADIUS
 # cannot pass nearer than that to the endpoint, and a board that clipped it at
 # y = -1.40 was reported as driving through a solid wall.
 WALL_END_MARGIN = 0.30
@@ -130,7 +130,7 @@ LEG_SETTLE_SEC = 0.5
 #
 # On the bench that is a wasted leg. On a real robot it is the hazard, and the
 # thing that would stop it there -- nav2_collision_monitor with a real scan --
-# is exactly what fake mode does not have. Catching it here is what makes the
+# is exactly what sim mode does not have. Catching it here is what makes the
 # behaviour visible before there is a robot to be hurt by it.
 RUNAWAY_RADIUS_M = 6.0
 
@@ -264,7 +264,7 @@ class Nav2GoalTester(Node):
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
         # The base's OWN pose, beside the filtered one. The firmware clamps a
         # simulated robot to the wall and corrects its odometry; this EKF fuses
-        # velocities only, and on contact the fake wheels keep reporting speed
+        # velocities only, and on contact the sim wheels keep reporting speed
         # (they slip, by design -- main.cpp), so the filtered pose walks through
         # a wall the base is pinned against. Reading both is what lets a verdict
         # say which of the two happened.
@@ -770,7 +770,7 @@ def _sample_map_odom(node):
     #
     # The same lookup already has it and was throwing it away. map->odom is
     # SLAM's correction to the wheels; on a simulated robot in a 10 x 6 m room
-    # it should stay small, because the fake LiDAR sees a room that matches the
+    # it should stay small, because the sim LiDAR sees a room that matches the
     # wheels exactly. On the 2026-09-23 mecanum slice a leg aborted with
     # error_code=203, "failed to plan from (3.80, -3.11)", while the drive suite
     # moments later showed the base at (+0.01, -0.00) driving 8/8 -- so the
@@ -790,7 +790,7 @@ def _map_odom_offset_note(node, room_half_y: float = 2.69) -> str:
     """How far SLAM's correction wandered, and whether that is survivable.
 
     room_half_y is the y half-extent the firmware clamps the simulated base to
-    (FAKE_MAP_HEIGHT 6.0 m, less the robot radius). A correction bigger than
+    (SIM_MAP_HEIGHT 6.0 m, less the robot radius). A correction bigger than
     that can put the map pose outside the room on its own, with the base still
     where it should be -- which is exactly the 203 this measures.
     """
@@ -923,7 +923,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
     def moved() -> bool:
         """Did the base respond to what it was told?
 
-        The reported TWIST, not the integrated pose. A fake-mode board at rest
+        The reported TWIST, not the integrated pose. A sim-mode board at rest
         still reports a little of both -- one bench run sampled vel_lin=0.006 m/s
         and vel_ang=0.036 rad/s while standing still -- and integrating that over
         a 25-second window accumulates 0.15 m of "travel", which sails past any
@@ -940,7 +940,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         """
         return node.odom_peak_lin >= noise_lin or node.odom_peak_ang >= noise_ang
 
-    # The room's one obstacle (fake_ld19.h): a wall at x = 2.0 spanning y = -1.5..1.5.
+    # The room's one obstacle (sim_ld19.h): a wall at x = 2.0 spanning y = -1.5..1.5.
     # A goal on its far side is what this test was written for, and "reached" is
     # only worth anything there if the plan went AROUND the wall: a goal reached
     # with no such plan means either the robot was already past the wall or the
@@ -992,7 +992,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
     def went_through() -> bool:
         """Crossed where the wall actually is, by more than the error bar.
 
-        The simulated robot is pushed off the segment (fake_ld19.h clampToRoom,
+        The simulated robot is pushed off the segment (sim_ld19.h clampToRoom,
         measured: a board driven at the wall stops 0.30 m short and stays), so
         this should be impossible; if it is ever true the room, not the
         navigation, is what failed. Anything within a sample gap of the wall's
@@ -1253,7 +1253,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                         else:
                             why = (f"The base's own odometry reached x={raw_x:.2f} too, so the clamp "
                                    f"that should push a simulated robot off the wall did not act: "
-                                   f"check that fake_ld19 is enabled and clampToRoom is reached.")
+                                   f"check that sim_ld19 is enabled and clampToRoom is reached.")
                         print(f"❌ NAV2 LEG {i}/{n} DROVE INTO THE WALL: {_whose} "
                               f"crossed x={WALL_X:.1f} at y={ys}, inside the wall's span "
                               f"(±{WALL_HALF_SPAN:.1f} m){_gap(node)}. {why}")
@@ -1268,7 +1268,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"left the {RUNAWAY_RADIUS_M:.0f} m room instead"
                               f"{_why(node)}{_gap(node)}{_where(node)} after {took:.0f} s. "
                               f"The base was still taking commands, so this is the controller "
-                              f"driving it away, not a stall -- and nothing in fake mode would "
+                              f"driving it away, not a stall -- and nothing in sim mode would "
                               f"have stopped it.")
                         return False
                     # WHERE first, then why. The order is not cosmetic: on the
@@ -1557,7 +1557,7 @@ def main():
                              "integrated velocity")
     parser.add_argument("--noise-ang", type=float, default=0.10,
                         help="Angular speed (rad/s) at or below which /odom is considered at rest; "
-                             "a fake-mode board at rest has been seen reporting 0.036")
+                             "a sim-mode board at rest has been seen reporting 0.036")
     parser.add_argument("--no-require-motion", action="store_true",
                         help="Pass on planning alone, without the base responding. For bringing "
                              "a host-side stack up with no board attached; never for a release "

@@ -4,7 +4,7 @@
 #
 # bringup needs two packages the cockpit repo does not contain:
 #
-#   ldlidar_stl_ros2        LD19 driver, used whenever the scan is not faked
+#   ldlidar_stl_ros2        LD19 driver, used whenever the scan is not simd
 #   micro_ros_agent         pulled from the registry image inside the Dockerfile
 #
 # (linorobot2_description used to be the third. It is gone: the robot
@@ -37,7 +37,7 @@ mkdir -p "$VENDOR"
 # The LD19 driver is OUR FORK, not ldrobot's, and the difference is not cosmetic:
 # ldrobot's node declares only the serial parameters, while every non-serial
 # LiDAR path in this project needs the ones the fork adds -- `comm_mode`,
-# `server_ip`/`server_port` (the board's fake_ld19 streaming a scan over UDP) and
+# `server_ip`/`server_port` (the board's sim_ld19 streaming a scan over UDP) and
 # `raw_scan_topic`/`bins`. Vendoring ldrobot's meant `bringup.launch.py` passed
 # `comm_mode: udp_server` to a node that had never heard of it: it fell through to
 # the serial path, died on `input serial param error` with an empty port name, and
@@ -103,7 +103,7 @@ fi
 # that same branch -- so the points pile up until the overrun bail throws them
 # away, and demo.cpp prints nothing for the DATA_WAIT that results.
 #
-# Found 2026-09-20 by driving the driver from a harness: our fake LD19 room is
+# Found 2026-09-20 by driving the driver from a harness: our sim LD19 room is
 # geometrically perfect, so all 456 points of a revolution form one group and
 # every scan after the first was discarded. The first survives only because the
 # driver drops the very first packet to seed its timestamp, which leaves an arc

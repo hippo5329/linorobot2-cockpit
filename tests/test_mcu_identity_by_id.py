@@ -5,7 +5,7 @@ import mcu_identity
 
 
 def test_resolve_port_follows_a_symlink(tmp_path):
-    real = tmp_path / "ttyFAKE0"
+    real = tmp_path / "ttySIM0"
     real.write_text("")
     link = tmp_path / "usb-Board_1234-if00"
     os.symlink(real, link)
@@ -22,7 +22,7 @@ def test_resolve_port_keeps_a_name_that_does_not_resolve(tmp_path):
 
 
 def test_by_id_map_prefers_the_first_name_for_a_port(tmp_path, monkeypatch):
-    real = tmp_path / "ttyFAKE1"
+    real = tmp_path / "ttySIM1"
     real.write_text("")
     for name in ("usb-Board_1234-if00", "usb-Board_1234-if00-port0"):
         os.symlink(real, tmp_path / name)

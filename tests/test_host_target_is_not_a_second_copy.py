@@ -1,13 +1,13 @@
 """The host micro-ROS target must stay an instrument, not a reimplementation.
 
 `firmware/host/` compiles the firmware's own `mcu_env.cpp` and `uros_transport.cpp`
-natively so that micro-ROS over UDP4 -- the one layer `scripts/fake_base_node.py`
+natively so that micro-ROS over UDP4 -- the one layer `scripts/sim_base_node.py`
 removes -- can be tested without silicon. Its value depends entirely on those
 being the SAME sources a board runs. The moment a copy is taken "just to get it
 building", the target starts passing for code no robot executes, and it becomes
 the most convincing kind of false green: a test named after the thing it stopped
-testing. `tests/test_fake_base_node.py` exists to stop exactly that happening to
-the Python fake base; this stops it happening here.
+testing. `tests/test_sim_base_node.py` exists to stop exactly that happening to
+the Python sim base; this stops it happening here.
 
 Four invariants, each one a way that could go wrong quietly.
 """
@@ -126,7 +126,7 @@ def test_the_host_has_no_compiled_in_robot():
         "TRANSPORT_DEFAULT",   # udp4: the only transport a host HAS
         "AGENT_IP_DEFAULT",    # loopback: needs no configuration to be reachable
         "AGENT_PORT_DEFAULT",  # 8888: micro_ros_agent's own default
-        "FAKE_LD19_DEFAULT",   # false: there is no UART to emit LD19 frames on
+        "SIM_LD19_DEFAULT",   # false: there is no UART to emit LD19 frames on
         "LIDAR_RXD",           # -1: the firmware's own "not wired"
     }
     unjustified = defined - justified

@@ -73,7 +73,7 @@ def test_stale_cache_is_replaced_not_served(prebuilt_dir, monkeypatch, capsys):
     p = _plant_stale(prebuilt_dir)
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", lambda repo: "rc-20260919")
     monkeypatch.setattr(fetch_prebuilt.urllib.request, "urlopen",
-                        lambda *a, **k: _FakeResp(_tarball("dcfb4b2")))
+                        lambda *a, **k: _SimResp(_tarball("dcfb4b2")))
     out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "dcfb4b2"
     assert fetch_prebuilt.cached_release(out) == "rc-20260919"
@@ -84,7 +84,7 @@ def test_cache_from_the_same_tag_is_still_replaced(prebuilt_dir, monkeypatch):
     _plant_stale(prebuilt_dir, commit="46b184a", release="rc-20260919")
     monkeypatch.setattr(fetch_prebuilt, "newest_release_tag", lambda repo: "rc-20260919")
     monkeypatch.setattr(fetch_prebuilt.urllib.request, "urlopen",
-                        lambda *a, **k: _FakeResp(_tarball("dcfb4b2")))
+                        lambda *a, **k: _SimResp(_tarball("dcfb4b2")))
     out = fetch_prebuilt.fetch("esp32-jazzy", version="dev")
     assert json.load(open(os.path.join(out, "manifest.json")))["commit"] == "dcfb4b2", \
         "a tag re-cut in place must not be served from cache"
@@ -140,7 +140,7 @@ def test_offline_without_a_cache_is_an_error(prebuilt_dir, monkeypatch):
     assert "not cached" in str(exc.value)
 
 
-class _FakeResp:
+class _SimResp:
     def __init__(self, blob):
         self._blob = blob
     def read(self):

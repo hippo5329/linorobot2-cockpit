@@ -21,7 +21,7 @@ FRAME_SITES = {
     "common/lib/imu/imu_interface.h": ["imu_link"],
     "common/lib/imu/mag_interface.h": ["imu_link"],
     "common/lib/range/range.cpp": ["sonar_link"],
-    "common/lib/encoder/fake_wheel.h": ["imu_link"],
+    "common/lib/encoder/sim_wheel.h": ["imu_link"],
     "src/main.cpp": ["base_link"],
 }
 
@@ -80,9 +80,9 @@ def test_setup_initialises_the_prefixer_before_anything_stamps_a_frame():
 
 
 def test_the_simulated_sonar_gets_a_frame_too():
-    """The fake sonar branch fills range_msg field by field and never touches
+    """The sim sonar branch fills range_msg field by field and never touches
     the header, so the frame has to be set once in setup() -- otherwise every
-    fake-mode board (the default) publishes /sonar with an empty frame_id, which
+    sim-mode board (the default) publishes /sonar with an empty frame_id, which
     no consumer can place."""
     src = _src("src/main.cpp")
     assert 'range_msg->header.frame_id' in src

@@ -1,9 +1,9 @@
-"""The fake magnetometer must be fused, or the simulated heading walks away.
+"""The sim magnetometer must be fused, or the simulated heading walks away.
 
-FakeIMUFromWheels::applyMag rotates a world field into the body frame by the
+SimIMUFromWheels::applyMag rotates a world field into the body frame by the
 wheel heading for one purpose: to give madgwick an absolute heading that agrees
 with the simulated room. bringup.launch.py then excluded it from fusion
-(`... and not use_fake_mag`), so madgwick ran gyro-only, the fake gyro's bias
+(`... and not use_sim_mag`), so madgwick ran gyro-only, the sim gyro's bias
 walked onto its clamp and stayed there, and the EKF -- which takes madgwick's
 yaw as absolute and only the wheels' yaw RATE -- drifted 52 degrees from the
 wheel heading in an hour. Measured at rest: wheel 59.4, EKF 7.2. Nav2 steers by
@@ -16,7 +16,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCH = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
 
 
-def use_mag_default(mag_sensor, use_fake_mag):
+def use_mag_default(mag_sensor, use_sim_mag):
     """Run the launcher's own default branch and return what it decided.
 
     This used to lift the `use_mag = ...` line out with a regex that required
@@ -29,27 +29,27 @@ def use_mag_default(mag_sensor, use_fake_mag):
     src = open(LAUNCH, encoding="utf-8").read()
     start = src.index("        auto_mag = ")
     end = src.index("\n", src.index("use_mag = (not auto_mag")) + 1
-    ns = {"mag_sensor": mag_sensor, "use_fake_mag": use_fake_mag}
+    ns = {"mag_sensor": mag_sensor, "use_sim_mag": use_sim_mag}
     exec(compile(textwrap.dedent(src[start:end]), "<use_mag>", "exec"), {}, ns)
     return ns["use_mag"]
 
 
-def test_fake_mag_is_not_excluded_from_fusion():
-    """The regression this file exists for: `... and not use_fake_mag` put the
+def test_sim_mag_is_not_excluded_from_fusion():
+    """The regression this file exists for: `... and not use_sim_mag` put the
     simulated field outside the fusion. Asked as behaviour, so it holds however
     the expression is spelled."""
     assert use_mag_default("NONE", True) is True, (
-        "the fake magnetometer is excluded from fusion again, and madgwick will "
+        "the sim magnetometer is excluded from fusion again, and madgwick will "
         "integrate the gyro alone and drift off the wheels")
 
 
-def test_fake_mag_alone_turns_fusion_on():
-    """A bare module declares mag: NONE but use_fake_mag: true -- that must fuse."""
-    assert use_mag_default("NONE", True) is True, "False for a fake-mag bare module"
+def test_sim_mag_alone_turns_fusion_on():
+    """A bare module declares mag: NONE but use_sim_mag: true -- that must fuse."""
+    assert use_mag_default("NONE", True) is True, "False for a sim-mag bare module"
 
 
 def test_no_mag_at_all_leaves_fusion_off():
-    """And this is the real-robot case: fake mode off, no magnetometer fitted."""
+    """And this is the real-robot case: sim mode off, no magnetometer fitted."""
     assert use_mag_default("NONE", False) is False
 
 

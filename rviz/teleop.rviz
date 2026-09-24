@@ -1,4 +1,4 @@
-# Teleop view -- the one to use with a bare module running USE_FAKE_WHEEL.
+# Teleop view -- the one to use with a bare module running USE_SIM_WHEEL.
 # Fixed frame is odom, so the robot is seen driving away from where it started
 # with odometry arrows tracing the path it thinks it took. Bare `rviz2` opens
 # with nothing configured and looks empty while you drive.

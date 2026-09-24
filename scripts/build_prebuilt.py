@@ -2,7 +2,7 @@
 """
 build_prebuilt.py — produce the ready-to-flash images in firmware/prebuilt/.
 
-Fake-mode images, one per MCU per ROS 2 distribution, so a user can bring a
+Sim-mode images, one per MCU per ROS 2 distribution, so a user can bring a
 board up without installing a toolchain at all:
 
     pico2    RP2350, micro-ROS over USB serial
@@ -23,7 +23,7 @@ which one it is, rather than the jazzy half being spelled as the bare board name
     pico2-jazzy    pico-jazzy    esp32-jazzy    esp32s3-jazzy
     pico2-lyrical  pico-lyrical  esp32-lyrical  esp32s3-lyrical
 
-Fake mode throughout: the firmware simulates the IMU, magnetometer and wheels,
+Sim mode throughout: the firmware simulates the IMU, magnetometer and wheels,
 so a bare board with nothing wired to it still produces odometry and, where the
 profile has a scan source, a /scan. That is what makes a prebuilt image useful
 without knowing anything about the user's hardware.
@@ -75,7 +75,7 @@ BASE_DIR = os.path.join(REPO_ROOT, "firmware")
 #   2026-09-23, through the generated bare config. "Generated, not read from
 #   config/reference" was true of the pins and false of everything else:
 #   gen_bare_config donates geometry/ekf/slam/nav2 from gendrv_config.yaml, so
-#   that design's costmap radius shipped in every image as FAKE_ROBOT_RADIUS.
+#   that design's costmap radius shipped in every image as SIM_ROBOT_RADIUS.
 #
 # Both times the wrong robot's dimensions ended up in someone else's image. A
 # released image must describe NO robot: the env partition is what turns it
@@ -205,7 +205,7 @@ def header_cmd(mcu, distro):
     robot. It used to be built from a generated bare config, which sounds the
     same and was not -- gen_bare_config donates its geometry/ekf/slam/nav2 from
     config/reference/gendrv_config.yaml, so that design's costmap radius was
-    reaching every released image as #define FAKE_ROBOT_RADIUS. A reference
+    reaching every released image as #define SIM_ROBOT_RADIUS. A reference
     design is a robot someone can own, not a build input; every robot fact now
     arrives through the env partition at flash time.
 
@@ -251,9 +251,9 @@ def build(profile, keep_going=False):
     # flash_mcu.py checks for that key before writing one.
     uses_env = True
 
-    # A release image describes no robot, so it is neither fake nor real until
+    # A release image describes no robot, so it is neither sim nor real until
     # an env is written to it. There is no config to read this from any more.
-    fake_mode = False
+    sim_mode = False
     sh(["pio", "run", "-d", BASE_DIR, "-e", env])
 
     build_dir = os.path.join(BASE_DIR, ".pio", "build", env)
@@ -322,13 +322,13 @@ def build(profile, keep_going=False):
         "config": f"generated bare module ({mcu})",
         "pio_env": env,
         "ros_distro": distro,
-        # False because the image commits to nothing: `fake_wheel`, `fake_ld19`
-        # and the rest are env keys, so any of these images is fake or real at
+        # False because the image commits to nothing: `sim_wheel`, `sim_ld19`
+        # and the rest are env keys, so any of these images is sim or real at
         # run time depending only on what was written to its env partition.
         # (It was once hardcoded True, then read from whichever config built
         # the image -- both were answering a question the image cannot have an
         # opinion on.)
-        "fake_mode": fake_mode,
+        "sim_mode": sim_mode,
         "built": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "commit": git_commit(),
         "files": files,

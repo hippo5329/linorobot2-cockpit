@@ -20,7 +20,7 @@ geometry, so it is a per-robot measurement (kinematics.angular_scale) rather
 than a derived number.
 
 Why the bench never caught it: the same radius converts the command into wheel
-RPM and the RPM back into odometry, so in fake mode the error cancels exactly.
+RPM and the RPM back into odometry, so in sim mode the error cancels exactly.
 Every leg of the matrix reports odom agreeing with cmd_vel to three decimals on
 a mecanum base that would, on a real floor, turn at 60% of the commanded rate.
 These tests compile the real kinematics.cpp and drive it, which is the only
@@ -130,7 +130,7 @@ class Base:
         return list(out)
 
     def round_trip(self, vx, vy=0.0, wz=0.0):
-        """Command -> wheels -> measured motion, the way fake mode does it."""
+        """Command -> wheels -> measured motion, the way sim mode does it."""
         return self.vel(self.rpm(vx, vy, wz))
 
 
@@ -190,7 +190,7 @@ def test_a_mecanum_asked_to_spin_drives_its_wheels_at_the_right_speed(kin_lib):
 def test_the_two_halves_cannot_disagree(kin_lib):
     """Command -> wheels -> odometry is the identity for every base type.
 
-    This is the property fake mode DOES have, and the reason fake mode cannot
+    This is the property sim mode DOES have, and the reason sim mode cannot
     see the bug above: it held just as firmly when the radius was wrong. It is
     here so that fixing one half without the other fails loudly.
     """

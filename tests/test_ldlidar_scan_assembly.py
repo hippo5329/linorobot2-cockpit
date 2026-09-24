@@ -13,7 +13,7 @@ that same branch, so the points pile up until the overrun bail throws them
 away, and `demo.cpp` prints nothing for the DATA_WAIT that results. The node
 logs "ldlidar communication is normal", advertises /scan, and never publishes.
 
-Our fake LD19 room is geometrically perfect, so every revolution is one group.
+Our sim LD19 room is geometrically perfect, so every revolution is one group.
 Measured 2026-09-20 by driving the driver from a harness with our exact bytes:
 
     in=456 pending=456 groups=1 -> WRAP MERGE fires -> groups=0 -> filtered=0
@@ -51,7 +51,7 @@ static uint64_t now_ns() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// firmware/common/lib/lidar/fake_ld19.h, transcribed.
+// firmware/common/lib/lidar/sim_ld19.h, transcribed.
 static const uint16_t POINTS_PER_PACK = 12;
 static const uint16_t POINTS_PER_REV  = 456;
 static const float    DEG_PER_POINT   = 360.0f / 456.0f;
@@ -75,7 +75,7 @@ static uint8_t crc8(const uint8_t *d, int len) {
 static void put16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 
 static uint16_t point_idx = 0;
-static uint32_t fake_ms = 0;
+static uint32_t sim_ms = 0;
 
 // A square room: continuous all the way round, which is the whole point.
 static uint16_t range_mm(float deg) {
@@ -100,11 +100,11 @@ static void build_pack(uint8_t *pkt) {
         pkt[6 + i * 3 + 2] = inten;
     }
     put16(&pkt[42], (uint16_t)(fmodf(end_deg, 360.0f) * 100.0f));
-    put16(&pkt[44], (uint16_t)(fake_ms % 30000));
+    put16(&pkt[44], (uint16_t)(sim_ms % 30000));
     pkt[46] = crc8(pkt, 46);
     point_idx += POINTS_PER_PACK;
     if (point_idx >= POINTS_PER_REV) point_idx -= POINTS_PER_REV;
-    fake_ms += 3;
+    sim_ms += 3;
 }
 
 int main(int argc, char **argv) {

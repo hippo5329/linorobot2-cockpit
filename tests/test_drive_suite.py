@@ -1,7 +1,7 @@
 """The drive suite judges the RIGHT sign and a plausible magnitude.
 
 Its whole reason to exist is that 50 Hz topics do not prove motion: the
-fake-wheel invert bug and the PID windup both produced perfect rates on a base
+sim-wheel invert bug and the PID windup both produced perfect rates on a base
 that was spinning in place or pinned at a rail. So the test that guards the
 suite is: a report matching the command passes, a reversed-sign report fails,
 and a dead-still report fails -- exactly the three the suite is there to tell
@@ -61,7 +61,7 @@ def test_a_tiny_command_has_a_floor_so_noise_does_not_fail_it():
 
 
 # The room-geometry note, mirrored the same way and for the same reason: it is
-# pure, and if it drifts from the suite (or from fake_ld19.h) it stops telling
+# pure, and if it drifts from the suite (or from sim_ld19.h) it stops telling
 # a clamped pose from a base fault. Keep these numbers identical to both.
 ROOM_W, ROOM_H, ROBOT_R = 10.0, 6.0, 0.30
 WALL_X, WALL_HALF_SPAN, NEAR = 2.0, 1.5, 0.05

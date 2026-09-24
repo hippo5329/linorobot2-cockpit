@@ -61,7 +61,7 @@ def test_every_translation_unit_that_prints_reaches_the_wrapper():
             if "Serial." not in src or f in ("lino_console.h", "lino_console.cpp"):
                 continue
             # a header that includes another of ours is covered transitively
-            if re.search(r'#include\s+"(mcu_env|lino_console|imu_interface|mag_interface|default_imu|fake_ld19)\.h"', src):
+            if re.search(r'#include\s+"(mcu_env|lino_console|imu_interface|mag_interface|default_imu|sim_ld19)\.h"', src):
                 continue
             missing.append(os.path.relpath(p, FW))
     assert not missing, f"print without the console wrapper: {missing}"

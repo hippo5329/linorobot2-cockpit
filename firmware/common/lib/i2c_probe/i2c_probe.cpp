@@ -85,7 +85,7 @@ void identify(Sink &sink, uint8_t addr)
             // the IMU's INTERNAL auxiliary bus, so it never ACKs a scan of the
             // main bus -- probing alone would report a 9-axis part as 6-axis and
             // i2cProbeSelect() would leave mag_name at whatever the config said,
-            // usually "fake". /imu/mag would then never publish and nothing would
+            // usually "sim". /imu/mag would then never publish and nothing would
             // say why. Register the magnetometer here, against the same address:
             // ICM20948MAG reaches it through the IMU exactly as this implies.
             sink.add(addr, "mag", "AK09916", "icm20948", "USE_ICM20948_MAG",

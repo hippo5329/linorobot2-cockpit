@@ -1,6 +1,6 @@
 """One default chassis, everywhere.
 
-A Nav2 fake-mode failure can only be attributed to a board if every default config
+A Nav2 sim-mode failure can only be attributed to a board if every default config
 shares the same chassis: the same body and sensor mounts (laser at the base origin),
 the same costmap radii, consistent frame names, the same bare kinematics, and no
 inherited hardware quirks. The Yahboom reference failed the Nav2 goal on both
@@ -190,7 +190,7 @@ def test_the_generated_bare_config_is_the_default_chassis():
         for n in range(1, 5):
             assert pins[f"motor{n}"]["invert"] is False and pins[f"encoder{n}"]["invert"] is False, \
                 f"bare_{mcu}: invert flags default OFF"
-        for key in ("use_fake_imu", "use_fake_wheel", "use_fake_ld19"):
+        for key in ("use_sim_imu", "use_sim_wheel", "use_sim_ld19"):
             assert cfg["base_controller"]["sensors"][key] is True
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "gen_bare_config.bare_config(bare_mcu.group(1))" in pipe, "bare configs are regenerated per run"
@@ -294,7 +294,7 @@ def test_none_is_not_a_chip_name():
     assert m.sensor_topics({"sensors": {"current": "INA219"}}) == ["/battery"]
     for absent in ("NONE", "none", " None ", "", "off"):
         assert m.sensor_topics({"sensors": {"current": absent}}) == [], absent
-    assert m.sensor_topics({"sensors": {"current": "INA219", "use_fake_current": True}}) == []
+    assert m.sensor_topics({"sensors": {"current": "INA219", "use_sim_current": True}}) == []
 
 
 def test_the_gate_never_asks_for_tighter_than_nav2_promises():
@@ -326,14 +326,14 @@ def test_topics_only_runs_no_slam_no_nav2_no_map():
 
 def test_a_real_imu_on_simulated_wheels_is_called_out():
     """The EKF fuses vyaw from odom AND imu. A board bolted to a bench reports
-    gyro=(0, 0, 0) while the fake wheels report a turn, so the filtered heading
+    gyro=(0, 0, 0) while the sim wheels report a turn, so the filtered heading
     is dragged toward zero on every IMU sample. Measured on the GenDrv: 8/8 legs
-    in fake mode, stalled 1.615 m (jazzy) and 1.625 m (lyrical) short of the same
+    in sim mode, stalled 1.615 m (jazzy) and 1.625 m (lyrical) short of the same
     goal in auto mode, both reporting "Failed to make progress". A run that mixes
     them must say so, or the transcript reads like a navigation fault."""
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "NOT_FITTED = {" in pipe, "the not-fitted sentinel is named once"
-    assert 'use_fake_wheel' in pipe and "A real IMU with simulated wheels" in pipe
+    assert 'use_sim_wheel' in pipe and "A real IMU with simulated wheels" in pipe
     import yaml
     for name in _reference_names():
         d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
@@ -433,12 +433,12 @@ def test_only_one_source_supplies_absolute_yaw():
 
 # --- the simulated sensors must be a typical real one -------------------------
 
-def _fake_peak(macro):
+def _sim_peak(macro):
     import re
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "firmware", "common", "lib", "encoder", "fake_wheel.h")).read()
+                            "firmware", "common", "lib", "encoder", "sim_wheel.h")).read()
     m = re.search(rf"#define {macro}\s+([0-9.eE+-]+)f?\b", src)
-    assert m, f"{macro} not found in fake_wheel.h"
+    assert m, f"{macro} not found in sim_wheel.h"
     return float(m.group(1))
 
 
@@ -446,9 +446,9 @@ def test_the_simulated_sensors_are_a_typical_real_one():
     """Sized to the MEDIAN of the datasheet variances mcu_env.py carries, so the
     bench is not tuned against a sensor nobody sells.
 
-    fakeWheelNoise() is uniform on +/-peak, so var = peak^2/3. The placeholders
+    simWheelNoise() is uniform on +/-peak, so var = peak^2/3. The placeholders
     said 1e-5 while the accelerometer produced 5.1e-4 -- the EKF was told the
-    simulated IMU was 50x quieter than it was, on every fake-mode leg.
+    simulated IMU was 50x quieter than it was, on every sim-mode leg.
     """
     import statistics as st
     import mcu_env
@@ -459,27 +459,27 @@ def test_the_simulated_sensors_are_a_typical_real_one():
     accel = [float(v) for v in re.findall(r'"accel_cov":\s*([0-9.eE+-]+)', src)]
     gyro = [float(v) for v in re.findall(r'"gyro_cov":\s*([0-9.eE+-]+)', src)]
     assert len(accel) >= 8 and len(gyro) >= 8, "the per-chip table shrank; check this test"
-    for macro, want in (("FAKE_IMU_ACCEL_NOISE", st.median(accel)),
-                        ("FAKE_IMU_GYRO_NOISE", st.median(gyro))):
-        got = _fake_peak(macro) ** 2 / 3.0
+    for macro, want in (("SIM_IMU_ACCEL_NOISE", st.median(accel)),
+                        ("SIM_IMU_GYRO_NOISE", st.median(gyro))):
+        got = _sim_peak(macro) ** 2 / 3.0
         assert abs(got - want) / want < 0.02, (
             f"{macro} produces variance {got:.4g}; the typical real sensor is {want:.4g}")
 
 
-def test_the_fake_sensor_declares_the_covariance_it_produces():
+def test_the_sim_sensor_declares_the_covariance_it_produces():
     """The simulated sensor is the one sensor whose noise is known exactly, so
     it derives its covariance instead of restating it in a second constant that
     can drift."""
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "firmware", "common", "lib", "encoder", "fake_wheel.h")).read()
-    assert "constexpr float fakeCov(float peak) { return peak * peak / 3.0f; }" in src
-    for macro in ("FAKE_IMU_ACCEL_NOISE", "FAKE_IMU_GYRO_NOISE", "FAKE_MAG_NOISE_T"):
-        assert f"fakeCov({macro})" in src, f"{macro} covariance is not derived from its noise"
-    # and the generic placeholders must no longer stand in for the fake sensor
+                            "firmware", "common", "lib", "encoder", "sim_wheel.h")).read()
+    assert "constexpr float simCov(float peak) { return peak * peak / 3.0f; }" in src
+    for macro in ("SIM_IMU_ACCEL_NOISE", "SIM_IMU_GYRO_NOISE", "SIM_MAG_NOISE_T"):
+        assert f"simCov({macro})" in src, f"{macro} covariance is not derived from its noise"
+    # and the generic placeholders must no longer stand in for the sim sensor
     head = src[src.index("void initMsgs("):src.index("for (int i = 0; i < 3; i++)")]
     for placeholder in ("float accel_cov[3] = ACCEL_COV", "float gyro_cov[3] = GYRO_COV",
                         "float mag_cov[3] = MAG_COV"):
-        assert placeholder not in head, f"{placeholder}: the fake sensor is using a placeholder"
+        assert placeholder not in head, f"{placeholder}: the sim sensor is using a placeholder"
 
 
 def test_the_simulated_magnetometer_ships_calibrated():
@@ -495,8 +495,8 @@ def test_the_simulated_magnetometer_ships_calibrated():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "firmware", "src", "main.cpp")).read()
     block = src[src.index("static bool mag_bias_read"):src.index('envFloatVec("mag_bias"')]
-    assert "sim_mag" in block, "the default is not conditioned on the mag being simulated"
-    for macro in ("FAKE_MAG_BIAS_X", "FAKE_MAG_BIAS_Y", "FAKE_MAG_BIAS_Z"):
+    assert "mag_from_wheels" in block, "the default is not conditioned on the mag being simulated"
+    for macro in ("SIM_MAG_BIAS_X", "SIM_MAG_BIAS_Y", "SIM_MAG_BIAS_Z"):
         assert macro in block, f"{macro} is not used as the simulated calibration"
     # and it must not override a calibration somebody actually supplied
     assert "!mag_bias[0] && !mag_bias[1] && !mag_bias[2]" in block

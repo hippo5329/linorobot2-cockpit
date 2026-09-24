@@ -181,7 +181,7 @@ def usb_mode(env: str, port: str) -> str:
     # happened to be carrying.
     #
     # That is how a pico2 bench came to be tested with an env that never had
-    # fake_wheel=1 written to it: no pose reset at the agent session, the
+    # sim_wheel=1 written to it: no pose reset at the agent session, the
     # emulator still parked at the room wall from an earlier run (odom
     # x=4.800, /scan min 0.20 m), Nav2 boxed in and 41 consecutive zero
     # velocity commands. Every symptom pointed at Nav2 or the firmware; the

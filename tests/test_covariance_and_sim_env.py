@@ -103,17 +103,17 @@ def test_the_barometer_address_can_be_named():
 
 
 def test_the_simulated_room_is_configurable():
-    """Fake mode is this project's default, so the room the emulator raycasts
+    """Sim mode is this project's default, so the room the emulator raycasts
     is configuration: a Nav2 test wants the obstacle wall somewhere else
     without rebuilding."""
     env = _env(_with(simulation={"map_width": 8.0, "wall_obstacle": 0,
                                  "wall_x1": 1.25, "robot_mass": 12,
                                  "wheel_noise_rpm": 0.25}))
-    assert env["fake_map_w"] == "8"
-    assert env["fake_wall"] == 0
-    assert env["fake_wall_x1"] == "1.25"
-    assert env["fake_mass"] == "12"
-    assert env["fake_noise_rpm"] == "0.25"
+    assert env["sim_map_w"] == "8"
+    assert env["sim_wall"] == 0
+    assert env["sim_wall_x1"] == "1.25"
+    assert env["sim_mass"] == "12"
+    assert env["sim_noise_rpm"] == "0.25"
 
 
 def test_a_silent_config_adds_none_of_these_keys():
@@ -133,9 +133,9 @@ def test_a_silent_config_adds_none_of_these_keys():
     env = _env(cfg)
     for key in ("accel_cov", "gyro_cov", "ori_cov", "mag_cov", "pose_cov",
                 "twist_cov", "env_cov", "mag_bias", "bmp280_addr",
-                "fake_map_w", "fake_wall", "fake_mass", "fake_noise_rpm",
-                "fake_gear_eff", "fake_coulomb", "fake_sag", "fake_sag_tau",
-                "fake_drv_drop", "fake_drv_r"):
+                "sim_map_w", "sim_wall", "sim_mass", "sim_noise_rpm",
+                "sim_gear_eff", "sim_coulomb", "sim_sag", "sim_sag_tau",
+                "sim_drv_drop", "sim_drv_r"):
         assert key not in env, f"{key} was written for a config that never asked"
 
 
@@ -196,12 +196,12 @@ def test_a_global_does_not_read_the_env_in_its_constructor():
 
 
 def test_the_simulated_imu_reads_the_same_covariance_keys():
-    """Fake mode publishes through FakeIMUFromWheels, not IMUInterface, so
+    """Sim mode publishes through SimIMUFromWheels, not IMUInterface, so
     without this the covariance a config sets reached every robot EXCEPT the
     simulated one -- which is the default here, and the one an EKF is usually
     tuned against first."""
-    fake = _src("firmware/common/lib/encoder/fake_wheel.h")
-    init = fake[fake.index("void initMsgs("):]
+    sim = _src("firmware/common/lib/encoder/sim_wheel.h")
+    init = sim[sim.index("void initMsgs("):]
     init = init[:init.index("void update(")]
     for key in ("accel_cov", "gyro_cov", "ori_cov", "mag_cov"):
         assert f'envFloatVec("{key}"' in init, f"initMsgs ignores {key}"

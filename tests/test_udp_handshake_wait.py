@@ -84,7 +84,7 @@ def test_the_scan_wait_covers_any_scan_the_board_produces():
     exits and respawns every 2 s -- all while the board is rebooting from the
     flash the same run performed. It got 15 s and failed on both distros, while
     the udp leg beside it passed on 90. Only the host's virtual room is fast,
-    because fake_laser_node publishes the moment it starts.
+    because sim_laser_node publishes the moment it starts.
     """
     block = _scan_block()
     m = re.search(r"scan_wait = (\d+) if host_room else (\d+)", block)
@@ -96,7 +96,7 @@ def test_the_scan_wait_covers_any_scan_the_board_produces():
     )
     assert board_s > host_s
     # host_room must be decided the way bringup decides to launch the virtual room.
-    assert "use_fake_ld19" in block and 'lidar_mode != "serial"' in block
+    assert "use_sim_ld19" in block and 'lidar_mode != "serial"' in block
     assert "os.path.exists(lidar_port_cfg)" in block
     # and udp/udp_server is the real driver in server mode, decided BEFORE the
     # host-room test, as bringup does -- the GenDrv's udp leg got 15 s otherwise.

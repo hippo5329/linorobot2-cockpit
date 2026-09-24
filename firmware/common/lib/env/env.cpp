@@ -18,8 +18,8 @@
 #include "env.h"
 #include "mcu_env.h"
 
-#ifndef FAKE_ENV_DEFAULT
-#define FAKE_ENV_DEFAULT false
+#ifndef SIM_ENV_DEFAULT
+#define SIM_ENV_DEFAULT false
 #endif
 
 
@@ -134,13 +134,13 @@ static void loadCalibration()
     }
 }
 
-// Simulated barometer, from the env rather than the build. `USE_FAKE_ENV`
+// Simulated barometer, from the env rather than the build. `USE_SIM_ENV`
 // decided this at compile time, which meant a bench board could only report a
 // synthetic 25 C / 1013 hPa if someone had generated its header that way --
 // and a released image could never do it at all.
-static bool s_fake = false;
+static bool s_sim = false;
 
-bool envIsFake() { return s_fake; }
+bool envIsSim() { return s_sim; }
 
 bool initEnv()
 {
@@ -148,12 +148,12 @@ bool initEnv()
     s_is_bme = false;
 
     initMcuEnv();
-    s_fake = envFlag("fake_env", FAKE_ENV_DEFAULT);
-    if (s_fake)
+    s_sim = envFlag("sim_env", SIM_ENV_DEFAULT);
+    if (s_sim)
     {
         s_ok = true;
         s_is_bme = false;
-        Serial.println("[env] fake_env=1: synthetic barometer (25 C, 1013 hPa)");
+        Serial.println("[env] sim_env=1: synthetic barometer (25 C, 1013 hPa)");
         return true;
     }
 
@@ -200,7 +200,7 @@ EnvData readEnv()
     if (!s_ok)
         return d;
 
-    if (s_fake)
+    if (s_sim)
     {
         d.valid = true;
         d.temperature = 25.0f;

@@ -1,4 +1,4 @@
-# Prebuilt fake-mode firmware
+# Prebuilt sim-mode firmware
 
 Ready-to-flash images so a board can be brought up without installing
 PlatformIO, a cross-compiler, or anything else. They are **release assets**,
@@ -32,7 +32,7 @@ them — the pin matrix, the I2C bus, the LiDAR wiring, which IMU is fitted, the
 transport, the credentials — is in the `env` flash partition, not in the binary.
 A board is a configuration, not a build.
 
-All of them are **fake mode**: the firmware simulates the IMU, magnetometer and
+All of them are **sim mode**: the firmware simulates the IMU, magnetometer and
 wheel encoders, so a board with nothing wired to it still publishes odometry and
 a scan. That is what lets one image be useful without knowing anything about
 your hardware — it is for bringing a board up and proving the pipeline, not for
@@ -100,7 +100,7 @@ board       i2c_sda  i2c_scl  i2c_clock
 drivetrain  m<N>_pwm  m<N>_in_a  m<N>_in_b  m<N>_inv
             m<N>_enc_a  m<N>_enc_b  m<N>_cpr  m<N>_enc_inv    (N = 1..4)
             motor_driver  pwm_freq  pwm_bits  pwm_min  pwm_max
-            kp  ki  kd  fake_wheel
+            kp  ki  kd  sim_wheel
 
 kinematics  base  max_rpm  rpm_ratio  wheel_d  lr_dist
             motor_v  power_v

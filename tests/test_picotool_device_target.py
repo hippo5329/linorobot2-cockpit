@@ -33,7 +33,7 @@ def _no_leaked_target(monkeypatch):
     monkeypatch.setattr(flash_mcu, "_TARGET_USB_PATH", None)
 
 
-def _fake_sysfs(tmp_path, path="7-1.1", bus="7", addr="57"):
+def _sim_sysfs(tmp_path, path="7-1.1", bus="7", addr="57"):
     root = tmp_path / "devices"
     dev = root / path
     dev.mkdir(parents=True)
@@ -45,7 +45,7 @@ def _fake_sysfs(tmp_path, path="7-1.1", bus="7", addr="57"):
 def test_the_target_is_read_fresh_because_bootsel_re_enumerates(tmp_path, monkeypatch):
     """The address changes between the 1200-baud touch and the load, so it must
     not be captured with the path."""
-    root = _fake_sysfs(tmp_path, addr="57")
+    root = _sim_sysfs(tmp_path, addr="57")
     monkeypatch.setattr(flash_mcu, "_TARGET_USB_PATH", "7-1.1")
     assert flash_mcu.picotool_target(str(root)) == ["--bus", "7", "--address", "57"]
 

@@ -93,12 +93,12 @@ def test_generated_bare_config_is_pinless(reference):
         m = _macros(gh.generate_header(bare_config(mcu), {}, None, True, "jazzy"))
         assert m["MOTOR1_PWM"] == "-1", mcu
         assert m["SDA_PIN"] == "-1", mcu
-        # The fakes are DEFAULTS now, not gates: the drivers are compiled into
+        # The sims are DEFAULTS now, not gates: the drivers are compiled into
         # every image and the env decides. A bare module is the one design that
         # wants them all on with no wiring, so it says so as a value.
-        assert m["FAKE_WHEEL_DEFAULT"] == "true", mcu
-        assert m["IMU_DEFAULT_NAME"] == '"fake"', mcu
-        assert m["FAKE_LD19_DEFAULT"] == "true", mcu
+        assert m["SIM_WHEEL_DEFAULT"] == "true", mcu
+        assert m["IMU_DEFAULT_NAME"] == '"sim"', mcu
+        assert m["SIM_LD19_DEFAULT"] == "true", mcu
         # Pins stay absent: nothing is wired, so nothing is driven. (The
         # drivers still compile -- range.cpp and battery.cpp take -1 and say
         # so at boot -- which is what lets one image serve a wired board.)

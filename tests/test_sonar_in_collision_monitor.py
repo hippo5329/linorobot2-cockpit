@@ -1,7 +1,7 @@
 """The sonar has a consumer -- on a robot that has a sonar.
 
 The firmware has published sensor_msgs/Range on `sonar` all along (a real
-HC-SR04 when the pins name one, a raycast from the fake LiDAR room otherwise)
+HC-SR04 when the pins name one, a raycast from the sim LiDAR room otherwise)
 and nothing read it. Not a costmap layer, not the collision monitor, nothing.
 The LiDAR was the only obstacle input in the stack, so when it was wrong there
 was nothing to contradict it.
@@ -101,7 +101,7 @@ def test_only_a_robot_with_sonar_pins_declares_the_source():
 
 def test_the_beam_does_not_exceed_the_monitors_point_ceiling():
     """point_count = ceil(field_of_view / obstacles_angle) + 1, and the
-    firmware's cone is FAKE_SONAR_CONE_DEG = 30 degrees."""
+    firmware's cone is SIM_SONAR_CONE_DEG = 30 degrees."""
     for f in _configs():
         d = yaml.safe_load(_read(f))
         cm = _cm(d)

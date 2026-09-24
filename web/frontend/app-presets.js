@@ -1,4 +1,4 @@
-// Linorobot2 Cockpit frontend -- reference build presets & hardware design engine, fake-mode.
+// Linorobot2 Cockpit frontend -- reference build presets & hardware design engine, sim-mode.
 // Part of the app.js split: a classic script sharing global scope. See app-core.js.
 
 // ==============================================================================
@@ -9,7 +9,7 @@ const REFERENCE_DESIGNS = {
   pico2: [
     {
       id: "bare_pico2",
-      name: "🧩 Bare Module (RP2350) — all pins N/C (Safe Default / Fake Mode)",
+      name: "🧩 Bare Module (RP2350) — all pins N/C (Safe Default / Sim Mode)",
       mcu: "pico2",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -19,12 +19,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: true,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: true,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
@@ -42,7 +42,7 @@ const REFERENCE_DESIGNS = {
     },
     {
       id: "pico2_diff",
-      name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Fake IMU Default)",
+      name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Sim IMU Default)",
       mcu: "pico2",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -52,12 +52,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: 10, in_b: 11, pwm: 12 },
@@ -75,7 +75,7 @@ const REFERENCE_DESIGNS = {
     },
     {
       id: "pico2_mecanum",
-      name: "⚡ Pico 2 · 4WD Mecanum · BTS7960 (Fake IMU)",
+      name: "⚡ Pico 2 · 4WD Mecanum · BTS7960 (Sim IMU)",
       mcu: "pico2",
       kinematics: "mecanum",
       driver: "BTS7960",
@@ -85,12 +85,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: 6, in_b: 7, pwm: 8 },
@@ -118,12 +118,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: 11, in_b: 12, pwm: 10 },
@@ -151,12 +151,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: 11, in_b: 12, pwm: 10 },
@@ -176,7 +176,7 @@ const REFERENCE_DESIGNS = {
   pico: [
     {
       id: "bare_pico",
-      name: "🧩 Bare Module (RP2040) — all pins N/C (Safe Default / Fake Mode)",
+      name: "🧩 Bare Module (RP2040) — all pins N/C (Safe Default / Sim Mode)",
       mcu: "pico",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -186,12 +186,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: true,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: true,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
@@ -219,12 +219,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 25,
         motor1: { in_a: 11, in_b: 12, pwm: 10 },
@@ -244,7 +244,7 @@ const REFERENCE_DESIGNS = {
   esp32: [
     {
       id: "bare_esp32",
-      name: "🧩 Bare Module (ESP32) — all pins N/C (Safe Default / Fake Mode)",
+      name: "🧩 Bare Module (ESP32) — all pins N/C (Safe Default / Sim Mode)",
       mcu: "esp32",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -254,12 +254,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: true,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: true,
+      use_sim_ld19: true,
       pins: {
         led: 2,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
@@ -289,10 +289,10 @@ const REFERENCE_DESIGNS = {
       operating_voltage: 12.0,
       imu: "QMI8658",
       mag: "AK09918",
-      use_fake_imu: false,
-      use_fake_mag: false,
-      use_fake_wheel: false,
-      use_fake_ld19: false,
+      use_sim_imu: false,
+      use_sim_mag: false,
+      use_sim_wheel: false,
+      use_sim_ld19: false,
       pins: {
         led: -1,
         motor1: { in_a: 17, in_b: 21, pwm: -1 },
@@ -322,10 +322,10 @@ const REFERENCE_DESIGNS = {
       operating_voltage: 12.0,
       imu: "BNO085",
       mag: "NONE",
-      use_fake_imu: false,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: false,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 2,
         motor1: { in_a: 14, in_b: 27, pwm: 13 },
@@ -345,7 +345,7 @@ const REFERENCE_DESIGNS = {
   esp32s3: [
     {
       id: "bare_esp32s3",
-      name: "🧩 Bare Module (ESP32-S3) — all pins N/C (Safe Default / Fake Mode)",
+      name: "🧩 Bare Module (ESP32-S3) — all pins N/C (Safe Default / Sim Mode)",
       mcu: "esp32s3",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -355,12 +355,12 @@ const REFERENCE_DESIGNS = {
       max_rpm: 140,
       cpr: 4000,
       operating_voltage: 12.0,
-      imu: "FAKE",
+      imu: "SIM",
       mag: "NONE",
-      use_fake_imu: true,
-      use_fake_mag: true,
-      use_fake_wheel: true,
-      use_fake_ld19: true,
+      use_sim_imu: true,
+      use_sim_mag: true,
+      use_sim_wheel: true,
+      use_sim_ld19: true,
       pins: {
         led: 48,
         motor1: { in_a: -1, in_b: -1, pwm: -1 },
@@ -391,10 +391,10 @@ const REFERENCE_DESIGNS = {
       operating_voltage: 8.4,
       imu: "ICM42670",
       mag: "NONE",
-      use_fake_imu: false,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: false,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 45,
         motor1: { in_a: 4, in_b: 5, pwm: -1 },
@@ -420,10 +420,10 @@ const REFERENCE_DESIGNS = {
       operating_voltage: 12.0,
       imu: "MPU6050",
       mag: "NONE",
-      use_fake_imu: false,
-      use_fake_mag: true,
-      use_fake_wheel: false,
-      use_fake_ld19: true,
+      use_sim_imu: false,
+      use_sim_mag: true,
+      use_sim_wheel: false,
+      use_sim_ld19: true,
       pins: {
         led: 48,
         motor1: { in_a: 2, in_b: 4, pwm: 1 },
@@ -538,10 +538,10 @@ async function applyReferenceDesign(designId) {
     const el = document.getElementById(id);
     if (el && val !== undefined) el.checked = !!val;
   };
-  setChk("chk-fake-imu", found.use_fake_imu);
-  setChk("chk-fake-mag", found.use_fake_mag);
-  setChk("chk-fake-wheel", found.use_fake_wheel);
-  setChk("chk-fake-ld19", found.use_fake_ld19);
+  setChk("chk-sim-imu", found.use_sim_imu);
+  setChk("chk-sim-mag", found.use_sim_mag);
+  setChk("chk-sim-wheel", found.use_sim_wheel);
+  setChk("chk-sim-ld19", found.use_sim_ld19);
 
   // Pins
   if (found.pins) {
@@ -652,26 +652,26 @@ function initReferenceDesigns() {
   }
   window.__syncControllerSelects = syncControllerSelects;
 
-  initFakeModeWorkflow();
+  initSimModeWorkflow();
 }
 
-let currentFakeMode = true;
+let currentSimMode = true;
 
-function updateFakeModeUI(enabled) {
-  currentFakeMode = enabled;
+function updateSimModeUI(enabled) {
+  currentSimMode = enabled;
 
   const hdrMode = document.getElementById("hdr-pipeline-mode");
   const cockpitMode = document.getElementById("cockpit-pipeline-mode");
-  if (hdrMode) hdrMode.value = enabled ? "fake" : "real";
-  if (cockpitMode) cockpitMode.value = enabled ? "fake" : "real";
+  if (hdrMode) hdrMode.value = enabled ? "sim" : "real";
+  if (cockpitMode) cockpitMode.value = enabled ? "sim" : "real";
 
-  const stateBadge = document.getElementById("fake-mode-state-badge");
-  const descElem = document.getElementById("fake-mode-desc");
-  const toggleBtn = document.getElementById("btn-toggle-fake-mode");
+  const stateBadge = document.getElementById("sim-mode-state-badge");
+  const descElem = document.getElementById("sim-mode-desc");
+  const toggleBtn = document.getElementById("btn-toggle-sim-mode");
   const odomStatus = document.getElementById("sim-odom-status");
   const imuStatus = document.getElementById("sim-imu-status");
   const lidarStatus = document.getElementById("sim-lidar-status");
-  const cardTitle = document.getElementById("fake-mode-card-title");
+  const cardTitle = document.getElementById("sim-mode-card-title");
 
   if (stateBadge) {
     stateBadge.textContent = enabled ? "Zero-Wiring Default ON" : "Real Hardware Active";
@@ -679,22 +679,22 @@ function updateFakeModeUI(enabled) {
   }
   if (cardTitle) {
     cardTitle.textContent = enabled
-      ? "Fake Mode / Zero-Wiring Simulation Preview (Active by Default)"
-      : "Real Physical Hardware Mode (Fake Simulation Disabled)";
+      ? "Sim Mode / Zero-Wiring Simulation Preview (Active by Default)"
+      : "Real Physical Hardware Mode (Sim Simulation Disabled)";
   }
   if (descElem) {
     if (enabled) {
-      descElem.innerHTML = `Linorobot2 defaults to safe <b>Fake Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_FAKE_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_FAKE_IMU</code>), and simulated planar LiDAR scans (<code>USE_FAKE_LD19</code>). This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.`;
+      descElem.innerHTML = `Linorobot2 defaults to safe <b>Sim Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_SIM_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_SIM_IMU</code>), and simulated planar LiDAR scans (<code>USE_SIM_LD19</code>). This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.`;
     } else {
-      descElem.innerHTML = `<b>Real Physical Hardware Mode Active.</b> Synthetic simulation flags (<code>USE_FAKE_WHEEL</code>, <code>USE_FAKE_IMU</code>, <code>USE_FAKE_LD19</code>) are turned OFF. The microcontroller interacts with real physical motor drivers, wheel encoders, and real I2C sensors. Proceed to Step 2 (Drive &amp; Motors) and Step 4 (Pin Matrix) to finalize wiring pinouts.`;
+      descElem.innerHTML = `<b>Real Physical Hardware Mode Active.</b> Synthetic simulation flags (<code>USE_SIM_WHEEL</code>, <code>USE_SIM_IMU</code>, <code>USE_SIM_LD19</code>) are turned OFF. The microcontroller interacts with real physical motor drivers, wheel encoders, and real I2C sensors. Proceed to Step 2 (Drive &amp; Motors) and Step 4 (Pin Matrix) to finalize wiring pinouts.`;
     }
   }
   if (toggleBtn) {
     if (enabled) {
-      toggleBtn.innerHTML = `⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design`;
+      toggleBtn.innerHTML = `⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design`;
       toggleBtn.className = "btn btn-accent";
     } else {
-      toggleBtn.innerHTML = `🔄 Re-enable Fake Mode Simulation Preview`;
+      toggleBtn.innerHTML = `🔄 Re-enable Sim Mode Simulation Preview`;
       toggleBtn.className = "btn btn-secondary";
     }
   }
@@ -714,28 +714,28 @@ function updateFakeModeUI(enabled) {
       : `<span style="color:#94a3b8;">Laser Scanner:</span> <b style="color:#38bdf8;">Serial / UDP LiDAR Driver</b>`;
   }
 
-  const slamBadge = document.getElementById("slam-fake-mode-badge");
+  const slamBadge = document.getElementById("slam-sim-mode-badge");
   if (slamBadge) {
     slamBadge.textContent = enabled ? "Zero-Wiring Simulation Active" : "Real Hardware Mode";
     slamBadge.className = "badge-pill " + (enabled ? "badge-ok" : "badge-accent");
   }
-  const cockpitBadge = document.getElementById("cockpit-fake-mode-badge");
+  const cockpitBadge = document.getElementById("cockpit-sim-mode-badge");
   if (cockpitBadge) {
-    cockpitBadge.textContent = enabled ? "Fake Mode Active" : "Real Hardware Active";
+    cockpitBadge.textContent = enabled ? "Sim Mode Active" : "Real Hardware Active";
     cockpitBadge.className = "badge-pill " + (enabled ? "badge-ok" : "badge-accent");
   }
 
   document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => {
-    btn.textContent = enabled ? "⚡ Switch Fake Mode OFF ➔ Start Details Hardware Design ➔" : "⚙️ Proceed to Step 2: Drive & Motors ➔";
+    btn.textContent = enabled ? "⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design ➔" : "⚙️ Proceed to Step 2: Drive & Motors ➔";
   });
 }
 
-async function setFakeMode(enabled, transitionToDetails = false) {
-  updateFakeModeUI(enabled);
+async function setSimMode(enabled, transitionToDetails = false) {
+  updateSimModeUI(enabled);
   const activeController = state.status?.controller || "pico2";
 
   try {
-    const res = await fetch("/api/hardware/fake_mode", {
+    const res = await fetch("/api/hardware/sim_mode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: enabled, controller: activeController }),
@@ -745,11 +745,11 @@ async function setFakeMode(enabled, transitionToDetails = false) {
       if (!enabled) {
         showToast("⚡ Switched to Real Hardware Mode! You can now configure your detailed hardware design.");
       } else {
-        showToast("🔄 Switched to Fake Simulation Mode (Safe Zero-Wiring Default).");
+        showToast("🔄 Switched to Sim Simulation Mode (Safe Zero-Wiring Default).");
       }
     }
   } catch (err) {
-    console.error("Failed to update fake mode on backend:", err);
+    console.error("Failed to update sim mode on backend:", err);
   }
 
   if (transitionToDetails) {
@@ -761,17 +761,17 @@ async function setFakeMode(enabled, transitionToDetails = false) {
   }
 }
 
-function initFakeModeWorkflow() {
+function initSimModeWorkflow() {
   document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => {
     btn.addEventListener("click", () => {
-      setFakeMode(false, true);
+      setSimMode(false, true);
     });
   });
 
-  const toggleBtn = document.getElementById("btn-toggle-fake-mode");
+  const toggleBtn = document.getElementById("btn-toggle-sim-mode");
   if (toggleBtn) {
     toggleBtn.addEventListener("click", () => {
-      setFakeMode(!currentFakeMode, !currentFakeMode ? false : true);
+      setSimMode(!currentSimMode, !currentSimMode ? false : true);
     });
   }
 
@@ -791,18 +791,18 @@ function initFakeModeWorkflow() {
   if (hdrMode) {
     hdrMode.addEventListener("change", (e) => {
       if (e.target.value === "real") {
-        setFakeMode(false, false);
-      } else if (e.target.value === "fake") {
-        setFakeMode(true, false);
+        setSimMode(false, false);
+      } else if (e.target.value === "sim") {
+        setSimMode(true, false);
       }
     });
   }
   if (cockpitMode) {
     cockpitMode.addEventListener("change", (e) => {
       if (e.target.value === "real") {
-        setFakeMode(false, false);
-      } else if (e.target.value === "fake") {
-        setFakeMode(true, false);
+        setSimMode(false, false);
+      } else if (e.target.value === "sim") {
+        setSimMode(true, false);
       }
     });
   }

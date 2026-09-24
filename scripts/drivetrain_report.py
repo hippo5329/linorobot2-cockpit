@@ -13,7 +13,7 @@
 # degrades: three mecanum legs left the room on 2026-09-23 before anyone looked
 # at the motors. The arithmetic is not hard; it was simply never written down.
 #
-# The model is the firmware's own (firmware/common/lib/encoder/fake_wheel.h): a
+# The model is the firmware's own (firmware/common/lib/encoder/sim_wheel.h): a
 # brushed DC gear motor whose torque falls linearly from stall to no-load, a
 # gearbox that returns part of it, constant gear drag, viscous friction, and a
 # pack that sags under the current all the wheels draw together.
@@ -39,36 +39,36 @@ except ImportError:
     sys.exit(1)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FAKE_WHEEL_H = os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
-                            "fake_wheel.h")
+SIM_WHEEL_H = os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
+                            "sim_wheel.h")
 
 
-def model_defaults(path=FAKE_WHEEL_H):
+def model_defaults(path=SIM_WHEEL_H):
     """The wheel model's constants, read from the firmware that implements it."""
     want = {
-        "FAKE_WHEEL_TAU_MS": "tau_ms",
-        "FAKE_WHEEL_REF_MASS": "ref_mass",
-        "FAKE_WHEEL_MAX_ACCEL_RPM": "accel_clamp",
-        "FAKE_WHEEL_FRICTION": "viscous",
-        "FAKE_WHEEL_STALL_DUTY": "stall_duty",
-        "FAKE_ROBOT_MASS": "mass",
-        "FAKE_GEAR_EFFICIENCY": "gear_eff",
-        "FAKE_WHEEL_COULOMB_RPM": "coulomb",
-        "FAKE_BATT_SAG": "sag",
-        "FAKE_BATT_SAG_TAU_MS": "sag_tau_ms",
-        "FAKE_DRV_DROP": "drv_drop",
-        "FAKE_DRV_R": "drv_r",
-        "FAKE_MOTOR_STALL_A": "stall_a",
-        "FAKE_DRV_ILIMIT_A": "ilimit_a",
+        "SIM_WHEEL_TAU_MS": "tau_ms",
+        "SIM_WHEEL_REF_MASS": "ref_mass",
+        "SIM_WHEEL_MAX_ACCEL_RPM": "accel_clamp",
+        "SIM_WHEEL_FRICTION": "viscous",
+        "SIM_WHEEL_STALL_DUTY": "stall_duty",
+        "SIM_ROBOT_MASS": "mass",
+        "SIM_GEAR_EFFICIENCY": "gear_eff",
+        "SIM_WHEEL_COULOMB_RPM": "coulomb",
+        "SIM_BATT_SAG": "sag",
+        "SIM_BATT_SAG_TAU_MS": "sag_tau_ms",
+        "SIM_DRV_DROP": "drv_drop",
+        "SIM_DRV_R": "drv_r",
+        "SIM_MOTOR_STALL_A": "stall_a",
+        "SIM_DRV_ILIMIT_A": "ilimit_a",
         # The simulated SENSORS. Not used by this report, which is noiseless on
-        # purpose, but fake_base_node has to imitate the board's output and not
+        # purpose, but sim_base_node has to imitate the board's output and not
         # just its motion -- a perfect IMU is a different robot to fuse.
-        "FAKE_WHEEL_NOISE_RPM": "noise_rpm",
-        "FAKE_IMU_GYRO_BIAS": "gyro_bias",
-        "FAKE_IMU_GYRO_DRIFT": "gyro_drift",
-        "FAKE_IMU_GYRO_NOISE": "gyro_noise",
-        "FAKE_IMU_ACCEL_NOISE": "accel_noise",
-        "FAKE_IMU_SCALE_ERROR": "scale_error",
+        "SIM_WHEEL_NOISE_RPM": "noise_rpm",
+        "SIM_IMU_GYRO_BIAS": "gyro_bias",
+        "SIM_IMU_GYRO_DRIFT": "gyro_drift",
+        "SIM_IMU_GYRO_NOISE": "gyro_noise",
+        "SIM_IMU_ACCEL_NOISE": "accel_noise",
+        "SIM_IMU_SCALE_ERROR": "scale_error",
     }
     out = {}
     with open(path, encoding="utf-8") as fh:
@@ -132,7 +132,7 @@ def drivetrain(params):
     # first version of this report.
     #
     #   motor_rpm    the motor's own no-load speed, derated only by the voltage
-    #                it is fed. What the machine CAN do. fake_wheel.h uses this.
+    #                it is fed. What the machine CAN do. sim_wheel.h uses this.
     #   command_rpm  that, times max_rpm_ratio -- the DRIVER MARGIN, which is
     #                the share of no-load speed the losses take back before the
     #                wheel ever turns at the rated figure. What the controller
@@ -172,7 +172,7 @@ def performance(d):
     tau = (d["tau_ms"] / 1000.0) * (d["mass"] / d["ref_mass"])
     tau = max(tau, 0.001)
 
-    # The pack's sag LAGS (FAKE_BATT_SAG_TAU_MS), so the first instant of an
+    # The pack's sag LAGS (SIM_BATT_SAG_TAU_MS), so the first instant of an
     # acceleration sees a stiff pack and the sag develops underneath it. That
     # gives two different accelerations and the difference is the lunge a real
     # robot has: bridge losses bite immediately, the pack gives way after.
@@ -229,14 +229,14 @@ def performance(d):
 # integrating the coast, which no closed form gives.
 #
 # So the numbers are produced the way the bench produces them: by running the
-# model. This class is a transcription of FakeEncoder::integrate() and
+# model. This class is a transcription of SimEncoder::integrate() and
 # busScale() -- same terms, same order, same clamps, same shared pack -- and
 # run_test_acc() is a transcription of test_acc.cpp's loop_() and dump_record().
 # Given that, flashing test_acc and driving a board is no longer how these
 # numbers are obtained. It is how this transcription is CHECKED, which is a
 # different job and a much rarer one.
 #
-# Deliberately noiseless. getRPM() adds +/-FAKE_WHEEL_NOISE_RPM, and test_acc
+# Deliberately noiseless. getRPM() adds +/-SIM_WHEEL_NOISE_RPM, and test_acc
 # differentiates it: 1 rpm of white noise across a 20 ms tick is about 0.4 m/s2
 # of pure instrument error in the MAX ACC column, which is why the bench figure
 # reads slightly high and why a report should not reproduce it.
@@ -272,7 +272,7 @@ class _Pack:
 
 
 class _Wheel:
-    """One simulated wheel. Mirrors FakeEncoder; see fake_wheel.h."""
+    """One simulated wheel. Mirrors SimEncoder; see sim_wheel.h."""
 
     def __init__(self, d, pack, slot):
         self.d, self.pack, self.slot = d, pack, slot
@@ -427,7 +427,7 @@ def demand_rpm(d, vx, wz):
 # The plant here is PWM counts in, wheel RPM out. To a good approximation it is
 # first order with a dead zone:
 #
-#     G(s) = K / (tau*s + 1),   with no output at all below FAKE_WHEEL_STALL_DUTY
+#     G(s) = K / (tau*s + 1),   with no output at all below SIM_WHEEL_STALL_DUTY
 #
 # K and tau are MEASURED off the simulated response rather than taken from the
 # model's constants, for the same reason you would measure them on a bench: the
@@ -488,7 +488,7 @@ def simulate_closed_loop(d, gains, setpoint_rpm=None, seconds=2.0):
 
     This is the part the bench could never do. A step response measured open
     loop tells you the plant; it does not tell you whether the gains in the
-    config make a STABLE loop, and fake mode used to be no help because the
+    config make a STABLE loop, and sim mode used to be no help because the
     wheels did not respond to PWM at all -- they tracked the command, so every
     set of gains looked perfect. Now the wheel is a plant driven by PWM, so the
     loop is a real loop and a bad gain oscillates here exactly as it would on a

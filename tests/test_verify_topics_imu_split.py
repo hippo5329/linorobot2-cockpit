@@ -62,7 +62,7 @@ class V:
         self.x, self.y, self.z, self.w = x, y, z, w
 
 
-class FakeImu:
+class SimImu:
     def __init__(self, accel=(0.0, 0.0, -9.81), gyro=(0.0, 0.0, 0.0),
                  quat=(0.0, 0.0, 0.0, 1.0)):
         self.linear_acceleration = V(*accel)
@@ -88,18 +88,18 @@ def test_gravity_is_asked_of_the_raw_topic_and_not_the_filtered_one():
     assert MOD.RANGE_CHECKS["/imu/data_raw"] is MOD._imu_raw_range
     assert MOD.RANGE_CHECKS["/imu/data"] is MOD._imu_filtered_range
 
-    still = FakeImu(accel=(0.0, 0.0, -9.81))
+    still = SimImu(accel=(0.0, 0.0, -9.81))
     ok, note = MOD._imu_raw_range(still)
     assert ok and "9.81" in note
 
-    dead = FakeImu(accel=(0.0, 0.0, 0.0))
+    dead = SimImu(accel=(0.0, 0.0, 0.0))
     ok, note = MOD._imu_raw_range(dead)
     assert not ok and "outside 5..30" in note
 
 
 def test_a_gravity_free_filtered_sample_is_not_a_failure():
     """The exact lyrical reading that failed the gate: it is correct output."""
-    filtered = FakeImu(accel=(-0.03, 0.08, -0.56),
+    filtered = SimImu(accel=(-0.03, 0.08, -0.56),
                        quat=(0.999, 0.0, 0.0, -0.025))
     n = math.sqrt(sum(c * c for c in (0.999, 0.0, 0.0, -0.025)))
     filtered.orientation = V(0.999 / n, 0.0, 0.0, -0.025 / n)
@@ -110,9 +110,9 @@ def test_a_gravity_free_filtered_sample_is_not_a_failure():
 
 
 def test_the_filtered_row_still_catches_a_filter_with_no_estimate():
-    ok, note = MOD._imu_filtered_range(FakeImu(quat=(0.0, 0.0, 0.0, 0.0)))
+    ok, note = MOD._imu_filtered_range(SimImu(quat=(0.0, 0.0, 0.0, 0.0)))
     assert not ok and "norm" in note
-    nan = FakeImu(accel=(float("nan"), 0.0, 0.0))
+    nan = SimImu(accel=(float("nan"), 0.0, 0.0))
     assert not MOD._imu_filtered_range(nan)[0]
 
 
@@ -124,7 +124,7 @@ def test_a_real_imu_makes_the_raw_topic_required():
     cfg = {"sensors": {"imu": "MPU6050", "mag": "AK09918"}}
     assert "/imu/data_raw" in ocp.sensor_topics(cfg)
     # a board whose IMU is synthesised is not a chip to check gravity on
-    cfg_fake = {"sensors": {"imu": "MPU6050", "use_fake_imu": True}}
-    assert "/imu/data_raw" not in ocp.sensor_topics(cfg_fake)
+    cfg_sim = {"sensors": {"imu": "MPU6050", "use_sim_imu": True}}
+    assert "/imu/data_raw" not in ocp.sensor_topics(cfg_sim)
     cfg_none = {"sensors": {"imu": "NONE"}}
     assert "/imu/data_raw" not in ocp.sensor_topics(cfg_none)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# fake_laser_node.py — Virtual 10x6m Room LaserScan Publisher
+# sim_laser_node.py — Virtual 10x6m Room LaserScan Publisher
 #
-# Raycasts a virtual 10x6m room with obstacle wall, matching fake_ld19.h geometry.
+# Raycasts a virtual 10x6m room with obstacle wall, matching sim_ld19.h geometry.
 # Enables bare MCU boards (Pico 2, ESP32) with 0 wiring to run full SLAM and Nav2.
 # ==============================================================================
 
@@ -35,7 +35,7 @@ except ImportError as exc:
     sys.exit(1)
 
 
-# Room geometry (identical to fake_ld19.h)
+# Room geometry (identical to sim_ld19.h)
 ROOM_MIN_X = -5.0
 ROOM_MAX_X =  5.0
 ROOM_MIN_Y = -3.0
@@ -58,9 +58,9 @@ SEGMENTS = [
 ]
 
 
-class FakeLaserNode(Node):
+class SimLaserNode(Node):
     def __init__(self):
-        super().__init__("fake_laser_node")
+        super().__init__("sim_laser_node")
         # Where the LiDAR sits and what its frame is called come from the robot
         # config (geometry.laser), handed over by bringup.launch.py, so the
         # synthetic scan is taken from the same place the TF tree says it is.
@@ -93,7 +93,7 @@ class FakeLaserNode(Node):
         self.angle_max = math.pi
         self.angle_step = (self.angle_max - self.angle_min) / self.num_points
 
-        self.get_logger().info("Fake LD19 LaserScan Node active (10 Hz, 10x6m virtual room).")
+        self.get_logger().info("Sim LD19 LaserScan Node active (10 Hz, 10x6m virtual room).")
 
     def _odom_cb(self, msg: Odometry):
         self.pose_x = msg.pose.pose.position.x
@@ -162,7 +162,7 @@ class FakeLaserNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = FakeLaserNode()
+    node = SimLaserNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

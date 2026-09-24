@@ -31,13 +31,13 @@
 // And two the diagnostic counters ask for. Both are hardware answers, and a host
 // has none of the hardware:
 //
-//   FAKE_LD19_DEFAULT  false. The scan emulator writes LD19 frames out a UART for
+//   SIM_LD19_DEFAULT  false. The scan emulator writes LD19 frames out a UART for
 //                      a real LiDAR driver to read; there is no UART here. The env
-//                      key `fake_ld19` still overrides it, which is why diag.cpp
+//                      key `sim_ld19` still overrides it, which is why diag.cpp
 //                      consults the env first -- this is only the answer for an
 //                      image whose env was never written.
 //   LIDAR_RXD          -1, the value the firmware already reads as "not wired".
-#define FAKE_LD19_DEFAULT   false
+#define SIM_LD19_DEFAULT   false
 #define LIDAR_RXD           (-1)
 
 #endif // CONFIG_H

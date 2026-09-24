@@ -12,7 +12,7 @@ them.
 
 So it is generated. One function, one rule, every board:
 
-    every pin -1, every sensor faked, 2WD, nothing on the bus.
+    every pin -1, every sensor simd, 2WD, nothing on the bus.
 
 The scaffolding a robot config also needs -- geometry, ekf, slam, nav2 -- is
 taken from the shipped mecanum reference rather than duplicated here, so tuning
@@ -92,7 +92,7 @@ def _bare_comm_mode(mcu: str) -> str:
 #
 # The firmware is happy either way -- an absent key keeps its compiled default,
 # which is what makes a blank env boot -- so this is for the person reading the
-# config. Fake mode is this project's default, so the simulated room, mass and
+# config. Sim mode is this project's default, so the simulated room, mass and
 # drivetrain losses ARE the robot on every bench run, and a config that lists
 # only what someone chose to override describes none of it. Sweeping one of them
 # then starts from a value you can see.
@@ -104,23 +104,23 @@ def _bare_comm_mode(mcu: str) -> str:
 # robot_radius the costmaps plan with, and a literal would break that agreement
 # (see mcu_env.py, and the soak that sat in a lethal cell for 154 goals).
 SIM_DEFAULTS = (
-    ("map_width",          "lidar/fake_ld19.h",    "FAKE_MAP_WIDTH",           float),
-    ("map_height",         "lidar/fake_ld19.h",    "FAKE_MAP_HEIGHT",          float),
-    ("wall_obstacle",      "lidar/fake_ld19.h",    "FAKE_WALL_OBSTACLE",       bool),
-    ("wall_x1",            "lidar/fake_ld19.h",    "FAKE_WALL_X1",             float),
-    ("wall_y1",            "lidar/fake_ld19.h",    "FAKE_WALL_Y1",             float),
-    ("wall_x2",            "lidar/fake_ld19.h",    "FAKE_WALL_X2",             float),
-    ("wall_y2",            "lidar/fake_ld19.h",    "FAKE_WALL_Y2",             float),
-    ("robot_mass",         "encoder/fake_wheel.h", "FAKE_ROBOT_MASS",          float),
-    ("wheel_noise_rpm",    "encoder/fake_wheel.h", "FAKE_WHEEL_NOISE_RPM",     float),
-    ("gear_efficiency",    "encoder/fake_wheel.h", "FAKE_GEAR_EFFICIENCY",     float),
-    ("gear_drag_rpm",      "encoder/fake_wheel.h", "FAKE_WHEEL_COULOMB_RPM",   float),
-    ("battery_sag",        "encoder/fake_wheel.h", "FAKE_BATT_SAG",            float),
-    ("battery_sag_tau_ms", "encoder/fake_wheel.h", "FAKE_BATT_SAG_TAU_MS",     float),
-    ("driver_drop",        "encoder/fake_wheel.h", "FAKE_DRV_DROP",            float),
-    ("driver_resistance",  "encoder/fake_wheel.h", "FAKE_DRV_R",               float),
-    ("motor_stall_amps",   "encoder/fake_wheel.h", "FAKE_MOTOR_STALL_A",       float),
-    ("driver_current_limit", "encoder/fake_wheel.h", "FAKE_DRV_ILIMIT_A",      float),
+    ("map_width",          "lidar/sim_ld19.h",    "SIM_MAP_WIDTH",           float),
+    ("map_height",         "lidar/sim_ld19.h",    "SIM_MAP_HEIGHT",          float),
+    ("wall_obstacle",      "lidar/sim_ld19.h",    "SIM_WALL_OBSTACLE",       bool),
+    ("wall_x1",            "lidar/sim_ld19.h",    "SIM_WALL_X1",             float),
+    ("wall_y1",            "lidar/sim_ld19.h",    "SIM_WALL_Y1",             float),
+    ("wall_x2",            "lidar/sim_ld19.h",    "SIM_WALL_X2",             float),
+    ("wall_y2",            "lidar/sim_ld19.h",    "SIM_WALL_Y2",             float),
+    ("robot_mass",         "encoder/sim_wheel.h", "SIM_ROBOT_MASS",          float),
+    ("wheel_noise_rpm",    "encoder/sim_wheel.h", "SIM_WHEEL_NOISE_RPM",     float),
+    ("gear_efficiency",    "encoder/sim_wheel.h", "SIM_GEAR_EFFICIENCY",     float),
+    ("gear_drag_rpm",      "encoder/sim_wheel.h", "SIM_WHEEL_COULOMB_RPM",   float),
+    ("battery_sag",        "encoder/sim_wheel.h", "SIM_BATT_SAG",            float),
+    ("battery_sag_tau_ms", "encoder/sim_wheel.h", "SIM_BATT_SAG_TAU_MS",     float),
+    ("driver_drop",        "encoder/sim_wheel.h", "SIM_DRV_DROP",            float),
+    ("driver_resistance",  "encoder/sim_wheel.h", "SIM_DRV_R",               float),
+    ("motor_stall_amps",   "encoder/sim_wheel.h", "SIM_MOTOR_STALL_A",       float),
+    ("driver_current_limit", "encoder/sim_wheel.h", "SIM_DRV_ILIMIT_A",      float),
 )
 
 
@@ -135,7 +135,7 @@ def bare_simulation(strict: bool = False) -> dict:
     scripts over the top, so a header that moved in the repo and not in the
     image made this generator exit -- and it is called during bringup, so the
     exit took down the whole Nav2 run. Every RP2 leg of a matrix died in three
-    seconds with "cannot find #define FAKE_GEAR_EFFICIENCY" and nothing to do
+    seconds with "cannot find #define SIM_GEAR_EFFICIENCY" and nothing to do
     with the robot.
 
     An absent key is not a stale value: mcu_env writes nothing for it and the
@@ -160,7 +160,7 @@ def bare_simulation(strict: bool = False) -> dict:
                 cache[rel] = ""
                 print(f"[gen_bare_config] {path}: {exc}", file=sys.stderr)
         # The FIRST definition wins: these headers guard each macro with #ifndef
-        # and a #define, so a later line is the same value, and FAKE_ROBOT_MASS
+        # and a #define, so a later line is the same value, and SIM_ROBOT_MASS
         # has an earlier ROBOT_WEIGHT branch that is not a number at all.
         m = re.search(r"^\s*#define\s+" + macro + r"\s+(-?[0-9.]+)f?\s*(?://.*)?$",
                       cache[rel], re.MULTILINE)
@@ -182,7 +182,7 @@ def bare_simulation(strict: bool = False) -> dict:
 def bare_pins(mcu: str = "esp32") -> dict:
     """Every pin unconnected -- except the onboard LED.
 
-    A bare module still has its LED, fake mode drives the real one, and a board
+    A bare module still has its LED, sim mode drives the real one, and a board
     on a bench should blink out of the box (user rule, 2026-09-22): the pin is
     the MCU's own, from the same table the release image uses. Invert flags are
     OFF: the default is forward, for motors and encoders alike; a real chassis
@@ -203,17 +203,17 @@ def bare_sensors() -> dict:
     """Everything simulated: a bare board must never wait on a bus that is empty.
 
     An I2C read to a chip that is not there is a NACK loop, and the 50 Hz
-    control loop is what stalls. FAKE is not a convenience here, it is what
+    control loop is what stalls. SIM is not a convenience here, it is what
     keeps a wireless-less, sensorless board answering micro-ROS at all.
     """
     return {
-        "imu": "FAKE",
+        "imu": "SIM",
         "mag": "NONE",
-        "use_fake_imu": True,
-        "use_fake_mag": True,
-        "use_fake_wheel": True,
-        "use_fake_ld19": True,
-        "use_fake_env": True,
+        "use_sim_imu": True,
+        "use_sim_mag": True,
+        "use_sim_wheel": True,
+        "use_sim_ld19": True,
+        "use_sim_env": True,
         "current": "NONE",
         "env": "NONE",
     }
@@ -236,7 +236,7 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
 
     params["robot"] = {
         "name": robot_name,
-        "description": f"{label} bare module -- all pins N/C, fake sensors",
+        "description": f"{label} bare module -- all pins N/C, sim sensors",
     }
     params["base_controller"] = {
         "name": key,

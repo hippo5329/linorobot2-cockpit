@@ -2,7 +2,7 @@
 """Eight manoeuvres, checked for sign and magnitude against odometry.
 
 Rates prove the board talks. Only this proves it MOVES, and moves the way it
-was told: the fake-wheel invert bug and the PID integral windup both produced
+was told: the sim-wheel invert bug and the PID integral windup both produced
 perfect 50 Hz topics on a robot that was spinning on the spot or pinned at
 both rails. Every hardware run ends with this, after the topic gate.
 
@@ -43,7 +43,7 @@ never commanded: measured 2026-09-22 on the GenDrv, both spins reported
 vx ~ +0.15 m/s while commanded (0.00, +/-1.50), and both were positive. Without
 the pose that reads as a base fault; with it, a "near obstacle wall" note says
 what it is. The room's geometry is mirrored here from firmware/common/lib/lidar/
-fake_ld19.h -- if it changes there, change it here.
+sim_ld19.h -- if it changes there, change it here.
 
 Exit status 0 when all six pass; the verdict line says how many did.
 """
@@ -60,7 +60,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402  -- the prefix rule lives in one place
 
 
-# The simulated room, mirrored from fake_ld19.h so a manoeuvre can say whether
+# The simulated room, mirrored from sim_ld19.h so a manoeuvre can say whether
 # the pose it reports was being clamped.
 ROOM_W, ROOM_H = 10.0, 6.0
 ROBOT_R = 0.30

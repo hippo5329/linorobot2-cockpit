@@ -21,8 +21,8 @@ endif()
 
 # THE SOURCES UNDER TEST. Compiled from the firmware tree unmodified -- not
 # copied, not adapted. A second copy of either would make this instrument lie,
-# which is the fault tests/test_fake_base_node.py exists to prevent for the
-# Python fake base and that this target must not reintroduce.
+# which is the fault tests/test_sim_base_node.py exists to prevent for the
+# Python sim base and that this target must not reintroduce.
 add_executable(lino_host_probe
   host_probe.cpp
   ${FIRMWARE_ROOT}/common/lib/mcu_env/mcu_env.cpp

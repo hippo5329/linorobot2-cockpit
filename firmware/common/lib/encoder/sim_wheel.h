@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef FAKE_WHEEL_H
-#define FAKE_WHEEL_H
+#ifndef SIM_WHEEL_H
+#define SIM_WHEEL_H
 
 #include <Arduino.h>
 #include "mcu_env.h"
 #include <micro_ros_utilities/string_utilities.h>
 #include "encoder_interface.h"
 // Self-contained rather than relying on main.cpp to have included these first.
-// FakeEncoder is now built by hw_factory, which has no reason to know about
+// SimEncoder is now built by hw_factory, which has no reason to know about
 // ROS messages, so this header can no longer assume a ROS-aware includer.
 #include "imu_interface.h"
 #include "mag_interface.h"
@@ -44,32 +44,32 @@
 // The robot's total weight is optional robot data from the config engine, which
 // emits it as ROBOT_WEIGHT. Use it when it is there, so the simulated robot has
 // the inertia of the one that was configured.
-#ifndef FAKE_ROBOT_MASS
+#ifndef SIM_ROBOT_MASS
     #ifdef ROBOT_WEIGHT
-        #define FAKE_ROBOT_MASS ROBOT_WEIGHT
+        #define SIM_ROBOT_MASS ROBOT_WEIGHT
     #else
-        #define FAKE_ROBOT_MASS 3.5     // simulated robot mass (kg)
+        #define SIM_ROBOT_MASS 3.5     // simulated robot mass (kg)
     #endif
 #endif
 
-#ifndef FAKE_WHEEL_TAU_MS
-#define FAKE_WHEEL_TAU_MS 150       // spin-up time constant (ms) at FAKE_WHEEL_REF_MASS
+#ifndef SIM_WHEEL_TAU_MS
+#define SIM_WHEEL_TAU_MS 150       // spin-up time constant (ms) at SIM_WHEEL_REF_MASS
 #endif
 
-#ifndef FAKE_WHEEL_REF_MASS
-#define FAKE_WHEEL_REF_MASS 3.5     // mass FAKE_WHEEL_TAU_MS was measured at (kg)
+#ifndef SIM_WHEEL_REF_MASS
+#define SIM_WHEEL_REF_MASS 3.5     // mass SIM_WHEEL_TAU_MS was measured at (kg)
 #endif
 
-#ifndef FAKE_WHEEL_MAX_ACCEL_RPM
-#define FAKE_WHEEL_MAX_ACCEL_RPM 900.0  // traction/current limit (RPM per second)
+#ifndef SIM_WHEEL_MAX_ACCEL_RPM
+#define SIM_WHEEL_MAX_ACCEL_RPM 900.0  // traction/current limit (RPM per second)
 #endif
 
-#ifndef FAKE_WHEEL_FRICTION
-#define FAKE_WHEEL_FRICTION 0.06    // viscous drag, fraction of current RPM per second
+#ifndef SIM_WHEEL_FRICTION
+#define SIM_WHEEL_FRICTION 0.06    // viscous drag, fraction of current RPM per second
 #endif
 
-#ifndef FAKE_WHEEL_STALL_DUTY
-#define FAKE_WHEEL_STALL_DUTY 0.04  // duty below which the motor cannot break static friction
+#ifndef SIM_WHEEL_STALL_DUTY
+#define SIM_WHEEL_STALL_DUTY 0.04  // duty below which the motor cannot break static friction
 #endif
 
 // --- the gearbox -----------------------------------------------------------
@@ -80,16 +80,16 @@
 //
 //   efficiency   a spur reduction returns 70-80% of the torque put into it, so
 //                the driving term is scaled. Reflected inertia (N^2 * J_motor)
-//                stays lumped into FAKE_WHEEL_TAU_MS, which is where it belongs.
+//                stays lumped into SIM_WHEEL_TAU_MS, which is where it belongs.
 //   Coulomb drag a gear train has a roughly CONSTANT breakaway/running torque
 //                loss, unlike the viscous term already here. It is why an
 //                unpowered gear motor stops quickly instead of coasting, and why
 //                a small duty produces no motion at all.
-#ifndef FAKE_GEAR_EFFICIENCY
-#define FAKE_GEAR_EFFICIENCY 0.75
+#ifndef SIM_GEAR_EFFICIENCY
+#define SIM_GEAR_EFFICIENCY 0.75
 #endif
-#ifndef FAKE_WHEEL_COULOMB_RPM
-#define FAKE_WHEEL_COULOMB_RPM 12.0  // constant drag (RPM per second) while turning
+#ifndef SIM_WHEEL_COULOMB_RPM
+#define SIM_WHEEL_COULOMB_RPM 12.0  // constant drag (RPM per second) while turning
 #endif
 
 // --- battery sag -----------------------------------------------------------
@@ -105,8 +105,8 @@
 // are demanding full stall current, so it needs no pack chemistry: 0.25 means a
 // 20% sag at that worst case (1 / 1.25). Kinematics::setMeasuredVoltage() is the
 // real-robot counterpart; this is its simulated twin.
-#ifndef FAKE_BATT_SAG
-#define FAKE_BATT_SAG 0.25
+#ifndef SIM_BATT_SAG
+#define SIM_BATT_SAG 0.25
 #endif
 
 // How long the pack takes to sag, and to come back.
@@ -120,8 +120,8 @@
 //
 // Modelled as a first-order lag on the demand the pack sees. 0 makes the sag
 // instantaneous, which is the old behaviour.
-#ifndef FAKE_BATT_SAG_TAU_MS
-#define FAKE_BATT_SAG_TAU_MS 400
+#ifndef SIM_BATT_SAG_TAU_MS
+#define SIM_BATT_SAG_TAU_MS 400
 #endif
 
 // --- the motor driver ------------------------------------------------------
@@ -129,9 +129,9 @@
 // The bridge is between the pack and the motor and keeps some of the voltage for
 // itself. Two parts, because they behave differently:
 //
-//   FAKE_DRV_DROP  a fixed fraction, the body-diode / Vce floor. Present at any
+//   SIM_DRV_DROP  a fixed fraction, the body-diode / Vce floor. Present at any
 //                  current, so it costs most at low duty.
-//   FAKE_DRV_R     a fraction proportional to the current drawn -- Rds(on) and
+//   SIM_DRV_R     a fraction proportional to the current drawn -- Rds(on) and
 //                  the shunt. This one follows the current INSTANTLY, unlike the
 //                  pack's sag, which is why the two are separate terms rather
 //                  than one fudge factor.
@@ -139,11 +139,11 @@
 // Stall is where both bite hardest: the current proxy is at 1.0, so the motor
 // sees (1 - DROP) / (1 + SAG + DRV_R) of the pack -- which is the real reason a
 // stalled motor produces less torque than its datasheet stall figure.
-#ifndef FAKE_DRV_DROP
-#define FAKE_DRV_DROP 0.03
+#ifndef SIM_DRV_DROP
+#define SIM_DRV_DROP 0.03
 #endif
-#ifndef FAKE_DRV_R
-#define FAKE_DRV_R 0.10
+#ifndef SIM_DRV_R
+#define SIM_DRV_R 0.10
 #endif
 
 // --- the driver's current limiter ------------------------------------------
@@ -163,19 +163,19 @@
 //
 // Expressed in amps, because that is what a datasheet gives:
 //
-//   FAKE_MOTOR_STALL_A   the motor's own stall current at its rated voltage.
+//   SIM_MOTOR_STALL_A   the motor's own stall current at its rated voltage.
 //                        The current scale: a brushed motor draws stall current
 //                        in proportion to (no-load speed - present speed), which
 //                        is the same term the driving torque uses, so the model
 //                        already computes it -- as a fraction, in demand().
-//   FAKE_DRV_ILIMIT_A    what the driver will actually pass. ZERO MEANS NO
+//   SIM_DRV_ILIMIT_A    what the driver will actually pass. ZERO MEANS NO
 //                        LIMITER, which is the default: a limit nobody entered
 //                        must not quietly throttle every existing robot.
-#ifndef FAKE_MOTOR_STALL_A
-#define FAKE_MOTOR_STALL_A 2.5      // motor stall current (A) at rated voltage
+#ifndef SIM_MOTOR_STALL_A
+#define SIM_MOTOR_STALL_A 2.5      // motor stall current (A) at rated voltage
 #endif
-#ifndef FAKE_DRV_ILIMIT_A
-#define FAKE_DRV_ILIMIT_A 0.0       // driver current limit (A); 0 = none fitted
+#ifndef SIM_DRV_ILIMIT_A
+#define SIM_DRV_ILIMIT_A 0.0       // driver current limit (A); 0 = none fitted
 #endif
 
 // Mass and encoder noise are properties of THIS robot, not of the image, so
@@ -183,11 +183,11 @@
 // statics rather than globals: these are read inside a class used before
 // setup() finishes, and a global would be initialised before the flash
 // partition API is usable.
-static inline float fakeRobotMass()
+static inline float simRobotMass()
 {
     static float mass = -1.0f;
     if (mass < 0.0f)
-        mass = envFloat("fake_mass", (float)FAKE_ROBOT_MASS);
+        mass = envFloat("sim_mass", (float)SIM_ROBOT_MASS);
     return mass;
 }
 
@@ -195,7 +195,7 @@ static inline float fakeRobotMass()
 //
 // A sweep across gear efficiency or pack stiffness is a legitimate test -- it is
 // how you find out which of them a navigation failure was actually sensitive to
-// -- and it must not cost eight firmware builds. Same reasoning as fake_mass
+// -- and it must not cost eight firmware builds. Same reasoning as sim_mass
 // beside it: these describe THIS robot, not the image.
 //
 // Cached behind a sentinel like the others, because integrate() reads them on
@@ -205,32 +205,32 @@ static inline float fakeRobotMass()
 // none of the three is meaningfully negative. A gear that returns negative
 // torque, drag that accelerates, or a pack that gains voltage under load are all
 // nonsense, and clamping here is cheaper than three checks in the hot path.
-static inline float fakeGearEfficiency()
+static inline float simGearEfficiency()
 {
     static float eff = -1.0f;
     if (eff < 0.0f) {
-        eff = envFloat("fake_gear_eff", (float)FAKE_GEAR_EFFICIENCY);
+        eff = envFloat("sim_gear_eff", (float)SIM_GEAR_EFFICIENCY);
         if (eff < 0.0f) eff = 0.0f;
         if (eff > 1.0f) eff = 1.0f;     // a gearbox cannot return more than it is given
     }
     return eff;
 }
 
-static inline float fakeCoulombRpm()
+static inline float simCoulombRpm()
 {
     static float drag = -1.0f;
     if (drag < 0.0f) {
-        drag = envFloat("fake_coulomb", (float)FAKE_WHEEL_COULOMB_RPM);
+        drag = envFloat("sim_coulomb", (float)SIM_WHEEL_COULOMB_RPM);
         if (drag < 0.0f) drag = 0.0f;
     }
     return drag;
 }
 
-static inline float fakeBattSag()
+static inline float simBattSag()
 {
     static float sag = -1.0f;
     if (sag < 0.0f) {
-        sag = envFloat("fake_sag", (float)FAKE_BATT_SAG);
+        sag = envFloat("sim_sag", (float)SIM_BATT_SAG);
         if (sag < 0.0f) sag = 0.0f;
     }
     return sag;
@@ -238,7 +238,7 @@ static inline float fakeBattSag()
 
 // The fraction of its rated speed the motor can reach on the pack it is given.
 // 1.0 when the pack matches the motor, which is every shipped reference.
-static inline float fakeVoltageRatio()
+static inline float simVoltageRatio()
 {
     static float ratio = -1.0f;
     if (ratio < 0.0f) {
@@ -252,83 +252,83 @@ static inline float fakeVoltageRatio()
     return ratio;
 }
 
-static inline float fakeSagTauMs()
+static inline float simSagTauMs()
 {
     static float tau = -1.0f;
     if (tau < 0.0f) {
-        tau = envFloat("fake_sag_tau", (float)FAKE_BATT_SAG_TAU_MS);
+        tau = envFloat("sim_sag_tau", (float)SIM_BATT_SAG_TAU_MS);
         if (tau < 0.0f) tau = 0.0f;
     }
     return tau;
 }
 
-static inline float fakeDrvDrop()
+static inline float simDrvDrop()
 {
     static float drop = -1.0f;
     if (drop < 0.0f) {
-        drop = envFloat("fake_drv_drop", (float)FAKE_DRV_DROP);
+        drop = envFloat("sim_drv_drop", (float)SIM_DRV_DROP);
         if (drop < 0.0f) drop = 0.0f;
         if (drop > 0.9f) drop = 0.9f;   // a bridge that keeps everything is not a bridge
     }
     return drop;
 }
 
-static inline float fakeDrvR()
+static inline float simDrvR()
 {
     static float r = -1.0f;
     if (r < 0.0f) {
-        r = envFloat("fake_drv_r", (float)FAKE_DRV_R);
+        r = envFloat("sim_drv_r", (float)SIM_DRV_R);
         if (r < 0.0f) r = 0.0f;
     }
     return r;
 }
 
-static inline float fakeMotorStallA()
+static inline float simMotorStallA()
 {
     static float a = -1.0f;
     if (a < 0.0f) {
-        a = envFloat("fake_stall_a", (float)FAKE_MOTOR_STALL_A);
+        a = envFloat("sim_stall_a", (float)SIM_MOTOR_STALL_A);
         if (a < 0.0f) a = 0.0f;
     }
     return a;
 }
 
 // 0 is a real answer here ("no limiter"), so the sentinel has to be below it.
-static inline float fakeDrvLimitA()
+static inline float simDrvLimitA()
 {
     static float a = -1.0f;
     if (a < 0.0f) {
-        a = envFloat("fake_ilimit_a", (float)FAKE_DRV_ILIMIT_A);
+        a = envFloat("sim_ilimit_a", (float)SIM_DRV_ILIMIT_A);
         if (a < 0.0f) a = 0.0f;
     }
     return a;
 }
 
-#ifndef FAKE_WHEEL_NOISE_RPM
-#define FAKE_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
+#ifndef SIM_WHEEL_NOISE_RPM
+#define SIM_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
 #endif
 
-static inline float fakeWheelNoiseRpm()
+static inline float simWheelNoiseRpm()
 {
     static float noise = -1.0f;
     if (noise < 0.0f)
-        noise = envFloat("fake_noise_rpm", (float)FAKE_WHEEL_NOISE_RPM);
+        noise = envFloat("sim_noise_rpm", (float)SIM_WHEEL_NOISE_RPM);
     return noise;
 }
 
 // +/- peak white noise, scaled by amplitude
-static inline float fakeWheelNoise(float amplitude)
+static inline float simWheelNoise(float amplitude)
 {
     return ((float)random(-1000, 1001) / 1000.0) * amplitude;
 }
 
-// The variance of what fakeWheelNoise() produces: uniform on +/-peak, so
+// The variance of what simWheelNoise() produces: uniform on +/-peak, so
 // var = peak^2 / 3. A simulated sensor is the one sensor whose noise is known
 // exactly -- so it declares this, rather than a constant somebody has to
 // remember to update alongside.
-static inline constexpr float fakeCov(float peak) { return peak * peak / 3.0f; }
+static inline constexpr float simCov(float peak) { return peak * peak / 3.0f; }
 
-class FakeEncoder : public EncoderInterface
+class SimEncoder : public EncoderInterface
 {
 private:
     int counts_per_rev_ = -1;
@@ -346,7 +346,7 @@ private:
     // class, the ESP32 core compiles as gnu++11 so there are no inline
     // variables, and a static member would need an out-of-line definition in a
     // .cpp this library does not have. The file already uses this idiom for
-    // fakeRobotMass() and says why -- these are read inside a class used before
+    // simRobotMass() and says why -- these are read inside a class used before
     // setup() finishes, where a global's initialisation order is not safe.
     static float *demand()
     {
@@ -402,7 +402,7 @@ private:
             sagState() = inst;
         } else if (dt > 0) {
             sagClock() = now;
-            const float tau_s = fakeSagTauMs() / 1000.0f;
+            const float tau_s = simSagTauMs() / 1000.0f;
             float k = 1.0f;                 // tau 0 -> instantaneous, the old behaviour
             if (tau_s > 0.0f) {
                 k = ((float)dt / 1000000.0f) / tau_s;
@@ -411,8 +411,8 @@ private:
             sagState() += (inst - sagState()) * k;
         }
 
-        float scale = (1.0f - fakeDrvDrop()) /
-                      (1.0f + fakeBattSag() * sagState() + fakeDrvR() * inst);
+        float scale = (1.0f - simDrvDrop()) /
+                      (1.0f + simBattSag() * sagState() + simDrvR() * inst);
         if (scale < 0.0f) scale = 0.0f;
         return scale;
     }
@@ -428,8 +428,8 @@ private:
         float dts = (float)dt / 1000000.0;
 
         // heavier robot, more inertia per wheel, slower response
-        float tau = (FAKE_WHEEL_TAU_MS / 1000.0) *
-                    (fakeRobotMass() / (float)FAKE_WHEEL_REF_MASS);
+        float tau = (SIM_WHEEL_TAU_MS / 1000.0) *
+                    (simRobotMass() / (float)SIM_WHEEL_REF_MASS);
         if (tau < 0.001) tau = 0.001;
 
         // The motor's own no-load speed, derated by the voltage it is actually
@@ -446,16 +446,16 @@ private:
         // the bench at 3.5 kg: test_acc drives raw PWM, bypasses Kinematics and
         // reaches 135.6 rpm, where the controller would never request beyond
         // 119.
-        float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM * fakeVoltageRatio();
+        float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM * simVoltageRatio();
         // below the stall band the motor cannot hold the wheel against friction
-        if (fabsf(duty_) < (float)FAKE_WHEEL_STALL_DUTY) no_load_rpm = 0.0;
+        if (fabsf(duty_) < (float)SIM_WHEEL_STALL_DUTY) no_load_rpm = 0.0;
 
         // The pack sags under the current the four wheels are drawing, and the
         // no-load speed scales with the voltage that survives. Recorded BEFORE
         // the scale is applied, so the demand this wheel reports is the demand
         // it would make at full voltage -- otherwise the sag feeds back on
         // itself and the whole thing converges on nothing.
-        const float stall = (float)MOTOR_MAX_RPM * fakeVoltageRatio();
+        const float stall = (float)MOTOR_MAX_RPM * simVoltageRatio();
         // The current this wheel is asking for, as a fraction of its own stall
         // current: for a brushed motor the two are proportional to the same
         // (no-load speed - present speed) the torque uses.
@@ -466,9 +466,9 @@ private:
         // change the speed the motor is trying to reach, which is why this is a
         // separate factor rather than another bite out of no_load_rpm.
         float ilim_scale = 1.0f;
-        const float limit_a = fakeDrvLimitA();
+        const float limit_a = simDrvLimitA();
         if (limit_a > 0.0f) {
-            const float want_a = ifrac * fakeMotorStallA();
+            const float want_a = ifrac * simMotorStallA();
             if (want_a > limit_a)
                 ilim_scale = limit_a / want_a;
         }
@@ -483,19 +483,19 @@ private:
 
         // back-EMF: driving torque is proportional to the remaining speed error,
         // and the gearbox returns only part of it
-        float accel = ilim_scale * fakeGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
+        float accel = ilim_scale * simGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
         // viscous friction always opposes motion
-        accel -= wheel_rpm_ * (float)FAKE_WHEEL_FRICTION;
+        accel -= wheel_rpm_ * (float)SIM_WHEEL_FRICTION;
         // ...and the gear train's constant drag, which does not scale with speed.
         // Signed against motion, and never enough to drive the wheel backwards
         // through zero: that would be a gearbox pushing the robot.
         if (wheel_rpm_ > 0.0f)
-            accel -= fakeCoulombRpm();
+            accel -= simCoulombRpm();
         else if (wheel_rpm_ < 0.0f)
-            accel += fakeCoulombRpm();
+            accel += simCoulombRpm();
         // traction and current limit the achievable acceleration
-        if (accel > (float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = (float)FAKE_WHEEL_MAX_ACCEL_RPM;
-        if (accel < -(float)FAKE_WHEEL_MAX_ACCEL_RPM) accel = -(float)FAKE_WHEEL_MAX_ACCEL_RPM;
+        if (accel > (float)SIM_WHEEL_MAX_ACCEL_RPM) accel = (float)SIM_WHEEL_MAX_ACCEL_RPM;
+        if (accel < -(float)SIM_WHEEL_MAX_ACCEL_RPM) accel = -(float)SIM_WHEEL_MAX_ACCEL_RPM;
 
         const float was = wheel_rpm_;
         wheel_rpm_ += accel * dts;
@@ -511,7 +511,7 @@ private:
     }
 
 public:
-    FakeEncoder(int pin1, int pin2, int counts_per_rev, bool invert = false)
+    SimEncoder(int pin1, int pin2, int counts_per_rev, bool invert = false)
     {
         // Which wheel this is, in construction order, so the shared pack can be
         // told what each of them is drawing. A fifth encoder gets no slot and
@@ -520,7 +520,7 @@ public:
         if (next_slot < 4)
             slot_ = next_slot++;
 
-        // The pins are deliberately ignored. Fake wheel mode exists for boards
+        // The pins are deliberately ignored. Sim wheel mode exists for boards
         // with nothing wired, where the encoder pins are normally left unset
         // (-1); keying off them would leave every simulated wheel at 0 RPM,
         // which is the one case this class is for. Nothing here touches GPIO.
@@ -535,7 +535,7 @@ public:
         // inverts what it drives and the encoder inverts what it reads. The two
         // cancel: the wheel turns forward and reports forward.
         //
-        // In fake mode there is no motor. Pins are -1, so MotorInterface::spin()
+        // In sim mode there is no motor. Pins are -1, so MotorInterface::spin()
         // returns without touching anything, and NOTHING applies the motor half
         // of that pair -- but feed() was still applying the encoder half. Wheel
         // 2 therefore ran backwards whenever wheel 1 ran forwards, and the
@@ -568,7 +568,7 @@ public:
     {
         if (counts_per_rev_ < 0) return 0.0;
         integrate();
-        return wheel_rpm_ + fakeWheelNoise(fakeWheelNoiseRpm());
+        return wheel_rpm_ + simWheelNoise(simWheelNoiseRpm());
     }
 
     inline int32_t read()
@@ -585,12 +585,12 @@ public:
     }
 };
 
-#ifndef FAKE_IMU_GRAVITY
-#define FAKE_IMU_GRAVITY 9.81       // specific force reported on Z when level
+#ifndef SIM_IMU_GRAVITY
+#define SIM_IMU_GRAVITY 9.81       // specific force reported on Z when level
 #endif
 
-#ifndef FAKE_IMU_ACCEL_TAU_MS
-#define FAKE_IMU_ACCEL_TAU_MS 60    // accelerometer band limit (ms)
+#ifndef SIM_IMU_ACCEL_TAU_MS
+#define SIM_IMU_ACCEL_TAU_MS 60    // accelerometer band limit (ms)
 #endif
 
 // The simulated sensors are sized to a TYPICAL real one, not to whatever looked
@@ -603,13 +603,13 @@ public:
 //     gyro   3.0e-6 (rad/s)^2   MPU6050/9250  spread 4.4e-7 .. 4.4e-5
 //     mag    4.0e-14 T^2        QMC5883L      spread 2.3e-14 .. 9e-14
 //
-// fakeWheelNoise() is uniform on +/-peak, so peak = sigma*sqrt(3) and the
-// variance the sensor DECLARES (fakeCov below) is the variance it actually has.
+// simWheelNoise() is uniform on +/-peak, so peak = sigma*sqrt(3) and the
+// variance the sensor DECLARES (simCov below) is the variance it actually has.
 // Getting this wrong breaks the stack in a way that only shows up on hardware:
 // too quiet and the EKF learns to trust an IMU nobody sells, too loud and
 // tuning that works on the bench is wrong on a robot.
-#ifndef FAKE_IMU_ACCEL_NOISE
-#define FAKE_IMU_ACCEL_NOISE 0.03912 // +/- peak accel noise (m/s^2) = typical 5.1e-4 var
+#ifndef SIM_IMU_ACCEL_NOISE
+#define SIM_IMU_ACCEL_NOISE 0.03912 // +/- peak accel noise (m/s^2) = typical 5.1e-4 var
 #endif
 
 // A real MEMS IMU is not a clean derivative of the truth: it has a fixed bias,
@@ -617,36 +617,36 @@ public:
 // noise on top. Fusion (madgwick, the EKF) exists to fight exactly that, so a
 // perfect simulated IMU would make the whole estimation stack look better than
 // it is on hardware.
-#ifndef FAKE_IMU_GYRO_BIAS
-#define FAKE_IMU_GYRO_BIAS 0.004f       // fixed gyro bias (rad/s)
+#ifndef SIM_IMU_GYRO_BIAS
+#define SIM_IMU_GYRO_BIAS 0.004f       // fixed gyro bias (rad/s)
 #endif
 
-#ifndef FAKE_IMU_GYRO_DRIFT
-#define FAKE_IMU_GYRO_DRIFT 0.0015f     // gyro bias random walk (rad/s per sqrt(s))
+#ifndef SIM_IMU_GYRO_DRIFT
+#define SIM_IMU_GYRO_DRIFT 0.0015f     // gyro bias random walk (rad/s per sqrt(s))
 #endif
 
-#ifndef FAKE_IMU_ACCEL_BIAS
-#define FAKE_IMU_ACCEL_BIAS 0.03f       // fixed accelerometer bias (m/s^2)
+#ifndef SIM_IMU_ACCEL_BIAS
+#define SIM_IMU_ACCEL_BIAS 0.03f       // fixed accelerometer bias (m/s^2)
 #endif
 
-#ifndef FAKE_IMU_ACCEL_DRIFT
-#define FAKE_IMU_ACCEL_DRIFT 0.01f      // accelerometer bias random walk (m/s^2 per sqrt(s))
+#ifndef SIM_IMU_ACCEL_DRIFT
+#define SIM_IMU_ACCEL_DRIFT 0.01f      // accelerometer bias random walk (m/s^2 per sqrt(s))
 #endif
 
-#ifndef FAKE_IMU_SCALE_ERROR
-#define FAKE_IMU_SCALE_ERROR 0.01f      // scale-factor error, fraction of reading
+#ifndef SIM_IMU_SCALE_ERROR
+#define SIM_IMU_SCALE_ERROR 0.01f      // scale-factor error, fraction of reading
 #endif
 
-#ifndef FAKE_MAG_FIELD_T
-#define FAKE_MAG_FIELD_T 50e-6f     // Simulated field strength (Tesla, ~Earth)
+#ifndef SIM_MAG_FIELD_T
+#define SIM_MAG_FIELD_T 50e-6f     // Simulated field strength (Tesla, ~Earth)
 #endif
 
-#ifndef FAKE_MAG_ROOM_HEADING
-#define FAKE_MAG_ROOM_HEADING 0.0f  // Heading (rad) of the room's +X axis vs the field
+#ifndef SIM_MAG_ROOM_HEADING
+#define SIM_MAG_ROOM_HEADING 0.0f  // Heading (rad) of the room's +X axis vs the field
 #endif
 
-#ifndef FAKE_MAG_NOISE_T
-#define FAKE_MAG_NOISE_T 3.464e-7f  // +/- peak mag noise (T) = typical 4.0e-14 var
+#ifndef SIM_MAG_NOISE_T
+#define SIM_MAG_NOISE_T 3.464e-7f  // +/- peak mag noise (T) = typical 4.0e-14 var
 #endif
 
 // Hard-iron offset. A magnetometer mounted on a robot always sits next to
@@ -654,18 +654,18 @@ public:
 // pull the heading round with the robot. Simulating it means the magnetometer
 // calibration routine has a real offset to discover and remove, instead of
 // converging on zero and proving nothing.
-#ifndef FAKE_MAG_BIAS_X
-#define FAKE_MAG_BIAS_X 6.0e-6f
+#ifndef SIM_MAG_BIAS_X
+#define SIM_MAG_BIAS_X 6.0e-6f
 #endif
-#ifndef FAKE_MAG_BIAS_Y
-#define FAKE_MAG_BIAS_Y -4.0e-6f
+#ifndef SIM_MAG_BIAS_Y
+#define SIM_MAG_BIAS_Y -4.0e-6f
 #endif
-#ifndef FAKE_MAG_BIAS_Z
-#define FAKE_MAG_BIAS_Z 2.5e-6f
+#ifndef SIM_MAG_BIAS_Z
+#define SIM_MAG_BIAS_Z 2.5e-6f
 #endif
 
-#ifndef FAKE_IMU_GYRO_NOISE
-#define FAKE_IMU_GYRO_NOISE 0.003   // +/- peak gyro noise (rad/s) = typical 3.0e-6 var
+#ifndef SIM_IMU_GYRO_NOISE
+#define SIM_IMU_GYRO_NOISE 0.003   // +/- peak gyro noise (rad/s) = typical 3.0e-6 var
 #endif
 
 // Derives IMU readings from the simulated body motion, so the accelerometer
@@ -679,7 +679,7 @@ static inline float clampBias(float v, float limit)
     return v;
 }
 
-class FakeIMUFromWheels
+class SimIMUFromWheels
 {
 private:
     float linear_x_ = 0.0;          // latest body velocities
@@ -691,7 +691,7 @@ private:
     // slowly wandering sensor biases, seeded to a fixed offset and then walked
     // Start calibrated. A real IMU has its static bias measured and subtracted
     // at startup -- IMUInterface::init() calls calibrateGyro(), which averages
-    // 40 samples and stores the offset. Fake wheel mode never calls that (there
+    // 40 samples and stores the offset. Sim wheel mode never calls that (there
     // is no chip to talk to), so seeding these with the full bias simulated an
     // IMU that had skipped its own calibration: the gyro read a steady offset
     // forever, the EKF integrated it, and yaw walked away from the wheels.
@@ -708,7 +708,7 @@ public:
     void initMsgs(sensor_msgs__msg__Imu &imu_msg,
                   sensor_msgs__msg__MagneticField &mag_msg)
     {
-        // The same env keys a real IMU uses. Fake mode publishes through this
+        // The same env keys a real IMU uses. Sim mode publishes through this
         // class rather than IMUInterface, so without this the covariance a
         // config sets reached every robot EXCEPT the simulated one -- which is
         // the default here, and the one an EKF is usually tuned against first.
@@ -719,20 +719,20 @@ public:
         // it in a second constant only creates something to drift. The
         // placeholders said 1e-5 while the accelerometer produced 5.1e-4, and
         // the EKF was told the simulated IMU was 50x quieter than it was.
-        float accel_cov[3] = {fakeCov(FAKE_IMU_ACCEL_NOISE), fakeCov(FAKE_IMU_ACCEL_NOISE),
-                              fakeCov(FAKE_IMU_ACCEL_NOISE)};
-        float gyro_cov[3] = {fakeCov(FAKE_IMU_GYRO_NOISE), fakeCov(FAKE_IMU_GYRO_NOISE),
-                             fakeCov(FAKE_IMU_GYRO_NOISE)};
+        float accel_cov[3] = {simCov(SIM_IMU_ACCEL_NOISE), simCov(SIM_IMU_ACCEL_NOISE),
+                              simCov(SIM_IMU_ACCEL_NOISE)};
+        float gyro_cov[3] = {simCov(SIM_IMU_GYRO_NOISE), simCov(SIM_IMU_GYRO_NOISE),
+                             simCov(SIM_IMU_GYRO_NOISE)};
         float ori_cov[3] = ORI_COV;
-        float mag_cov[3] = {fakeCov(FAKE_MAG_NOISE_T), fakeCov(FAKE_MAG_NOISE_T),
-                            fakeCov(FAKE_MAG_NOISE_T)};
+        float mag_cov[3] = {simCov(SIM_MAG_NOISE_T), simCov(SIM_MAG_NOISE_T),
+                            simCov(SIM_MAG_NOISE_T)};
         envFloatVec("accel_cov", accel_cov, 3);
         envFloatVec("gyro_cov", gyro_cov, 3);
         envFloatVec("ori_cov", ori_cov, 3);
         envFloatVec("mag_cov", mag_cov, 3);
 
         // initMsgs() runs from setup(), so the env is readable and the robot's
-        // namespace goes on here. Fake mode is the DEFAULT on a bare module,
+        // namespace goes on here. Sim mode is the DEFAULT on a bare module,
         // so this is the path a two-robot bench actually exercises.
         imu_msg.header.frame_id =
             micro_ros_string_utilities_set(imu_msg.header.frame_id, envPrefixed("imu_link"));
@@ -758,7 +758,7 @@ public:
             // accelerometer is band limited, so ease into the new value
             float raw_x = (linear_x - linear_x_) / dt;
             float raw_y = (linear_y - linear_y_) / dt;
-            float alpha = 1.0 - expf(-dt / (FAKE_IMU_ACCEL_TAU_MS / 1000.0));
+            float alpha = 1.0 - expf(-dt / (SIM_IMU_ACCEL_TAU_MS / 1000.0));
             accel_x_ += (raw_x - accel_x_) * alpha;
             accel_y_ += (raw_y - accel_y_) * alpha;
 
@@ -775,12 +775,12 @@ public:
             // nominal bias keeps the drift a filter has to cope with, without
             // letting uptime decide whether SLAM works.
             const float rw = sqrtf(dt);
-            gyro_bias_z_  += fakeWheelNoise((float)FAKE_IMU_GYRO_DRIFT) * rw;
-            accel_bias_x_ += fakeWheelNoise((float)FAKE_IMU_ACCEL_DRIFT) * rw;
-            accel_bias_y_ += fakeWheelNoise((float)FAKE_IMU_ACCEL_DRIFT) * rw;
-            gyro_bias_z_  = clampBias(gyro_bias_z_,  (float)FAKE_IMU_GYRO_BIAS);
-            accel_bias_x_ = clampBias(accel_bias_x_, (float)FAKE_IMU_ACCEL_BIAS);
-            accel_bias_y_ = clampBias(accel_bias_y_, (float)FAKE_IMU_ACCEL_BIAS);
+            gyro_bias_z_  += simWheelNoise((float)SIM_IMU_GYRO_DRIFT) * rw;
+            accel_bias_x_ += simWheelNoise((float)SIM_IMU_ACCEL_DRIFT) * rw;
+            accel_bias_y_ += simWheelNoise((float)SIM_IMU_ACCEL_DRIFT) * rw;
+            gyro_bias_z_  = clampBias(gyro_bias_z_,  (float)SIM_IMU_GYRO_BIAS);
+            accel_bias_x_ = clampBias(accel_bias_x_, (float)SIM_IMU_ACCEL_BIAS);
+            accel_bias_y_ = clampBias(accel_bias_y_, (float)SIM_IMU_ACCEL_BIAS);
         }
         linear_x_ = linear_x;
         linear_y_ = linear_y;
@@ -791,13 +791,13 @@ public:
     // would disagree with the yaw the wheels report and drag any heading fusion
     // (madgwick, EKF) away from the truth. Rotate a fixed world field into the
     // body frame instead, so the mag agrees with the simulated room: the field
-    // points along the room's +X axis, offset by FAKE_MAG_ROOM_HEADING.
+    // points along the room's +X axis, offset by SIM_MAG_ROOM_HEADING.
     void setHeading(float heading) { heading_ = heading; }
 
     void applyMag(sensor_msgs__msg__MagneticField &mag_msg)
     {
-        const float theta = heading_ - (float)FAKE_MAG_ROOM_HEADING;
-        const float b = (float)FAKE_MAG_FIELD_T;
+        const float theta = heading_ - (float)SIM_MAG_ROOM_HEADING;
+        const float b = (float)SIM_MAG_FIELD_T;
         // The world field points along +Y, i.e. North in the ENU frame ROS uses,
         // because that is the direction imu_filter_madgwick assumes when it
         // derives heading from the magnetometer. Pointing it along +X instead
@@ -813,11 +813,11 @@ public:
         // then spoiled by the hard-iron offset calibration is meant to find,
         // and white noise.
         mag_msg.magnetic_field.x =
-            b * sinf(theta) + (float)FAKE_MAG_BIAS_X + fakeWheelNoise((float)FAKE_MAG_NOISE_T);
+            b * sinf(theta) + (float)SIM_MAG_BIAS_X + simWheelNoise((float)SIM_MAG_NOISE_T);
         mag_msg.magnetic_field.y =
-            b * cosf(theta) + (float)FAKE_MAG_BIAS_Y + fakeWheelNoise((float)FAKE_MAG_NOISE_T);
+            b * cosf(theta) + (float)SIM_MAG_BIAS_Y + simWheelNoise((float)SIM_MAG_NOISE_T);
         mag_msg.magnetic_field.z =
-            (float)FAKE_MAG_BIAS_Z + fakeWheelNoise((float)FAKE_MAG_NOISE_T);
+            (float)SIM_MAG_BIAS_Z + simWheelNoise((float)SIM_MAG_NOISE_T);
     }
 
     void apply(sensor_msgs__msg__Imu &imu_msg)
@@ -826,26 +826,26 @@ public:
         // centripetal term while turning, plus gravity held up by the floor
         // true specific force, then spoiled the way a real sensor spoils it:
         // scale error on the signal, a wandering bias, then white noise
-        const float k = 1.0f + (float)FAKE_IMU_SCALE_ERROR;
+        const float k = 1.0f + (float)SIM_IMU_SCALE_ERROR;
         const float ax = accel_x_ - angular_z_ * linear_y_;
         const float ay = accel_y_ + angular_z_ * linear_x_;
 
         imu_msg.linear_acceleration.x =
-            ax * k + accel_bias_x_ + fakeWheelNoise((float)FAKE_IMU_ACCEL_NOISE);
+            ax * k + accel_bias_x_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
         imu_msg.linear_acceleration.y =
-            ay * k + accel_bias_y_ + fakeWheelNoise((float)FAKE_IMU_ACCEL_NOISE);
+            ay * k + accel_bias_y_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
         imu_msg.linear_acceleration.z =
-            (float)FAKE_IMU_GRAVITY + fakeWheelNoise((float)FAKE_IMU_ACCEL_NOISE);
+            (float)SIM_IMU_GRAVITY + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
 
-        imu_msg.angular_velocity.x = fakeWheelNoise((float)FAKE_IMU_GYRO_NOISE);
-        imu_msg.angular_velocity.y = fakeWheelNoise((float)FAKE_IMU_GYRO_NOISE);
+        imu_msg.angular_velocity.x = simWheelNoise((float)SIM_IMU_GYRO_NOISE);
+        imu_msg.angular_velocity.y = simWheelNoise((float)SIM_IMU_GYRO_NOISE);
         imu_msg.angular_velocity.z =
-            angular_z_ * k + gyro_bias_z_ + fakeWheelNoise((float)FAKE_IMU_GYRO_NOISE);
+            angular_z_ * k + gyro_bias_z_ + simWheelNoise((float)SIM_IMU_GYRO_NOISE);
     }
 };
 
 
-// No `#define ENCODER` either: createEncoder() picks FakeEncoder or Encoder
-// from `fake_wheel` in the env, per board, at boot.
+// No `#define ENCODER` either: createEncoder() picks SimEncoder or Encoder
+// from `sim_wheel` in the env, per board, at boot.
 
 #endif

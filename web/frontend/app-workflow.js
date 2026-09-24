@@ -1025,7 +1025,7 @@ function initCockpitDashboard() {
     const controller = targetSelect ? targetSelect.value : (state.status?.controller || "pico2");
     const sec = exploreSec ? parseInt(exploreSec.value, 10) || 15 : 15;
     const noNav2 = noNav2Check ? noNav2Check.checked : false;
-    const mode = (hdrMode && hdrMode.value) || (cockpitMode && cockpitMode.value) || "fake";
+    const mode = (hdrMode && hdrMode.value) || (cockpitMode && cockpitMode.value) || "sim";
     // Force a write even over a board that already runs this build (--flash).
     // Unticked by default; auto-update below is what handles the ordinary case.
     const updateFw = document.getElementById("cockpit-update-firmware")?.checked || false;

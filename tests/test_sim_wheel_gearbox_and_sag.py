@@ -56,11 +56,11 @@ static FakeSerial Serial;
 """
 
 SHIM = """
-#include "fake_wheel.h"
+#include "sim_wheel.h"
 extern "C" {
-void *enc_new(int cpr) { return (void *)new FakeEncoder(-1, -1, cpr); }
-void enc_feed(void *e, int pwm) { ((FakeEncoder *)e)->feed(pwm); }
-float enc_rpm(void *e) { return ((FakeEncoder *)e)->getRPM(); }
+void *enc_new(int cpr) { return (void *)new SimEncoder(-1, -1, cpr); }
+void enc_feed(void *e, int pwm) { ((SimEncoder *)e)->feed(pwm); }
+float enc_rpm(void *e) { return ((SimEncoder *)e)->getRPM(); }
 void tick(unsigned long us) { __advance(us); }
 }
 """
@@ -87,7 +87,7 @@ def lib(tmp_path_factory):
         "static inline unsigned long envU32(const char *, unsigned long d) { return d; }\n"
         "static inline void envFloatVec(const char *, float *, int) {}\n")
     # The header is self-contained about ROS messages (hw_factory builds
-    # FakeEncoder and has no reason to know about them), so the stub has to
+    # SimEncoder and has no reason to know about them), so the stub has to
     # supply the message shapes. Only the fields the simulated IMU fills.
     for sub in ("micro_ros_utilities", "sensor_msgs/msg", "geometry_msgs/msg",
                 "std_msgs/msg", "builtin_interfaces/msg", "rosidl_runtime_c"):
@@ -123,7 +123,7 @@ def lib(tmp_path_factory):
          os.path.join(d, "shim.cpp"), "-I", str(d), "-I", ENC],
         capture_output=True, text=True)
     if res.returncode != 0:
-        pytest.skip(f"fake_wheel.h does not build against the stub: {res.stderr[:500]}")
+        pytest.skip(f"sim_wheel.h does not build against the stub: {res.stderr[:500]}")
     l = ctypes.CDLL(so)
     l.enc_new.restype = ctypes.c_void_p
     l.enc_new.argtypes = [ctypes.c_int]
@@ -141,7 +141,7 @@ PWM_MAX = 1023
 def wheels(lib):
     """The board's four wheels, created ONCE.
 
-    FakeEncoder takes its pack slot from a process-global counter, so only the
+    SimEncoder takes its pack slot from a process-global counter, so only the
     first four instances get one -- correct for a robot, and a trap for a test
     file that news up encoders per case: later ones get slot -1, contribute no
     current, and the sag silently disappears. That is how the four-wheel case
@@ -238,20 +238,20 @@ def test_sag_recovers_once_the_wheels_are_up_to_speed(lib, wheels):
 def test_the_three_losses_come_from_the_env():
     """A sweep across gear efficiency or pack stiffness is how you find out which
     one a navigation failure was sensitive to. It must not cost a firmware build
-    per value -- the same argument as fake_mass beside them."""
+    per value -- the same argument as sim_mass beside them."""
     src = open(os.path.join(ROOT, "firmware", "common", "lib", "encoder",
-                            "fake_wheel.h"), encoding="utf-8").read()
-    for fn, key in (("fakeGearEfficiency", "fake_gear_eff"),
-                    ("fakeCoulombRpm", "fake_coulomb"),
-                    ("fakeBattSag", "fake_sag")):
+                            "sim_wheel.h"), encoding="utf-8").read()
+    for fn, key in (("simGearEfficiency", "sim_gear_eff"),
+                    ("simCoulombRpm", "sim_coulomb"),
+                    ("simBattSag", "sim_sag")):
         assert f'envFloat("{key}"' in src, f"{key} is not read from the env"
         assert f"static inline float {fn}()" in src, f"{fn} is gone"
         # and the running model must go through the accessor, not the macro.
-        # Scoped to the CLASS, not to after integrate(): fakeBattSag() is used by
+        # Scoped to the CLASS, not to after integrate(): simBattSag() is used by
         # busScale(), which integrate() calls but which is defined above it -- an
         # "after integrate()" slice cannot see it and failed on the one accessor
         # that was wired correctly.
-        cls = src[src.index("class FakeEncoder"):]
+        cls = src[src.index("class SimEncoder"):]
         assert f"{fn}()" in cls, f"the model still uses the compile-time constant, not {fn}()"
 
 
@@ -261,25 +261,25 @@ def test_the_env_values_are_clamped_to_physical_ranges():
     unset marker, so an unclamped negative would be read as "not yet loaded" on
     every call."""
     src = open(os.path.join(ROOT, "firmware", "common", "lib", "encoder",
-                            "fake_wheel.h"), encoding="utf-8").read()
-    eff = src[src.index("static inline float fakeGearEfficiency()"):]
+                            "sim_wheel.h"), encoding="utf-8").read()
+    eff = src[src.index("static inline float simGearEfficiency()"):]
     eff = eff[:eff.index("\n}")]
     assert "> 1.0f) eff = 1.0f" in eff, "gear efficiency is not capped at 1"
     assert "< 0.0f) eff = 0.0f" in eff
-    for fn in ("fakeCoulombRpm", "fakeBattSag"):
+    for fn in ("simCoulombRpm", "simBattSag"):
         blk = src[src.index(f"static inline float {fn}()"):]
         blk = blk[:blk.index("\n}")]
         assert "< 0.0f" in blk, f"{fn} accepts a negative value"
 
 
 def test_the_config_keys_reach_the_env():
-    """simulation.gear_efficiency -> fake_gear_eff, and the other two."""
+    """simulation.gear_efficiency -> sim_gear_eff, and the other two."""
     import sys
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import mcu_env
     src = open(os.path.join(ROOT, "scripts", "mcu_env.py"), encoding="utf-8").read()
-    for env_key, cfg_key in (("fake_gear_eff", "gear_efficiency"),
-                             ("fake_coulomb", "gear_drag_rpm"),
-                             ("fake_sag", "battery_sag")):
+    for env_key, cfg_key in (("sim_gear_eff", "gear_efficiency"),
+                             ("sim_coulomb", "gear_drag_rpm"),
+                             ("sim_sag", "battery_sag")):
         assert f'"{env_key}": "{cfg_key}"' in src, f"{cfg_key} is not mapped to {env_key}"
         assert f'("{env_key}", float)' in src, f"{env_key} is not cast as a float"

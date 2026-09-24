@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef FAKE_LD19_H
-#define FAKE_LD19_H
+#ifndef SIM_LD19_H
+#define SIM_LD19_H
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -31,28 +31,28 @@
 // keyed. The UDP sink needs a UDP stack: every ESP32 core has one, and on RP2
 // only the W boards do, where it arrives with USE_WIFI.
 #if defined(ESP32) || defined(USE_WIFI)
-#define FAKE_LD19_UDP_SINK 1
+#define SIM_LD19_UDP_SINK 1
 #endif
 
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <errno.h>
 #endif
 
-#ifndef FAKE_MAP_WIDTH
-#define FAKE_MAP_WIDTH 10.0f    // Simulated room width (meters, -5.0 to +5.0)
+#ifndef SIM_MAP_WIDTH
+#define SIM_MAP_WIDTH 10.0f    // Simulated room width (meters, -5.0 to +5.0)
 #endif
 
-#ifndef FAKE_MAP_HEIGHT
-#define FAKE_MAP_HEIGHT 6.0f    // Simulated room height (meters, -3.0 to +3.0)
+#ifndef SIM_MAP_HEIGHT
+#define SIM_MAP_HEIGHT 6.0f    // Simulated room height (meters, -3.0 to +3.0)
 #endif
 
 // TX ring buffer for the emitted stream, in bytes (ESP32 only -- RP2040 and
 // RP2350 have no TX ring). One revolution is PACKS_PER_REV * 47 = 1786 bytes,
 // so 2048 absorbs a whole scan and write() never waits on the wire.
-#ifndef FAKE_LD19_TX_BUFFER
-#define FAKE_LD19_TX_BUFFER 2048
+#ifndef SIM_LD19_TX_BUFFER
+#define SIM_LD19_TX_BUFFER 2048
 #endif
 
 // An LD19 sees 12 m. Beyond that it reports no measurement, not a reading at
@@ -70,32 +70,32 @@
 // still that is a uniform 12 cm error; turning, it sweeps a 24 cm circle and
 // the walls smear. Measured effect on a finished map: 0.196 m median distance
 // from the true walls, down to a few cm once the origin is right.
-#ifndef FAKE_LIDAR_OFFSET_X
-#define FAKE_LIDAR_OFFSET_X 0.12f
+#ifndef SIM_LIDAR_OFFSET_X
+#define SIM_LIDAR_OFFSET_X 0.12f
 #endif
 
-#ifndef FAKE_LD19_MAX_RANGE_M
-#define FAKE_LD19_MAX_RANGE_M 12.0f
+#ifndef SIM_LD19_MAX_RANGE_M
+#define SIM_LD19_MAX_RANGE_M 12.0f
 #endif
 
-#ifndef FAKE_SCAN_HZ
-#define FAKE_SCAN_HZ 10         // Simulated LiDAR revolutions per second
+#ifndef SIM_SCAN_HZ
+#define SIM_SCAN_HZ 10         // Simulated LiDAR revolutions per second
 #endif
 
-#ifndef FAKE_SONAR_CONE_DEG
-#define FAKE_SONAR_CONE_DEG 30.0f   // Ultrasonic beam width, full angle
+#ifndef SIM_SONAR_CONE_DEG
+#define SIM_SONAR_CONE_DEG 30.0f   // Ultrasonic beam width, full angle
 #endif
 // The span the simulated cone claims on /sonar. A reading outside it is not
 // "unknown" to nav2_collision_monitor, it is a broken sensor, so the publisher
 // clamps into this range rather than emitting -1 (see main.cpp).
-#ifndef FAKE_SONAR_MIN_RANGE_M
-#define FAKE_SONAR_MIN_RANGE_M 0.02f
+#ifndef SIM_SONAR_MIN_RANGE_M
+#define SIM_SONAR_MIN_RANGE_M 0.02f
 #endif
-#ifndef FAKE_SONAR_MAX_RANGE_M
-#define FAKE_SONAR_MAX_RANGE_M 4.0f
+#ifndef SIM_SONAR_MAX_RANGE_M
+#define SIM_SONAR_MAX_RANGE_M 4.0f
 #endif
 
-#ifndef FAKE_ROBOT_RADIUS
+#ifndef SIM_ROBOT_RADIUS
 // How close the simulated robot's CENTRE may get to a simulated wall.
 //
 // scripts/gen_firmware_header.py derives this from the same `robot_radius`
@@ -110,24 +110,24 @@
 //
 // Stopping the robot short of the wall is the point of the clamp; stopping it
 // somewhere Nav2 considers a collision defeats it.
-#define FAKE_ROBOT_RADIUS 0.30f
+#define SIM_ROBOT_RADIUS 0.30f
 #endif
 
-#ifndef FAKE_WALL_OBSTACLE
-#define FAKE_WALL_OBSTACLE 1    // 1 to include obstacle wall
+#ifndef SIM_WALL_OBSTACLE
+#define SIM_WALL_OBSTACLE 1    // 1 to include obstacle wall
 #endif
 
-#ifndef FAKE_WALL_X1
-#define FAKE_WALL_X1 2.0f       // Obstacle wall start X (m)
+#ifndef SIM_WALL_X1
+#define SIM_WALL_X1 2.0f       // Obstacle wall start X (m)
 #endif
-#ifndef FAKE_WALL_Y1
-#define FAKE_WALL_Y1 -1.5f      // Obstacle wall start Y (m)
+#ifndef SIM_WALL_Y1
+#define SIM_WALL_Y1 -1.5f      // Obstacle wall start Y (m)
 #endif
-#ifndef FAKE_WALL_X2
-#define FAKE_WALL_X2 2.0f       // Obstacle wall end X (m)
+#ifndef SIM_WALL_X2
+#define SIM_WALL_X2 2.0f       // Obstacle wall end X (m)
 #endif
-#ifndef FAKE_WALL_Y2
-#define FAKE_WALL_Y2 1.5f       // Obstacle wall end Y (m)
+#ifndef SIM_WALL_Y2
+#define SIM_WALL_Y2 1.5f       // Obstacle wall end Y (m)
 #endif
 
 #ifndef LIDAR_BAUDRATE
@@ -156,7 +156,7 @@
 #define LIDAR_PORT   envU16("lidar_port", LIDAR_PORT_DEFAULT)
 #endif
 
-class FakeLD19
+class SimLD19
 {
 public:
     // Where the synthetic scan goes. One image compiles all three sinks; the env
@@ -193,8 +193,8 @@ private:
     // without ever stalling the control loop (measured on ESP32: odometry
     // holds 50.0 Hz at a 10 Hz scan). Going much above this has no headroom
     // left to give.
-    static const uint16_t SPEED_DPS       = (uint16_t)(FAKE_SCAN_HZ * 360);
-    static const uint32_t PACK_PERIOD_US  = (uint32_t)(1000000UL / (PACKS_PER_REV * FAKE_SCAN_HZ));
+    static const uint16_t SPEED_DPS       = (uint16_t)(SIM_SCAN_HZ * 360);
+    static const uint32_t PACK_PERIOD_US  = (uint32_t)(1000000UL / (PACKS_PER_REV * SIM_SCAN_HZ));
     // How many packets one step() may hand the UART. On ESP32 the TX ring
     // buffer absorbs them and write() returns at once, so a burst is free. On
     // RP2040/RP2350 there is no TX ring at all -- SerialUART::write() calls
@@ -214,7 +214,7 @@ private:
     // packet per step is not thereby behind.
     static const uint32_t RESYNC_LAG_US = PACK_PERIOD_US * 38;
 
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
     // The UDP path has no UART to protect, and the budget that protects one is
     // the wrong bound here. Measured on the GenDrv bench against the UDP server:
     // the board delivered ~126 LD19 packets/s with the agent connected and
@@ -264,23 +264,23 @@ private:
     static const uint16_t UDP_DATAGRAM_LIMIT = UDP_PACKS_PER_DATAGRAM * 47;  // 1410
 #endif
 
-    // The room, from the env. Fake mode is the DEFAULT here, so the world the
+    // The room, from the env. Sim mode is the DEFAULT here, so the world the
     // emulator raycasts is configuration like everything else: a Nav2 test
     // wants the obstacle wall somewhere else without rebuilding, and a bigger
     // robot wants a bigger room. The macros stay as the fallback.
-    float map_w_ = (float)FAKE_MAP_WIDTH;
-    float map_h_ = (float)FAKE_MAP_HEIGHT;
-    bool  wall_on_ = (bool)(FAKE_WALL_OBSTACLE);
-    float wall_x1_ = (float)FAKE_WALL_X1;
-    float wall_y1_ = (float)FAKE_WALL_Y1;
-    float wall_x2_ = (float)FAKE_WALL_X2;
-    float wall_y2_ = (float)FAKE_WALL_Y2;
+    float map_w_ = (float)SIM_MAP_WIDTH;
+    float map_h_ = (float)SIM_MAP_HEIGHT;
+    bool  wall_on_ = (bool)(SIM_WALL_OBSTACLE);
+    float wall_x1_ = (float)SIM_WALL_X1;
+    float wall_y1_ = (float)SIM_WALL_Y1;
+    float wall_x2_ = (float)SIM_WALL_X2;
+    float wall_y2_ = (float)SIM_WALL_Y2;
     // How close the simulated robot's centre may come to a wall. A robot fact,
     // so it arrives the way every other robot fact does -- through the env at
     // flash time -- and NOT baked into the image: a released image is built
     // for a silicon, not for a robot, and it cannot know what it will be
     // bolted to. The macro is the fallback for a board with a blank env.
-    float robot_radius_ = (float)FAKE_ROBOT_RADIUS;
+    float robot_radius_ = (float)SIM_ROBOT_RADIUS;
 
     // Current robot pose in global world frame
     float pose_x_ = 0.0f;
@@ -295,9 +295,9 @@ private:
     int tx_pin_ = -1;
     bool enabled_ = false;
     CommMode comm_mode_ = COMM_SERIAL;
-    float offset_x_ = (float)FAKE_LIDAR_OFFSET_X;   // where the LiDAR sits, forward of base_link
+    float offset_x_ = (float)SIM_LIDAR_OFFSET_X;   // where the LiDAR sits, forward of base_link
 
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
     WiFiUDP udp_;
     bool udp_enabled_ = false;
     // Heap, not .bss. This is 1410 bytes held by a global object for the whole
@@ -329,7 +329,7 @@ private:
     // saw no scan could not tell them apart.
     uint32_t uart_bytes_ = 0;
     uint32_t uart_short_ = 0;
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
 #endif
 
     // CalCRC8 lookup table (poly 0x4D), LDROBOT LD19 standard
@@ -364,7 +364,7 @@ private:
     }
 
 public:
-    FakeLD19() {}
+    SimLD19() {}
 
     void setStream(Stream *stream)
     {
@@ -389,7 +389,7 @@ public:
     // datagrams left, how many sends failed and the last errno.
     void statsLine(char *buf, size_t n) const
     {
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
         snprintf(buf, n, "steps=%lu packs=%lu resync=%lu uart_bytes=%lu uart_short=%lu "
                  "udp_dg=%lu udp_bytes=%lu udp_fail=%lu udp_noradio=%lu errno=%d",
                  (unsigned long)steps_, (unsigned long)packs_, (unsigned long)resyncs_,
@@ -409,14 +409,14 @@ public:
     // Same reason initSyslog() is separate from its constructor.
     void applyEnvRoom()
     {
-        map_w_ = envFloat("fake_map_w", map_w_);
-        map_h_ = envFloat("fake_map_h", map_h_);
-        wall_on_ = envFlag("fake_wall", wall_on_);
-        wall_x1_ = envFloat("fake_wall_x1", wall_x1_);
-        wall_y1_ = envFloat("fake_wall_y1", wall_y1_);
-        wall_x2_ = envFloat("fake_wall_x2", wall_x2_);
-        wall_y2_ = envFloat("fake_wall_y2", wall_y2_);
-        robot_radius_ = envFloat("fake_radius", robot_radius_);
+        map_w_ = envFloat("sim_map_w", map_w_);
+        map_h_ = envFloat("sim_map_h", map_h_);
+        wall_on_ = envFlag("sim_wall", wall_on_);
+        wall_x1_ = envFloat("sim_wall_x1", wall_x1_);
+        wall_y1_ = envFloat("sim_wall_y1", wall_y1_);
+        wall_x2_ = envFloat("sim_wall_x2", wall_x2_);
+        wall_y2_ = envFloat("sim_wall_y2", wall_y2_);
+        robot_radius_ = envFloat("sim_radius", robot_radius_);
     }
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
@@ -441,7 +441,7 @@ public:
             // The buffer is drained by the UART interrupt, so write() returns
             // immediately and the emission costs the loop nothing but the
             // memcpy. Must be called before begin() to take effect.
-            serial->setTxBufferSize(FAKE_LD19_TX_BUFFER);
+            serial->setTxBufferSize(SIM_LD19_TX_BUFFER);
             // On ESP32, configure UART with TX pin on LIDAR_RXD
             serial->begin(baud, SERIAL_8N1, -1, tx_pin);
             out_stream_ = serial;
@@ -460,7 +460,7 @@ public:
 #endif
         }
 
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
     if (comm_mode_ == COMM_UDP)
     {
         // A failed allocation here is not fatal and must not be silent: the
@@ -587,7 +587,7 @@ public:
     // inside a cone, not a single ray. Gives the robot actual feedback that
     // something is ahead, rather than leaving it to be inferred from odometry
     // that has stopped advancing.
-    float rangeAheadM(float cone_deg = (float)FAKE_SONAR_CONE_DEG)
+    float rangeAheadM(float cone_deg = (float)SIM_SONAR_CONE_DEG)
     {
         const float half = cone_deg * 0.5f;
         uint16_t nearest = 0xFFFF;
@@ -648,7 +648,7 @@ public:
         };
 
         int count = wall_on_ ? 5 : 4;
-        float min_dist = (float)FAKE_LD19_MAX_RANGE_M; // nothing seen yet
+        float min_dist = (float)SIM_LD19_MAX_RANGE_M; // nothing seen yet
 
         for (int i = 0; i < count; i++)
         {
@@ -676,7 +676,7 @@ public:
         // at exactly 12 m, SLAM would map it as a wall standing inside the
         // room, and the map comes out larger and sheared. 0 is the protocol's
         // "no measurement", which the driver turns into an invalid range.
-        if (min_dist >= (float)FAKE_LD19_MAX_RANGE_M) return 0;
+        if (min_dist >= (float)SIM_LD19_MAX_RANGE_M) return 0;
 
         // Add small simulated white noise (+-5 mm)
         float noise = ((float)(rand() % 11) - 5.0f);
@@ -712,7 +712,7 @@ public:
         uint32_t resync_lag = RESYNC_LAG_US;
         if (out_stream_)
             max_packs = MAX_PACKS_PER_STEP;          // a UART, paced for a UART
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
         else if (comm_mode_ == COMM_UDP)
         {
             max_packs = UDP_MAX_PACKS_PER_STEP;      // a whole revolution is one flush
@@ -749,7 +749,7 @@ public:
     }
 
 private:
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
     void flushUdp()
     {
         if (!udp_enabled_ || !udp_buf_ || udp_buf_len_ == 0) return;
@@ -828,7 +828,7 @@ private:
             pkt_cb_(pkt, 47);
         }
 
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
         if (udp_enabled_ && udp_buf_)
         {
             if (udp_buf_len_ + 47 > UDP_DATAGRAM_LIMIT)
@@ -844,12 +844,12 @@ private:
         if (point_idx_ >= POINTS_PER_REV)
         {
             point_idx_ -= POINTS_PER_REV;
-#ifdef FAKE_LD19_UDP_SINK
+#ifdef SIM_LD19_UDP_SINK
             // A revolution is 38 packets -- 1786 bytes, more than one datagram
             // holds -- so a scan leaves as one full 1410-byte datagram and one
             // shorter remainder, and nothing is ever held across the boundary.
             // That is the latency bound: a packet waits at most one scan period
-            // (100 ms at FAKE_SCAN_HZ 10), and the host gets whole revolutions,
+            // (100 ms at SIM_SCAN_HZ 10), and the host gets whole revolutions,
             // which is the unit ldlidar_stl_ros2 assembles anyway.
             flushUdp();
 #endif

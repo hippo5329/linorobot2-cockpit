@@ -61,8 +61,8 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
-#include "fake_wheel.h"
-#include "fake_ld19.h"
+#include "sim_wheel.h"
+#include "sim_ld19.h"
 // The synthetic scan can reach the host three ways, and running two at once
 // wastes a link that has no headroom to spare -- so exactly one is chosen, at
 // BOOT rather than at build time. The publisher below is compiled into every
@@ -163,7 +163,7 @@ extern void rcSoftFail(int line, int code);
 // Whether /imu/mag exists is decided at BOOT, not at build time. A released
 // image is built for an MCU, not for a robot, so "does this robot have a
 // magnetometer" cannot be a macro: the answer is whichever chip answered the
-// I2C probe, plus fake wheel mode, which synthesises a real field from the
+// I2C probe, plus sim wheel mode, which synthesises a real field from the
 // simulated heading -- hard-iron bias and all -- and is exactly what a
 // calibration run needs even though no chip is present.
 static bool publish_mag = false;
@@ -208,7 +208,7 @@ static bool rpm_track_voltage = false;
 // Per-motor stall / encoder-loss guard. A wheel that is COMMANDED but whose
 // encoder is not counting has stalled or lost its encoder; both are hazards the
 // forward-range stop cannot see. Off by default (needs real encoders to be
-// meaningful; a FakeEncoder always tracks the command, so it never trips).
+// meaningful; a SimEncoder always tracks the command, so it never trips).
 static bool stall_detect_on = false;
 static uint16_t stall_ms = 1500;          // sustained no-count-while-commanded before tripping
 static float stall_rpm_floor = 5.0f;      // |rpm| below this counts as "not turning"
@@ -276,36 +276,36 @@ enum states
 
 // Compiled in unconditionally, and that is the point: whether THIS BOARD has
 // wheels is a fact about the board, and a board is a configuration, not a build
-// (AGENTS.md §10). It used to be `#ifdef USE_FAKE_WHEEL`, which meant the bare
+// (AGENTS.md §10). It used to be `#ifdef USE_SIM_WHEEL`, which meant the bare
 // bench module and the same module with an IMU soldered on needed two different
 // binaries of the same firmware -- and no env key could undo the difference,
 // because an #ifdef had already removed the other path at compile time.
 // It costs one small object in images that never simulate anything.
-FakeIMUFromWheels fake_imu;
+SimIMUFromWheels sim_imu;
 
-// wheelsAreFake() reads the env; it is read once in setup() and used from the
+// wheelsAreSim() reads the env; it is read once in setup() and used from the
 // control loop, which runs on the other core on ESP32.
-static bool fake_wheels = false;
-FakeLD19 *fake_ld19 = nullptr;
+static bool sim_wheels = false;
+SimLD19 *sim_ld19 = nullptr;
 // Whether the emulator runs at all is a robot fact, not an image fact: a
-// prebuilt image is built from a fake-mode reference, and every real robot
+// prebuilt image is built from a sim-mode reference, and every real robot
 // that flashes it would otherwise raycast a room and stream it (env key
-// fake_ld19; the compiled-in default is on, so a blank env keeps the bench).
-static bool fake_lidar_on = false;
+// sim_ld19; the compiled-in default is on, so a blank env keeps the bench).
+static bool sim_lidar_on = false;
 
 // /sonar, decided at boot rather than by the build.
 //
-// It used to take `#if defined(ECHO_PIN) || (defined(USE_FAKE_SONAR) &&
-// defined(USE_FAKE_LD19))`. Neither half was ever true in a shipped image: no
+// It used to take `#if defined(ECHO_PIN) || (defined(USE_SIM_SONAR) &&
+// defined(USE_SIM_LD19))`. Neither half was ever true in a shipped image: no
 // reference config carried sonar pins, so ECHO_PIN was never defined, and
-// USE_FAKE_SONAR is emitted by nothing at all. The topic has therefore never
+// USE_SIM_SONAR is emitted by nothing at all. The topic has therefore never
 // been published by any release, on either path.
 //
 // publish_range is now rangePresent() -- both pins resolved from the env -- or
-// the simulated cone, which follows the emulator. range_fake says which.
+// the simulated cone, which follows the emulator. range_sim says which.
 static bool publish_range = false;
-static bool range_fake = false;
-static FakeLD19::CommMode fake_lidar_comm = FakeLD19::COMM_SERIAL;
+static bool range_sim = false;
+static SimLD19::CommMode sim_lidar_comm = SimLD19::COMM_SERIAL;
 rcl_publisher_t raw_scan_publisher;
 std_msgs__msg__UInt8MultiArray raw_scan_msg;
 // Heap, and only on a board that actually publishes raw_scan. Held statically
@@ -397,16 +397,16 @@ Odometry *odometry = nullptr;
 IMUInterface *imu = nullptr;
 MAGInterface *mag = nullptr;
 // Set in setup() once the name is resolved (config, then env, then the bus).
-static bool imu_is_fake = false;
+static bool imu_is_sim = false;
 // Which of the two simulated sensors actually ride on the simulated wheels.
-// Fake wheels used to imply a fake IMU and a fake magnetometer, full stop --
+// Sim wheels used to imply a sim IMU and a sim magnetometer, full stop --
 // right for a bare module with nothing on the bus, wrong for a bare custom
 // board (the Yahboom YB-EET01 on the bench: no encoders, a real IMU). Now a
 // real sensor that the config or the bus names is initialised even when the
-// wheels are simulated, and only the sensors that are themselves fake are
+// wheels are simulated, and only the sensors that are themselves sim are
 // synthesised from the wheels.
-static bool sim_imu = false;
-static bool sim_mag = false;
+static bool imu_from_wheels = false;
+static bool mag_from_wheels = false;
 
 #ifndef BAUDRATE
 #define BAUDRATE 921600
@@ -879,7 +879,7 @@ void setup()
     // Read once. Every use below -- the sensor path, the pose reset, the control
     // loop -- asks this rather than the compiler, so one image serves a bare
     // bench module and the same board with an IMU on it.
-    fake_wheels = wheelsAreFake();
+    sim_wheels = wheelsAreSim();
 #ifdef USE_ESP32_DUAL_CORE
     dual_core = envFlag("dual_core", DUAL_CORE_DEFAULT);
     // Dual core is the SERIAL robot's tool: it takes moveBase() off the core
@@ -947,56 +947,56 @@ void setup()
     // a config that disagrees with the hardware is visible rather than silently
     // routed around.
     //
-    // Skipped only on a board that is fake all the way through: no wheels, no
+    // Skipped only on a board that is sim all the way through: no wheels, no
     // IMU, no magnetometer. That is the bare bench module, where the bus is
     // empty by definition and the simulated IMU is computed from the simulated
     // wheels anyway.
     //
-    // Keying this on wheelsAreFake() alone was wrong, and the bench board that
+    // Keying this on wheelsAreSim() alone was wrong, and the bench board that
     // exists to test this feature is exactly the counter-example: an RP2350 with
     // a real MPU6050 on GP0/GP1 and no drivetrain at all. Real sensors are a
-    // fact about the BUS; fake wheels are a fact about the drivetrain.
+    // fact about the BUS; sim wheels are a fact about the drivetrain.
     // `i2c_scan` in the env forces the answer either way.
-    const bool all_fake = wheelsAreFake()
-                          && strcasecmp(imu_name, "fake") == 0
-                          && strcasecmp(mag_name, "fake") == 0;
-    if (envFlag("i2c_scan", !all_fake))
+    const bool all_sim = wheelsAreSim()
+                          && strcasecmp(imu_name, "sim") == 0
+                          && strcasecmp(mag_name, "sim") == 0;
+    if (envFlag("i2c_scan", !all_sim))
         i2cProbeSelect(&imu_name, &mag_name);
 
     imu = createIMU(imu_name);
     mag = createMAG(mag_name);
     // Which driver was actually built, after the probe has had its say. The
     // simulated IMU has no gyro of its own, so the loop below takes yaw rate
-    // from the odometry instead -- that used to be `#ifdef USE_FAKE_IMU`, which
+    // from the odometry instead -- that used to be `#ifdef USE_SIM_IMU`, which
     // asked the BUILD a question only the boot can answer, and got it wrong on
     // any board whose IMU was chosen by detection rather than by the config.
-    imu_is_fake = (strcasecmp(imu_name, "fake") == 0);
+    imu_is_sim = (strcasecmp(imu_name, "sim") == 0);
 
-    // A real magnetometer answered the bus, or fake wheels are synthesising a
+    // A real magnetometer answered the bus, or sim wheels are synthesising a
     // field to calibrate against. Either way there is something to publish; a
-    // FakeMAG standing in for absent hardware has nothing to say and the topic
+    // SimMAG standing in for absent hardware has nothing to say and the topic
     // stays off the wire.
     publish_mag = envFlag("pub_mag",
-                              (strcasecmp(mag_name, "fake") != 0) || fake_wheels);
+                              (strcasecmp(mag_name, "sim") != 0) || sim_wheels);
 
-    sim_imu = fake_wheels && imu_is_fake;
-    sim_mag = fake_wheels && (strcasecmp(mag_name, "fake") == 0);
-    if (fake_wheels) {
+    imu_from_wheels = sim_wheels && imu_is_sim;
+    mag_from_wheels = sim_wheels && (strcasecmp(mag_name, "sim") == 0);
+    if (sim_wheels) {
         // The simulated IMU and magnetometer are computed from the simulated
         // wheels; prepare the two messages whether or not they end up used.
-        fake_imu.initMsgs(*imu_msg, *mag_msg);
+        sim_imu.initMsgs(*imu_msg, *mag_msg);
     }
-    if (!sim_imu) {
+    if (!imu_from_wheels) {
         if (!imu->init())
         {
-            if (fake_wheels) {
+            if (sim_wheels) {
                 // A bare board whose IMU did not answer is still a working
                 // simulated robot; say so loudly and carry on with the
                 // simulation rather than trapping the board before it connects.
-                Serial.println("[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU");
+                Serial.println("[imu] init FAILED on a sim-wheel board - falling back to the simulated IMU");
                 syslog(LOG_INFO, "%s IMU init failed, simulated IMU instead %lu", __FUNCTION__, millis());
-                sim_imu = true;
-                imu_is_fake = true;
+                imu_from_wheels = true;
+                imu_is_sim = true;
             } else {
                 Serial.println("IMU init failed");   // take IMU failure as fatal
                 syslog(LOG_INFO, "%s IMU init failed %lu", __FUNCTION__, millis());
@@ -1009,13 +1009,13 @@ void setup()
             }
         }
     }
-    if (!sim_mag) {
+    if (!mag_from_wheels) {
         if (!mag->init())
         {
-            if (fake_wheels) {
-                Serial.println("[mag] init FAILED on a fake-wheel board - falling back to the simulated field");
+            if (sim_wheels) {
+                Serial.println("[mag] init FAILED on a sim-wheel board - falling back to the simulated field");
                 syslog(LOG_INFO, "%s MAG init failed, simulated field instead %lu", __FUNCTION__, millis());
-                sim_mag = true;
+                mag_from_wheels = true;
             } else {
                 Serial.println("MAG init failed");   // take mag failure as fatal
                 syslog(LOG_INFO, "%s MAG init failed %lu", __FUNCTION__, millis());
@@ -1029,11 +1029,11 @@ void setup()
         }
     }
     initBattery();
-    // Fake mode masks the sonar. `fake_ld19` is read directly rather than
-    // waiting for fake_lidar_on below, because initRange() has to happen before
+    // Sim mode masks the sonar. `sim_ld19` is read directly rather than
+    // waiting for sim_lidar_on below, because initRange() has to happen before
     // the LiDAR block and the answer is the same either way.
-    const bool sonar_faked = fake_wheels || envFlag("fake_ld19", FAKE_LD19_DEFAULT);
-    initRange(!sonar_faked);
+    const bool sonar_simd = sim_wheels || envFlag("sim_ld19", SIM_LD19_DEFAULT);
+    initRange(!sonar_simd);
     env_present = initEnv();
     // Three states, carried by one optional env key:
     //
@@ -1086,52 +1086,52 @@ void setup()
     // 2026-09-21).
     odometry->applyEnvCovariance();
     odometry->applyEnvFrames();
-    if (!sim_imu && imu) imu->applyEnvFrames();
-    if (!sim_mag && mag) mag->applyEnvFrames();
+    if (!imu_from_wheels && imu) imu->applyEnvFrames();
+    if (!mag_from_wheels && mag) mag->applyEnvFrames();
     // The SIMULATED sonar fills range_msg field by field and never touches the
     // header, so without this it published an empty frame_id -- a Range that no
     // consumer can place anywhere. The real path overwrites the whole message
     // from getRange(), which carries the same frame, so setting it here is
-    // right for both. (Empty on every fake-mode board until 2026-09-21; nothing
+    // right for both. (Empty on every sim-mode board until 2026-09-21; nothing
     // in the pipeline subscribes to /sonar yet, which is why it went unseen.)
     if (range_msg)
         range_msg->header.frame_id =
             micro_ros_string_utilities_set(range_msg->header.frame_id, envPrefixed("sonar_link"));
     initLidar(); // after wifi connected
-    fake_lidar_on = envFlag("fake_ld19", true);
-    // The emulator is built only when fake mode asks for it. As a static
+    sim_lidar_on = envFlag("sim_ld19", true);
+    // The emulator is built only when sim mode asks for it. As a static
     // object its 176 bytes sat in .bss on every board, real LiDAR or not; on
     // esp32_lyrical that segment is at its limit. Built once, never freed.
-    if (fake_lidar_on && !fake_ld19)
-        fake_ld19 = new FakeLD19();
-    if (fake_lidar_on && !fake_ld19)
+    if (sim_lidar_on && !sim_ld19)
+        sim_ld19 = new SimLD19();
+    if (sim_lidar_on && !sim_ld19)
     {
         Serial.println("[lidar] out of memory for the LD19 emulator -- running without it");
-        fake_lidar_on = false;
+        sim_lidar_on = false;
     }
-    if (fake_lidar_on)
+    if (sim_lidar_on)
     {
         // The mode, before begin(): it decides whether a UART is opened, which
         // sink is armed and how many packets a step() may emit.
-        fake_lidar_comm = FakeLD19::parseCommMode(envGet("lidar_comm", NULL),
-                                                  FakeLD19::parseCommMode(LIDAR_COMM_DEFAULT,
-                                                                          FakeLD19::COMM_SERIAL));
-        fake_ld19->setCommMode(fake_lidar_comm);
+        sim_lidar_comm = SimLD19::parseCommMode(envGet("lidar_comm", NULL),
+                                                  SimLD19::parseCommMode(LIDAR_COMM_DEFAULT,
+                                                                          SimLD19::COMM_SERIAL));
+        sim_ld19->setCommMode(sim_lidar_comm);
         Serial.printf("[lidar] comm=%s (default %s)\n",
-                      fake_lidar_comm == FakeLD19::COMM_SERIAL ? "serial"
-                      : fake_lidar_comm == FakeLD19::COMM_UDP ? "udp" : "topic",
+                      sim_lidar_comm == SimLD19::COMM_SERIAL ? "serial"
+                      : sim_lidar_comm == SimLD19::COMM_UDP ? "udp" : "topic",
                       LIDAR_COMM_DEFAULT);
-        if (fake_lidar_comm == FakeLD19::COMM_TOPIC)
+        if (sim_lidar_comm == SimLD19::COMM_TOPIC)
         {
             initRawScan();
-            fake_ld19->setPacketCallback(onRawScanPacket);
+            sim_ld19->setPacketCallback(onRawScanPacket);
         }
         // Where on the robot the scan is taken from: geometry.laser.x, the
         // same number the URDF puts the laser frame at.
         {
             const char *x_env = envGet("lidar_x", NULL);
             if (x_env && *x_env)
-                fake_ld19->setOffsetX((float)atof(x_env));
+                sim_ld19->setOffsetX((float)atof(x_env));
         }
         // Which pin the simulated scan goes out of, and how fast, are wiring
         // facts about one board -- so they come from the env with the generated
@@ -1139,15 +1139,15 @@ void setup()
         // scan then leaves over UDP or micro-ROS instead.
         const int rx = envInt("lidar_rx", LIDAR_RXD);
         if (rx >= 0)
-            fake_ld19->begin(rx, envU32("lidar_baud", LIDAR_BAUDRATE));
+            sim_ld19->begin(rx, envU32("lidar_baud", LIDAR_BAUDRATE));
         else
-            fake_ld19->begin();
+            sim_ld19->begin();
     }
     else
-        Serial.println("[lidar] fake_ld19=0: the LiDAR emulator is off (a real LiDAR on this robot)");
+        Serial.println("[lidar] sim_ld19=0: the LiDAR emulator is off (a real LiDAR on this robot)");
 
     // /sonar: a real HC-SR04 if the env named both pins, else the simulated
-    // cone when the emulator is running to raycast it. `fake_sonar` can turn
+    // cone when the emulator is running to raycast it. `sim_sonar` can turn
     // the simulated one off on a bench that does not want it; it cannot
     // conjure one without the emulator.
     safety_stop_on = envFlag("safety_stop", false);
@@ -1157,14 +1157,14 @@ void setup()
     stall_ms = (uint16_t)constrain(atoi(envGet("stall_ms", "1500")), 200, 10000);
     stall_rpm_floor = (float)atof(envGet("stall_rpm_floor", "5.0"));
     // The simulated cone when anything is simulated, the real sensor only on a
-    // robot that is entirely real. rangePresent() is already false in fake mode
+    // robot that is entirely real. rangePresent() is already false in sim mode
     // -- initRange() dropped the pins -- so this cannot drive hardware either
     // way; it decides what, if anything, /sonar carries.
-    range_fake = fake_lidar_on && envFlag("fake_sonar", true);
-    publish_range = rangePresent() || range_fake;
+    range_sim = sim_lidar_on && envFlag("sim_sonar", true);
+    publish_range = rangePresent() || range_sim;
     Serial.printf("[range] /sonar %s\n",
                   !publish_range ? "off (no sonar pins, no emulator)"
-                  : range_fake ? "simulated (raycast from the fake LiDAR room)"
+                  : range_sim ? "simulated (raycast from the sim LiDAR room)"
                                : "from the HC-SR04");
 
     if (battery_msg) *battery_msg = getBattery();   // null for a tool app
@@ -1208,26 +1208,26 @@ void setup()
 // The flash is timed rather than delayed: this runs inside the 50 Hz control
 // path, and a delay() here would stall the whole loop.
 #if defined(LED_PIN) && (LED_PIN) >= 0
-#define FAKE_WALL_LED
+#define SIM_WALL_LED
 #endif
 
-static unsigned long fake_wall_led_off_at = 0;
+static unsigned long sim_wall_led_off_at = 0;
 
-static inline void fakeWallLedOn()
+static inline void simWallLedOn()
 {
-#ifdef FAKE_WALL_LED
+#ifdef SIM_WALL_LED
     digitalWrite(LED_PIN, HIGH);
-    fake_wall_led_off_at = millis() + 120;
+    sim_wall_led_off_at = millis() + 120;
 #endif
 }
 
-static inline void fakeWallLedService()
+static inline void simWallLedService()
 {
-#ifdef FAKE_WALL_LED
-    if (fake_wall_led_off_at != 0 && (long)(millis() - fake_wall_led_off_at) >= 0)
+#ifdef SIM_WALL_LED
+    if (sim_wall_led_off_at != 0 && (long)(millis() - sim_wall_led_off_at) >= 0)
     {
         digitalWrite(LED_PIN, LOW);
-        fake_wall_led_off_at = 0;
+        sim_wall_led_off_at = 0;
     }
 #endif
 }
@@ -1242,7 +1242,7 @@ void loop() {
         wdtFeed();
         return;
     }
-    fakeWallLedService();
+    simWallLedService();
     reportSampleAge();
     diagCount(DIAG_LOOP);
     diagState((int)state);
@@ -1305,8 +1305,8 @@ void loop() {
 #ifdef BOARD_LOOP // board specific loop
     BOARD_LOOP
 #endif
-    if (fake_ld19)
-        fake_ld19->step();
+    if (sim_ld19)
+        sim_ld19->step();
     flushRawScan();
     // The emulator's own account of itself every 5 s, over syslog (verified to
     // arrive with the agent up). Cumulative counters; read the deltas. Not
@@ -1316,12 +1316,12 @@ void loop() {
     // A serial-transport robot with the radio off has no channel for this; the
     // UART1 diagnostic is the instrument there (`diag_tx`), and it cannot be
     // the same UART the emulator streams out of.
-    if (fake_lidar_on)
+    if (sim_lidar_on)
     {
         EXECUTE_EVERY_N_MS(5000, {
             char stats[192];
-            fake_ld19->statsLine(stats, sizeof(stats));
-            syslog(LOG_INFO, "fake_ld19 %s state=%d", stats, (int)state);
+            sim_ld19->statsLine(stats, sizeof(stats));
+            syslog(LOG_INFO, "sim_ld19 %s state=%d", stats, (int)state);
         });
     }
     diagTick();
@@ -1401,10 +1401,10 @@ bool createEntities()
     //                    message carries, i.e. a constant zero heading.
     //
     // `publish_mag` is the right discriminator and not a new flag: it is
-    // already (a real magnetometer answered) OR (fake wheels are synthesising a
-    // field). A magless real robot gets imu/data; a bench board in fake mode
+    // already (a real magnetometer answered) OR (sim wheels are synthesising a
+    // field). A magless real robot gets imu/data; a bench board in sim mode
     // keeps imu/data_raw and madgwick exactly as before, which is why the
-    // 30-leg fake-mode matrix does not move under this change.
+    // 30-leg sim-mode matrix does not move under this change.
     const char *imu_topic = publish_mag ? "imu/data_raw" : "imu/data";
     Serial.printf("[imu] publishing %s (%s)\n", imu_topic,
                   publish_mag ? "magnetometer fitted: madgwick fuses this into imu/data"
@@ -1468,11 +1468,11 @@ bool createEntities()
                 ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, RelativeHumidity),
                 topicName("humidity")));
     }
-    // create raw_scan publisher for fake LiDAR -- only in topic mode. The
-    // publisher is compiled into every image now, so `fake_lidar_on` alone
+    // create raw_scan publisher for sim LiDAR -- only in topic mode. The
+    // publisher is compiled into every image now, so `sim_lidar_on` alone
     // would put an unread raw_scan on the wire for every serial and udp robot,
     // and spend one of RMW_UXRCE_MAX_PUBLISHERS doing it.
-    if (fake_lidar_on && fake_lidar_comm == FakeLD19::COMM_TOPIC)
+    if (sim_lidar_on && sim_lidar_comm == SimLD19::COMM_TOPIC)
     {
         RCCHECK(rclc_publisher_init_default(
             &raw_scan_publisher,
@@ -1547,7 +1547,7 @@ bool createEntities()
     syncTime();
     ledWrite(HIGH);
 
-    if (fake_wheels) {
+    if (sim_wheels) {
         // A simulated robot has no way to be picked up and put back at the start,
         // and its pose is board state: it survives the host container, the agent
         // and the whole ROS stack being torn down and rebuilt. So a second test run
@@ -1561,8 +1561,8 @@ bool createEntities()
         // across a reconnect, or the transform tree jumps under whatever is
         // localising against it.
         odometry->reset();
-        if (fake_ld19)
-            fake_ld19->updatePose(0.0f, 0.0f, 0.0f);
+        if (sim_ld19)
+            sim_ld19->updatePose(0.0f, 0.0f, 0.0f);
         syslog(LOG_INFO, "%s simulated pose reset to origin %lu", __FUNCTION__, millis());
     }
 
@@ -1655,8 +1655,8 @@ static inline float rangeAheadOrNegative()
 {
     if (!publish_range)
         return -1.0f;
-    if (range_fake)
-        return (fake_lidar_on && fake_ld19) ? fake_ld19->rangeAheadM() : -1.0f;
+    if (range_sim)
+        return (sim_lidar_on && sim_ld19) ? sim_ld19->rangeAheadM() : -1.0f;
     const float r = getRange().range;
     return isfinite(r) ? r : -1.0f;
 }
@@ -1722,7 +1722,7 @@ void moveBase()
     // Stall / encoder-loss guard. For each wheel that exists: if it is being
     // commanded but its encoder is not counting, and that persists past
     // stall_ms, the wheel has stalled or lost its encoder -- stop the base and
-    // say so. A FakeEncoder tracks the command, so this never trips in fake
+    // say so. A SimEncoder tracks the command, so this never trips in sim
     // mode; it is a real-hardware guard.
     if (stall_detect_on) {
         // Unused motors (e.g. motor3/4 on a 2WD) get req≈0 from getRPM(), so
@@ -1789,16 +1789,16 @@ void moveBase()
     );
     // Stop the simulated robot at the simulated walls, and correct the
     // odometry to match, so /odom and /scan never disagree about where it is.
-    // fake_lidar_on is the only gate: on a real robot the emulator is off and
+    // sim_lidar_on is the only gate: on a real robot the emulator is off and
     // clampToRoom() is never consulted, so the walls do not exist.
-    float fake_x = odometry->getX();
-    float fake_y = odometry->getY();
-    const bool hit_wall = fake_lidar_on && fake_ld19->clampToRoom(fake_x, fake_y);
+    float sim_x = odometry->getX();
+    float sim_y = odometry->getY();
+    const bool hit_wall = sim_lidar_on && sim_ld19->clampToRoom(sim_x, sim_y);
     if (hit_wall)
-        odometry->setPosition(fake_x, fake_y);
-    if (fake_lidar_on)
-        fake_ld19->updatePose(fake_x, fake_y, odometry->getHeading());
-    if (fake_wheels) {
+        odometry->setPosition(sim_x, sim_y);
+    if (sim_lidar_on)
+        sim_ld19->updatePose(sim_x, sim_y, odometry->getHeading());
+    if (sim_wheels) {
         // The IMU rides on how the body actually moved, which is not what the
         // wheels claim once the robot is against a wall. Real hardware behaves
         // the same way: the wheels slip and keep reporting speed, while the IMU
@@ -1806,13 +1806,13 @@ void moveBase()
         // disagreement is the only feedback there is that something was hit --
         // there is no bump sensor, and odometry velocity alone never reveals it.
         // Rotation survives, since a robot pinned against a wall can still turn.
-        fake_imu.update(
+        sim_imu.update(
             hit_wall ? 0.0f : current_vel.linear_x,
             hit_wall ? 0.0f : current_vel.linear_y,
             current_vel.angular_z,
             vel_dt
         );
-        fake_imu.setHeading(odometry->getHeading());
+        sim_imu.setHeading(odometry->getHeading());
     }
     // Announce the contact once, on the way in. Driving into a wall holds the
     // clamp active for as long as the command lasts, so logging every 20 ms
@@ -1820,9 +1820,9 @@ void moveBase()
     static bool was_clamped = false;
     if (hit_wall && !was_clamped)
     {
-        syslog(LOG_INFO, "%s fake wall contact at x %.2f y %.2f %lu",
-               __FUNCTION__, fake_x, fake_y, millis());
-        fakeWallLedOn();
+        syslog(LOG_INFO, "%s sim wall contact at x %.2f y %.2f %lu",
+               __FUNCTION__, sim_x, sim_y, millis());
+        simWallLedOn();
     }
     was_clamped = hit_wall;
 }
@@ -1845,7 +1845,7 @@ void moveBase()
 static void reportSampleAge()
 {
     static bool reported = false;
-    if (reported || sim_imu || !imu)
+    if (reported || imu_from_wheels || !imu)
         return;
     if (millis() < 8000)
         return;
@@ -1873,20 +1873,20 @@ void publishData()
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
     const uint32_t sens_t0 = micros();
-    if (sim_imu) {
+    if (imu_from_wheels) {
         // Every field the driver would return is overwritten here, and on a bare
         // module the read is a failing I2C transaction per publish, stalling the
         // loop for the bus timeout. Skip it.
-        fake_imu.apply(*imu_msg);
+        sim_imu.apply(*imu_msg);
     } else {
         *imu_msg = imu->getData();
-        if (imu_is_fake)
+        if (imu_is_sim)
             imu_msg->angular_velocity.z = odom_msg->twist.twist.angular.z;
     }
-    if (sim_mag) {
+    if (mag_from_wheels) {
         // Simulated wheels mean a simulated heading, so a simulated magnetometer
         // follows it; a real one is read as itself.
-        fake_imu.applyMag(*mag_msg);
+        sim_imu.applyMag(*mag_msg);
     } else {
         *mag_msg = mag->getData();
     }
@@ -1908,7 +1908,7 @@ void publishData()
             mag_bias[2] = compiled[2];
 #endif
             // A SIMULATED magnetometer ships calibrated, because a real robot
-            // that has been through magnetometer_calibration does. The fake
+            // that has been through magnetometer_calibration does. The sim
             // hard-iron offset is still injected (applyMag) so the calibration
             // routine has a real offset to find -- this only means the default
             // robot is one that has already found it.
@@ -1922,11 +1922,11 @@ void publishData()
             //
             // Writing `mag_bias 0,0,0` in the env puts the robot back to
             // uncalibrated, which is how the calibration leg is run.
-            if (sim_mag && !mag_bias[0] && !mag_bias[1] && !mag_bias[2])
+            if (mag_from_wheels && !mag_bias[0] && !mag_bias[1] && !mag_bias[2])
             {
-                mag_bias[0] = (float)FAKE_MAG_BIAS_X;
-                mag_bias[1] = (float)FAKE_MAG_BIAS_Y;
-                mag_bias[2] = (float)FAKE_MAG_BIAS_Z;
+                mag_bias[0] = (float)SIM_MAG_BIAS_X;
+                mag_bias[1] = (float)SIM_MAG_BIAS_Y;
+                mag_bias[2] = (float)SIM_MAG_BIAS_Z;
             }
             envFloatVec("mag_bias", mag_bias, 3);
             mag_bias_set = (mag_bias[0] != 0.0f || mag_bias[1] != 0.0f
@@ -2022,7 +2022,7 @@ void publishData()
         // ahead -- wheel odometry cannot provide it, because the wheels keep
         // turning when the robot is stopped against something.
         EXECUTE_EVERY_N_MS(RANGE_TIMER, {
-            if (range_fake)
+            if (range_sim)
             {
                 // rangeAheadM() answers -1 for "nothing in the cone", which is
                 // the right answer for the hazard stop below ROS (a missing
@@ -2033,13 +2033,13 @@ void publishData()
                 // open room reads exactly like a failed sensor and the robot
                 // never moves again. Clear is max_range, and it is inside the
                 // span. Same rule as the real sensor: see range.cpp.
-                const float ahead = fake_ld19->rangeAheadM();
-                range_msg->field_of_view = (float)FAKE_SONAR_CONE_DEG * (float)DEG_TO_RAD;
-                range_msg->min_range = FAKE_SONAR_MIN_RANGE_M;
-                range_msg->max_range = FAKE_SONAR_MAX_RANGE_M;
+                const float ahead = sim_ld19->rangeAheadM();
+                range_msg->field_of_view = (float)SIM_SONAR_CONE_DEG * (float)DEG_TO_RAD;
+                range_msg->min_range = SIM_SONAR_MIN_RANGE_M;
+                range_msg->max_range = SIM_SONAR_MAX_RANGE_M;
                 range_msg->range =
-                    (ahead < 0.0f || ahead > FAKE_SONAR_MAX_RANGE_M) ? FAKE_SONAR_MAX_RANGE_M
-                    : (ahead < FAKE_SONAR_MIN_RANGE_M)               ? FAKE_SONAR_MIN_RANGE_M
+                    (ahead < 0.0f || ahead > SIM_SONAR_MAX_RANGE_M) ? SIM_SONAR_MAX_RANGE_M
+                    : (ahead < SIM_SONAR_MIN_RANGE_M)               ? SIM_SONAR_MIN_RANGE_M
                                                                      : ahead;
                 range_msg->radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
             }

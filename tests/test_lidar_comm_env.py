@@ -2,7 +2,7 @@
 
 `comm_mode` used to be compiled in three ways at once: it zeroed LIDAR_RXD for
 the topic and udp modes, it defined USE_LIDAR_UDP, and main.cpp derived
-USE_FAKE_LD19_RAW_SCAN from both. So the transport was a property of the IMAGE.
+USE_SIM_LD19_RAW_SCAN from both. So the transport was a property of the IMAGE.
 
 The released `esp32` image used to be built from esp32_wifi_config.yaml, whose
 comm_mode is `udp`.
@@ -51,7 +51,7 @@ def _header(cfg_stem, tmp_path, distro="jazzy"):
 def _fake_udp_config(tmp_path):
     """gendrv turned into what esp32_wifi_config.yaml used to be.
 
-    That file -- the fake-mode, udp-sink ESP32 reference -- was deleted on
+    That file -- the sim-mode, udp-sink ESP32 reference -- was deleted on
     2026-09-20 along with esp32_config.yaml: same silicon as gendrv, differing
     only in keys the env partition decides at boot. The COMBINATION it supplied
     is still worth testing, so it is built here instead of stored.
@@ -60,7 +60,7 @@ def _fake_udp_config(tmp_path):
     src = _yaml.safe_load(open(os.path.join(REF, "gendrv_config.yaml")))
     ctrl = src["base_controller"]
     ctrl["transport"] = "udp4"
-    ctrl["sensors"]["use_fake_ld19"] = True
+    ctrl["sensors"]["use_sim_ld19"] = True
     ctrl.setdefault("lidar", {})["comm_mode"] = "udp"
     cfg = tmp_path / "fake_udp_config.yaml"
     cfg.write_text(_yaml.safe_dump(src))
@@ -144,8 +144,8 @@ def test_the_udp_destination_exists_even_in_a_serial_build(tmp_path):
 
 
 def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
-    """lidar.cpp's path is gated `USE_LIDAR_UDP && !USE_FAKE_LD19` -- forwarding a
-    PHYSICAL LiDAR's bytes over UDP. A fake-mode udp robot must not define it, or
+    """lidar.cpp's path is gated `USE_LIDAR_UDP && !USE_SIM_LD19` -- forwarding a
+    PHYSICAL LiDAR's bytes over UDP. A sim-mode udp robot must not define it, or
     the emulator's sink goes back to being chosen by the build."""
     import subprocess
     cfg, _src = _fake_udp_config(tmp_path)
@@ -166,10 +166,10 @@ def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
     # decides. What it still carries is the DEFAULT the board falls back to,
     # and lidar.cpp forwards a real LiDAR only when the env says the emulator
     # is off -- checked here rather than asserting on a macro that is gone.
-    assert 'FAKE_LD19_DEFAULT true' in text, "the built config is a fake-mode one"
+    assert 'SIM_LD19_DEFAULT true' in text, "the built config is a sim-mode one"
     assert "#define USE_LIDAR_UDP" not in text, (
         "USE_LIDAR_UDP is gone: forwarding a real LiDAR over UDP is a run-time "
-        "decision from lidar_comm + fake_ld19, not a build.")
+        "decision from lidar_comm + sim_ld19, not a build.")
 
 
 @pytest.mark.parametrize("cfg_stem", ["gendrv"])
@@ -222,33 +222,33 @@ def test_the_serial_lidar_driver_respawns():
 
 
 def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_absent():
-    """use_fake_ld19 + serial + no lidar tty must use the host-side fake laser.
+    """use_sim_ld19 + serial + no lidar tty must use the host-side sim laser.
 
     A bare ESP32 module has only its one micro-ROS USB; there is no second
     USB-serial bridge for a lidar. A serial ldlidar driver then dies on a
     missing /dev/ttyUSB1 and /scan never comes -- stranding SLAM/Nav2 and
     breaking the "bring up a bare module instantly" promise. When the scan is
-    meant to be faked, an absent serial port must route to fake_laser_node (the
+    meant to be simd, an absent serial port must route to sim_laser_node (the
     virtual room); a *present* port still drives the real serial driver, so the
     gendrv driver-path test is unchanged.
     """
     path = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
     text = open(path).read()
-    assert "use_host_fake_laser" in text, "the host-fake-laser guard is gone"
-    m = re.search(r"use_host_fake_laser\s*=\s*\((.*?)\n    \)", text, re.S)
-    assert m, "use_host_fake_laser is no longer a single assignment block"
+    assert "use_host_sim_laser" in text, "the host-sim-laser guard is gone"
+    m = re.search(r"use_host_sim_laser\s*=\s*\((.*?)\n    \)", text, re.S)
+    assert m, "use_host_sim_laser is no longer a single assignment block"
     guard = m.group(1)
-    assert "use_fake_ld19" in guard, "the fallback no longer requires a faked scan"
+    assert "use_sim_ld19" in guard, "the fallback no longer requires a simd scan"
     assert 'effective_lidar_comm_mode != "serial"' in guard, (
-        "the fallback no longer routes non-serial fake modes to the host node"
+        "the fallback no longer routes non-serial sim modes to the host node"
     )
     assert "os.path.exists(lidar_port)" in guard, (
         "the bare-module fallback no longer checks whether the serial lidar "
         "port exists; a bare board will strand SLAM/Nav2 on a missing /scan"
     )
-    # The fake-laser Node must be selected by exactly this guard.
-    assert "if use_host_fake_laser" in text, (
-        "fake_laser_node is no longer gated on use_host_fake_laser"
+    # The sim-laser Node must be selected by exactly this guard.
+    assert "if use_host_sim_laser" in text, (
+        "sim_laser_node is no longer gated on use_host_sim_laser"
     )
 
 
@@ -256,7 +256,7 @@ def test_scan_wait_follows_the_scan_source_not_the_transport():
     """The pipeline's /scan gate must key on who PRODUCES the scan.
 
     It keyed on the micro-ROS transport, so a board with micro-ROS on a cable and
-    fake_ld19 out a UART into a second bridge -- the GenDrv -- got 15 s while the
+    sim_ld19 out a UART into a second bridge -- the GenDrv -- got 15 s while the
     real ldlidar driver was still respawning against a board rebooting from the
     flash the same run had just done. Both distros failed with /scan NO DATA on a
     healthy board, while the udp leg beside it passed with 90 s.
@@ -267,5 +267,5 @@ def test_scan_wait_follows_the_scan_source_not_the_transport():
     assert "scan_wait = 15 if host_room else 90" in src
     # and it must decide host_room the same way bringup decides to launch the
     # virtual room, or the gate and the stack disagree about what will publish.
-    assert 'use_fake_ld19' in src and 'lidar_mode != "serial"' in src
+    assert 'use_sim_ld19' in src and 'lidar_mode != "serial"' in src
     assert "os.path.exists(lidar_port_cfg)" in src

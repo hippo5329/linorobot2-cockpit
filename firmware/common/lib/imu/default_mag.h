@@ -305,13 +305,13 @@ class ICM20948MAG: public MAGInterface
         }
 };
 
-class FakeMAG: public MAGInterface
+class SimMAG: public MAGInterface
 {
     private:
         geometry_msgs__msg__Vector3 mag_;
 
     public:
-        FakeMAG()
+        SimMAG()
         {
         }
 
