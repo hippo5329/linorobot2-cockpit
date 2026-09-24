@@ -70,6 +70,26 @@ base_controller:
     use_fake_wheel: false
     use_fake_ld19: true
     use_fake_env: true
+  # The simulated world. Written out in full because fake mode is the default:
+  # on a bench run these ARE the robot. Every key is optional -- absent, the
+  # firmware keeps its compiled default, which is the value shown here.
+  # robot_radius is omitted on purpose: it follows the costmaps' robot_radius.
+  simulation:
+    map_width: 10.0                   # the simulated room, metres, centred on the origin
+    map_height: 6.0
+    wall_obstacle: true               # the obstacle the Nav2 test goal sits behind
+    wall_x1: 2.0
+    wall_y1: -1.5
+    wall_x2: 2.0
+    wall_y2: 1.5
+    robot_mass: 3.5                   # kg -- sets the wheels' spin-up time constant
+    wheel_noise_rpm: 1.0              # +/- peak white noise on the reported RPM
+    gear_efficiency: 0.75             # fraction of motor torque the reduction returns
+    gear_drag_rpm: 12.0               # constant (Coulomb) drag, RPM/s, while turning
+    battery_sag: 0.25                 # fraction of V_oc lost at four-wheel stall current
+    battery_sag_tau_ms: 400           # the pack sags, and recovers, over this long
+    driver_drop: 0.03                 # bridge's fixed voltage floor, present at any current
+    driver_resistance: 0.1            # bridge's current-proportional loss, instant
   pins:
     motor1:            # channel 1, right
       pwm: -1

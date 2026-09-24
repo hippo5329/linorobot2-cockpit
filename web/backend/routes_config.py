@@ -116,8 +116,33 @@ async def api_save_hardware_config(request: Request):
         ctrl.setdefault("sensors", {}).update(data["sensors"])
     if "pins" in data and isinstance(data["pins"], dict):
         ctrl.setdefault("pins", {}).update(data["pins"])
+    # The simulated robot's load and drivetrain losses. Merged rather than
+    # replaced: the form carries the mass and the four loss terms, and the room
+    # (map_width, the obstacle wall) is set elsewhere -- a whole-block assignment
+    # would drop it.
+    if "simulation" in data and isinstance(data["simulation"], dict):
+        ctrl.setdefault("simulation", {}).update(data["simulation"])
     if "base_controller" in data and isinstance(data["base_controller"], dict):
         ctrl.update(data["base_controller"])
+
+    # Re-derive the Nav2 limits from the motors this robot now has.
+    #
+    # ON by default, because the alternative is what shipped: limits asking 103%
+    # of a differential base's motors, 171% at the smoother's ceiling and 129%
+    # on mecanum, with nothing checking. Changing the wheel diameter or the mass
+    # silently invalidates hand-tuned limits, and this is the one place that
+    # knows the change happened. `kinematics.auto_nav2_limits: false` hands
+    # control back to whoever wants to tune by hand -- and then nothing here
+    # touches their values.
+    import drivetrain_report as dr
+
+    try:
+        nav2_changes = dr.apply_nav2_limits(params)
+    except (ValueError, TypeError, SystemExit) as exc:
+        # A half-entered chassis must not block saving the chassis.
+        nav2_changes, nav2_error = {}, str(exc)
+    else:
+        nav2_error = None
 
     save_params(params)
     findings = [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)]
@@ -132,11 +157,19 @@ async def api_save_hardware_config(request: Request):
                    f"error(s) for [{controller_name}]. Fix them below and save again.")
     else:
         message = f"Hardware config saved, but the header generator failed for [{controller_name}]."
+    if nav2_changes:
+        message += (f" Nav2 limits re-derived from the motors "
+                    f"({len(nav2_changes)} value(s) changed).")
+    elif nav2_error:
+        message += f" Nav2 limits NOT re-derived: {nav2_error}"
+
     return {
         "success": True,
         "controller": controller_name,
         "header_ok": header_ok,
         "message": message,
+        "nav2_auto": dr.auto_limits_enabled(params),
+        "nav2_changes": {k: v for k, v in nav2_changes.items()},
         "header_stdout": res.stdout,
         "header_stderr": res.stderr,
         "pin_findings": findings,
@@ -471,3 +504,139 @@ def api_configs():
                     "path": os.path.relpath(os.path.join(custom_dir, f), REPO_ROOT),
                 })
     return {"status": "ok", "configs": configs}
+
+
+# ---------------------------------------------------------------------------
+# The drivetrain HUD.
+#
+# The Kinematics HUD on the Hardware tab has always shown circumference, ticks
+# per metre and a top speed from `pi*d*rpm/60`. Those are arithmetic. What a
+# person actually needs before they order parts -- how fast does it accelerate,
+# how long to reach speed, how far to stop, and is the Nav2 tuning in this same
+# config asking for more than the motors can give -- needs the motor model, and
+# until now the only way to see it was to flash test_acc and drive the board.
+#
+# It is computed HERE rather than in the browser on purpose. scripts/
+# drivetrain_report.py parses the model's constants out of fake_wheel.h, so the
+# HUD moves when the firmware moves; a JavaScript reimplementation would be a
+# second opinion about the robot that drifts silently from the first. Same rule
+# as the report itself, one layer up.
+@app.post("/api/drivetrain/performance")
+async def api_drivetrain_performance(request: Request):
+    """Speed, acceleration and the Nav2 budget check for a config.
+
+    The body is a partial config -- `kinematics`, optionally `base_controller.
+    simulation` and `nav2`. Absent blocks fall back to the saved params, so the
+    HUD can post just the kinematics fields the user is editing and still be
+    judged against the robot's real Nav2 tuning.
+    """
+    import drivetrain_report as dr
+
+    data = await json_body(request)
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="expected a JSON object")
+
+    def _overlay(base, over):
+        # A shallow overlay per block is right here: the HUD sends whole scalar
+        # fields, and a deep merge into the Nav2 tree would let a half-typed
+        # value from one node reach another.
+        out = dict(base or {})
+        out.update({k: v for k, v in (over or {}).items() if v is not None})
+        return out
+
+    params = copy.deepcopy(load_params()) or {}
+    for key in ("kinematics", "nav2"):
+        if isinstance(data.get(key), dict):
+            params[key] = _overlay(params.get(key), data[key])
+    sim = (data.get("base_controller") or {}).get("simulation")
+    if isinstance(sim, dict):
+        bc = params.setdefault("base_controller", {})
+        bc["simulation"] = _overlay(bc.get("simulation"), sim)
+
+    try:
+        d = dr.drivetrain(params)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"kinematics: {exc}")
+    if d["max_rpm"] <= 0 or d["circ"] <= 0:
+        # Not an error: the HUD asks on every keystroke, and a half-typed
+        # wheel_diameter is a normal state of an input box.
+        return {"ready": False,
+                "reason": "kinematics.max_rpm and wheel_diameter must be positive"}
+    p = dr.performance(d)
+
+    # The same demands report() judges, in the same order, so the HUD and the
+    # command line cannot disagree about whether a config is over budget.
+    nav = params.get("nav2") or {}
+    smoother_v = dr._dig(nav, "max_velocity")
+    smoother_a = dr._dig(nav, "max_accel")
+    checks, over = [], False
+    for label, v, w in (
+            ("Controller target", dr._dig(nav, "desired_linear_vel"),
+             dr._dig(nav, "rotate_to_heading_angular_vel")),
+            ("Smoother envelope",
+             smoother_v[0] if isinstance(smoother_v, list) else None,
+             smoother_v[2] if isinstance(smoother_v, list) and len(smoother_v) > 2 else None)):
+        if v is None or w is None:
+            checks.append({"label": label, "set": False})
+            continue
+        need = dr.demand_rpm(d, float(v), float(w))
+        pct = need / d["command_rpm"] * 100.0 if d["command_rpm"] > 0 else 0.0
+        over = over or need > d["command_rpm"]
+        checks.append({"label": label, "set": True, "linear": float(v), "angular": float(w),
+                       "need_rpm": need, "budget_rpm": d["command_rpm"], "percent": pct,
+                       "over": need > d["command_rpm"]})
+    if isinstance(smoother_a, list) and smoother_a:
+        # Against the SETTLED acceleration: a rate limit the base meets only
+        # while the pack is still stiff is one it misses for the rest of the move.
+        asked, have = float(smoother_a[0]), p["lin_acc_held"]
+        over = over or asked > have
+        checks.append({"label": "Smoother accel", "set": True, "asked": asked, "have": have,
+                       "percent": (asked / have * 100.0) if have > 0 else 0.0,
+                       "over": asked > have})
+
+    # What test_acc itself would print, simulated on its own 20 ms / 1 s profile.
+    # This is the block a velocity smoother should be tuned from: it is what the
+    # robot does in the second a manoeuvre lasts, where the closed form above is
+    # the asymptote it converges on given longer.
+    lin_run = dr.run_test_acc(d, rotate=False)
+    rot_run = dr.run_test_acc(d, rotate=True)
+
+    return {
+        "ready": True,
+        "base": d["base"], "wheels": d["wheels"],
+        "measured": {
+            "max_vel": lin_run["max_vel"], "max_acc": lin_run["max_acc"],
+            "t_to_90": lin_run["t_to_90"], "stop": lin_run["stop"],
+            "max_vel_ang": rot_run["max_vel"], "max_acc_ang": rot_run["max_acc"],
+            "stop_ang": rot_run["stop"],
+        },
+        "motor_rpm": d["motor_rpm"], "command_rpm": d["command_rpm"],
+        "volt_ratio": d["volt_ratio"], "radius": d["radius"],
+        "circumference": d["circ"], "mass": d["mass"],
+        "ticks_per_m": (float(params.get("kinematics", {}).get("counts_per_rev", 0) or 0)
+                        / d["circ"]) if d["circ"] > 0 else 0.0,
+        "model": {"gear_efficiency": d["gear_eff"], "gear_drag_rpm": d["coulomb"],
+                  "battery_sag": d["sag"], "battery_sag_tau_ms": d["sag_tau_ms"],
+                  "driver_drop": d["drv_drop"], "driver_resistance": d["drv_r"]},
+        "max_linear": p["lin_vel"], "max_angular": p["ang_vel"],
+        "accel_first": p["lin_acc"], "accel_held": p["lin_acc_held"],
+        "ang_accel_first": p["ang_acc"], "ang_accel_held": p["ang_acc_held"],
+        "t_to_90": p["t_to_90"], "tau_ms": p["tau"] * 1000.0,
+        "stop_distance": p["stop_dist"],
+        "checks": checks,
+        "over_budget": over,
+        # What the limits WOULD become, so the HUD can show them before the user
+        # saves -- and so a manual tuner can see what the motors suggest without
+        # having their own values overwritten to find out.
+        "auto_limits": dr.auto_limits_enabled(params),
+        "suggested": {k.split("ros__parameters.")[-1]: v
+                      for k, v in dr.suggest_nav2_limits(d, p).items()},
+        # The radius rule is the thing people get wrong, so it is stated rather
+        # than left to be inferred from a number.
+        "radius_note": ("mecanum turns on (lr + fr)/2 -- the rollers put the "
+                        "wheelbase into the yaw term"
+                        if d["base"] == "mecanum" else
+                        "skid steer: lr/2 scaled by angular_scale (scrub)"
+                        if d["base"] in ("4wd", "skid_steer") else
+                        "differential: lr/2"),
+    }

@@ -100,6 +100,12 @@ async function loadHardwareConfig() {
     if (elOpV) elOpV.value = kine.motor_operating_voltage || 24.0;
     const elMaxV = document.getElementById("cfg-motor-max-voltage");
     if (elMaxV) elMaxV.value = kine.motor_power_max_voltage || 12.0;
+    loadSimForm(tgt.simulation || {});
+    // Default ON when the key is absent: the same default drivetrain_report.py
+    // applies, so an old config gets the derived limits rather than keeping
+    // whatever it happened to ship with.
+    const elAuto = document.getElementById("cfg-nav2-auto");
+    if (elAuto) elAuto.checked = kine.auto_nav2_limits !== false;
     loadGeometryForm(data.geometry || {}, data.geometry_warnings || []);
 
     // 2. Drive & Motors
@@ -323,6 +329,45 @@ function renderGeometryWarnings(warnings) {
     : "";
 }
 
+// The load and the drivetrain's losses: form field <-> base_controller.simulation
+// key. One table, used by the loader, the save payload and the HUD's request, so
+// a field cannot be readable and unsaveable (or worse, saved under a name the
+// firmware does not read -- the env key contract's whole subject).
+const SIM_FIELDS = [
+  ["cfg-sim-mass",      "robot_mass"],
+  ["cfg-sim-gear-eff",  "gear_efficiency"],
+  ["cfg-sim-gear-drag", "gear_drag_rpm"],
+  ["cfg-sim-sag",       "battery_sag"],
+  ["cfg-sim-sag-tau",   "battery_sag_tau_ms"],
+  ["cfg-sim-drv-drop",  "driver_drop"],
+  ["cfg-sim-drv-r",     "driver_resistance"],
+];
+
+// Blank means "use the firmware's default", never zero. A gearbox of efficiency
+// 0 or a pack that never sags are both meaningful values somebody might type, so
+// the empty string is the only thing that means unset -- which is why this
+// returns undefined rather than 0 and the caller drops the key entirely.
+function readSimForm() {
+  const out = {};
+  SIM_FIELDS.forEach(([id, key]) => {
+    const raw = document.getElementById(id)?.value;
+    if (raw === undefined || raw === null || String(raw).trim() === "") return;
+    const v = parseFloat(raw);
+    if (Number.isFinite(v)) out[key] = v;
+  });
+  return out;
+}
+
+function loadSimForm(sim) {
+  SIM_FIELDS.forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // The placeholder already shows the firmware default, so an absent key
+    // leaves the box empty rather than pretending the user chose that value.
+    el.value = (sim && sim[key] !== undefined && sim[key] !== null) ? sim[key] : "";
+  });
+}
+
 function updateKinematicsHUD() {
   const wheelD = parseFloat(document.getElementById("cfg-wheel-diameter")?.value || 0.152);
   const trackW = parseFloat(document.getElementById("cfg-track-width")?.value || 0.271);
@@ -348,6 +393,178 @@ function updateKinematicsHUD() {
     const elTicks = document.getElementById("hud-ticks-per-m");
     if (elTicks) elTicks.textContent = `${Math.round(ticksPerM).toLocaleString()} ticks/m`;
   }
+  updateDrivetrainHUD();
+}
+
+// --- motor performance --------------------------------------------------------
+//
+// pi*d*rpm/60 above is arithmetic, and arithmetic cannot answer the question
+// somebody designing a robot actually has: does it accelerate fast enough, and
+// is the Nav2 tuning in this same config asking the motors for more than they
+// can give? That needs the brushed DC torque-speed model, and until now the only
+// way to see it was to flash test_acc and drive the board.
+//
+// The model is NOT reimplemented here. /api/drivetrain/performance runs
+// scripts/drivetrain_report.py, which parses its constants out of fake_wheel.h --
+// so this HUD and the firmware cannot disagree about the robot. A JS copy would
+// be a second opinion that drifts silently, which is the exact fault the report
+// was written to avoid.
+let drivetrainHudTimer = null;
+let drivetrainHudSeq = 0;
+
+function updateDrivetrainHUD() {
+  // Debounced: this fires on every keystroke in the kinematics form.
+  if (drivetrainHudTimer) clearTimeout(drivetrainHudTimer);
+  drivetrainHudTimer = setTimeout(fetchDrivetrainHUD, 250);
+}
+
+async function fetchDrivetrainHUD() {
+  const num = (id, dflt) => {
+    const v = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(v) ? v : dflt;
+  };
+  const payload = {
+    kinematics: {
+      base_type: document.getElementById("cfg-kinematics")?.value || "2wd",
+      wheel_diameter: num("cfg-wheel-diameter", 0.152),
+      lr_wheels_distance: num("cfg-track-width", 0.271),
+      fr_wheels_distance: num("cfg-wheelbase", 0.0),
+      max_rpm: num("cfg-max-rpm", 140),
+      max_rpm_ratio: num("cfg-headroom", 0.85),
+      counts_per_rev: num("cfg-cpr", 144000),
+      motor_operating_voltage: num("cfg-motor-voltage", 24.0),
+      motor_power_max_voltage: num("cfg-motor-max-voltage", 12.0),
+      auto_nav2_limits: document.getElementById("cfg-nav2-auto")?.checked !== false,
+    },
+    // Unsaved edits count: the HUD's job is to answer while the user is still
+    // deciding, so it sends what the form says, not what the file says.
+    base_controller: { simulation: readSimForm() },
+  };
+  // A late reply must not overwrite a newer one: the user keeps typing while
+  // these are in flight, and out-of-order responses would show the HUD of a
+  // config that no longer matches the form.
+  const seq = ++drivetrainHudSeq;
+  let data;
+  try {
+    const res = await fetch("/api/drivetrain/performance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    data = await res.json();
+  } catch (err) {
+    return;                       // offline or backend restarting; keep the last numbers
+  }
+  if (seq !== drivetrainHudSeq) return;
+  renderDrivetrainHUD(data);
+}
+
+function renderDrivetrainHUD(d) {
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  const checks = document.getElementById("hud-perf-checks");
+  if (!d || d.ready === false) {
+    ["hud-perf-speed", "hud-perf-accel-first", "hud-perf-accel-held", "hud-perf-t90",
+     "hud-perf-radius", "hud-perf-budget", "hud-acc-max-vel", "hud-acc-max-acc",
+     "hud-acc-t90", "hud-acc-stop"].forEach((id) => set(id, "--"));
+    set("hud-perf-model", d && d.reason ? d.reason : "");
+    if (checks) checks.innerHTML = "";
+    return;
+  }
+
+  set("hud-perf-speed", `${d.max_linear.toFixed(2)} m/s`);
+  set("hud-perf-speed-sub", `${d.max_angular.toFixed(2)} rad/s about the centre`);
+  set("hud-perf-accel-first", `${d.accel_first.toFixed(2)} m/s²`);
+  set("hud-perf-accel-held", `${d.accel_held.toFixed(2)} m/s²`);
+  set("hud-perf-t90", `${d.t_to_90.toFixed(2)} s`);
+  set("hud-perf-stop", `stops in ${d.stop_distance.toFixed(2)} m (τ ${Math.round(d.tau_ms)} ms)`);
+  set("hud-perf-radius", `${d.radius.toFixed(3)} m`);
+  set("hud-perf-radius-note", d.radius_note || "");
+  set("hud-perf-budget", `${Math.round(d.command_rpm)} rpm`);
+  set("hud-perf-budget-sub",
+      `motor reaches ${Math.round(d.motor_rpm)} rpm`
+      + (d.volt_ratio < 0.999 ? ` (pack derates it to ${Math.round(d.volt_ratio * 100)}%)` : ""));
+  set("hud-perf-model",
+      `${d.mass.toFixed(2)} kg · gearbox ${Math.round(d.model.gear_efficiency * 100)}% · `
+      + `drag ${Math.round(d.model.gear_drag_rpm)} rpm/s · sag ${Math.round(d.model.battery_sag * 100)}%`
+      + ` over ${Math.round(d.model.battery_sag_tau_ms)} ms · driver `
+      + `${Math.round(d.model.driver_drop * 100)}% + ${Math.round(d.model.driver_resistance * 100)}%`);
+
+  // The simulated test_acc run. Same four lines the tool prints on a board, in
+  // the same units and the same order, so the two are directly comparable when
+  // somebody does put motors on it.
+  const m = d.measured || {};
+  if (m.max_vel !== undefined) {
+    set("hud-acc-max-vel", `${m.max_vel.toFixed(2)} m/s`);
+    set("hud-acc-max-vel-ang", `${m.max_vel_ang.toFixed(2)} rad/s turning on the spot`);
+    set("hud-acc-max-acc", `${m.max_acc.toFixed(2)} m/s²`);
+    set("hud-acc-max-acc-ang", `${m.max_acc_ang.toFixed(2)} rad/s² turning`);
+    set("hud-acc-t90", `${m.t_to_90.toFixed(2)} s`);
+    set("hud-acc-stop", `${m.stop.toFixed(3)} m`);
+    set("hud-acc-stop-ang", `${m.stop_ang.toFixed(2)} rad turning`);
+  }
+
+  const badge = document.getElementById("hud-kinematics-badge");
+  if (badge) {
+    // The badge used to say "85% Headroom Safe" whatever the numbers were --
+    // a reassurance with nothing behind it. It now reports the verdict.
+    badge.textContent = d.over_budget ? "⚠ Config asks for more than the motors give"
+                                      : "✓ Within the motors' budget";
+    badge.classList.toggle("over", !!d.over_budget);
+  }
+
+  set("hud-nav2-auto-state", d.auto_limits
+      ? "auto-tuning is on — saving rewrites these from the motors"
+      : "auto-tuning is off — these are yours to set");
+  renderSuggestedLimits(d);
+
+  if (!checks) return;
+  const rows = (d.checks || []).map((c) => {
+    if (!c.set) {
+      return `<div class="hud-check"><span class="hud-check-label">${escapeHtml(c.label)}</span>`
+           + `<span>not set in this config</span></div>`;
+    }
+    const cls = c.over ? "over" : "ok";
+    const flag = c.over ? "OVER BUDGET" : "ok";
+    const detail = c.need_rpm !== undefined
+      ? `${c.linear.toFixed(2)} m/s + ${c.angular.toFixed(2)} rad/s → `
+        + `${c.need_rpm.toFixed(1)} rpm = ${c.percent.toFixed(0)}% of ${Math.round(c.budget_rpm)}`
+      : `${c.asked.toFixed(2)} m/s² → ${c.percent.toFixed(0)}% of the `
+        + `${c.have.toFixed(2)} m/s² it holds`;
+    return `<div class="hud-check ${cls}"><span class="hud-check-label">`
+         + `${escapeHtml(c.label)}</span><span>${escapeHtml(detail)}</span>`
+         + `<span>${flag}</span></div>`;
+  });
+  if (d.auto_limits) {
+    // With auto-tuning on, an over-budget row is a statement about the FILE as
+    // it stands, not about what the robot will run: saving rewrites it. Saying
+    // so stops the red row reading as an unfixable fault.
+    rows.unshift('<div class="hud-check"><span class="hud-check-label">In the config now'
+               + "</span><span>auto-tuning is on, so saving replaces these with the "
+               + "values below</span></div>");
+  }
+  checks.innerHTML = rows.join("");
+}
+
+// What auto-tuning would write. Shown whether it is on or off: with it on this
+// is a preview of the save, and with it off it is the advice a manual tuner
+// wanted without having their own numbers overwritten to see it.
+function renderSuggestedLimits(d) {
+  const box = document.getElementById("hud-perf-suggested");
+  if (!box) return;
+  const sug = d.suggested || {};
+  const keys = Object.keys(sug);
+  if (!keys.length) { box.innerHTML = ""; return; }
+  const fmt = (v) => (Array.isArray(v) ? `[${v.join(", ")}]` : String(v));
+  const head = d.auto_limits
+    ? "Derived from the motors — written on save"
+    : "Auto-tuning is OFF — these are what the motors suggest, nothing is rewritten";
+  box.innerHTML = `<div class="hud-check"><span class="hud-check-label">${escapeHtml(head)}`
+    + "</span></div>"
+    + keys.map((k) => `<div class="hud-check"><span class="hud-check-label">`
+        + `${escapeHtml(k)}</span><span>${escapeHtml(fmt(sug[k]))}</span></div>`).join("");
 }
 
 function updateAdcCalculations() {
@@ -804,6 +1021,7 @@ async function saveCurrentHardwareConfig() {
     serial_port: serialPort,
     console: document.getElementById("cfg-console")?.value || "usb",
     geometry: readGeometryForm(kineType),
+    simulation: readSimForm(),
     kinematics: {
       base_type: kineType,
       wheel_diameter: parseFloat(document.getElementById("cfg-wheel-diameter")?.value || 0.152),
@@ -812,6 +1030,7 @@ async function saveCurrentHardwareConfig() {
       max_rpm: parseInt(document.getElementById("cfg-max-rpm")?.value || 140, 10),
       max_rpm_ratio: parseFloat(document.getElementById("cfg-headroom")?.value || 0.85),
       counts_per_rev: parseInt(document.getElementById("cfg-cpr")?.value || 144000, 10),
+      auto_nav2_limits: document.getElementById("cfg-nav2-auto")?.checked !== false,
       pwm_frequency: parseInt(document.getElementById("cfg-pwm-freq")?.value || 20000, 10),
       pwm_bits: parseInt(document.getElementById("cfg-pwm-bits")?.value || 10, 10),
       motor_operating_voltage: parseFloat(document.getElementById("cfg-motor-voltage")?.value || 24.0),

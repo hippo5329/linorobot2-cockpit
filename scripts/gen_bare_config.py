@@ -25,6 +25,7 @@ updated when a Nav2 key is added.
 import argparse
 import copy
 import os
+import re
 import sys
 
 import yaml
@@ -84,6 +85,63 @@ def _bare_comm_mode(mcu: str) -> str:
     default rather than one that quietly halves the control rate.
     """
     return "topic" if mcu.startswith("pico") else "serial"
+
+
+# The simulated world, written out IN FULL rather than left to the firmware's
+# #ifndef fallbacks.
+#
+# The firmware is happy either way -- an absent key keeps its compiled default,
+# which is what makes a blank env boot -- so this is for the person reading the
+# config. Fake mode is this project's default, so the simulated room, mass and
+# drivetrain losses ARE the robot on every bench run, and a config that lists
+# only what someone chose to override describes none of it. Sweeping one of them
+# then starts from a value you can see.
+#
+# The values are PARSED from the headers that implement the model, for the same
+# reason drivetrain_report.py parses them: a table restating another file's
+# numbers drifts from it silently, and then the config describes a robot that
+# does not exist. robot_radius is deliberately NOT here -- it follows the largest
+# robot_radius the costmaps plan with, and a literal would break that agreement
+# (see mcu_env.py, and the soak that sat in a lethal cell for 154 goals).
+SIM_DEFAULTS = (
+    ("map_width",          "lidar/fake_ld19.h",    "FAKE_MAP_WIDTH",           float),
+    ("map_height",         "lidar/fake_ld19.h",    "FAKE_MAP_HEIGHT",          float),
+    ("wall_obstacle",      "lidar/fake_ld19.h",    "FAKE_WALL_OBSTACLE",       bool),
+    ("wall_x1",            "lidar/fake_ld19.h",    "FAKE_WALL_X1",             float),
+    ("wall_y1",            "lidar/fake_ld19.h",    "FAKE_WALL_Y1",             float),
+    ("wall_x2",            "lidar/fake_ld19.h",    "FAKE_WALL_X2",             float),
+    ("wall_y2",            "lidar/fake_ld19.h",    "FAKE_WALL_Y2",             float),
+    ("robot_mass",         "encoder/fake_wheel.h", "FAKE_ROBOT_MASS",          float),
+    ("wheel_noise_rpm",    "encoder/fake_wheel.h", "FAKE_WHEEL_NOISE_RPM",     float),
+    ("gear_efficiency",    "encoder/fake_wheel.h", "FAKE_GEAR_EFFICIENCY",     float),
+    ("gear_drag_rpm",      "encoder/fake_wheel.h", "FAKE_WHEEL_COULOMB_RPM",   float),
+    ("battery_sag",        "encoder/fake_wheel.h", "FAKE_BATT_SAG",            float),
+    ("battery_sag_tau_ms", "encoder/fake_wheel.h", "FAKE_BATT_SAG_TAU_MS",     float),
+    ("driver_drop",        "encoder/fake_wheel.h", "FAKE_DRV_DROP",            float),
+    ("driver_resistance",  "encoder/fake_wheel.h", "FAKE_DRV_R",               float),
+)
+
+
+def bare_simulation() -> dict:
+    """The `simulation:` block, every key present, values from the firmware."""
+    cache = {}
+    out = {}
+    for cfg_key, rel, macro, cast in SIM_DEFAULTS:
+        path = os.path.join(REPO_ROOT, "firmware", "common", "lib", rel)
+        if rel not in cache:
+            with open(path, encoding="utf-8") as fh:
+                cache[rel] = fh.read()
+        # The FIRST definition wins: these headers guard each macro with #ifndef
+        # and a #define, so a later line is the same value, and FAKE_ROBOT_MASS
+        # has an earlier ROBOT_WEIGHT branch that is not a number at all.
+        m = re.search(r"^\s*#define\s+" + macro + r"\s+(-?[0-9.]+)f?\s*(?://.*)?$",
+                      cache[rel], re.MULTILINE)
+        if not m:
+            raise SystemExit(f"{path}: cannot find #define {macro} -- the simulated "
+                             f"world moved and this generator would write a stale value")
+        value = float(m.group(1))
+        out[cfg_key] = bool(value) if cast is bool else value
+    return out
 
 
 def bare_pins(mcu: str = "esp32") -> dict:
@@ -157,6 +215,7 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
         "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
                   "raw_scan_topic": "raw_scan"},
         "sensors": bare_sensors(),
+        "simulation": bare_simulation(),
         "pins": bare_pins(key),
     }
     params["kinematics"] = bare_kinematics()

@@ -109,6 +109,43 @@
 #define FAKE_BATT_SAG 0.25
 #endif
 
+// How long the pack takes to sag, and to come back.
+//
+// Sag is not instantaneous. Internal resistance drops the voltage at once, but
+// the chemistry behind it polarises over hundreds of milliseconds, so a load
+// that is held gets DEEPER sag than the same load applied briefly -- and the
+// recovery is just as slow. That is why a heavy robot suffers more than its peak
+// current alone suggests: being heavy means drawing that current for longer, and
+// the sag has time to develop.
+//
+// Modelled as a first-order lag on the demand the pack sees. 0 makes the sag
+// instantaneous, which is the old behaviour.
+#ifndef FAKE_BATT_SAG_TAU_MS
+#define FAKE_BATT_SAG_TAU_MS 400
+#endif
+
+// --- the motor driver ------------------------------------------------------
+//
+// The bridge is between the pack and the motor and keeps some of the voltage for
+// itself. Two parts, because they behave differently:
+//
+//   FAKE_DRV_DROP  a fixed fraction, the body-diode / Vce floor. Present at any
+//                  current, so it costs most at low duty.
+//   FAKE_DRV_R     a fraction proportional to the current drawn -- Rds(on) and
+//                  the shunt. This one follows the current INSTANTLY, unlike the
+//                  pack's sag, which is why the two are separate terms rather
+//                  than one fudge factor.
+//
+// Stall is where both bite hardest: the current proxy is at 1.0, so the motor
+// sees (1 - DROP) / (1 + SAG + DRV_R) of the pack -- which is the real reason a
+// stalled motor produces less torque than its datasheet stall figure.
+#ifndef FAKE_DRV_DROP
+#define FAKE_DRV_DROP 0.03
+#endif
+#ifndef FAKE_DRV_R
+#define FAKE_DRV_R 0.10
+#endif
+
 // Mass and encoder noise are properties of THIS robot, not of the image, so
 // they come from the env with the macros as the fallback. Function-local
 // statics rather than globals: these are read inside a class used before
@@ -167,6 +204,53 @@ static inline float fakeBattSag()
     return sag;
 }
 
+// The fraction of its rated speed the motor can reach on the pack it is given.
+// 1.0 when the pack matches the motor, which is every shipped reference.
+static inline float fakeVoltageRatio()
+{
+    static float ratio = -1.0f;
+    if (ratio < 0.0f) {
+        const float op = envFloat("motor_v", (float)MOTOR_OPERATING_VOLTAGE);
+        const float pw = envFloat("power_v", (float)MOTOR_POWER_MAX_VOLTAGE);
+        ratio = (op > 0.0f) ? (pw / op) : 1.0f;
+        if (ratio < 0.0f) ratio = 0.0f;
+        if (ratio > 1.0f) ratio = 1.0f;   // a pack above the motor's rating does
+                                          // not make it spin faster than rated
+    }
+    return ratio;
+}
+
+static inline float fakeSagTauMs()
+{
+    static float tau = -1.0f;
+    if (tau < 0.0f) {
+        tau = envFloat("fake_sag_tau", (float)FAKE_BATT_SAG_TAU_MS);
+        if (tau < 0.0f) tau = 0.0f;
+    }
+    return tau;
+}
+
+static inline float fakeDrvDrop()
+{
+    static float drop = -1.0f;
+    if (drop < 0.0f) {
+        drop = envFloat("fake_drv_drop", (float)FAKE_DRV_DROP);
+        if (drop < 0.0f) drop = 0.0f;
+        if (drop > 0.9f) drop = 0.9f;   // a bridge that keeps everything is not a bridge
+    }
+    return drop;
+}
+
+static inline float fakeDrvR()
+{
+    static float r = -1.0f;
+    if (r < 0.0f) {
+        r = envFloat("fake_drv_r", (float)FAKE_DRV_R);
+        if (r < 0.0f) r = 0.0f;
+    }
+    return r;
+}
+
 #ifndef FAKE_WHEEL_NOISE_RPM
 #define FAKE_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
 #endif
@@ -217,17 +301,67 @@ private:
         return d;
     }
 
-    // What the four wheels together are doing to the bus voltage, as a scale on
-    // the no-load speed. 1.0 with the robot at rest.
+    // The pack's own filter state: how much sag has DEVELOPED, as against how
+    // much the present current would cause. Shared, like demand(), because there
+    // is one pack.
+    static float &sagState()
+    {
+        static float s = 0.0f;
+        return s;
+    }
+    static unsigned long &sagClock()
+    {
+        static unsigned long t = 0;
+        return t;
+    }
+
+    // What the four wheels together are doing to the voltage the motors see, as
+    // a scale on the no-load speed. 1.0 with the robot at rest.
+    //
+    // Three terms, and they are separate because they behave differently:
+    //
+    //   the pack      lags. Internal resistance drops the voltage at once but the
+    //                 chemistry polarises over hundreds of ms, so a held load
+    //                 sags deeper than a brief one. This is why a heavy robot
+    //                 suffers more than its peak current suggests -- heavy means
+    //                 drawing that current for LONGER.
+    //   Rds(on)       follows the current instantly, so it uses the present
+    //                 demand rather than the filtered one.
+    //   the diode/Vce floor  is there at any current at all.
+    //
+    // Advanced from whichever wheel calls first each cycle: each call moves the
+    // filter by the time since the last one, so four wheels advance it by one
+    // cycle in total rather than four.
     static float busScale()
     {
-        float total = 0.0;
+        float inst = 0.0;
         for (int i = 0; i < 4; i++)
-            total += demand()[i];
-        total *= 0.25;                      // mean across the four wheels
-        if (total < 0.0) total = 0.0;
-        if (total > 1.0) total = 1.0;
-        return 1.0f / (1.0f + fakeBattSag() * total);
+            inst += demand()[i];
+        inst *= 0.25;                       // mean across the four wheels
+        if (inst < 0.0) inst = 0.0;
+        if (inst > 1.0) inst = 1.0;
+
+        const unsigned long now = micros();
+        unsigned long dt = now - sagClock();
+        if (sagClock() == 0 || dt > 1000000UL) {
+            // first call, or a micros() rollover: seed, do not step
+            sagClock() = now;
+            sagState() = inst;
+        } else if (dt > 0) {
+            sagClock() = now;
+            const float tau_s = fakeSagTauMs() / 1000.0f;
+            float k = 1.0f;                 // tau 0 -> instantaneous, the old behaviour
+            if (tau_s > 0.0f) {
+                k = ((float)dt / 1000000.0f) / tau_s;
+                if (k > 1.0f) k = 1.0f;
+            }
+            sagState() += (inst - sagState()) * k;
+        }
+
+        float scale = (1.0f - fakeDrvDrop()) /
+                      (1.0f + fakeBattSag() * sagState() + fakeDrvR() * inst);
+        if (scale < 0.0f) scale = 0.0f;
+        return scale;
     }
 
     // advance the wheel model to now
@@ -245,7 +379,21 @@ private:
                     (fakeRobotMass() / (float)FAKE_WHEEL_REF_MASS);
         if (tau < 0.001) tau = 0.001;
 
-        float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM;
+        // The motor's own no-load speed, derated by the voltage it is actually
+        // fed. A 12 V motor on a 9 V pack really does top out at 75% of its
+        // rated speed, and Kinematics applies the same ratio when it works out
+        // what to ask for (max_rpm_ = (power_v / operating_v) * motor_max_rpm *
+        // ratio) -- so leaving it out here made the simulated motor faster than
+        // the one the kinematics believes in.
+        //
+        // max_rpm_RATIO is deliberately NOT applied. That is a derating of the
+        // COMMAND -- a margin Kinematics keeps so it never asks for the last
+        // 15% -- not a property of the motor. The motor's no-load speed is what
+        // it is; the controller simply declines to use all of it. Measured on
+        // the bench at 3.5 kg: test_acc drives raw PWM, bypasses Kinematics and
+        // reaches 135.6 rpm, where the controller would never request beyond
+        // 119.
+        float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM * fakeVoltageRatio();
         // below the stall band the motor cannot hold the wheel against friction
         if (fabsf(duty_) < (float)FAKE_WHEEL_STALL_DUTY) no_load_rpm = 0.0;
 
@@ -255,7 +403,7 @@ private:
         // it would make at full voltage -- otherwise the sag feeds back on
         // itself and the whole thing converges on nothing.
         if (slot_ >= 0 && slot_ < 4) {
-            const float stall = (float)MOTOR_MAX_RPM;
+            const float stall = (float)MOTOR_MAX_RPM * fakeVoltageRatio();
             demand()[slot_] = stall > 0.0f ? fabsf(no_load_rpm - wheel_rpm_) / stall : 0.0f;
         }
         no_load_rpm *= busScale();

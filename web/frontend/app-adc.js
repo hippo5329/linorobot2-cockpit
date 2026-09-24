@@ -299,8 +299,18 @@ function initWiringTable() {
 function initBaseControllerConfigModule() {
   loadHardwareConfig();
 
-  // Inputs change listeners
-  ["cfg-wheel-diameter", "cfg-track-width", "cfg-max-rpm", "cfg-cpr", "cfg-headroom"].forEach(id => {
+  // Inputs change listeners. The wheelbase and the two motor voltages are here
+  // because the performance half of the HUD depends on them: the wheelbase sets
+  // a mecanum's rotation radius, and a motor rated above the pack never reaches
+  // its no-load rpm. Without them the HUD silently described a different robot
+  // than the form did.
+  ["cfg-wheel-diameter", "cfg-track-width", "cfg-wheelbase", "cfg-max-rpm", "cfg-cpr",
+   "cfg-headroom", "cfg-motor-voltage", "cfg-motor-max-voltage",
+   // The load and the losses. Mass is the field the HUD is most sensitive to, so
+   // a HUD that did not follow it would be answering for a different robot than
+   // the one on screen -- which is the whole reason the HUD exists.
+   "cfg-sim-mass", "cfg-sim-gear-eff", "cfg-sim-gear-drag", "cfg-sim-sag",
+   "cfg-sim-sag-tau", "cfg-sim-drv-drop", "cfg-sim-drv-r"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("input", updateKinematicsHUD);
   });
@@ -310,10 +320,17 @@ function initBaseControllerConfigModule() {
     if (el) el.addEventListener("input", updateAdcCalculations);
   });
 
+  const elAuto = document.getElementById("cfg-nav2-auto");
+  if (elAuto) elAuto.addEventListener("change", updateKinematicsHUD);
+
   const elKine = document.getElementById("cfg-kinematics");
   if (elKine) elKine.addEventListener("change", () => {
     updateKinematicsVisibility();
     validateHardwareSafety();
+    // The drivetrain decides the rotation radius, so the HUD is wrong until it
+    // is told: mecanum turns on (lr + fr)/2, skid steer on lr/2 times the
+    // scrub factor, and the same Nav2 request costs them different wheel speeds.
+    updateKinematicsHUD();
   });
 
   const elMcu = document.getElementById("cfg-mcu");

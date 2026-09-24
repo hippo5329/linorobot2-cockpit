@@ -116,14 +116,38 @@ def test_the_simulated_room_is_configurable():
     assert env["fake_noise_rpm"] == "0.25"
 
 
-def test_an_unconfigured_robot_adds_none_of_these_keys():
+def test_a_silent_config_adds_none_of_these_keys():
     """Every one of them costs bytes in a 4 KB partition, and the firmware's
-    own default is the right answer when the config is silent."""
-    env = _env(_with())
+    own default is the right answer when the config is silent.
+
+    The generated bare config is NOT silent any more -- it writes the whole
+    `simulation` block out at the firmware's own defaults, deliberately, so that
+    a config a person reads describes the whole simulated robot instead of only
+    the parts somebody overrode (see test_sim_block_is_complete.py). That is a
+    change in what the generator produces, not in this rule: a config that omits
+    the block must still produce no keys, or "unset" would silently become
+    "zero" -- a gearbox of no efficiency and a pack that never sags.
+    """
+    cfg = _with()
+    cfg["base_controller"].pop("simulation", None)
+    env = _env(cfg)
     for key in ("accel_cov", "gyro_cov", "ori_cov", "mag_cov", "pose_cov",
                 "twist_cov", "env_cov", "mag_bias", "bmp280_addr",
-                "fake_map_w", "fake_wall", "fake_mass", "fake_noise_rpm"):
+                "fake_map_w", "fake_wall", "fake_mass", "fake_noise_rpm",
+                "fake_gear_eff", "fake_coulomb", "fake_sag", "fake_sag_tau",
+                "fake_drv_drop", "fake_drv_r"):
         assert key not in env, f"{key} was written for a config that never asked"
+
+
+def test_the_written_block_still_fits_the_env_partition():
+    """Writing the simulated world out in full costs bytes in a 4 KB partition.
+    It is about 300 of them, which is affordable -- but only as long as somebody
+    checks, and the generated bare config is the largest one this repo makes."""
+    env = _env(_with())
+    blob = "".join(f"{k}={v}\0" for k, v in env.items())
+    assert len(blob) < mcu_env.DATA_LEN * 0.6, (
+        f"the generated env is {len(blob)} bytes of {mcu_env.DATA_LEN}; "
+        f"the margin for a robot with more sensors than the bare module is gone")
 
 
 def test_the_key_names_match_the_config_engines_schema():

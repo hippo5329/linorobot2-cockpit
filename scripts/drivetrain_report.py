@@ -49,10 +49,14 @@ def model_defaults(path=FAKE_WHEEL_H):
         "FAKE_WHEEL_REF_MASS": "ref_mass",
         "FAKE_WHEEL_MAX_ACCEL_RPM": "accel_clamp",
         "FAKE_WHEEL_FRICTION": "viscous",
+        "FAKE_WHEEL_STALL_DUTY": "stall_duty",
         "FAKE_ROBOT_MASS": "mass",
         "FAKE_GEAR_EFFICIENCY": "gear_eff",
         "FAKE_WHEEL_COULOMB_RPM": "coulomb",
         "FAKE_BATT_SAG": "sag",
+        "FAKE_BATT_SAG_TAU_MS": "sag_tau_ms",
+        "FAKE_DRV_DROP": "drv_drop",
+        "FAKE_DRV_R": "drv_r",
     }
     out = {}
     with open(path, encoding="utf-8") as fh:
@@ -92,7 +96,9 @@ def drivetrain(params):
     # The env overrides the compiled-in defaults, so the config's simulation
     # block is what a real run would use.
     for cfg_key, name in (("robot_mass", "mass"), ("gear_efficiency", "gear_eff"),
-                          ("gear_drag_rpm", "coulomb"), ("battery_sag", "sag")):
+                          ("gear_drag_rpm", "coulomb"), ("battery_sag", "sag"),
+                          ("battery_sag_tau_ms", "sag_tau_ms"),
+                          ("driver_drop", "drv_drop"), ("driver_resistance", "drv_r")):
         if sim.get(cfg_key) is not None:
             d[name] = float(sim[cfg_key])
 
@@ -108,8 +114,27 @@ def drivetrain(params):
         radius = (lr / 2.0) * float(kine.get("angular_scale", 1.0))
     else:
         radius = lr / 2.0
+    # TWO different ceilings, and conflating them was a real mistake in the
+    # first version of this report.
+    #
+    #   motor_rpm    the motor's own no-load speed, derated only by the voltage
+    #                it is fed. What the machine CAN do. fake_wheel.h uses this.
+    #   command_rpm  that, times max_rpm_ratio -- the margin Kinematics keeps so
+    #                it never asks for the last 15%. What the controller WILL
+    #                ask for, and therefore what a demand must fit inside.
+    #
+    # The report said "max speed 0.60 m/s" using the command cap while the bench
+    # measured 0.71 m/s, because test_acc drives raw PWM and bypasses Kinematics
+    # entirely (135.6 rpm at 3.5 kg, 2026-09-23). Capability and budget are not
+    # the same number.
+    op_v = float(kine.get("motor_operating_voltage", 0) or 0)
+    pw_v = float(kine.get("motor_power_max_voltage", 0) or 0)
+    volt_ratio = min(pw_v / op_v, 1.0) if op_v > 0 and pw_v > 0 else 1.0
+    motor_rpm = float(kine.get("max_rpm", 0)) * volt_ratio
     d.update(base=base, radius=radius, circ=math.pi * wheel_d,
-             max_rpm=float(kine.get("max_rpm", 0)) * float(kine.get("max_rpm_ratio", 1.0)),
+             volt_ratio=volt_ratio, motor_rpm=motor_rpm,
+             command_rpm=motor_rpm * float(kine.get("max_rpm_ratio", 1.0)),
+             max_rpm=motor_rpm,
              wheels=4 if base in ("4wd", "skid_steer", "mecanum") else 2)
     return d
 
@@ -125,16 +150,27 @@ def performance(d):
     tau = (d["tau_ms"] / 1000.0) * (d["mass"] / d["ref_mass"])
     tau = max(tau, 0.001)
 
-    # From rest: every wheel demands full stall current, so the pack sags most.
-    no_load_from_rest = d["max_rpm"] / (1.0 + d["sag"])
-    a_rpm = d["gear_eff"] * no_load_from_rest / tau - d["coulomb"]
-    a_rpm = min(a_rpm, d["accel_clamp"])
-    lin_acc = max(a_rpm, 0.0) * d["circ"] / 60.0
+    # The pack's sag LAGS (FAKE_BATT_SAG_TAU_MS), so the first instant of an
+    # acceleration sees a stiff pack and the sag develops underneath it. That
+    # gives two different accelerations and the difference is the lunge a real
+    # robot has: bridge losses bite immediately, the pack gives way after.
+    drv_now = (1.0 - d["drv_drop"]) / (1.0 + d["drv_r"])          # stall current, no sag yet
+    drv_held = (1.0 - d["drv_drop"]) / (1.0 + d["sag"] + d["drv_r"])   # sag fully developed
+
+    def _accel(scale):
+        a = d["gear_eff"] * (d["motor_rpm"] * scale) / tau - d["coulomb"]
+        return max(min(a, d["accel_clamp"]), 0.0) * d["circ"] / 60.0
+
+    lin_acc = _accel(drv_now)          # peak, in the first instant
+    lin_acc_held = _accel(drv_held)    # once the pack has sagged
 
     # Terminal speed: accel = 0, and at that point the current -- and so the sag
     # -- has almost gone, so the no-load speed is back to full.
     #   eff*(no_load - w)/tau = w*viscous + coulomb
-    w = (d["gear_eff"] * d["max_rpm"] / tau - d["coulomb"]) / \
+    # At terminal speed the current has almost gone, so the pack recovers and
+    # only the bridge's fixed drop remains.
+    no_load_terminal = d["motor_rpm"] * (1.0 - d["drv_drop"])
+    w = (d["gear_eff"] * no_load_terminal / tau - d["coulomb"]) / \
         (d["gear_eff"] / tau + d["viscous"])
     w = max(w, 0.0)
     lin_vel = w * d["circ"] / 60.0
@@ -143,12 +179,180 @@ def performance(d):
         "tau": tau,
         "lin_vel": lin_vel,
         "lin_acc": lin_acc,
+        "lin_acc_held": lin_acc_held,
+        "ang_acc_held": lin_acc_held / d["radius"] if d["radius"] > 0 else 0.0,
         "ang_vel": lin_vel / d["radius"] if d["radius"] > 0 else 0.0,
         "ang_acc": lin_acc / d["radius"] if d["radius"] > 0 else 0.0,
         "t_to_90": 2.3 * tau,
         "stop_dist": lin_vel * tau / d["gear_eff"] if d["gear_eff"] > 0 else 0.0,
         "wheel_rpm_terminal": w,
     }
+
+
+# ==============================================================================
+# The simulated test_acc.
+#
+# performance() above solves the model in closed form. That is the right shape
+# for "what can this chassis do", but it is NOT what test_acc reports, and the
+# two differ in ways that matter: test_acc samples at 20 ms and differentiates
+# the samples, so it sees a first-difference acceleration rather than the
+# instantaneous one; it drives raw PWM in 1 s phases, so the pack's sag has a
+# specific amount of time to develop; and it measures the stop distance by
+# integrating the coast, which no closed form gives.
+#
+# So the numbers are produced the way the bench produces them: by running the
+# model. This class is a transcription of FakeEncoder::integrate() and
+# busScale() -- same terms, same order, same clamps, same shared pack -- and
+# run_test_acc() is a transcription of test_acc.cpp's loop_() and dump_record().
+# Given that, flashing test_acc and driving a board is no longer how these
+# numbers are obtained. It is how this transcription is CHECKED, which is a
+# different job and a much rarer one.
+#
+# Deliberately noiseless. getRPM() adds +/-FAKE_WHEEL_NOISE_RPM, and test_acc
+# differentiates it: 1 rpm of white noise across a 20 ms tick is about 0.4 m/s2
+# of pure instrument error in the MAX ACC column, which is why the bench figure
+# reads slightly high and why a report should not reproduce it.
+# ==============================================================================
+class _Pack:
+    """The one battery all four wheels share, with its lagging sag."""
+
+    def __init__(self, d):
+        self.d = d
+        self.demand = [0.0, 0.0, 0.0, 0.0]
+        # Starts UNSAGGED, because on the board it does.
+        #
+        # busScale() seeds sagState() from the present demand on its very first
+        # call (sagClock() == 0), rather than stepping with a bogus dt. On a real
+        # board that first call happens at boot with the wheels at rest and duty
+        # zero, so it seeds to 0 and the seeding never matters again. Starting
+        # this simulation at the first tick of test_acc's drive phase instead
+        # seeded it at FULL stall demand -- the pack fully sagged before the
+        # wheel had turned once, which reversed the whole point of the lag: a
+        # long tau then held that worst case for longer and a "stiffer" pack
+        # looked quicker. Seeding at rest is the faithful transcription.
+        self.state = 0.0
+
+    def scale(self, dt):
+        inst = min(max(sum(self.demand) * 0.25, 0.0), 1.0)
+        if dt > 0:
+            tau_s = self.d["sag_tau_ms"] / 1000.0
+            k = 1.0 if tau_s <= 0 else min(dt / tau_s, 1.0)
+            self.state += (inst - self.state) * k
+        scale = (1.0 - self.d["drv_drop"]) / \
+                (1.0 + self.d["sag"] * self.state + self.d["drv_r"] * inst)
+        return max(scale, 0.0)
+
+
+class _Wheel:
+    """One simulated wheel. Mirrors FakeEncoder; see fake_wheel.h."""
+
+    def __init__(self, d, pack, slot):
+        self.d, self.pack, self.slot = d, pack, slot
+        self.rpm = 0.0
+        self.duty = 0.0
+        self.tau = max((d["tau_ms"] / 1000.0) * (d["mass"] / d["ref_mass"]), 0.001)
+
+    def step(self, dt, first_in_tick):
+        d = self.d
+        no_load = self.duty * d["motor_rpm"]      # motor_rpm already carries volt_ratio
+        if abs(self.duty) < d["stall_duty"]:
+            no_load = 0.0
+        # Recorded BEFORE the bus scale, or the sag feeds back on itself.
+        stall = d["motor_rpm"]
+        self.pack.demand[self.slot] = abs(no_load - self.rpm) / stall if stall > 0 else 0.0
+        # Only the first wheel of a tick advances the pack's filter: in the
+        # firmware the other three call busScale() in the same microsecond and
+        # its dt is zero, so four wheels advance it by one cycle in total.
+        no_load *= self.pack.scale(dt if first_in_tick else 0.0)
+
+        accel = d["gear_eff"] * (no_load - self.rpm) / self.tau
+        accel -= self.rpm * d["viscous"]
+        if self.rpm > 0.0:
+            accel -= d["coulomb"]
+        elif self.rpm < 0.0:
+            accel += d["coulomb"]
+        accel = min(max(accel, -d["accel_clamp"]), d["accel_clamp"])
+
+        was = self.rpm
+        self.rpm += accel * dt
+        # Coulomb drag brakes, it must not become a motor.
+        if no_load == 0.0 and was != 0.0 and (was > 0.0) != (self.rpm > 0.0):
+            self.rpm = 0.0
+        if no_load == 0.0 and abs(self.rpm) < 0.5:
+            self.rpm = 0.0
+
+
+def _velocities(d, rpm):
+    """Kinematics::getVelocities(), for the base this config declares."""
+    r1, r2, r3, r4 = rpm
+    if d["base"] not in ("4wd", "skid_steer", "mecanum"):
+        r3 = r4 = 0.0
+    n = float(d["wheels"])
+    lin_x = ((r1 + r2 + r3 + r4) / n / 60.0) * d["circ"]
+    ang_z = ((-r1 + r2 - r3 + r4) / n / 60.0) * d["circ"] / d["radius"] if d["radius"] > 0 else 0.0
+    return lin_x, ang_z
+
+
+# test_acc's own timing: `const unsigned ticks = 20`, `run_time = 1000`, and four
+# phases per run (drive, coast, reverse, coast) -> buf_size = 200 samples.
+TICK_S = 0.020
+PHASE_SAMPLES = 50
+
+
+def run_test_acc(d, rotate=False):
+    """What test_acc would print for this config, without flashing anything.
+
+    `rotate` picks the run parity: test_acc alternates a straight run (all four
+    wheels driven the same way) with a rotation (wheels 1 and 3 reversed), and
+    reports the linear columns for one and the angular for the other.
+    """
+    pack = _Pack(d)
+    wheels = [_Wheel(d, pack, i) for i in range(4)]
+    # Full PWM. test_acc halves it every fourth run; the first run, which is the
+    # one quoted, is at the top of the range.
+    duty = [-1.0 if rotate and i in (0, 2) else 1.0 for i in range(4)]
+
+    trace = []
+    for phase, sign in enumerate((1.0, 0.0, -1.0, 0.0)):
+        for i, w in enumerate(wheels):
+            w.duty = duty[i] * sign
+        for _ in range(PHASE_SAMPLES):
+            # SAMPLE FIRST, then advance. record() reads getRPM() and only then
+            # delay()s, so the first sample of a phase is taken with no elapsed
+            # time -- it still shows the previous phase's final speed -- and
+            # sample i shows i ticks of the new duty. Stepping first put every
+            # number one tick early, which is a 20 ms error in "time to 0.9x"
+            # and reads as a robot that accelerates faster than it does.
+            trace.append(_velocities(d, [w.rpm for w in wheels]))
+            # feed() integrates once and record()'s four getRPM() calls
+            # integrate again, but only the first call after the delay sees a
+            # non-zero dt -- so one step per wheel per tick is the whole of it.
+            for i, w in enumerate(wheels):
+                w.step(TICK_S, first_in_tick=(i == 0))
+
+    lin = [t[0] for t in trace]
+    ang = [t[1] for t in trace]
+    series = ang if rotate else lin
+
+    def _extremes(v):
+        acc = [(v[i] - v[i - 1 if i else 0]) / TICK_S for i in range(len(v))]
+        return max(max(v), 0.0), min(min(v), 0.0), max(max(acc), 0.0), min(min(acc), 0.0)
+
+    max_v, min_v, max_a, min_a = _extremes(series)
+    # dump_record() integrates the SECOND quarter -- the coast after the first
+    # drive phase -- which is the distance the robot takes to stop.
+    stop = sum(series[PHASE_SAMPLES:2 * PHASE_SAMPLES]) * TICK_S
+    # ...and reports the first sample of the first quarter that passed 0.9x max.
+    t_to_90 = PHASE_SAMPLES * TICK_S
+    for i in range(PHASE_SAMPLES):
+        if series[i] > max_v * 0.9:
+            t_to_90 = i * TICK_S
+            break
+
+    return {"max_vel": max_v, "min_vel": min_v, "max_acc": max_a, "min_acc": min_a,
+            "t_to_90": t_to_90, "stop": stop,
+            "max_vel_lin": max(max(lin), 0.0), "max_vel_ang": max(max(ang), 0.0),
+            "trace": trace}
 
 
 def demand_rpm(d, vx, wz):
@@ -160,6 +364,143 @@ def demand_rpm(d, vx, wz):
     if d["circ"] <= 0:
         return 0.0
     return (abs(vx) * 60.0 / d["circ"]) + (abs(wz) * d["radius"] * 60.0 / d["circ"])
+
+
+# ==============================================================================
+# Nav2 limits, derived from the motors rather than typed in.
+#
+# The shipped limits asked for 103% of a differential base's motors, 171% at the
+# velocity smoother's ceiling and 129% on mecanum, and nothing noticed until
+# three mecanum legs left the room. The fix at the time was to lower them by
+# hand, which fixes one chassis: the next robot with different wheels, a heavier
+# load or a weaker pack starts the same way, because the numbers are a judgement
+# about a robot nobody re-measured.
+#
+# So they are computed. This is ON by default -- `kinematics.auto_nav2_limits:
+# false` turns it off for someone who wants to tune by hand, and then nothing
+# here touches their values.
+#
+# The fractions below are not arbitrary: they reproduce the limits this project
+# settled on for its default chassis on 2026-09-23 (smoother [0.3, ., 1.2] /
+# [0.8, ., 1.5], desired_linear_vel 0.25, rotate_to_heading 1.0) and then scale
+# with the model, so a heavier robot or a softer pack gets proportionally lower
+# limits without anyone re-deciding.
+#
+#   speed        47% of what the base reaches in test_acc's 1 s phase. Half the
+#                capability, and the other half is what tracking a curve needs.
+#   rotation     26% of the achievable yaw rate -- LOWER than the linear
+#                fraction, because rotation is where tracking error grows
+#                fastest and, on a mecanum, where wheel speed is most expensive.
+#   accel        31% of the SETTLED acceleration (not the first kick): a rate
+#                limit the base only meets while the pack is still stiff is one
+#                it misses for the rest of the manoeuvre.
+#   ang accel    whatever reaches the angular ceiling in 0.8 s, capped at 31% of
+#                the settled angular acceleration so a weak base cannot be given
+#                a figure its motors cannot produce.
+#   targets      83% of the smoother's ceiling, so the controller asks for
+#                something the smoother can actually pass through.
+#
+# Every one of them is then checked against the wheel-speed budget, because a
+# translation and a rotation ADD at the outer wheel and each looked survivable
+# alone. That check is the reason this exists, so it is applied to the OUTPUT and
+# not merely offered as advice.
+# ==============================================================================
+SPEED_FRAC = 0.47
+ROT_FRAC = 0.26
+ACCEL_FRAC = 0.31
+ANG_ACCEL_SECONDS = 0.8
+TARGET_FRAC = 0.83
+
+
+def suggest_nav2_limits(d, p=None, measured=None):
+    """The Nav2 limits this drivetrain can actually meet, as dotted paths."""
+    p = p or performance(d)
+    measured = measured or run_test_acc(d, rotate=False)
+    rot = run_test_acc(d, rotate=True)
+
+    # What the base MEASURES over the second a manoeuvre lasts, not the
+    # asymptote it converges on given longer.
+    v = measured["max_vel"] * SPEED_FRAC
+    w = rot["max_vel"] * ROT_FRAC
+
+    # ...and then the budget, because the two add at the outer wheel. If the
+    # pair does not fit, both are scaled by the same factor: shaving only one
+    # would silently change the robot's character (a base that turns but will
+    # not drive, or the reverse).
+    if d["command_rpm"] > 0:
+        need = demand_rpm(d, v, w)
+        if need > d["command_rpm"]:
+            shrink = d["command_rpm"] / need
+            v *= shrink
+            w *= shrink
+
+    a = p["lin_acc_held"] * ACCEL_FRAC
+    ang_a = min(w / ANG_ACCEL_SECONDS, p["ang_acc_held"] * ACCEL_FRAC)
+
+    def r2(x):
+        # +0.0, never -0.0: it round-trips through YAML as "-0.0", which reads
+        # like a deliberate negative zero and is just noise.
+        return round(x, 2) + 0.0
+
+    v, w, a, ang_a = r2(v), r2(w), r2(a), r2(ang_a)
+    # A mecanum is the only base that can command y at all; for the others the
+    # smoother's y limits must stay 0 or it will pass through a velocity the
+    # kinematics cannot produce.
+    vy = r2(v) if d["base"] == "mecanum" else 0.0
+
+    return {
+        "nav2.velocity_smoother.ros__parameters.max_velocity": [v, vy, w],
+        "nav2.velocity_smoother.ros__parameters.min_velocity": [-v, -vy + 0.0, -w],
+        "nav2.velocity_smoother.ros__parameters.max_accel": [a, r2(a) if vy else 0.0, ang_a],
+        "nav2.velocity_smoother.ros__parameters.max_decel":
+            [-a, -(r2(a)) if vy else 0.0, -ang_a],
+        "nav2.controller_server.ros__parameters.FollowPath.desired_linear_vel":
+            r2(v * TARGET_FRAC),
+        "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel":
+            r2(w * TARGET_FRAC),
+        "nav2.controller_server.ros__parameters.FollowPath.max_angular_accel": ang_a,
+        # Recovery spins are allowed to be brisker than path following: they
+        # happen when the robot is stuck, with nothing to track.
+        "nav2.behavior_server.ros__parameters.max_rotational_vel": r2(w * 0.67),
+        "nav2.behavior_server.ros__parameters.min_rotational_vel": r2(w * 0.33),
+        "nav2.behavior_server.ros__parameters.rotational_acc_lim": r2(ang_a * 2.0),
+    }
+
+
+def auto_limits_enabled(params):
+    """Default ON. `kinematics.auto_nav2_limits: false` hands control back.
+
+    The flag lives in `kinematics` beside `stamped_cmd_vel` rather than in `nav2`
+    because the nav2 block is dumped whole into a ROS params file, where every
+    top-level key has to be a node name.
+    """
+    flag = (params.get("kinematics") or {}).get("auto_nav2_limits", True)
+    if isinstance(flag, bool):
+        return flag
+    return str(flag).strip().lower() not in ("false", "0", "no", "off")
+
+
+def apply_nav2_limits(params):
+    """Write the derived limits into `params` in place. Returns what changed."""
+    if not auto_limits_enabled(params):
+        return {}
+    d = drivetrain(params)
+    if d["max_rpm"] <= 0 or d["circ"] <= 0:
+        return {}
+    changed = {}
+    for path, value in suggest_nav2_limits(d).items():
+        node = params
+        parts = path.split(".")
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        if node.get(parts[-1]) != value:
+            changed[path] = {"from": node.get(parts[-1]), "to": value}
+            node[parts[-1]] = value
+    return changed
 
 
 def report(params, name=""):
@@ -176,10 +517,13 @@ def report(params, name=""):
     out = []
     out.append(f"=== {name or params.get('robot', {}).get('name', 'robot')}"
                f"   base={d['base']}  {d['wheels']} driven wheels")
-    out.append(f"    motors {d['max_rpm']:.0f} rpm effective at the wheel, "
-               f"{d['circ'] / math.pi * 1000:.0f} mm wheels, {d['mass']:.2f} kg")
-    out.append(f"    gearbox {d['gear_eff'] * 100:.0f}% efficient, drag {d['coulomb']:.0f} rpm/s, "
-               f"pack sag {d['sag'] * 100:.0f}% at full stall")
+    out.append(f"    motor {d['motor_rpm']:.0f} rpm no-load at the wheel"
+               + (f" (derated to {d['volt_ratio'] * 100:.0f}% by the pack)" if d['volt_ratio'] < 0.999 else "")
+               + f", controller will ask at most {d['command_rpm']:.0f}")
+    out.append(f"    {d['circ'] / math.pi * 1000:.0f} mm wheels, {d['mass']:.2f} kg")
+    out.append(f"    gearbox {d['gear_eff'] * 100:.0f}% efficient, drag {d['coulomb']:.0f} rpm/s")
+    out.append(f"    pack sag {d['sag'] * 100:.0f}% at full stall over {d['sag_tau_ms']:.0f} ms, "
+               f"driver {d['drv_drop'] * 100:.0f}% fixed + {d['drv_r'] * 100:.0f}% at stall")
     out.append(f"    turns on {d['radius']:.4f} m"
                + ("  (mecanum: (lr+fr)/2)" if d["base"] == "mecanum" else "  (lr/2)"))
     out.append("")
@@ -190,9 +534,42 @@ def report(params, name=""):
     # every speed above zero. Comparing the smoother's rate limit against the
     # peak is therefore generous -- a limit that only just fits here will not be
     # met near top speed.
-    out.append(f"    max acceleration   {p['lin_acc']:5.2f} m/s2     {p['ang_acc']:5.2f} rad/s2"
-               f"   (from rest; falls as speed rises)")
+    out.append(f"    accel, first kick  {p['lin_acc']:5.2f} m/s2     {p['ang_acc']:5.2f} rad/s2"
+               f"   (stiff pack, from rest)")
+    out.append(f"    accel, sag settled {p['lin_acc_held']:5.2f} m/s2     {p['ang_acc_held']:5.2f} rad/s2"
+               f"   (what a held manoeuvre gets)")
     out.append(f"    time to 0.9x max   {p['t_to_90']:5.2f} s        (tau {p['tau'] * 1000:.0f} ms)")
+    out.append("    (the asymptote: the speed the wheel converges on, and the")
+    out.append("     acceleration at the instant it starts)")
+    out.append("")
+
+    # The same model, run rather than solved, following test_acc's own profile.
+    # This is the column to compare against a bench run, because it is the same
+    # measurement: 20 ms samples, differentiated, 1 s phases, stop distance from
+    # the integrated coast. The closed form above answers "what can it do"; this
+    # answers "what will test_acc print", and the two differ by the sampling.
+    lin_run = run_test_acc(d, rotate=False)
+    rot_run = run_test_acc(d, rotate=True)
+    out.append("--- what test_acc would print (simulated, no flashing)")
+    out.append(f"    MAX VEL            {lin_run['max_vel']:5.2f} m/s     "
+               f"{rot_run['max_vel']:6.2f} rad/s")
+    out.append(f"    MAX ACC            {lin_run['max_acc']:5.2f} m/s2    "
+               f"{rot_run['max_acc']:6.2f} rad/s2")
+    out.append(f"    time to 0.9x max   {lin_run['t_to_90']:5.2f} s       "
+               f"{rot_run['t_to_90']:6.2f} s")
+    out.append(f"    distance to stop   {lin_run['stop']:5.3f} m       "
+               f"{rot_run['stop']:6.3f} rad")
+    out.append("    (20 ms samples, full PWM, noiseless -- the board's MAX ACC reads")
+    out.append("     ~0.4 m/s2 high because it differentiates encoder noise)")
+    # Why the two blocks disagree, said once rather than left to be guessed at.
+    # test_acc drives for 1 s; the asymptote needs several tau and the last few
+    # percent arrive slowly, because torque falls as the wheel speeds up.
+    if p["lin_vel"] > 0:
+        shortfall = (1.0 - lin_run["max_vel"] / p["lin_vel"]) * 100.0
+        out.append(f"    test_acc's 1 s phase reaches {100 - shortfall:.0f}% of the asymptote:")
+        out.append("     the last few percent arrive slowly, since torque falls with speed.")
+        out.append("     Tune a velocity smoother from THIS block -- it is what the robot does")
+        out.append("     in the second a manoeuvre lasts.")
     out.append("")
     out.append("--- what the config asks for")
 
@@ -205,22 +582,27 @@ def report(params, name=""):
             verdict_lines.append(f"    {label:18} not set in this config")
             continue
         need = demand_rpm(d, v, w)
-        pct = need / d["max_rpm"] * 100.0
-        flag = "OVER BUDGET" if need > d["max_rpm"] else "ok"
-        if need > d["max_rpm"]:
+        cap = d["command_rpm"]
+        pct = need / cap * 100.0
+        flag = "OVER BUDGET" if need > cap else "ok"
+        if need > cap:
             over = True
         verdict_lines.append(f"    {label:18} {v:.2f} m/s + {w:.2f} rad/s "
-                             f"-> {need:6.1f} rpm = {pct:5.1f}% of {d['max_rpm']:.0f}   {flag}")
+                             f"-> {need:6.1f} rpm = {pct:5.1f}% of {cap:.0f}   {flag}")
     out += verdict_lines
 
     if isinstance(smoother_a, list) and smoother_a:
+        # Judged against the SETTLED acceleration, not the first kick: a rate
+        # limit the base can only meet while the pack is still stiff is a limit
+        # it misses for the rest of the manoeuvre.
         asked = float(smoother_a[0])
-        pct = asked / p["lin_acc"] * 100.0 if p["lin_acc"] > 0 else float("inf")
-        flag = "OVER BUDGET" if asked > p["lin_acc"] else "ok"
-        if asked > p["lin_acc"]:
+        have = p["lin_acc_held"]
+        pct = asked / have * 100.0 if have > 0 else float("inf")
+        flag = "OVER BUDGET" if asked > have else "ok"
+        if asked > have:
             over = True
         out.append(f"    smoother accel     {asked:.2f} m/s2 "
-                   f"-> {pct:5.1f}% of the {p['lin_acc']:.2f} m/s2 it can reach   {flag}")
+                   f"-> {pct:5.1f}% of the {have:.2f} m/s2 it holds   {flag}")
 
     out.append("")
     out.append("    VERDICT: the config asks for more than the motors can give"

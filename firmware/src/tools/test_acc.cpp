@@ -116,6 +116,10 @@ IMUInterface *imu = nullptr;
 MAGInterface *mag = nullptr;
 unsigned total_motors = 4;
 
+// Set when the env says the wheels are simulated. loop_() then prints where to
+// get the answer instead of driving nothing and tabulating the result.
+bool fake_wheels = false;
+
 void setup_()
 {
     // Allocated when this tool runs, not statically (see test_sensors).
@@ -160,6 +164,10 @@ void setup_()
     else
         Serial.printf("[+] IMU %s initialized.\n", imu_name);
     mag->init();
+
+    // A fake-wheel board has nothing to measure. Checked here, after
+    // initMcuEnv(), because it is the env that decides -- not the build.
+    fake_wheels = wheelsAreFake();
 
     if(Kinematics::LINO_BASE == Kinematics::DIFFERENTIAL_DRIVE)
     {
@@ -271,38 +279,55 @@ void dump_record(const Kinematics::velocities *buf) {
 }
 
 
-// Spin the motors AND close the simulated loop.
+// Spin the motors. Four calls, one place, because five call sites drifted.
 //
-// FakeEncoder::feed() is what turns a PWM into simulated wheel motion, and it
-// was called from main.cpp's moveBase() and nowhere else -- so on a fake-wheel
-// board this tool drove nothing at all. It still printed a full table: MAX VEL
-// 0.00 m/s beside MAX ACC 0.37 m/s2, which is encoder noise differentiated
-// rather than motion. A measurement tool that reports zeros as data is worse
-// than one that refuses, and the wiki tells people to set the velocity
-// smoother's limits from this output.
+// It does NOT drive the simulated wheels, and that is deliberate: this tool is
+// for a robot with motors on it. FakeEncoder::feed() was called here for a
+// while so that a fake-mode run produced a full table instead of zeros -- but
+// the table it produced was a measurement OF THE SIMULATOR, taken on an MCU,
+// over a serial line, after a flash. The simulator is a host-side model whose
+// constants live in fake_wheel.h, so the honest way to read it is to run it on
+// the host: scripts/drivetrain_report.py steps the same equations on
+// test_acc's own 20 ms / 1 s profile and prints the same four lines in
+// milliseconds, with no board involved.
 //
-// A real encoder's feed() is a no-op (EncoderInterface's default body is
-// `(void)pwm;`), so the same call serves both and which one runs stays the env's
-// decision, not the compiler's -- the same reasoning main.cpp records at its own
-// feed() calls.
-//
-// One feed() per phase is enough: it latches the duty and integrates, and
-// record()'s getRPM() calls integrate again as they sample, so the model
-// advances across the whole run.
+// So a fake-wheel board is refused in setup_() rather than answered. What is
+// left here is the real measurement: a real motor's real acceleration, which is
+// the only thing a board can tell you that the model cannot.
 static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
 {
     motor1_controller->spin(pwm1);
     motor2_controller->spin(pwm2);
     motor3_controller->spin(pwm3);
     motor4_controller->spin(pwm4);
-    motor1_encoder->feed(pwm1);
-    motor2_encoder->feed(pwm2);
-    motor3_encoder->feed(pwm3);
-    motor4_encoder->feed(pwm4);
 }
 
 void loop_() {
     if (!imu_msg) return;   // setup_ could not allocate; nothing to run
+
+    // Refuse rather than answer. With fake wheels there is no motor to
+    // accelerate: every number below would be a property of the simulated
+    // drivetrain in fake_wheel.h, measured the hard way. The host runs that
+    // model directly, on this tool's own 20 ms / 1 s profile, from the robot's
+    // config -- including the terms a board cannot vary without a reflash
+    // (mass, gear efficiency, pack sag, driver losses).
+    //
+    // Saying so once and stopping is the point. Printing a table would invite
+    // somebody to tune a velocity smoother from a number that describes a
+    // simulator, and the wiki tells people to tune it from this output.
+    if (fake_wheels) {
+        Serial.println("[test_acc] the env says these wheels are simulated "
+                       "(fake_wheel=1), so there is nothing here to measure.");
+        Serial.println("[test_acc] the same model, run on the host, with this "
+                       "robot's config:");
+        Serial.println("[test_acc]     python3 scripts/drivetrain_report.py "
+                       "--params <robot>_config.yaml");
+        Serial.println("[test_acc] or open the Config Studio's Kinematics HUD. "
+                       "For a real measurement, flash a robot with motors.");
+        syslog(LOG_INFO, "test_acc refused: fake_wheel=1, nothing to measure");
+        delay(10000);
+        return;
+    }
 
     // The velocity trace lives here, on the stack, for exactly as long as the
     // test runs. 2400 bytes of the loop task's 8192, and this tool is the only

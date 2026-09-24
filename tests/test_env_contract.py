@@ -65,7 +65,8 @@ MAXIMAL_CONFIG = {
                        # The simulated drivetrain's losses, swept from the env so
                        # a sensitivity test costs a 4 KB write, not a build.
                        "gear_efficiency": 0.75, "gear_drag_rpm": 12.0,
-                       "battery_sag": 0.25},
+                       "battery_sag": 0.25, "battery_sag_tau_ms": 400.0,
+                       "driver_drop": 0.03, "driver_resistance": 0.10},
     },
 }
 

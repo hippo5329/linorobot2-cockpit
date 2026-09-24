@@ -861,14 +861,31 @@ base_controller:
     twist_cov: 0.001
     mag_bias:  [1.5, -2.25, 0.75]   # hard-iron offsets, three axes or nothing
   simulation:                # key names are the config engine's schema.json
-    map_width: 10.0
+    map_width: 10.0          # the room, metres, centred on the origin
     map_height: 6.0
-    wall_obstacle: true
+    wall_obstacle: true      # the obstacle the Nav2 goal sits behind
     wall_x1: 2.0
     wall_y1: -1.5
-    robot_mass: 3.5
-    wheel_noise_rpm: 1.0
+    wall_x2: 2.0
+    wall_y2: 1.5
+    robot_radius: 0.30       # else the largest robot_radius the costmaps plan with
+    robot_mass: 3.5          # kg; sets the spin-up time constant
+    wheel_noise_rpm: 1.0     # +/- peak white noise on the reported RPM
+    gear_efficiency: 0.75    # fraction of motor torque the reduction returns
+    gear_drag_rpm: 12.0      # constant (Coulomb) drag, RPM/s, while turning
+    battery_sag: 0.25        # fraction of V_oc lost at four-wheel stall current
+    battery_sag_tau_ms: 400  # how long the pack takes to sag, and to recover
+    driver_drop: 0.03        # bridge's fixed voltage floor, any current
+    driver_resistance: 0.10  # bridge's current-proportional loss, instant
 ```
+
+**Every key here is optional, and every key is worth writing down anyway.** A
+key that is absent from the env is not written, and the firmware keeps its
+`#ifndef` default — the values above *are* those defaults, so this block sets
+nothing it would not already do. That is deliberate in both directions: a blank
+env boots, and a config a person reads tells them the whole simulated robot
+rather than only the parts someone chose to override. The generated configs
+therefore carry the block in full.
 
 Two rules are worth stating because both protect the EKF from a config mistake:
 
@@ -888,6 +905,86 @@ nearly perfect".
 The simulated room is configuration because **fake mode is the default here**:
 a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 12 kg robot does not accelerate like a 3.5 kg one.
+
+### The simulated drivetrain is a brushed DC gear motor, not a ramp
+
+`fake_wheel.h` used to move the wheel toward its commanded RPM with a first-order
+lag, which made every robot equally capable: four driven wheels accelerated
+exactly like two, and a 12 kg base like a 3.5 kg one. That is not a motor, and
+the difference matters because **fake mode gates the release** — a Nav2 limit that
+a real robot cannot meet has to fail on the bench, not in October.
+
+So the model is the motor's actual torque–speed line, and each term is separate
+because each behaves differently:
+
+| term | env key | what it is |
+| --- | --- | --- |
+| torque–speed | — | `accel ∝ (no_load_rpm − wheel_rpm)`: a brushed DC motor's torque falls linearly from stall to no-load, so acceleration dies as the wheel approaches its commanded speed and is greatest from rest. |
+| gearbox efficiency | `gear_efficiency` | a spur reduction returns 70–80% of the torque put in, so it scales the driving term. Reflected inertia (`N²·J_motor`) stays lumped into `FAKE_WHEEL_TAU_MS`, where it belongs. |
+| Coulomb drag | `gear_drag_rpm` | a gear train's loss is roughly **constant**, not proportional to speed. It is why an unpowered gear motor stops instead of coasting, and why a small duty produces no motion at all. Guarded so it can never push the wheel backwards through zero. |
+| viscous drag | — | `FAKE_WHEEL_FRICTION`, proportional to current RPM; bearings and the motor's own windage. |
+| pack sag | `battery_sag`, `battery_sag_tau_ms` | `V_bus = V_oc − I·R_internal`, and for a brushed motor the current is proportional to the same `(no_load − ω)` term the torque uses — so a hard acceleration browns out its own supply. One pack, four wheels: **this is the only coupling between the simulated wheels.** It is also *lagged*: internal resistance drops the voltage at once but the chemistry polarises over hundreds of ms, so a **held** load sags deeper than a brief one. That is the real reason a heavy robot suffers more than its peak current suggests — being heavy means drawing that current for longer. |
+| driver loss | `driver_drop`, `driver_resistance` | the bridge keeps some of the voltage. A fixed fraction (body-diode / V_ce floor, worst at low duty) plus a current-proportional one (R_ds(on) and the shunt) that follows the current **instantly**, unlike the pack. Two terms rather than one fudge factor because their time constants differ. |
+| supply voltage | `motor_v` / `power_v` | scales no-load RPM: a motor rated at 12 V on a 2S pack does not reach `MOTOR_MAX_RPM`. |
+
+Two consequences are worth stating, because both were mistakes first:
+
+- **`MOTOR_MAX_RPM` and `max_rpm_ratio` are different ceilings.** 140 rpm is what
+  the motor can spin; `0.85` is a derating Kinematics applies to *commands*, so
+  the controller will never ask for more than 119. A report that quotes one where
+  it means the other either flatters the robot or accuses a healthy bench
+  measurement of exceeding the motor.
+- **Stall is where every loss bites at once.** At stall the current proxy is 1.0,
+  so the motor sees `(1 − driver_drop) / (1 + battery_sag + driver_resistance)` of
+  the pack — which is why a real stalled motor never produces its datasheet stall
+  torque.
+
+Nothing here needs a rebuild: every term above is an env key, so a sweep is a
+4 KB env write per value. That is the point — it is how you find out *which* loss
+a navigation failure was sensitive to.
+
+### `drivetrain_report.py` — enter a config, get what the motors can deliver
+
+```
+python3 scripts/drivetrain_report.py --params config/reference/gendrv_config.yaml
+```
+
+It answers the question nothing in this repo asked before: **are the Nav2 limits
+in this config asking for more than these motors can give?** They were. The
+shipped limits wanted 103% of a differential base's motors and 171% at the
+velocity smoother's ceiling; on mecanum — which turns on `(lr + fr)/2` rather
+than `lr/2`, so the same `angular.z` costs 66% more wheel speed — 129%. Nav2 then
+commands what it cannot get, `Kinematics` scales the entire request down to fit,
+tracking degrades, and three mecanum legs left the room on 2026-09-23 before
+anyone looked at the motors.
+
+The report prints, for the drivetrain the config declares:
+
+```
+motor 140 rpm no-load at the wheel, controller will ask at most 119
+max speed           0.69 m/s       5.09 rad/s
+accel, first kick   3.17 m/s2     23.39 rad/s2   (stiff pack, from rest)
+accel, sag settled  2.57 m/s2     18.97 rad/s2   (what a held manoeuvre gets)
+```
+
+then checks each Nav2 and velocity-smoother limit against the right one of those
+— a *held* manoeuvre gets the settled figure, not the first kick — and adds the
+translate-plus-rotate demand at the outer wheel, which is where a combined
+request actually saturates.
+
+Two rules keep it honest:
+
+- **The model constants are parsed from `fake_wheel.h`, never copied.** A tool
+  that restates another file's numbers drifts from it silently and then describes
+  a robot that does not exist. If a macro is renamed the report exits rather than
+  guessing.
+- **Capability and budget are reported separately** (`motor_rpm` vs
+  `command_rpm`). Conflating them once produced "max speed 0.60 m/s" for a bench
+  that had just measured 0.71 m/s.
+
+Because the whole model is env-driven, the report also works as a **design tool**:
+put a candidate chassis, gearing, mass and pack into a config and read off the
+speed and acceleration before ordering anything.
 
 ### `topic_prefix` is an env key too, so the names are built at run time
 

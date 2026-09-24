@@ -277,6 +277,93 @@
             <span class="metric-val" id="hud-ticks-per-m">301,556 ticks/m</span>
           </div>
         </div>
+
+        <!-- Motor performance, computed from the firmware's own drivetrain model
+             (firmware/common/lib/encoder/fake_wheel.h) rather than pi*d*rpm/60:
+             a brushed DC torque-speed curve, gearbox efficiency, Coulomb drag,
+             the pack's lagging sag and the bridge's losses. This is the answer
+             flashing test_acc and driving the board used to be needed for. -->
+        <div class="hud-subhead">
+          <span class="hud-subtitle">🔧 Motor performance &amp; Nav2 budget</span>
+          <span class="hint" id="hud-perf-model" style="margin:0;"></span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Achievable Top Speed</span>
+            <span class="metric-val" id="hud-perf-speed">--</span>
+            <span class="metric-label" id="hud-perf-speed-sub" style="margin:0.3rem 0 0;"></span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Accel, First Kick</span>
+            <span class="metric-val" id="hud-perf-accel-first">--</span>
+            <span class="metric-label" style="margin:0.3rem 0 0;">stiff pack, from rest</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Accel, Sag Settled</span>
+            <span class="metric-val" id="hud-perf-accel-held">--</span>
+            <span class="metric-label" style="margin:0.3rem 0 0;">what a held manoeuvre gets</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Time To 0.9x Max</span>
+            <span class="metric-val" id="hud-perf-t90">--</span>
+            <span class="metric-label" id="hud-perf-stop" style="margin:0.3rem 0 0;"></span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Rotation Radius</span>
+            <span class="metric-val" id="hud-perf-radius">--</span>
+            <span class="metric-label" id="hud-perf-radius-note" style="margin:0.3rem 0 0;"></span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Command Budget</span>
+            <span class="metric-val" id="hud-perf-budget">--</span>
+            <span class="metric-label" id="hud-perf-budget-sub" style="margin:0.3rem 0 0;"></span>
+          </div>
+        </div>
+        <!-- The same model, RUN rather than solved, on test_acc's own profile:
+             20 ms samples, 1 s phases, full PWM, stop distance from the
+             integrated coast. This is the block to tune a velocity smoother
+             from -- it is what the robot does in the second a manoeuvre lasts,
+             where the cards above are the asymptote it converges on given
+             longer. Flashing test_acc is no longer how these are obtained; on a
+             fake-wheel board the tool now refuses and points here. -->
+        <div class="hud-subhead">
+          <span class="hud-subtitle">📈 Simulated <code>test_acc</code> run</span>
+          <span class="hint" style="margin:0;">what the tool would print — 20 ms samples, 1 s phases, no board</span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Max Vel</span>
+            <span class="metric-val" id="hud-acc-max-vel">--</span>
+            <span class="metric-label" id="hud-acc-max-vel-ang" style="margin:0.3rem 0 0;"></span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Max Acc</span>
+            <span class="metric-val" id="hud-acc-max-acc">--</span>
+            <span class="metric-label" id="hud-acc-max-acc-ang" style="margin:0.3rem 0 0;"></span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Time To 0.9x Max Vel</span>
+            <span class="metric-val" id="hud-acc-t90">--</span>
+            <span class="metric-label" style="margin:0.3rem 0 0;">within the 1 s drive phase</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Distance To Stop</span>
+            <span class="metric-val" id="hud-acc-stop">--</span>
+            <span class="metric-label" id="hud-acc-stop-ang" style="margin:0.3rem 0 0;"></span>
+          </div>
+        </div>
+
+        <div class="hud-subhead">
+          <span class="hud-subtitle">🎯 Nav2 limits vs this drivetrain</span>
+          <span class="hint" id="hud-nav2-auto-state" style="margin:0;"></span>
+        </div>
+        <div id="hud-perf-checks" class="hud-checks"></div>
+        <div id="hud-perf-suggested" class="hud-checks"></div>
+        <p class="hint" style="margin:0.6rem 0 0;">Speed and acceleration come from the
+          simulated drivetrain's model — gearbox efficiency, gear drag, battery sag and
+          driver losses are the <code>base_controller.simulation</code> keys, so a candidate
+          chassis can be evaluated here before anything is ordered. Change mass or gearing
+          and this HUD moves with it.</p>
       </div>
 
       <div class="form-section">
@@ -471,6 +558,72 @@
             <input type="number" id="cfg-motor-max-voltage" class="form-input" value="12.0" step="0.5">
           </div>
         </div>
+      </div>
+
+      <!-- The load and the drivetrain's losses. These are base_controller.simulation
+           keys: env values with the firmware's #ifndef defaults as the fallback, so a
+           blank field is not zero, it is the default. They are here because they are
+           what the performance HUD above is most sensitive to -- mass most of all --
+           and because sweeping one of them is a legitimate test that must not cost a
+           firmware build. -->
+      <div class="form-section">
+        <h3 class="section-title">Load &amp; Drivetrain Losses</h3>
+        <p class="hint" style="margin-bottom:12px;">Feeds the performance HUD at the top of this
+          tab, and the simulated drivetrain on a fake-wheel board. Leave a field blank to keep the
+          firmware's own default (shown as the placeholder). A heavier robot is slower AND sags its
+          pack for longer, which is why the two numbers move together.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-sim-mass" class="form-label">Total Robot Mass (kg)</label>
+            <input type="number" id="cfg-sim-mass" class="form-input" step="0.1" min="0.1" placeholder="3.5">
+            <span class="input-hint">The whole robot, batteries included — not the URDF body link's mass</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-gear-eff" class="form-label">Gearbox Efficiency (0–1)</label>
+            <input type="number" id="cfg-sim-gear-eff" class="form-input" step="0.01" min="0" max="1" placeholder="0.75">
+            <span class="input-hint">A spur reduction returns 0.70–0.80 of the torque put in</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-gear-drag" class="form-label">Gear Drag (rpm/s)</label>
+            <input type="number" id="cfg-sim-gear-drag" class="form-input" step="1" min="0" placeholder="12">
+            <span class="input-hint">Constant, not speed-proportional: why an unpowered gear motor stops</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-sag" class="form-label">Battery Sag At Stall (0–1)</label>
+            <input type="number" id="cfg-sim-sag" class="form-input" step="0.01" min="0" placeholder="0.25">
+            <span class="input-hint">Fraction of open-circuit volts lost with all four wheels stalled</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-sag-tau" class="form-label">Sag Time Constant (ms)</label>
+            <input type="number" id="cfg-sim-sag-tau" class="form-input" step="10" min="0" placeholder="400">
+            <span class="input-hint">A held load sags deeper than a brief one; 0 = instant</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-drv-drop" class="form-label">Driver Fixed Drop (0–1)</label>
+            <input type="number" id="cfg-sim-drv-drop" class="form-input" step="0.01" min="0" max="0.9" placeholder="0.03">
+            <span class="input-hint">Body-diode / V_ce floor — present at any current, worst at low duty</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-drv-r" class="form-label">Driver Loss At Stall (0–1)</label>
+            <input type="number" id="cfg-sim-drv-r" class="form-input" step="0.01" min="0" placeholder="0.10">
+            <span class="input-hint">R_ds(on) and the shunt — follows the current instantly</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Nav2 Velocity Limits</h3>
+        <p class="hint" style="margin-bottom:12px;">Saved with this robot as
+          <code>kinematics.auto_nav2_limits</code>. Left on, saving re-derives the velocity
+          smoother's envelope and rate limits, the controller's target speed and rotation rate,
+          and the recovery spin limits from the numbers in the HUD above — so changing a wheel
+          diameter or the load cannot leave the robot asking for more than its motors give,
+          which is how three mecanum legs left the room on 2026-09-23. Turn it off to tune by
+          hand; the HUD still shows what the motors suggest, and nothing is rewritten.</p>
+        <label class="checkbox-label">
+          <input type="checkbox" id="cfg-nav2-auto" checked>
+          Auto-tune Nav2 limits from this robot's motors when I save
+        </label>
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">

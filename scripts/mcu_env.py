@@ -731,7 +731,9 @@ def hardware_env(params: dict) -> dict:
                           ("fake_wall_y1", float), ("fake_wall_x2", float),
                           ("fake_wall_y2", float), ("fake_mass", float),
                           ("fake_noise_rpm", float), ("fake_gear_eff", float),
-                          ("fake_coulomb", float), ("fake_sag", float)):
+                          ("fake_coulomb", float), ("fake_sag", float),
+                          ("fake_sag_tau", float), ("fake_drv_drop", float),
+                          ("fake_drv_r", float)):
             src = {"fake_map_w": "map_width", "fake_map_h": "map_height",
                    "fake_wall": "wall_obstacle", "fake_wall_x1": "wall_x1",
                    "fake_wall_y1": "wall_y1", "fake_wall_x2": "wall_x2",
@@ -742,7 +744,13 @@ def hardware_env(params: dict) -> dict:
                    # not cost a firmware build per value.
                    "fake_gear_eff": "gear_efficiency",
                    "fake_coulomb": "gear_drag_rpm",
-                   "fake_sag": "battery_sag"}[key]
+                   "fake_sag": "battery_sag",
+                   # The pack's sag LAGS -- a held load sags deeper than a brief
+                   # one -- and the bridge keeps some of the voltage for itself,
+                   # instantly rather than with the pack's chemistry.
+                   "fake_sag_tau": "battery_sag_tau_ms",
+                   "fake_drv_drop": "driver_drop",
+                   "fake_drv_r": "driver_resistance"}[key]
             if sim.get(src) is None:
                 continue
             try:
