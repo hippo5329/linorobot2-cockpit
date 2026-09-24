@@ -434,6 +434,10 @@ async function fetchDrivetrainHUD() {
       max_rpm: num("cfg-max-rpm", 140),
       max_rpm_ratio: num("cfg-headroom", 0.85),
       counts_per_rev: num("cfg-cpr", 144000),
+      // The loop's output range. A 12-bit board reaches the same speed with
+      // four times the counts, so its plant gain is a quarter of a 10-bit
+      // board's -- and gains derived without knowing that are 4x wrong.
+      pwm_bits: num("cfg-pwm-bits", 10),
       motor_operating_voltage: num("cfg-motor-voltage", 24.0),
       motor_power_max_voltage: num("cfg-motor-max-voltage", 12.0),
       auto_nav2_limits: document.getElementById("cfg-nav2-auto")?.checked !== false,

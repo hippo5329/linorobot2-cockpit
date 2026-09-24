@@ -26,6 +26,7 @@
 #   python3 scripts/drivetrain_report.py --params <robot>_config.yaml
 # ==============================================================================
 import argparse
+import datetime
 import math
 import os
 import re
@@ -138,6 +139,11 @@ def drivetrain(params):
     pw_v = float(kine.get("motor_power_max_voltage", 0) or 0)
     volt_ratio = min(pw_v / op_v, 1.0) if op_v > 0 and pw_v > 0 else 1.0
     motor_rpm = float(kine.get("max_rpm", 0)) * volt_ratio
+    # The loop's output range, because a plant gain in "rpm per PWM count" needs
+    # to know how many counts a full step is: 10-bit and 12-bit boards would
+    # otherwise be handed gains differing by a factor of four.
+    pwm_bits = int(kine.get("pwm_bits", 10) or 10)
+    d["pwm_max"] = float((1 << pwm_bits) - 1)
     d.update(base=base, radius=radius, circ=math.pi * wheel_d,
              volt_ratio=volt_ratio, motor_rpm=motor_rpm,
              command_rpm=motor_rpm * float(kine.get("max_rpm_ratio", 1.0)),
@@ -391,6 +397,327 @@ def demand_rpm(d, vx, wz):
 
 
 # ==============================================================================
+# The step response, read as a plant.
+#
+# test_acc is a STEP RESPONSE, by design: full PWM applied at t=0 to a wheel at
+# rest, sampled every 20 ms -- which is exactly the control loop's own period
+# (CONTROL_TIMER, 50 Hz). That is not a coincidence in how it was built, and it
+# is what makes the output usable for control design rather than just a
+# datasheet: from a step you get the plant, and from the plant you get gains
+# that are stable by construction instead of by trial.
+#
+# The plant here is PWM counts in, wheel RPM out. To a good approximation it is
+# first order with a dead zone:
+#
+#     G(s) = K / (tau*s + 1),   with no output at all below FAKE_WHEEL_STALL_DUTY
+#
+# K and tau are MEASURED off the simulated response rather than taken from the
+# model's constants, for the same reason you would measure them on a bench: the
+# model is not purely first order -- Coulomb drag, the lagging pack and the
+# driver's limiter all bend it -- and what a controller sees is the bent curve,
+# not the ideal one it was assembled from.
+# ==============================================================================
+def identify_plant(d, measured=None):
+    """Fit the first-order plant the control loop actually faces."""
+    measured = measured or run_test_acc(d, rotate=False)
+    drive = [v for v, _ in measured["trace"][:PHASE_SAMPLES]]
+    if d["circ"] <= 0 or not drive:
+        return None
+    # Wheel rpm, which is what the PID regulates -- not the body's m/s.
+    rpm = [v * 60.0 / d["circ"] for v in drive]
+    steady = rpm[-1]
+    if steady <= 0:
+        return None
+
+    pwm_max = float(d["pwm_max"])
+
+    def _cross(frac):
+        """First sample at or past `frac` of steady, linearly interpolated."""
+        target = steady * frac
+        for i, v in enumerate(rpm):
+            if v >= target:
+                if i == 0:
+                    return 0.0
+                span = rpm[i] - rpm[i - 1]
+                k = (target - rpm[i - 1]) / span if span > 0 else 0.0
+                return (i - 1 + k) * TICK_S
+        return PHASE_SAMPLES * TICK_S
+
+    # 63.2% is the definition of the time constant for a first-order step.
+    tau = _cross(0.632)
+    return {
+        "steady_rpm": steady,
+        "pwm_step": pwm_max,
+        # DC gain: rpm per PWM count. The number the loop gain is the inverse of.
+        "gain": steady / pwm_max if pwm_max > 0 else 0.0,
+        "tau": tau,
+        "t_rise": _cross(0.9) - _cross(0.1),
+        # 2% settling. Within a 1 s step the model does not always get there,
+        # and saying so is more useful than extrapolating.
+        "t_settle": _cross(0.98),
+        "settled": rpm[-1] >= steady * 0.98,
+        # The dead zone is a duty, and the loop's output is counts.
+        "dead_counts": d["stall_duty"] * pwm_max,
+        # A first-order plant cannot overshoot; anything here means the model
+        # has picked up a resonance and the gains below would not be valid.
+        "overshoot": max(0.0, (max(rpm) - steady) / steady),
+        "ts": TICK_S,
+    }
+
+
+def simulate_closed_loop(d, gains, setpoint_rpm=None, seconds=2.0):
+    """Close the PID round the simulated wheel and step it.
+
+    This is the part the bench could never do. A step response measured open
+    loop tells you the plant; it does not tell you whether the gains in the
+    config make a STABLE loop, and fake mode used to be no help because the
+    wheels did not respond to PWM at all -- they tracked the command, so every
+    set of gains looked perfect. Now the wheel is a plant driven by PWM, so the
+    loop is a real loop and a bad gain oscillates here exactly as it would on a
+    robot.
+
+    PID::compute() is transcribed, not approximated: positional form, integral
+    as a plain sum, derivative as a plain difference, and the same anti-windup
+    clamp on the integral's CONTRIBUTION that the firmware applies -- which is
+    the part that decides how a saturated loop recovers, and therefore most of
+    what "stable" means here.
+    """
+    plant = identify_plant(d)
+    if not plant:
+        return None
+    if setpoint_rpm is None:
+        setpoint_rpm = plant["steady_rpm"] * 0.5      # a normal cruise, not the rail
+    pwm_max = d["pwm_max"]
+    kp, ki, kd = float(gains["kp"]), float(gains["ki"]), float(gains["kd"])
+
+    pack = _Pack(d)
+    wheel = _Wheel(d, pack, 0)
+    integral = 0.0
+    prev_error = 0.0
+    trace = []
+    for _ in range(int(seconds / TICK_S)):
+        error = setpoint_rpm - wheel.rpm
+        integral += error
+        derivative = error - prev_error
+        if ki != 0.0:
+            i_max = pwm_max / abs(ki)             # the firmware's anti-windup
+            integral = min(max(integral, -i_max), i_max)
+        if setpoint_rpm == 0.0 and abs(error) < 0.5:
+            integral = derivative = 0.0
+        u = kp * error + ki * integral + kd * derivative
+        u = min(max(u, -pwm_max), pwm_max)
+        prev_error = error
+        wheel.duty = u / pwm_max
+        wheel.step(TICK_S, True)
+        trace.append(wheel.rpm)
+
+    peak = max(trace) if trace else 0.0
+    overshoot = (peak - setpoint_rpm) / setpoint_rpm if setpoint_rpm > 0 else 0.0
+    # Settled = inside +/-2% and STAYING there, so a curve passing through the
+    # band on its way to an oscillation is not counted as settled.
+    band = setpoint_rpm * 0.02
+    settle = None
+    for i in range(len(trace)):
+        if all(abs(v - setpoint_rpm) <= band for v in trace[i:]):
+            settle = i * TICK_S
+            break
+    final = trace[-1] if trace else 0.0
+    # Sign changes of the error, after the first crossing: a loop that keeps
+    # crossing is ringing, whatever its overshoot figure says.
+    crossings = 0
+    for a, b in zip(trace, trace[1:]):
+        if (a - setpoint_rpm) * (b - setpoint_rpm) < 0:
+            crossings += 1
+    return {"setpoint": setpoint_rpm, "overshoot": overshoot, "settle": settle,
+            "final": final, "steady_error": setpoint_rpm - final,
+            "crossings": crossings, "trace": trace}
+
+
+# How much slower than the plant the closed loop is asked to be.
+#
+# IMC/lambda tuning: lambda is the closed-loop time constant, and the ratio to
+# the open-loop tau is the whole trade. 1 is as fast as the plant and lively; 3
+# is sluggish and very forgiving. 2 is the usual starting point for a mechanical
+# loop with a noisy sensor, and a wheel encoder at 50 Hz is exactly that.
+LAMBDA_RATIO = 2.0
+
+
+def suggest_pid(d, plant=None, lambda_ratio=LAMBDA_RATIO):
+    """PI gains for THIS firmware's PID, from the identified plant.
+
+    The discretisation matters and is easy to get wrong, so it is written out.
+    PID::compute() is positional and NOT time-normalised:
+
+        u = kp*e + ki*sum(e) + kd*(e - e_prev)
+
+    -- `integral_ += error`, a plain sum with no dt, so ki carries the sample
+    period inside it. For a continuous PI Kc*(e + (1/Ti)*integral(e dt)) sampled
+    at Ts, the discrete equivalents are kp = Kc and ki = Kc*Ts/Ti.
+
+    IMC for a first-order plant gives Kc = tau / (K*lambda) and Ti = tau, so:
+
+        kp = tau / (K * lambda)
+        ki = kp * Ts / tau
+
+    kd is zero on purpose. A first-order plant needs no derivative term, and
+    this one differentiates a 50 Hz encoder reading with no filter -- on a real
+    robot that is an amplifier for quantisation noise, which is where the
+    chattering comes from.
+    """
+    plant = plant or identify_plant(d)
+    if not plant or plant["gain"] <= 0 or plant["tau"] <= 0:
+        return None
+    lam = plant["tau"] * lambda_ratio
+    kp = plant["tau"] / (plant["gain"] * lam)
+    ki = kp * plant["ts"] / plant["tau"]
+    return {"kp": round(kp, 3), "ki": round(ki, 3), "kd": 0.0,
+            "lambda_s": lam, "lambda_ratio": lambda_ratio}
+
+
+# What "stable" has to mean before a gain is written into a robot's config.
+#
+# Overshoot on a wheel loop is not cosmetic: the base surges past the commanded
+# speed and the controller above it is tracking a plant that argues back. And a
+# loop that keeps crossing the setpoint is ringing however small each excursion
+# is, so the crossing count is a separate test from the overshoot figure.
+PID_MAX_OVERSHOOT = 0.02
+PID_MAX_CROSSINGS = 0
+# Fast to slow. The first one that passes wins, so the order IS the preference:
+# the tightest loop that is still calm.
+LAMBDA_CANDIDATES = (1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0)
+
+
+def auto_tune_pid(d, plant=None):
+    """Tune, then PROVE it on the closed loop before offering the numbers.
+
+    IMC gives gains from the plant; it does not know about the dead zone, the
+    anti-windup clamp, the PWM rail, the Coulomb drag that makes the plant
+    non-linear near zero, or the current limiter. So the candidate is simulated
+    against the real loop -- the transcribed PID driving the transcribed wheel --
+    and rejected if it overshoots or rings.
+
+    Returns the gains plus the closed-loop evidence for them, or None if nothing
+    passed, which is a legitimate answer: it means this chassis should not have
+    its gains rewritten unattended.
+    """
+    plant = plant or identify_plant(d)
+    if not plant:
+        return None
+    best = None
+    for ratio in LAMBDA_CANDIDATES:
+        gains = suggest_pid(d, plant, lambda_ratio=ratio)
+        if not gains:
+            continue
+        # Two setpoints, because a wheel loop is not linear: the dead zone and
+        # the Coulomb drag dominate at low speed, the PWM rail and the pack's
+        # sag at high speed. Gains that are calm at cruise and ring at a crawl
+        # are not calm.
+        runs = [simulate_closed_loop(d, gains, setpoint_rpm=plant["steady_rpm"] * f)
+                for f in (0.25, 0.9)]
+        if any(r is None for r in runs):
+            continue
+        if any(r["overshoot"] > PID_MAX_OVERSHOOT or
+               r["crossings"] > PID_MAX_CROSSINGS for r in runs):
+            continue
+        settle = max((r["settle"] if r["settle"] is not None else 1e9) for r in runs)
+        gains = dict(gains, settle=settle, checked=runs)
+        if best is None or settle < best["settle"]:
+            best = gains
+    return best
+
+
+def auto_pid_enabled(params):
+    """On when the robot has been MEASURED; off when only the model has spoken.
+
+    Separate from the Nav2 flag, and defaulted differently, because they are
+    different kinds of decision. A Nav2 limit is a BOUND: get it wrong and the
+    robot is slower than it needed to be, and the velocity smoother clamps the
+    consequences either way. A loop gain is STABILITY: get it wrong and the
+    wheel oscillates, and nothing downstream saves it.
+
+    So the default follows the evidence. With `kinematics.step_response`
+    recorded -- a real test_acc run off a real board -- the gains are derived
+    from a measurement of this robot and are rewritten. Without it the only
+    plant available is the simulated one, and no motor has ever turned: the
+    report still prints what it would suggest, loudly, but it does not go and
+    change a stability-critical number on the strength of a model.
+
+    `kinematics.auto_pid: true` overrides that for somebody who wants the
+    model's gains anyway, and `false` turns it off even on a measured robot.
+    """
+    kine = params.get("kinematics") or {}
+    if "auto_pid" in kine:
+        flag = kine["auto_pid"]
+        if isinstance(flag, bool):
+            return flag
+        return str(flag).strip().lower() not in ("false", "0", "no", "off")
+    step = kine.get("step_response") or {}
+    return bool(isinstance(step, dict) and step.get("max_vel") and step.get("t_to_90"))
+
+
+# ==============================================================================
+# Identifying the plant from a REAL test_acc run.
+#
+# Everything above reads the SIMULATED step. On a robot with motors the same two
+# numbers come off the board, and they are the two test_acc already prints:
+#
+#     MAX VEL   0.71   0.00 m/s    0.03 rad/s
+#     time to 0.9x max vel   0.42 sec
+#
+# For a first-order step, 0.9 of final is reached at ln(10)*tau = 2.303*tau, so
+# those two lines are a complete identification -- steady state and time
+# constant -- in the loop's own units. Which is why the tool prints them.
+# ==============================================================================
+T90_OVER_TAU = math.log(10.0)          # 2.3026
+
+
+def plant_from_measurements(d, max_vel, t_to_90, pwm_step=None):
+    """The same plant dict, from a real robot's numbers instead of the model."""
+    if d["circ"] <= 0 or max_vel <= 0 or t_to_90 <= 0:
+        return None
+    pwm_max = float(pwm_step or d["pwm_max"])
+    steady = max_vel * 60.0 / d["circ"]
+    tau = t_to_90 / T90_OVER_TAU
+    return {
+        "steady_rpm": steady,
+        "pwm_step": pwm_max,
+        "gain": steady / pwm_max if pwm_max > 0 else 0.0,
+        "tau": tau,
+        # The board reports one crossing time, so the rest of the curve's shape
+        # is inferred from the first-order fit rather than measured. Said here
+        # rather than silently presented as if it had been.
+        "t_rise": (math.log(9.0)) * tau,        # 10% -> 90% of a first-order step
+        "t_settle": math.log(50.0) * tau,       # 2%
+        "settled": True,
+        "dead_counts": d["stall_duty"] * pwm_max,
+        "overshoot": 0.0,
+        "ts": TICK_S,
+        "measured": True,
+    }
+
+
+TEST_ACC_VEL = re.compile(r"MAX VEL\s+(-?[\d.]+)")
+TEST_ACC_T90 = re.compile(r"time to 0\.9x max vel\s+(-?[\d.]+)")
+TEST_ACC_PWM = re.compile(r"MAX PWM\s+(-?[\d.]+)")
+
+
+def parse_test_acc(text):
+    """Pull the step response out of a real test_acc transcript.
+
+    The FIRST run is the one used: test_acc halves the PWM every fourth run, so
+    later blocks are steps of a different size and mixing them would fit a plant
+    to two different inputs.
+    """
+    vel = TEST_ACC_VEL.search(text)
+    t90 = TEST_ACC_T90.search(text)
+    pwm = TEST_ACC_PWM.search(text)
+    if not vel or not t90:
+        return None
+    return {"max_vel": float(vel.group(1)), "t_to_90": float(t90.group(1)),
+            "pwm_step": float(pwm.group(1)) if pwm else None}
+
+
+# ==============================================================================
 # Nav2 limits, derived from the motors rather than typed in.
 #
 # The shipped limits asked for 103% of a differential base's motors, 171% at the
@@ -536,6 +863,35 @@ def auto_limits_enabled(params):
     return str(flag).strip().lower() not in ("false", "0", "no", "off")
 
 
+def config_plant(params, d=None):
+    """The plant to tune against: a REAL measurement if the config records one.
+
+    `kinematics.step_response` is where a robot's own test_acc run is kept:
+
+        step_response:
+          max_vel: 0.71       # m/s, the MAX VEL line
+          t_to_90: 0.42       # s, the "time to 0.9x max vel" line
+          pwm: 1023           # the MAX PWM line, if the step was not full scale
+          measured: 2026-09-24
+
+    It is stored rather than re-derived because it is evidence: the gains that
+    come out of it are only reproducible if the two numbers they came from are
+    written down, and a robot that has been measured should not silently fall
+    back to the model the next time somebody saves its config.
+
+    Absent, the simulated step is used, which is the right answer for a robot
+    that does not exist yet -- which is most of them, at design time.
+    """
+    d = d or drivetrain(params)
+    step = (params.get("kinematics") or {}).get("step_response") or {}
+    if isinstance(step, dict) and step.get("max_vel") and step.get("t_to_90"):
+        got = plant_from_measurements(d, float(step["max_vel"]),
+                                      float(step["t_to_90"]), step.get("pwm"))
+        if got:
+            return got
+    return identify_plant(d)
+
+
 def derived_limits(params):
     """Everything auto-tuning would write, as dotted paths -> values.
 
@@ -557,6 +913,17 @@ def derived_limits(params):
         out["kinematics.max_rpm_ratio"] = ratio
         d["command_rpm"] = d["motor_rpm"] * ratio
     out.update(suggest_nav2_limits(d))
+
+    # The wheel loop's gains, from the step response -- the robot's own if it
+    # has been measured, the model's otherwise. Only written when the closed-loop
+    # check passed: auto_tune_pid() returns None when no candidate was calm at
+    # both a crawl and near full speed, and "leave the gains alone" is the right
+    # answer then.
+    if auto_pid_enabled(params):
+        gains = auto_tune_pid(d, config_plant(params, d))
+        if gains:
+            for key in ("kp", "ki", "kd"):
+                out[f"kinematics.pid.{key}"] = gains[key]
     return out
 
 
@@ -660,6 +1027,51 @@ def report(params, name=""):
         out.append("     Tune a velocity smoother from THIS block -- it is what the robot does")
         out.append("     in the second a manoeuvre lasts.")
     out.append("")
+
+    # The step response as a PLANT, which is what test_acc was built to produce:
+    # a step into a wheel at rest, sampled at the control loop's own 20 ms, so
+    # the loop can be designed rather than guessed at.
+    plant = config_plant(params, d)
+    if plant:
+        src = "measured on the robot" if plant.get("measured") else "from the model"
+        out.append(f"--- the step response, as a plant ({src})")
+        out.append(f"    K  {plant['gain']:.4f} rpm per PWM count "
+                   f"({plant['steady_rpm']:.1f} rpm at a {plant['pwm_step']:.0f}-count step)")
+        out.append(f"    tau {plant['tau'] * 1000:.0f} ms      rise (10-90%) "
+                   f"{plant['t_rise'] * 1000:.0f} ms      2% settle "
+                   f"{plant['t_settle'] * 1000:.0f} ms")
+        out.append(f"    dead zone below {plant['dead_counts']:.0f} counts "
+                   f"({d['stall_duty'] * 100:.0f}% duty), overshoot "
+                   f"{plant['overshoot'] * 100:.1f}%")
+        shipped = (params.get("kinematics") or {}).get("pid") or {}
+        tuned = auto_tune_pid(d, plant)
+        out.append("")
+        out.append("--- the wheel loop, closed on that plant")
+        for label, gains in (("config", shipped), ("auto-tuned", tuned)):
+            if not gains or "kp" not in gains:
+                continue
+            runs = [simulate_closed_loop(d, gains, setpoint_rpm=plant["steady_rpm"] * f)
+                    for f in (0.25, 0.9)]
+            runs = [r for r in runs if r]
+            if not runs:
+                continue
+            over = max(r["overshoot"] for r in runs) * 100.0
+            ring = max(r["crossings"] for r in runs)
+            settle = max((r["settle"] if r["settle"] is not None else float("inf"))
+                         for r in runs)
+            settle_s = f"{settle:.2f} s" if settle != float("inf") else "never"
+            verdict = "calm" if (over <= PID_MAX_OVERSHOOT * 100 and
+                                 ring <= PID_MAX_CROSSINGS) else "RINGS"
+            out.append(f"    {label:11} kp {gains['kp']:<6} ki {gains['ki']:<6} "
+                       f"kd {gains['kd']:<5} -> overshoot {over:5.1f}%  "
+                       f"crossings {ring}  settle {settle_s}   {verdict}")
+        if tuned:
+            out.append(f"    (IMC, lambda = {tuned['lambda_ratio']:g} x tau, checked at a "
+                       f"crawl and near full speed)")
+        else:
+            out.append("    (no candidate was calm at both speeds -- tune this one by hand)")
+        out.append("")
+
     out.append("--- what the config asks for")
 
     verdict_lines, over = [], False
@@ -704,11 +1116,55 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--params", action="append", required=True,
                     help="robot config YAML; repeat to compare several")
+    # A real robot's own step response. Everything else in this report is the
+    # model; these two numbers are the board's, and they win when present --
+    # a measured plant beats a simulated one every time.
+    ap.add_argument("--from-test-acc", metavar="LOG",
+                    help="a real test_acc transcript: identify the plant from its "
+                         "MAX VEL and 'time to 0.9x max vel' lines instead of the model")
+    ap.add_argument("--max-vel", type=float,
+                    help="the MAX VEL figure (m/s), if you are typing it rather than "
+                         "pasting a log")
+    ap.add_argument("--t90", type=float,
+                    help="the 'time to 0.9x max vel' figure (s)")
+    ap.add_argument("--write", action="store_true",
+                    help="write the derived limits and gains back into the config(s), "
+                         "and record the measurement under kinematics.step_response")
     args = ap.parse_args()
+
+    step = None
+    if args.from_test_acc:
+        with open(args.from_test_acc, encoding="utf-8") as fh:
+            step = parse_test_acc(fh.read())
+        if not step:
+            raise SystemExit(f"{args.from_test_acc}: no 'MAX VEL' and 'time to 0.9x max "
+                             f"vel' lines -- is this a test_acc transcript?")
+    elif args.max_vel and args.t90:
+        step = {"max_vel": args.max_vel, "t_to_90": args.t90, "pwm_step": None}
+    elif bool(args.max_vel) != bool(args.t90):
+        raise SystemExit("--max-vel and --t90 identify the plant together; "
+                         "one without the other says nothing")
+
     any_over = False
     for path in args.params:
         with open(path, encoding="utf-8") as fh:
             params = yaml.safe_load(fh) or {}
+        if step:
+            # Recorded in the config, not just used: gains are only reproducible
+            # if the two numbers behind them are written down.
+            rec = {"max_vel": step["max_vel"], "t_to_90": step["t_to_90"],
+                   "measured": datetime.date.today().isoformat()}
+            if step.get("pwm_step"):
+                rec["pwm"] = step["pwm_step"]
+            params.setdefault("kinematics", {})["step_response"] = rec
+        if args.write:
+            changed = apply_derived_limits(params)
+            with open(path, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(params, fh, sort_keys=False)
+            print(f"=== {path}: wrote {len(changed)} value(s)")
+            for k, v in changed.items():
+                print(f"    {k}: {v['from']} -> {v['to']}")
+            print()
         text, over = report(params, os.path.basename(path))
         print(text)
         print()
