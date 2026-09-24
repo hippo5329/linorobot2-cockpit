@@ -1,4 +1,5 @@
-// WiFiUDP and IPAddress for the HOST target, over a plain POSIX socket.
+// WiFiUDP for the HOST target, over a plain POSIX socket. (IPAddress is in the
+// shim's Arduino.h, where the real cores keep it.)
 //
 // firmware/common/lib/uros_transport/uros_transport.cpp is compiled UNMODIFIED
 // against this. That file already chose the right shape for us: micro-ROS asks
@@ -25,46 +26,6 @@
 #include <unistd.h>
 
 #include "Arduino.h"
-
-// ---------------------------------------------------------------- IPAddress
-class IPAddress
-{
-public:
-    IPAddress() : _v(0) {}
-    IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
-        : _v(((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | d) {}
-    explicit IPAddress(uint32_t host_order) : _v(host_order) {}
-
-    // The env stores an address as text, so fromString is the path actually used
-    // (mcu_env's envIP calls it). Returns false on anything malformed rather than
-    // silently yielding 0.0.0.0, which would send the session into the void.
-    bool fromString(const char *s)
-    {
-        struct in_addr a;
-        if (!s || inet_pton(AF_INET, s, &a) != 1) return false;
-        _v = ntohl(a.s_addr);
-        return true;
-    }
-    uint32_t asHostOrder() const { return _v; }
-    uint32_t asNetworkOrder() const { return htonl(_v); }
-    uint8_t operator[](int i) const { return (uint8_t)((_v >> (8 * (3 - i))) & 0xFF); }
-    bool operator==(const IPAddress &o) const { return _v == o._v; }
-
-    // Serial.print(ip) in uros_transport.cpp's udp4 branch.
-    const char *c_str() const
-    {
-        snprintf(_txt, sizeof(_txt), "%u.%u.%u.%u",
-                 (unsigned)(*this)[0], (unsigned)(*this)[1],
-                 (unsigned)(*this)[2], (unsigned)(*this)[3]);
-        return _txt;
-    }
-
-private:
-    uint32_t _v;
-    mutable char _txt[16];
-};
-
-inline size_t _lino_print_ip(const IPAddress &ip) { return Serial.print(ip.c_str()); }
 
 // ---------------------------------------------------------------- WiFiUDP
 class WiFiUDP

@@ -11,6 +11,9 @@
 //              mmap'd into the DROM window and parsed in place.
 //   RP2040/2350 the 4 KB EEPROM sector arduino-pico reserves at the very top of
 //              flash. It is memory-mapped, so it is parsed in place.
+//   HOST       a FILE, mmap'd read-only (firmware/host/). The robot computer
+//              running as a micro-ROS client has no flash partition, so the env
+//              image scripts/mcu_env.py would have flashed is mapped instead.
 // ---------------------------------------------------------------------------
 
 #define ENV_SIZE      0x1000
@@ -161,6 +164,85 @@ static void loadEnv(void)
     }
     env_data = (const char *)(base + ENV_CRC_LEN);
     env_valid = true;
+}
+
+#elif defined(LINO_HOST)
+
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+// The host has no flash, but it does not need a different ENV: it needs the same
+// 4096 bytes in a file. `mcu_env.py build --out env.bin` already writes exactly
+// the image an ESP32 partition or an RP2 top sector receives, so the host target
+// maps that file and the loader below is the only new code -- the CRC check, the
+// entry walk and every accessor are the ones the board runs.
+//
+// That shared blob is the point. A host client whose configuration came from a
+// YAML reader of its own would agree with the board only for as long as nobody
+// edited either; reading the flash image means agreement is not something anyone
+// has to maintain. tests/test_host_env_blob.py asserts the two ends still meet.
+//
+// mmap rather than read(): both other backends parse in place out of a read-only
+// mapping, and a heap copy here would differ in the ways that matter to the
+// parser -- a copy can be NUL-terminated and sized to its content, where flash
+// is 0xFF-padded to the full partition and is walked against ENV_DATA_LEN. The
+// mapping keeps the host on the same code path rather than a kinder one.
+#define ENV_FILE_VAR      "LINO_ENV_BIN"
+#define ENV_FILE_DEFAULT  "env.bin"
+
+static void loadEnv(void)
+{
+    const char *path = getenv(ENV_FILE_VAR);
+    if (!path || !*path)
+        path = ENV_FILE_DEFAULT;
+
+    const int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        Serial.printf("[env] cannot open %s: %s — build one with "
+                      "`scripts/mcu_env.py build --out %s`, or point " ENV_FILE_VAR
+                      " at it\n", path, strerror(errno), ENV_FILE_DEFAULT);
+        return;
+    }
+
+    // A short file would map with a tail of zero-filled page, which reads as a
+    // terminating empty entry -- a truncated env that looks merely empty. Refuse
+    // it by size, and say which size, because "no keys" and "half the keys" are
+    // different faults and only one of them is a flashing mistake.
+    struct stat st;
+    const bool statted = (fstat(fd, &st) == 0);
+    if (!statted || (size_t)st.st_size < ENV_SIZE) {
+        Serial.printf("[env] %s is %ld bytes, expected at least %d — not an env image\n",
+                      path, statted ? (long)st.st_size : -1L, (int)ENV_SIZE);
+        close(fd);
+        return;
+    }
+
+    void *base = mmap(NULL, ENV_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+    // The mapping outlives the descriptor, so the fd is closed either way and
+    // env_data stays valid for the life of the process.
+    close(fd);
+    if (base == MAP_FAILED) {
+        Serial.printf("[env] mmap %s failed: %s\n", path, strerror(errno));
+        return;
+    }
+
+    uint32_t stored;
+    memcpy(&stored, base, ENV_CRC_LEN);
+    const uint32_t actual = crc32_iso((const uint8_t *)base + ENV_CRC_LEN, ENV_DATA_LEN);
+    if (stored != actual) {
+        Serial.printf("[env] CRC32 mismatch (image %08x, computed %08x) — %s is "
+                      "corrupt or was not written by scripts/mcu_env.py\n",
+                      (unsigned)stored, (unsigned)actual, path);
+        munmap(base, ENV_SIZE);
+        return;
+    }
+
+    env_data = (const char *)base + ENV_CRC_LEN;
+    env_valid = true;
+    Serial.printf("[env] %s: %d bytes, CRC32 %08x OK\n", path, (int)ENV_SIZE, (unsigned)actual);
 }
 
 #else

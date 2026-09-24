@@ -33,7 +33,9 @@ guessed:
 | `PID.h` | nothing |
 | `odometry.h` | nothing — its `micro_ros_utilities`/`nav_msgs` includes come from the micro-ROS client library |
 | `fake_wheel.h` | `micros()`, `random()`, `map()` |
-| `uros_transport.cpp` | `Serial.print*`, and nine `WiFiUDP` methods |
+| `uros_transport.cpp` | the `Print`/`Stream` hierarchy, `Serial`, `IPAddress`, and nine `WiFiUDP` methods |
+| `mcu_env.cpp` | `Serial.printf`, `IPAddress::fromString` |
+| `diag.cpp` | `Stream *` with `print`/`printf`, `millis()` |
 
 `shim/WiFiUdp.h` implements those nine over a POSIX socket, so
 `firmware/common/lib/uros_transport/uros_transport.cpp` compiles as it is and the host takes
@@ -41,10 +43,36 @@ the **same `transport=udp4` branch a board takes**, reading the same `agent_ip` 
 keys. Anything a future firmware change needs will fail to *compile* here, which is the right
 failure — a silent divergence between board and host is what this target exists to avoid.
 
-The env comes from the same place too: `scripts/mcu_env.py` generates the 4 KB blob from
-`config.yaml`, the firmware parses it in place from a memory-mapped pointer, and on the host
-that pointer is an `mmap()`ed file instead of a flash partition. Same generator, same keys,
-same parser, and `tests/test_env_contract.py` keeps guarding both.
+Two details of the shim are load-bearing rather than cosmetic. It reproduces Arduino's real
+`Print` → `Stream` class hierarchy, because the firmware passes `Stream *` around (`diag.cpp`
+holds its output as one; `uros_transport.cpp`'s serial branch casts `transport->args` back to
+one) — a shim offering only a concrete `Serial` would have forced a host `#ifdef` into each of
+those files, and an `#ifdef` in the firmware is precisely the divergence this target exists to
+*detect* rather than create. And `IPAddress` lives in `Arduino.h`, not in `WiFiUdp.h`, because
+that is where the real cores keep it and `mcu_env.h` relies on exactly that: it declares
+`envIP()` while including only `<Arduino.h>`.
+
+### The env is the same 4096 bytes a board is flashed
+
+`scripts/mcu_env.py build --out env.bin` already writes the exact image an ESP32 `env`
+partition or an RP2 top sector receives. The host target **maps that file**: `mcu_env.cpp`
+gains a third loader beside the ESP32 and RP2040 ones — `open` + `fstat` + `mmap(PROT_READ)`,
+at `$LINO_ENV_BIN` (default `./env.bin`) — and the CRC32 check, the entry walk and every
+accessor are the ones the board runs.
+
+`mmap` rather than `read()` is deliberate: both other backends parse in place out of a
+read-only mapping, and a heap copy here would differ in the ways that matter to the parser. A
+copy can be NUL-terminated and sized to its content, where flash is `0xFF`-padded to the full
+sector and is walked against `ENV_DATA_LEN`. The mapping keeps the host on the same code path
+rather than a kinder one.
+
+That shared blob is the point. A host client with a YAML reader of its own would agree with the
+board only for as long as nobody edited either. `tests/test_host_env_blob.py` asserts the two
+ends still meet — it writes an image with the Python writer, compiles the firmware's C++ reader
+against this shim, runs it, and requires every key back, plus the three refusals (missing,
+short, bad CRC). A short file matters more than it looks: it would map with a zero-filled tail,
+and a zero reads as the empty entry that ends the list, so half an env would parse as an empty
+one and the board would come up on compiled-in defaults, quietly.
 
 ## `probe/` — and why it is here rather than in a scratch directory
 
@@ -58,24 +86,51 @@ same parser, and `tests/test_env_contract.py` keeps guarding both.
 `rmw_microxrcedds` package, which that binary never loads. Measured 2026-09-24: a completely
 convincing green that said nothing whatsoever about micro-ROS.
 
-So the probe links `rmw_microxrcedds` and `microxrcedds_client` explicitly, and it ships with
-its control:
+So the probe links `rmw_microxrcedds` and `microxrcedds_client` explicitly — and, critically,
+**the rmw is rebuilt `RMW_UXRCE_TRANSPORT=custom`**. That is what puts the firmware's code
+under test rather than beside it. With the default `RMW_UXRCE_TRANSPORT=udp` the rmw owns a UDP
+socket of its own and `rmw_uros_options_set_udp_address()` configures it: the four functions in
+`uros_transport.cpp` would be *installed and never called*, and a `transport=udp4` regression in
+the firmware would pass. Under `custom` there is no second socket — switching the transport also
+`#undef`s `RMW_UXRCE_TRANSPORT_UDP`, which is what guards `RMW_UXRCE_DEFAULT_UDP_IP` and
+`_PORT`, so the rmw has no UDP address compiled in at all. Every byte must go through ours.
+
+(One upstream wrinkle: `rmw_microxrcedds` ships a test calling `rmw_uros_discover_agent()`,
+agent autodiscovery over UDP multicast, which does not exist under `custom` and fails to
+*compile*. It is upstream's test of a feature we deliberately remove, so the package is built
+`-DBUILD_TESTING=OFF`.)
+
+`probe/proof.sh` runs the whole thing on an isolated NAT subnet (a docker bridge per leg, plus
+its own `ROS_DOMAIN_ID`), and it has **four legs, none of which is optional**:
+
+| leg | env image says | must |
+| --- | --- | --- |
+| `CONTROL-SERIAL` | `transport=serial` | be refused, `rc=2` — the **env** picks the branch |
+| `CONTROL-DEAD` | `udp4`, port with no agent | fail `rclc_init` — no far end, no session |
+| `POSITIVE` | `udp4`, the live agent | establish a session, publish, and a ROS 2 subscriber receives |
+| `POSITIVE-ALTPORT` | `udp4`, port `8877` | establish a session — see below |
+
+**A transport test that passes without the far end is not a transport test.** Both controls are
+driven by real images from `scripts/mcu_env.py`, so the env path is exercised whichever way the
+leg is meant to go.
+
+`POSITIVE-ALTPORT` is the discriminating leg. The rmw was compiled
+`RMW_UXRCE_DEFAULT_UDP_PORT=8888` back when its transport was `udp`, and `host_probe.cpp` never
+calls `rmw_uros_options_set_udp_address()` — so a socket owned by the rmw could only ever reach
+8888, and an agent on 8877 would be unreachable. A session there proves the port came *out of
+the env image* and was used by `uros_transport.cpp`, not merely that a custom callback exists.
+
+Verified 2026-09-24 on `172.18.0.0/16`:
 
 ```
-CONTROL  no agent  -> rclc_init must FAIL       (no far end, no session)
-POSITIVE agent up  -> session established, publishes, a ROS 2 subscriber receives
-```
-
-**A transport test that passes without the far end is not a transport test.** Run both halves
-or neither.
-
-Verified 2026-09-24 on an isolated NAT subnet (a docker bridge, `172.18.0.0/16`):
-
-```
-create_client      | client_key: 0x419E940C, session_id: 0x81
-establish_session  | session established | address: 127.0.0.1:58497
-create_participant / create_topic / create_publisher / create_datawriter
-ros2 topic echo /lino_host_probe  ->  data: 9, 10, 11, 12
+rmw transport                      RMW_UXRCE_TRANSPORT_CUSTOM (no default UDP address)
+probe links                        librmw_microxrcedds.so, libmicroxrcedds_client.so.2.4
+CONTROL-SERIAL   rc=2              [uros] env says transport 'serial', host target is udp4 only
+CONTROL-DEAD                       [rclc_init] Error in rcl_init  -> FAILED rc=1
+POSITIVE         [env] 4096 bytes, CRC32 a9ffbfd2 OK -> [uros] transport udp4 -> 127.0.0.1:8888
+                 establish_session / create_participant / create_topic / create_publisher
+                 / create_datawriter        ros2 topic echo -> data: 9
+POSITIVE-ALTPORT [uros] transport udp4 -> 127.0.0.1:8877  -> SESSION ESTABLISHED
 ```
 
 ## Building it
@@ -94,7 +149,16 @@ agent's or the CLI's environment hands them the wrong middleware.
 
 ## Status
 
-Landed: the shim, the probe, and the verified UDP4 transport. Still to do: back `mcu_env` with
-an `mmap`ed blob, compile the model headers against the shim, and rebuild `rmw_microxrcedds`
-with `RMW_UXRCE_TRANSPORT=custom` so the firmware's own four transport functions are the ones
-under test rather than the rmw's built-in UDP socket.
+**Landed and verified.** The env (`mcu_env.cpp`'s `mmap` loader on the flasher's own image),
+the transport (the firmware's four functions, under `RMW_UXRCE_TRANSPORT=custom`), the shim,
+`probe/proof.sh` with all four legs, and `tests/test_host_env_blob.py` +
+`tests/test_host_target_is_not_a_second_copy.py` guarding both from the desk — no container, no
+board.
+
+**Still to do** before this is a fake base rather than a transport instrument: the probe
+publishes an `Int32`, not `/odom` and `/imu/data`. The model headers compile against the shim
+(`kinematics.h` needs nothing from Arduino at all; `fake_wheel.h` needs `micros`, `random`,
+`map`, all present), so what remains is to build the base application itself on this target and
+register it as a leg — the point at which "like a mcu" becomes literally true. It still will
+not cover the board's loop timing, the real flash, or the serial link, so **the gate stays on
+hardware**.

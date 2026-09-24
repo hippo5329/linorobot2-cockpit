@@ -4,17 +4,35 @@
 #include "mcu_env.h"
 #include "diag.h"
 
+// rmw_uros_set_custom_transport lives in micro_ros_platformio's umbrella header
+// on a board and in rmw_microros on a plain colcon build; it is the same function
+// from the same rmw either way. The host target (firmware/host/) is the colcon
+// case, and it must be a COLCON build for the reason the probe exists: the four
+// functions below are only under test if the rmw was built
+// RMW_UXRCE_TRANSPORT=custom, which is a rebuild, not a flag.
+#if defined(LINO_HOST)
+#include <rmw_microros/rmw_microros.h>
+#else
 #include <micro_ros_platformio.h>
+#endif
 #include <uxr/client/util/time.h>
 #include <uxr/client/profile/transport/custom/custom_transport.h>
 
-// Wi-Fi exists on the ESP32 family and nowhere else in this project. Guarding on
-// the architecture rather than on a config macro keeps the RP2040/RP2350 builds
-// free of a WiFiUDP they could never use, while the source stays single.
+// Which builds have a UDP socket at all. Guarding on the architecture rather than
+// on a config macro keeps the RP2040/RP2350 builds free of a WiFiUDP they could
+// never use, while the source stays single.
+//
+// Two ways to have one, and the distinction matters below: the ESP32 family has
+// Wi-Fi, and the HOST has a POSIX socket on an interface that is already up. The
+// host therefore needs no radio and no initWifis() -- it is the one udp4 build
+// whose link cannot fail to associate.
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
 #define UROS_HAVE_UDP 1
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#elif defined(LINO_HOST)
+#define UROS_HAVE_UDP 1
+#include "WiFiUdp.h"     // the shim's POSIX-socket WiFiUDP, same nine methods
 #endif
 
 static bool uros_use_udp = false;
@@ -108,7 +126,7 @@ bool initUrosTransport(void)
     uros_use_udp = (strcasecmp(mode, "udp4") == 0 || strcasecmp(mode, "udp") == 0
                     || strcasecmp(mode, "wifi") == 0);
 #else
-    // No radio: serial is not a default here, it is the only possibility. Saying
+    // No socket: serial is not a default here, it is the only possibility. Saying
     // so is better than silently ignoring a transport=udp4 that can never work.
     const char *mode = envGet("transport", "serial");
     if (strcasecmp(mode, "serial") != 0)
@@ -133,6 +151,16 @@ bool initUrosTransport(void)
                                       platformio_transport_read);
         return true;
     }
+#endif
+
+#if defined(LINO_HOST)
+    // The mirror image of the RP2 message above. A host has no USB device port to
+    // be a micro-ROS serial client on, so `transport=serial` here is a
+    // misconfiguration and not a fallback: installing a Stream transport over
+    // stdout would give a client that looks installed and never connects.
+    Serial.printf("[uros] env says transport '%s', but the host target is udp4 only "
+                  "— set transport=udp4 in the env image\n", mode);
+    return false;
 #endif
 
     Serial.println("[uros] transport serial");

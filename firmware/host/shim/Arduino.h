@@ -25,6 +25,18 @@
 #ifndef LINO_HOST_ARDUINO_H
 #define LINO_HOST_ARDUINO_H
 
+// The host target identifies itself the way ESP32 and RP2040 do -- by a macro the
+// per-MCU branches in the firmware can test (mcu_env.cpp's loader is the first).
+// It is defined HERE rather than passed on the command line because every one of
+// our translation units includes Arduino.h, so this cannot be forgotten for one
+// file; a -DLINO_HOST that reached only some of them would give one object a
+// different view of the tree than the next, which is the silent divergence this
+// whole target exists to avoid.
+#ifndef LINO_HOST
+#define LINO_HOST 1
+#endif
+
+#include <arpa/inet.h>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -90,45 +102,155 @@ inline void randomSeed(unsigned long seed) { ::srand((unsigned)seed); }
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #endif
 
-// ---------------------------------------------------------------- Serial
-// The firmware logs through Serial. On a host that is stdout, line-buffered so a
-// crash does not swallow the last lines -- the boot banner is how a board says
-// which build it is running, and the same is true here.
-class _LinoHostSerial
+// ---------------------------------------------------------------- Print/Stream
+// The firmware passes `Stream *` around -- diag.cpp keeps its output as one, and
+// uros_transport.cpp's serial branch casts transport->args back to one -- so the
+// shim reproduces the real class shape rather than a single Serial object:
+//
+//     Print    write + the print/println/printf family
+//     Stream   Print + available/read/peek/flush        (Arduino's own hierarchy)
+//
+// Getting this shape right is what lets those files compile UNMODIFIED. A shim
+// that offered only a concrete Serial would have forced a host #ifdef into each
+// of them, and an #ifdef in the firmware is a divergence between board and host
+// -- exactly what this target exists to detect rather than create.
+class IPAddress;
+
+class Print
 {
 public:
-    void begin(unsigned long = 0) {}
-    operator bool() const { return true; }
-    size_t print(const char *s) { return s ? fputs(s, stdout), fflush(stdout), strlen(s) : 0; }
+    virtual ~Print() {}
+    virtual size_t write(uint8_t c) = 0;
+    virtual size_t write(const uint8_t *buf, size_t n)
+    {
+        size_t out = 0;
+        for (size_t i = 0; i < n; i++) out += write(buf[i]);
+        return out;
+    }
+    size_t write(const char *s) { return s ? write((const uint8_t *)s, strlen(s)) : 0; }
+
+    size_t print(const char *s) { return s ? write((const uint8_t *)s, strlen(s)) : 0; }
+    size_t print(char c) { return write((uint8_t)c); }
     size_t print(int v) { return printf("%d", v); }
     size_t print(unsigned v) { return printf("%u", v); }
-    size_t print(float v) { return printf("%f", v); }
-    size_t println() { return printf("\n"); }
-    size_t println(const char *s) { return printf("%s\n", s ? s : ""); }
-    size_t println(int v) { return printf("%d\n", v); }
+    size_t print(long v) { return printf("%ld", v); }
+    size_t print(unsigned long v) { return printf("%lu", v); }
+    size_t print(double v) { return printf("%f", v); }
+    size_t print(const IPAddress &ip);          // defined below, once IPAddress is
+
+    size_t println() { return print("\r\n"); }
+    template <typename T> size_t println(T v) { return print(v) + println(); }
+
+    // ESP32 Print has printf; the RP2040 core has it too, and the firmware uses
+    // it heavily, so it belongs on Print rather than on the concrete port.
     int printf(const char *fmt, ...)
     {
         va_list ap;
         va_start(ap, fmt);
-        const int n = vfprintf(stdout, fmt, ap);
+        char buf[512];
+        const int n = vsnprintf(buf, sizeof(buf), fmt, ap);
         va_end(ap);
-        fflush(stdout);
-        return n;
+        if (n <= 0) return n;
+        const size_t len = (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1;
+        write((const uint8_t *)buf, len);
+        return (int)len;
     }
-    // Stream-ish members uros_transport.cpp touches on the SERIAL branch. The
-    // host target is udp4 only, so these exist to compile, and say so loudly
-    // rather than pretending to be a serial link.
-    size_t write(const uint8_t *, size_t)
+};
+
+class Stream : public Print
+{
+public:
+    virtual int available() { return 0; }
+    virtual int read() { return -1; }
+    virtual int peek() { return -1; }
+    virtual void flush() {}
+    virtual size_t readBytes(char *, size_t) { return 0; }
+    // uros_transport.cpp sets it on the serial branch. Stored and ignored: the
+    // host has no serial peer, and its udp4 read() runs its own timeout loop
+    // against uxr_millis() rather than leaning on the Stream.
+    void setTimeout(unsigned long ms) { _timeout = ms; }
+    unsigned long getTimeout() const { return _timeout; }
+
+protected:
+    unsigned long _timeout = 1000;
+};
+
+// ---------------------------------------------------------------- Serial
+// The firmware logs through Serial. On a host that is stdout, flushed on every
+// write so a crash does not swallow the last lines -- the boot banner is how a
+// board says which build it is running, and the same is true here.
+class _LinoHostSerial : public Stream
+{
+public:
+    void begin(unsigned long = 0) {}
+    void end() {}
+    operator bool() const { return true; }
+
+    size_t write(uint8_t c) override { fputc(c, stdout); fflush(stdout); return 1; }
+    size_t write(const uint8_t *buf, size_t n) override
     {
-        fputs("[host] Serial.write() on the host target: transport must be udp4\n", stderr);
-        return 0;
+        const size_t w = fwrite(buf, 1, n, stdout);
+        fflush(stdout);
+        return w;
     }
-    size_t readBytes(char *, size_t) { return 0; }
-    int available() { return 0; }
-    void flush() { fflush(stdout); }
+    using Print::write;
+    void flush() override { fflush(stdout); }
+
+    // A host has no USB device port, so it cannot be a micro-ROS SERIAL client:
+    // uros_transport.cpp refuses transport=serial on this target before any of
+    // this is reached. read() staying empty is therefore correct rather than
+    // unfinished -- there is no peer that could ever answer.
+    int available() override { return 0; }
+    int read() override { return -1; }
+    size_t readBytes(char *, size_t) override { return 0; }
 };
 
 extern _LinoHostSerial Serial;
+
+// ---------------------------------------------------------------- IPAddress
+// In the real Arduino cores IPAddress is part of the CORE and arrives with
+// Arduino.h, not with the networking library -- mcu_env.h relies on exactly
+// that: it declares envIP() and includes only <Arduino.h>. So it lives here.
+class IPAddress
+{
+public:
+    IPAddress() : _v(0) {}
+    IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+        : _v(((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | d) {}
+    explicit IPAddress(uint32_t host_order) : _v(host_order) {}
+
+    // The env stores an address as text, so fromString is the path actually used
+    // (mcu_env's envIP calls it). Returns false on anything malformed rather than
+    // silently yielding 0.0.0.0, which would send the session into the void.
+    bool fromString(const char *s)
+    {
+        struct in_addr a;
+        if (!s || inet_pton(AF_INET, s, &a) != 1) return false;
+        _v = ntohl(a.s_addr);
+        return true;
+    }
+    uint32_t asHostOrder() const { return _v; }
+    uint32_t asNetworkOrder() const { return htonl(_v); }
+    uint8_t operator[](int i) const { return (uint8_t)((_v >> (8 * (3 - i))) & 0xFF); }
+    bool operator==(const IPAddress &o) const { return _v == o._v; }
+
+    // Serial.print(ip) in uros_transport.cpp's udp4 branch.
+    const char *c_str() const
+    {
+        snprintf(_txt, sizeof(_txt), "%u.%u.%u.%u",
+                 (unsigned)(*this)[0], (unsigned)(*this)[1],
+                 (unsigned)(*this)[2], (unsigned)(*this)[3]);
+        return _txt;
+    }
+
+private:
+    uint32_t _v;
+    mutable char _txt[16];
+};
+
+// Serial.print(ip) in uros_transport.cpp's udp4 branch. On a real core this comes
+// from IPAddress being Printable; one overload is the whole of what we need.
+inline size_t Print::print(const IPAddress &ip) { return print(ip.c_str()); }
 
 // ---------------------------------------------------------------- misc types
 typedef uint8_t byte;
