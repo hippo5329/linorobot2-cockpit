@@ -310,7 +310,8 @@ function initBaseControllerConfigModule() {
    // a HUD that did not follow it would be answering for a different robot than
    // the one on screen -- which is the whole reason the HUD exists.
    "cfg-sim-mass", "cfg-sim-gear-eff", "cfg-sim-gear-drag", "cfg-sim-sag",
-   "cfg-sim-sag-tau", "cfg-sim-drv-drop", "cfg-sim-drv-r"].forEach(id => {
+   "cfg-sim-sag-tau", "cfg-sim-drv-drop", "cfg-sim-drv-r",
+   "cfg-sim-stall-a", "cfg-sim-ilimit-a"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("input", updateKinematicsHUD);
   });

@@ -608,6 +608,20 @@
             <input type="number" id="cfg-sim-drv-r" class="form-input" step="0.01" min="0" placeholder="0.10">
             <span class="input-hint">R_ds(on) and the shunt — follows the current instantly</span>
           </div>
+          <div class="form-group">
+            <label for="cfg-sim-stall-a" class="form-label">Motor Stall Current (A)</label>
+            <input type="number" id="cfg-sim-stall-a" class="form-input" step="0.1" min="0" placeholder="2.5">
+            <span class="input-hint">Datasheet figure at the motor's rated voltage — the current scale</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-ilimit-a" class="form-label">Driver Current Limit (A)</label>
+            <input type="number" id="cfg-sim-ilimit-a" class="form-input" step="0.1" min="0" placeholder="0 = none">
+            <span class="input-hint">Your driver's figure — a TB6612 is about 1.2 A per channel,
+              a DRV8871 about 3.6 A peak, and parts like the AT8236 or DRV8871 set theirs with a
+              sense resistor. Caps torque, so it bites hardest from rest and barely touches top
+              speed: a limited robot is sluggish, not slow. What matters is the ratio to the
+              motor's stall current above</span>
+          </div>
         </div>
       </div>
 

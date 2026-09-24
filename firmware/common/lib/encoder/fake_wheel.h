@@ -146,6 +146,38 @@
 #define FAKE_DRV_R 0.10
 #endif
 
+// --- the driver's current limiter ------------------------------------------
+//
+// Many small motor drivers chop at a fixed current -- a DRV8871 at 3.6 A, a
+// TB6612 at 1.2 A per channel, plenty of boards set 2.5 A with a sense
+// resistor. Below that limit the driver is transparent and the torque-speed
+// line above is the whole story; at or above it the driver simply refuses to
+// pass more current, and the motor's torque is pinned at whatever that current
+// buys no matter how much speed error there is.
+//
+// That is a different shape of limit from everything else here, and it bites
+// exactly where a robot is judged: from rest, at full duty, where the current
+// demand is at its highest. It is why two robots with the same motors and the
+// same pack can have very different acceleration, and why fitting a bigger
+// motor to a board whose driver limits at 1.2 A changes nothing.
+//
+// Expressed in amps, because that is what a datasheet gives:
+//
+//   FAKE_MOTOR_STALL_A   the motor's own stall current at its rated voltage.
+//                        The current scale: a brushed motor draws stall current
+//                        in proportion to (no-load speed - present speed), which
+//                        is the same term the driving torque uses, so the model
+//                        already computes it -- as a fraction, in demand().
+//   FAKE_DRV_ILIMIT_A    what the driver will actually pass. ZERO MEANS NO
+//                        LIMITER, which is the default: a limit nobody entered
+//                        must not quietly throttle every existing robot.
+#ifndef FAKE_MOTOR_STALL_A
+#define FAKE_MOTOR_STALL_A 2.5      // motor stall current (A) at rated voltage
+#endif
+#ifndef FAKE_DRV_ILIMIT_A
+#define FAKE_DRV_ILIMIT_A 0.0       // driver current limit (A); 0 = none fitted
+#endif
+
 // Mass and encoder noise are properties of THIS robot, not of the image, so
 // they come from the env with the macros as the fallback. Function-local
 // statics rather than globals: these are read inside a class used before
@@ -249,6 +281,27 @@ static inline float fakeDrvR()
         if (r < 0.0f) r = 0.0f;
     }
     return r;
+}
+
+static inline float fakeMotorStallA()
+{
+    static float a = -1.0f;
+    if (a < 0.0f) {
+        a = envFloat("fake_stall_a", (float)FAKE_MOTOR_STALL_A);
+        if (a < 0.0f) a = 0.0f;
+    }
+    return a;
+}
+
+// 0 is a real answer here ("no limiter"), so the sentinel has to be below it.
+static inline float fakeDrvLimitA()
+{
+    static float a = -1.0f;
+    if (a < 0.0f) {
+        a = envFloat("fake_ilimit_a", (float)FAKE_DRV_ILIMIT_A);
+        if (a < 0.0f) a = 0.0f;
+    }
+    return a;
 }
 
 #ifndef FAKE_WHEEL_NOISE_RPM
@@ -402,15 +455,35 @@ private:
         // the scale is applied, so the demand this wheel reports is the demand
         // it would make at full voltage -- otherwise the sag feeds back on
         // itself and the whole thing converges on nothing.
+        const float stall = (float)MOTOR_MAX_RPM * fakeVoltageRatio();
+        // The current this wheel is asking for, as a fraction of its own stall
+        // current: for a brushed motor the two are proportional to the same
+        // (no-load speed - present speed) the torque uses.
+        const float ifrac = stall > 0.0f ? fabsf(no_load_rpm - wheel_rpm_) / stall : 0.0f;
+
+        // What the driver will actually pass, as a fraction of that demand.
+        // A limiter caps TORQUE, so it scales the driving term -- it does not
+        // change the speed the motor is trying to reach, which is why this is a
+        // separate factor rather than another bite out of no_load_rpm.
+        float ilim_scale = 1.0f;
+        const float limit_a = fakeDrvLimitA();
+        if (limit_a > 0.0f) {
+            const float want_a = ifrac * fakeMotorStallA();
+            if (want_a > limit_a)
+                ilim_scale = limit_a / want_a;
+        }
+
         if (slot_ >= 0 && slot_ < 4) {
-            const float stall = (float)MOTOR_MAX_RPM * fakeVoltageRatio();
-            demand()[slot_] = stall > 0.0f ? fabsf(no_load_rpm - wheel_rpm_) / stall : 0.0f;
+            // A limited driver also draws less from the pack, so it sags less.
+            // Reporting the unlimited demand here would have the pack brown out
+            // over current the driver is refusing to pass.
+            demand()[slot_] = ifrac * ilim_scale;
         }
         no_load_rpm *= busScale();
 
         // back-EMF: driving torque is proportional to the remaining speed error,
         // and the gearbox returns only part of it
-        float accel = fakeGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
+        float accel = ilim_scale * fakeGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
         // viscous friction always opposes motion
         accel -= wheel_rpm_ * (float)FAKE_WHEEL_FRICTION;
         // ...and the gear train's constant drag, which does not scale with speed.

@@ -90,6 +90,8 @@ base_controller:
     battery_sag_tau_ms: 400           # the pack sags, and recovers, over this long
     driver_drop: 0.03                 # bridge's fixed voltage floor, present at any current
     driver_resistance: 0.1            # bridge's current-proportional loss, instant
+    motor_stall_amps: 2.5             # datasheet stall current at the motor's rated voltage
+    driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
   pins:
     motor1:            # channel 1, right
       pwm: -1
@@ -179,7 +181,14 @@ kinematics:
   lr_wheels_distance: 0.271
   fr_wheels_distance: 0
   max_rpm: 140
-  max_rpm_ratio: 0.85
+  # DERIVED -- the driver margin, not a hand-picked derating.
+  #
+  # The share of the motor's no-load speed that survives the gearbox, the gear
+  # drag, the friction, the pack's sag and the bridge. Measured off the
+  # drivetrain model on test_acc's 1 s profile and rewritten by
+  # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
+  # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
+  max_rpm_ratio: 0.87
   counts_per_rev: 4000
   pwm_bits: 10
   pwm_frequency: 20000
@@ -370,8 +379,8 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 1.0
-        max_angular_accel: 1.5
+        rotate_to_heading_angular_vel: 1.02
+        max_angular_accel: 1.54
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
@@ -426,50 +435,56 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 0.8
-      min_rotational_vel: 0.4
-      rotational_acc_lim: 3.2
+      max_rotational_vel: 0.82
+      min_rotational_vel: 0.41
+      rotational_acc_lim: 3.08
   velocity_smoother:
     ros__parameters:
       enable_stamped_cmd_vel: false
       smoothing_frequency: 20.0
       scale_velocities: false
       feedback: OPEN_LOOP
-      # Sized to the MOTORS, not to what the planner would like.
+      # DERIVED from the motors, not typed in. Do not hand-edit.
       #
-      # 140 rpm motors at max_rpm_ratio 0.85 give 119 rpm per wheel on 100 mm
-      # wheels. A combined translate-and-rotate costs linear + rotational wheel
-      # speed, and the old ceiling of 0.5 m/s with 2.5 rad/s asked for 203 rpm on
-      # the mecanum base -- 171% of what the motors have. The controller then
+      #   python3 scripts/drivetrain_report.py --params <this file>
+      #
+      # regenerates these, and saving the robot in the cockpit rewrites them,
+      # unless kinematics.auto_nav2_limits is false. The numbers come from the
+      # drivetrain model in firmware/common/lib/encoder/fake_wheel.h, run on
+      # test_acc's own 1 s profile -- so they follow the wheels, the load, the
+      # gearing and the pack rather than somebody's judgement about one chassis.
+      #
+      # Why it is done this way: a combined translate-and-rotate costs linear +
+      # rotational wheel speed at the outer wheel, and each limit looked
+      # survivable alone. The old ceiling of 0.5 m/s with 2.5 rad/s asked 203 rpm
+      # of a mecanum base -- 171% of what the motors have. The controller then
       # commands what it cannot get, Kinematics scales the whole request down to
       # fit, and tracking degrades: three mecanum legs left the room on
-      # 2026-09-23 (stamp 20260923-205120), all at leg 4/8, on both distros.
-      #
-      # It was always over budget -- 0.4 m/s with 1.8 rad/s is 123 rpm, 103% --
+      # 2026-09-23 (stamp 20260923-205120), all at leg 4/8, on both distros. It
+      # had always been over budget (0.4 m/s with 1.8 rad/s is 123 rpm, 103%),
       # and correcting the mecanum rotation radius to the textbook (lx + ly) made
       # the same request cost 154 rpm, which is where it stopped being marginal.
       #
-      # ONE set for all three drivetrains, sized to the worst of them: mecanum
-      # turns on (lr + fr)/2 = 0.2255 m where a differential base turns on
-      # lr/2 = 0.1355 m, so the same angular velocity costs it 66% more wheel
-      # speed. At 0.30 m/s and 1.2 rad/s the mecanum sits at 92% of budget as an
-      # envelope, and the controller's own 0.25 / 1.0 target at 76%.
+      # The angular figure is per-drivetrain now, for that reason: mecanum turns
+      # on (lr + fr)/2 = 0.2255 m where a differential base turns on lr/2 =
+      # 0.1355 m, so the same yaw rate costs it 66% more wheel speed and it is
+      # given a correspondingly lower ceiling.
       max_velocity:
       - 0.3
       - 0.0
-      - 1.2
+      - 1.23
       min_velocity:
       - -0.3
       - 0.0
-      - -1.2
+      - -1.23
       max_accel:
       - 0.8
       - 0.0
-      - 1.5
+      - 1.54
       max_decel:
       - -0.8
       - 0.0
-      - -1.5
+      - -1.54
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:

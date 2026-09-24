@@ -341,6 +341,8 @@ const SIM_FIELDS = [
   ["cfg-sim-sag-tau",   "battery_sag_tau_ms"],
   ["cfg-sim-drv-drop",  "driver_drop"],
   ["cfg-sim-drv-r",     "driver_resistance"],
+  ["cfg-sim-stall-a",   "motor_stall_amps"],
+  ["cfg-sim-ilimit-a",  "driver_current_limit"],
 ];
 
 // Blank means "use the firmware's default", never zero. A gearbox of efficiency
@@ -490,7 +492,10 @@ function renderDrivetrainHUD(d) {
       `${d.mass.toFixed(2)} kg · gearbox ${Math.round(d.model.gear_efficiency * 100)}% · `
       + `drag ${Math.round(d.model.gear_drag_rpm)} rpm/s · sag ${Math.round(d.model.battery_sag * 100)}%`
       + ` over ${Math.round(d.model.battery_sag_tau_ms)} ms · driver `
-      + `${Math.round(d.model.driver_drop * 100)}% + ${Math.round(d.model.driver_resistance * 100)}%`);
+      + `${Math.round(d.model.driver_drop * 100)}% + ${Math.round(d.model.driver_resistance * 100)}%`
+      + (d.model.driver_current_limit > 0
+         ? ` · limited to ${d.model.driver_current_limit} A of ${d.model.motor_stall_amps} A stall`
+         : ` · no current limiter`));
 
   // The simulated test_acc run. Same four lines the tool prints on a board, in
   // the same units and the same order, so the two are directly comparable when

@@ -217,6 +217,22 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         ("nav2", "velocity_smoother", "ros__parameters", "max_accel"),
         ("nav2", "velocity_smoother", "ros__parameters", "max_decel"),
     }
+    # ...and its YAW limits, which are now derived per drivetrain rather than
+    # shared. A mecanum turns on (lr + fr)/2 where a differential base turns on
+    # lr/2, so the same rad/s costs it 66% more wheel speed. One template used to
+    # mean one set of angular limits, sized for the worst base -- which made the
+    # differential robots slower than they need to be AND, before the radius was
+    # corrected, still left the mecanum over budget. These are the keys
+    # scripts/drivetrain_report.py writes, and they are expected to differ
+    # exactly as much as the geometry does.
+    angular = {
+        ("nav2", "controller_server", "ros__parameters", "FollowPath",
+         "rotate_to_heading_angular_vel"),
+        ("nav2", "controller_server", "ros__parameters", "FollowPath", "max_angular_accel"),
+        ("nav2", "behavior_server", "ros__parameters", "max_rotational_vel"),
+        ("nav2", "behavior_server", "ros__parameters", "min_rotational_vel"),
+        ("nav2", "behavior_server", "ros__parameters", "rotational_acc_lim"),
+    }
     # ... and it is the one reference that wires an HC-SR04, which the
     # collision monitor may then listen to. A sensor the robot has is exactly
     # the kind of difference this template permits -- the point of one template
@@ -243,7 +259,7 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         diffs = []
         for sec in ("ekf", "slam", "nav2"):
             walk(base.get(sec), d.get(sec), (sec,), diffs)
-        allowed = set(lateral) if name == "pico2_mecanum" else set()
+        allowed = set(lateral) | set(angular) if name == "pico2_mecanum" else set()
         if _sonar_fitted(d) and not _sonar_fitted(base):
             allowed |= sonar_keys
         bad = [p for p in diffs if p not in allowed]

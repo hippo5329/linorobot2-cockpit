@@ -733,7 +733,8 @@ def hardware_env(params: dict) -> dict:
                           ("fake_noise_rpm", float), ("fake_gear_eff", float),
                           ("fake_coulomb", float), ("fake_sag", float),
                           ("fake_sag_tau", float), ("fake_drv_drop", float),
-                          ("fake_drv_r", float)):
+                          ("fake_drv_r", float), ("fake_stall_a", float),
+                          ("fake_ilimit_a", float)):
             src = {"fake_map_w": "map_width", "fake_map_h": "map_height",
                    "fake_wall": "wall_obstacle", "fake_wall_x1": "wall_x1",
                    "fake_wall_y1": "wall_y1", "fake_wall_x2": "wall_x2",
@@ -750,7 +751,12 @@ def hardware_env(params: dict) -> dict:
                    # instantly rather than with the pack's chemistry.
                    "fake_sag_tau": "battery_sag_tau_ms",
                    "fake_drv_drop": "driver_drop",
-                   "fake_drv_r": "driver_resistance"}[key]
+                   "fake_drv_r": "driver_resistance",
+                   # Many small drivers chop at a fixed current, which caps
+                   # TORQUE rather than speed -- the one limit that bites hardest
+                   # from rest, where a robot is judged. 0 means none fitted.
+                   "fake_stall_a": "motor_stall_amps",
+                   "fake_ilimit_a": "driver_current_limit"}[key]
             if sim.get(src) is None:
                 continue
             try:

@@ -144,3 +144,116 @@ def test_a_stalled_duty_band_still_produces_a_run():
     d = _d()
     assert 0.0 < d["stall_duty"] < 0.5
     assert dr.run_test_acc(d)["max_vel"] > 0.1
+
+
+# --- the driver's current limiter -------------------------------------------
+#
+# Many small drivers chop at a fixed current -- DRV8871 3.6 A, TB6612 1.2 A per
+# channel, a sense resistor at whatever you pick. It caps TORQUE, which is a
+# different shape of limit from everything else in the model and bites exactly
+# where a robot is judged: from rest, at full duty, where the current demand is
+# highest. Without it, two robots with the same motors and pack but different
+# driver boards were identical on paper.
+
+
+def test_no_limiter_is_the_default_so_nothing_changes_silently():
+    """0 means none fitted. A limit nobody entered must not throttle every
+    existing robot, which is why the sentinel cannot be the usual -1."""
+    assert dr.model_defaults()["ilimit_a"] == 0.0
+    assert _d()["ilimit_a"] == 0.0
+
+
+def test_a_limit_above_the_stall_current_does_nothing():
+    """The limiter is only real when the motor would otherwise draw past it."""
+    d = _d()
+    free = dr.run_test_acc(d)
+    slack = dr.run_test_acc(_d(driver_current_limit=d["stall_a"] * 2))
+    assert slack["max_acc"] == pytest.approx(free["max_acc"])
+    assert slack["max_vel"] == pytest.approx(free["max_vel"])
+
+
+def test_a_tighter_limit_costs_acceleration_in_proportion():
+    """Torque is pinned at whatever the allowed current buys, so halving the
+    limit roughly halves the acceleration from rest."""
+    stall = _d()["stall_a"]
+    loose = dr.run_test_acc(_d(driver_current_limit=stall * 0.8))
+    tight = dr.run_test_acc(_d(driver_current_limit=stall * 0.4))
+    assert tight["max_acc"] < loose["max_acc"]
+    assert tight["max_acc"] == pytest.approx(loose["max_acc"] * 0.5, rel=0.25)
+
+
+def test_the_limiter_barely_touches_top_speed():
+    """Near terminal speed the speed error is small, so the current demand is
+    small and the limiter is not engaged. A limiter makes a robot sluggish, not
+    slow -- and reporting it as a lower top speed would send someone shopping
+    for the wrong part."""
+    stall = _d()["stall_a"]
+    free = dr.run_test_acc(_d())
+    tight = dr.run_test_acc(_d(driver_current_limit=stall * 0.4))
+    assert tight["max_vel"] > free["max_vel"] * 0.95
+    assert tight["t_to_90"] > free["t_to_90"]
+
+
+def test_only_the_ratio_of_limit_to_stall_current_matters():
+    """What the amps actually buy you.
+
+    The model carries the motor's torque capability in FAKE_WHEEL_TAU_MS, and
+    the current only says at what current that torque arrives. So the limiter's
+    effect is `limit / stall`, and nothing else: a motor drawing twice the
+    current for the same torque is hurt exactly twice as much by the same
+    driver.
+
+    Stated as a test because the tempting claim -- "a bigger motor behind a
+    small driver changes nothing" -- is NOT what this model says, and reading it
+    that way would have someone conclude the limiter does not matter. A bigger
+    motor here is a bigger max_rpm and a different tau as well, not a stall
+    current on its own.
+    """
+    a = dr.run_test_acc(_d(motor_stall_amps=2.5, driver_current_limit=1.0))
+    b = dr.run_test_acc(_d(motor_stall_amps=5.0, driver_current_limit=2.0))
+    assert b["max_acc"] == pytest.approx(a["max_acc"], rel=0.02)
+    # ...and the same limit on the thirstier motor buys half the torque.
+    c = dr.run_test_acc(_d(motor_stall_amps=5.0, driver_current_limit=1.0))
+    assert c["max_acc"] == pytest.approx(a["max_acc"] * 0.5, rel=0.1)
+
+
+def test_a_limited_driver_sags_the_pack_less():
+    """It draws less current, so it must brown out the pack less. Reporting the
+    unlimited demand to the pack would have it sag over current the driver is
+    refusing to pass."""
+    hard = _d(battery_sag=0.6, driver_current_limit=0.0)
+    soft = _d(battery_sag=0.6, driver_current_limit=hard["stall_a"] * 0.3)
+    p_hard, p_soft = dr._Pack(hard), dr._Pack(soft)
+    w_hard, w_soft = dr._Wheel(hard, p_hard, 0), dr._Wheel(soft, p_soft, 0)
+    # At full duty from rest, which is where the current demand is highest. A
+    # wheel left at the default duty of zero draws nothing and the comparison
+    # would be 0 < 0 -- true of any two packs, and a test that proves nothing.
+    w_hard.duty = w_soft.duty = 1.0
+    w_hard.step(0.02, True)
+    w_soft.step(0.02, True)
+    assert 0 < p_soft.demand[0] < p_hard.demand[0]
+
+
+def test_the_closed_form_and_the_simulation_agree_about_the_limiter():
+    """Two halves of the same report. If only one of them knew, the HUD would
+    show a limited robot with unlimited acceleration beside it."""
+    d = _d(driver_current_limit=_d()["stall_a"] * 0.4)
+    p = dr.performance(d)
+    run = dr.run_test_acc(d)
+    free = dr.performance(_d())
+    assert p["lin_acc"] < free["lin_acc"]
+    assert run["max_acc"] < free["lin_acc"]
+
+
+def test_the_firmware_and_the_host_apply_it_the_same_way():
+    """The transcription rule for this term: the limiter scales the DRIVING
+    torque and the pack demand, and does not touch the speed the motor aims for.
+    A firmware that instead derated no_load_rpm would make a limited robot slow
+    rather than sluggish."""
+    src = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
+                            "fake_wheel.h"), encoding="utf-8").read()
+    body = src[src.index("void integrate()"):src.index("public:")]
+    assert "ilim_scale * fakeGearEfficiency()" in body, "the limiter must scale the torque"
+    assert "demand()[slot_] = ifrac * ilim_scale;" in body, "the pack must see the limited current"
+    # ...and never the speed target.
+    assert "no_load_rpm *= ilim_scale" not in body

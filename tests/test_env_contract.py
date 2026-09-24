@@ -66,7 +66,8 @@ MAXIMAL_CONFIG = {
                        # a sensitivity test costs a 4 KB write, not a build.
                        "gear_efficiency": 0.75, "gear_drag_rpm": 12.0,
                        "battery_sag": 0.25, "battery_sag_tau_ms": 400.0,
-                       "driver_drop": 0.03, "driver_resistance": 0.10},
+                       "driver_drop": 0.03, "driver_resistance": 0.10,
+                       "motor_stall_amps": 2.5, "driver_current_limit": 2.0},
     },
 }
 

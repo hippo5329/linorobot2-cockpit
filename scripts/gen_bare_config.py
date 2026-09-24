@@ -119,6 +119,8 @@ SIM_DEFAULTS = (
     ("battery_sag_tau_ms", "encoder/fake_wheel.h", "FAKE_BATT_SAG_TAU_MS",     float),
     ("driver_drop",        "encoder/fake_wheel.h", "FAKE_DRV_DROP",            float),
     ("driver_resistance",  "encoder/fake_wheel.h", "FAKE_DRV_R",               float),
+    ("motor_stall_amps",   "encoder/fake_wheel.h", "FAKE_MOTOR_STALL_A",       float),
+    ("driver_current_limit", "encoder/fake_wheel.h", "FAKE_DRV_ILIMIT_A",      float),
 )
 
 

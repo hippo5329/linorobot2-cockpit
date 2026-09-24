@@ -57,6 +57,8 @@ def model_defaults(path=FAKE_WHEEL_H):
         "FAKE_BATT_SAG_TAU_MS": "sag_tau_ms",
         "FAKE_DRV_DROP": "drv_drop",
         "FAKE_DRV_R": "drv_r",
+        "FAKE_MOTOR_STALL_A": "stall_a",
+        "FAKE_DRV_ILIMIT_A": "ilimit_a",
     }
     out = {}
     with open(path, encoding="utf-8") as fh:
@@ -98,7 +100,9 @@ def drivetrain(params):
     for cfg_key, name in (("robot_mass", "mass"), ("gear_efficiency", "gear_eff"),
                           ("gear_drag_rpm", "coulomb"), ("battery_sag", "sag"),
                           ("battery_sag_tau_ms", "sag_tau_ms"),
-                          ("driver_drop", "drv_drop"), ("driver_resistance", "drv_r")):
+                          ("driver_drop", "drv_drop"), ("driver_resistance", "drv_r"),
+                          ("motor_stall_amps", "stall_a"),
+                          ("driver_current_limit", "ilimit_a")):
         if sim.get(cfg_key) is not None:
             d[name] = float(sim[cfg_key])
 
@@ -119,9 +123,12 @@ def drivetrain(params):
     #
     #   motor_rpm    the motor's own no-load speed, derated only by the voltage
     #                it is fed. What the machine CAN do. fake_wheel.h uses this.
-    #   command_rpm  that, times max_rpm_ratio -- the margin Kinematics keeps so
-    #                it never asks for the last 15%. What the controller WILL
-    #                ask for, and therefore what a demand must fit inside.
+    #   command_rpm  that, times max_rpm_ratio -- the DRIVER MARGIN, which is
+    #                the share of no-load speed the losses take back before the
+    #                wheel ever turns at the rated figure. What the controller
+    #                WILL ask for, and therefore what a demand must fit inside.
+    #                It used to be a hand-picked 0.85; suggest_max_rpm_ratio()
+    #                measures it off the model instead, so it follows the load.
     #
     # The report said "max speed 0.60 m/s" using the command cap while the bench
     # measured 0.71 m/s, because test_acc drives raw PWM and bypasses Kinematics
@@ -157,8 +164,14 @@ def performance(d):
     drv_now = (1.0 - d["drv_drop"]) / (1.0 + d["drv_r"])          # stall current, no sag yet
     drv_held = (1.0 - d["drv_drop"]) / (1.0 + d["sag"] + d["drv_r"])   # sag fully developed
 
+    # From rest the speed error is the whole no-load speed, so the current
+    # demand is at stall -- which is exactly where a driver's limiter bites.
+    ilim = 1.0
+    if d["ilimit_a"] > 0.0 and d["stall_a"] > 0.0:
+        ilim = min(d["ilimit_a"] / d["stall_a"], 1.0)
+
     def _accel(scale):
-        a = d["gear_eff"] * (d["motor_rpm"] * scale) / tau - d["coulomb"]
+        a = ilim * d["gear_eff"] * (d["motor_rpm"] * scale) / tau - d["coulomb"]
         return max(min(a, d["accel_clamp"]), 0.0) * d["circ"] / 60.0
 
     lin_acc = _accel(drv_now)          # peak, in the first instant
@@ -259,13 +272,24 @@ class _Wheel:
             no_load = 0.0
         # Recorded BEFORE the bus scale, or the sag feeds back on itself.
         stall = d["motor_rpm"]
-        self.pack.demand[self.slot] = abs(no_load - self.rpm) / stall if stall > 0 else 0.0
+        ifrac = abs(no_load - self.rpm) / stall if stall > 0 else 0.0
+
+        # The driver's current limiter caps TORQUE, not speed, so it scales the
+        # driving term rather than the speed the motor aims for. It also means
+        # the pack sees less current than the motor asked for.
+        ilim_scale = 1.0
+        if d["ilimit_a"] > 0.0:
+            want_a = ifrac * d["stall_a"]
+            if want_a > d["ilimit_a"]:
+                ilim_scale = d["ilimit_a"] / want_a
+
+        self.pack.demand[self.slot] = ifrac * ilim_scale
         # Only the first wheel of a tick advances the pack's filter: in the
         # firmware the other three call busScale() in the same microsecond and
         # its dt is zero, so four wheels advance it by one cycle in total.
         no_load *= self.pack.scale(dt if first_in_tick else 0.0)
 
-        accel = d["gear_eff"] * (no_load - self.rpm) / self.tau
+        accel = ilim_scale * d["gear_eff"] * (no_load - self.rpm) / self.tau
         accel -= self.rpm * d["viscous"]
         if self.rpm > 0.0:
             accel -= d["coulomb"]
@@ -411,6 +435,38 @@ ACCEL_FRAC = 0.31
 ANG_ACCEL_SECONDS = 0.8
 TARGET_FRAC = 0.83
 
+def suggest_max_rpm_ratio(d, measured=None):
+    """The driver margin, derived instead of guessed.
+
+    `max_rpm_ratio` has always been 0.85 -- a 15% derating somebody picked, with
+    nothing behind the number. What it expresses IS the margin: the gap between
+    the motor's no-load speed and the speed the wheel actually reaches once the
+    gearbox, the gear drag, the viscous friction, the pack's sag and the bridge's
+    losses have taken their share. That gap is not a constant. It is small on a
+    light robot with a stiff pack and large on a heavy one -- and the heavy case
+    is precisely where commanding 85% of no-load asks for rpm the motor cannot
+    give.
+
+    So it is measured off the model, on test_acc's own 1 s profile: the speed a
+    manoeuvre actually gets, not the asymptote it would reach given longer.
+
+    Nothing is shaded off it and it is not clamped into a "sensible" band. The
+    velocity smoother is what bounds what the robot is asked to do, and its
+    envelope is derived from the same measurement -- a second fudge here would
+    only derate the same physics twice, and a floor or ceiling would quietly
+    replace the measurement with a constant on exactly the unusual robots this
+    exists to describe.
+
+    It lands at 0.87 for the default chassis, near the hand-picked 0.85. That is
+    the point: the guess was about right for the robot it was guessed on, and
+    wrong for every other one.
+    """
+    measured = measured or run_test_acc(d, rotate=False)
+    if d["circ"] <= 0 or d["motor_rpm"] <= 0:
+        return None
+    reached_rpm = measured["max_vel"] * 60.0 / d["circ"]
+    return round(reached_rpm / d["motor_rpm"], 2)
+
 
 def suggest_nav2_limits(d, p=None, measured=None):
     """The Nav2 limits this drivetrain can actually meet, as dotted paths."""
@@ -480,15 +536,36 @@ def auto_limits_enabled(params):
     return str(flag).strip().lower() not in ("false", "0", "no", "off")
 
 
-def apply_nav2_limits(params):
-    """Write the derived limits into `params` in place. Returns what changed."""
-    if not auto_limits_enabled(params):
-        return {}
+def derived_limits(params):
+    """Everything auto-tuning would write, as dotted paths -> values.
+
+    The driver margin comes FIRST and the Nav2 limits are then derived against
+    it, because max_rpm_ratio is what sets the wheel-speed budget those limits
+    are checked against. Deriving them in the other order would clamp the
+    envelope to the budget the config happened to ship with, and then move the
+    budget out from under it.
+
+    There is no circularity: the margin is measured from the motor's no-load
+    speed and the model's losses, neither of which depends on the margin.
+    """
     d = drivetrain(params)
     if d["max_rpm"] <= 0 or d["circ"] <= 0:
         return {}
+    out = {}
+    ratio = suggest_max_rpm_ratio(d)
+    if ratio is not None:
+        out["kinematics.max_rpm_ratio"] = ratio
+        d["command_rpm"] = d["motor_rpm"] * ratio
+    out.update(suggest_nav2_limits(d))
+    return out
+
+
+def apply_derived_limits(params):
+    """Write the derived limits into `params` in place. Returns what changed."""
+    if not auto_limits_enabled(params):
+        return {}
     changed = {}
-    for path, value in suggest_nav2_limits(d).items():
+    for path, value in derived_limits(params).items():
         node = params
         parts = path.split(".")
         for part in parts[:-1]:
@@ -501,6 +578,12 @@ def apply_nav2_limits(params):
             changed[path] = {"from": node.get(parts[-1]), "to": value}
             node[parts[-1]] = value
     return changed
+
+
+# The old name, from when this only wrote Nav2 keys. Kept because the backend
+# and the bench both call it, and because "nav2 limits" is still what a person
+# means when they turn the feature off.
+apply_nav2_limits = apply_derived_limits
 
 
 def report(params, name=""):
@@ -524,6 +607,12 @@ def report(params, name=""):
     out.append(f"    gearbox {d['gear_eff'] * 100:.0f}% efficient, drag {d['coulomb']:.0f} rpm/s")
     out.append(f"    pack sag {d['sag'] * 100:.0f}% at full stall over {d['sag_tau_ms']:.0f} ms, "
                f"driver {d['drv_drop'] * 100:.0f}% fixed + {d['drv_r'] * 100:.0f}% at stall")
+    if d["ilimit_a"] > 0.0:
+        out.append(f"    driver limits at {d['ilimit_a']:.1f} A of the motor's "
+                   f"{d['stall_a']:.1f} A stall -- torque capped to "
+                   f"{min(d['ilimit_a'] / d['stall_a'], 1.0) * 100:.0f}% from rest")
+    else:
+        out.append(f"    no driver current limiter (motor stalls at {d['stall_a']:.1f} A)")
     out.append(f"    turns on {d['radius']:.4f} m"
                + ("  (mecanum: (lr+fr)/2)" if d["base"] == "mecanum" else "  (lr/2)"))
     out.append("")
