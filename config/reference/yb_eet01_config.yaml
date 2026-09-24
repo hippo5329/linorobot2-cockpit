@@ -188,7 +188,7 @@ kinematics:
   # drivetrain model on test_acc's 1 s profile and rewritten by
   # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
   # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
-  max_rpm_ratio: 0.91
+  max_rpm_ratio: 0.8
   counts_per_rev: 4000
   pwm_bits: 10
   pwm_frequency: 20000

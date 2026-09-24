@@ -941,6 +941,21 @@ ACCEL_FRAC = 0.31
 ANG_ACCEL_SECONDS = 0.8
 TARGET_FRAC = 0.83
 
+# The default driver margin: the controller may ask for 80% of no-load speed.
+#
+# Set on 2026-09-24, straight after the 2wd cliff. The derivation below measures
+# what the motors CAN deliver (0.87-0.91 on the default chassis), and asking for
+# all of it leaves the loop nothing to correct with -- which is how a 2.5% rise
+# in the yaw ceiling turned a green slice into 7/10, twice. A margin is headroom
+# by definition; spending it because the measurement says you could is the same
+# mistake in a different place.
+#
+# So the measurement can only make this MORE conservative, never less: a heavy
+# robot that reaches half its no-load speed gets 0.50, and a light one that
+# reaches 93% still gets 0.80.
+DEFAULT_MARGIN = 0.80
+
+
 def suggest_max_rpm_ratio(d, measured=None, raw=False):
     """The driver margin, derived instead of guessed.
 
@@ -963,15 +978,20 @@ def suggest_max_rpm_ratio(d, measured=None, raw=False):
     replace the measurement with a constant on exactly the unusual robots this
     exists to describe.
 
-    It lands at 0.87 for the default chassis, near the hand-picked 0.85. That is
-    the point: the guess was about right for the robot it was guessed on, and
-    wrong for every other one.
+    It is capped at DEFAULT_MARGIN. The measurement says what the motors reach;
+    the margin says how much of that the controller is allowed to spend, and the
+    answer is not "all of it" -- see the 2wd cliff. On the default chassis the
+    motors reach 0.91 and the controller is given 0.80; on a 15 kg robot the
+    motors reach 0.50 and the controller is given 0.50, because there the
+    measurement is the binding constraint and the margin is not.
     """
     measured = measured or run_test_acc(d, rotate=False)
     if d["circ"] <= 0 or d["motor_rpm"] <= 0:
         return None
     reached_rpm = measured["max_vel"] * 60.0 / d["circ"]
-    ratio = reached_rpm / d["motor_rpm"]
+    # Whichever is SMALLER: what the motors reach, or the standing margin. The
+    # measurement exists to catch the robot that cannot even manage 80%.
+    ratio = min(reached_rpm / d["motor_rpm"], DEFAULT_MARGIN)
     # Rounded for WRITING only. The budget the velocity limits are clamped
     # against is computed from the unrounded value (see derived_limits), because
     # feeding the written two-decimal ratio back in makes the whole derivation a

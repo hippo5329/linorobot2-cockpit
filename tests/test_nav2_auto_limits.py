@@ -166,3 +166,64 @@ def test_the_shipped_references_are_within_their_own_budget():
         need = dr.demand_rpm(d, float(v[0]), float(v[2]))
         assert need <= d["command_rpm"], \
             f"{name} ships a smoother envelope needing {need:.1f} of {d['command_rpm']:.1f} rpm"
+
+
+# --- the driver margin is headroom, not a target ------------------------------
+#
+# Set to 80% on 2026-09-24, straight after the 2wd cliff: with the smoother at
+# [0.3, 0, 1.23] the 2wd slice came back 7/10 twice, and at [0.3, 0, 1.2] it came
+# back 10/10. A 2.5% rise was the whole difference. The derivation measures what
+# the motors CAN deliver (0.87-0.91 on the default chassis); spending all of it
+# because the measurement says you could is the same mistake one level up.
+
+def test_the_default_margin_is_eighty_percent():
+    d = dr.drivetrain(_cfg("gendrv"))
+    assert dr.DEFAULT_MARGIN == 0.80
+    assert dr.suggest_max_rpm_ratio(d) == 0.80
+
+
+def test_the_measurement_can_only_make_the_margin_smaller():
+    """A heavy robot that cannot reach 80% gets what it can reach; a light one
+    that could reach 93% still gets 80%. The measurement exists to catch the
+    robot that falls SHORT of the margin, not to spend it."""
+    light = copy.deepcopy(_cfg("gendrv"))
+    light["base_controller"]["simulation"]["robot_mass"] = 1.4
+    heavy = copy.deepcopy(_cfg("gendrv"))
+    heavy["base_controller"]["simulation"]["robot_mass"] = 15.0
+    assert dr.suggest_max_rpm_ratio(dr.drivetrain(light)) == dr.DEFAULT_MARGIN
+    heavy_ratio = dr.suggest_max_rpm_ratio(dr.drivetrain(heavy))
+    assert heavy_ratio < dr.DEFAULT_MARGIN, heavy_ratio
+
+
+def test_every_shipped_config_carries_the_margin():
+    for name in ("gendrv", "yb_eet01", "pico2_mecanum"):
+        got = _cfg(name)["kinematics"]["max_rpm_ratio"]
+        assert got <= dr.DEFAULT_MARGIN + 1e-9, f"{name} asks for more than the margin"
+
+
+def test_the_generated_bare_config_carries_it_too():
+    import gen_bare_config
+    assert gen_bare_config.bare_config("pico2")["kinematics"]["max_rpm_ratio"] \
+        <= dr.DEFAULT_MARGIN + 1e-9
+
+
+def test_the_firmware_header_default_agrees_with_the_margin():
+    """A config that omits the key must not get a more generous default than a
+    config that sets it -- that is how a robot ends up asking for 85% because
+    nobody wrote a number down."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+               encoding="utf-8").read()
+    assert 'kine.get("max_rpm_ratio", 0.80)' in src
+    assert '"max_rpm_ratio": 0.80,' in src
+
+
+def test_the_limits_still_fit_the_smaller_budget():
+    """Lowering the margin lowers the wheel-speed budget the limits are checked
+    against, so the check has to be re-run -- not assumed to still hold."""
+    for name in ("gendrv", "yb_eet01", "pico2_mecanum"):
+        params = _cfg(name)
+        d = dr.drivetrain(params)
+        v = _dig(params, SMOOTHER)["max_velocity"]
+        need = dr.demand_rpm(d, float(v[0]), float(v[2]))
+        assert need <= d["command_rpm"], \
+            f"{name}: {need:.1f} rpm of a {d['command_rpm']:.1f} rpm budget"

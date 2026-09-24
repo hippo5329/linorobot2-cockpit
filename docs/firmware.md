@@ -934,15 +934,21 @@ Four consequences are worth stating, because each was a mistake first:
   the motor can spin; `max_rpm_ratio` derates *commands*, so the controller asks
   for less. A report that quotes one where it means the other either flatters the
   robot or accuses a healthy bench measurement of exceeding the motor.
-- **`max_rpm_ratio` is the driver margin, and it is derived now.** It was 0.85 on
-  every robot — a 15% derating somebody picked. What it expresses is the share of
-  no-load speed that survives all the losses above, and that share is *not a
-  constant*: 0.93 on a 1.4 kg robot, 0.87 on this chassis, 0.50 on a 15 kg one.
-  `suggest_max_rpm_ratio()` measures it off the model on `test_acc`'s 1 s profile.
-  Nothing is shaded off it and it is not clamped into a "sensible" band — the
-  velocity smoother bounds what the robot is asked to do, and its envelope comes
-  from the same measurement, so a second fudge here would derate the same physics
-  twice.
+- **`max_rpm_ratio` is the driver margin, and the default is 80%.** It was 0.85 on
+  every robot — a 15% derating somebody picked. What it expresses is how much of
+  the motor's no-load speed the controller may ask for, and the answer is
+  deliberately *not* "as much as it can reach". `suggest_max_rpm_ratio()` measures
+  what the motors do reach on `test_acc`'s 1 s profile — 0.91 on this chassis —
+  and then takes the **smaller** of that and `DEFAULT_MARGIN` (0.80). So the
+  measurement can only make a robot more conservative, never less: a 15 kg base
+  that reaches 55% gets 0.55, and a 1.4 kg one that reaches 93% still gets 0.80.
+
+  The reason is on the bench. With the smoother at `[0.3, 0, 1.23]` the 2wd slice
+  came back **7/10 twice**; at `[0.3, 0, 1.2]` it came back **10/10** — same
+  firmware, same boards, a 2.5% difference in the yaw ceiling. skid_steer and
+  mecanum absorbed the identical rise at 10/10, so they are nowhere near their
+  cliff and 2wd is sitting on its. A margin is headroom by definition, and
+  spending it because a measurement says you could is how you find the edge.
 - **Only the *ratio* of limit to stall current matters.** The model carries the
   motor's torque capability in `FAKE_WHEEL_TAU_MS`; the amps only say at what
   current that torque arrives. So a motor drawing twice the current for the same

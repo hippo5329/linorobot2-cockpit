@@ -348,7 +348,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # honest default -- see Kinematics::rotationRadius for how to measure it.
     angular_scale = float(kine.get("angular_scale", 1.0))
     max_rpm = int(kine.get("max_rpm", 140))
-    rpm_ratio = float(kine.get("max_rpm_ratio", 0.85))
+    rpm_ratio = float(kine.get("max_rpm_ratio", 0.80))
     cpr = counts_per_rev(kine)
     pwm_bits = int(kine.get("pwm_bits", 10))
     pwm_freq = int(kine.get("pwm_frequency", 20000))
@@ -1054,7 +1054,11 @@ def bare_mcu_params(mcu: str) -> dict:
             "wheel_diameter": 0.1,
             "lr_wheels_distance": 0.271,
             "max_rpm": 140,
-            "max_rpm_ratio": 0.85,
+            # The driver margin: 80% of no-load speed is what the controller may
+            # ask for. See DEFAULT_MARGIN in scripts/drivetrain_report.py --
+            # a margin is headroom, and the 2wd slice proved what spending it
+            # costs.
+            "max_rpm_ratio": 0.80,
             "counts_per_rev": 4000,
             "pwm_bits": 10,
             "pwm_frequency": 20000,
