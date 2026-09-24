@@ -245,9 +245,14 @@ def _bringup(a: Dict) -> str:
             f"micro_ros_baudrate:={baud} madgwick:={madgwick} micro_ros:={micro_ros}")
 
 
+# The compose file is docker-compose.YML and has been since the first commit.
+# These four call sites said .yaml from 0d789db (the action registry that replaced
+# the browser's raw command strings) until 2026-09-24, so every Docker action here
+# named a file that does not exist. tests/test_compose_files_exist.py now asserts
+# that every `-f` target actions.py names is either tracked or generated.
 def _bringup_docker(a: Dict) -> str:
     compose = _compose_resolve(a)
-    flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
+    flags = "--env-file .env -f docker-compose.yml -f devices.generated.yaml"
     d = _path(a.get("docker_dir"), "docker_dir")
     return f"{compose}cd {shlex.quote(d)} && $COMPOSE {flags} up bringup"
 
@@ -355,7 +360,7 @@ def _compose_resolve(a: Dict) -> str:
 
 def _docker_service_up(a: Dict) -> str:
     compose = _compose_resolve(a)
-    flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
+    flags = "--env-file .env -f docker-compose.yml -f devices.generated.yaml"
     d = _path(a.get("docker_dir"), "docker_dir")
     service = _ident(a.get("service"), "service")
     return f"{compose}cd {shlex.quote(d)} && DISPLAY=:200 $COMPOSE {flags} up {service}"
@@ -401,7 +406,7 @@ def _docker_build(a: Dict) -> str:
     override_body = "services:\n  bringup:\n    devices:\n" + "\n".join(device_lines) + "\n"
 
     compose = _compose_resolve({"engine": engine})
-    flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
+    flags = "--env-file .env -f docker-compose.yml -f devices.generated.yaml"
     ws_q = shlex.quote(workspace)
     dir_q = shlex.quote(docker_dir)
     return "set -e\n" + "\n".join([
@@ -418,7 +423,7 @@ def _docker_build(a: Dict) -> str:
 
 def _docker_down(a: Dict) -> str:
     compose = _compose_resolve(a)
-    flags = "--env-file .env -f docker-compose.yaml -f devices.generated.yaml"
+    flags = "--env-file .env -f docker-compose.yml -f devices.generated.yaml"
     d = _path(a.get("docker_dir"), "docker_dir")
     return f"{compose}cd {shlex.quote(d)} && $COMPOSE {flags} down"
 
