@@ -70,9 +70,6 @@ def collect(tgt: dict):
         if _pin(i2c.get(key, -1)) >= 0:
             rows.append((f"I2C {label}", _pin(i2c[key]), "io", ""))
     sonar = pins.get("sonar") or {}
-    imu = pins.get("imu") or {}
-    if _pin(imu.get("int", -1)) >= 0:
-        rows.append(("IMU interrupt", _pin(imu["int"]), "in", "DATA_RDY"))
     if _pin(sonar.get("trigger", -1)) >= 0:
         rows.append(("Sonar trigger", _pin(sonar["trigger"]), "out", "HC-SR04"))
     if _pin(sonar.get("echo", -1)) >= 0:

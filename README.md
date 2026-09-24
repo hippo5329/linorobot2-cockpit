@@ -214,22 +214,11 @@ time from your config. Every key the config side writes is one the firmware read
 (`tests/test_env_contract.py`) fails when that stops being true. Editing the config and pressing
 Start again rewrites 4 KB; the application image is untouched. The IMU and magnetometer are
 detected on the I2C bus at boot, so swapping a sensor needs no edit at all.
-An IMU whose DATA_RDY line is wired (`pins.imu.int`) is read on its interrupt instead of polled,
-with a logged fallback to polling if the line never fires; the Yahboom microROS control board
-reference (`yb_eet01_config.yaml`, ESP32-S3, INT on GPIO 41) is the first config that uses it.
 
-### Two wires worth adding
+### One wire worth adding
 
-Both are optional, both are cheap, and each removes an error the stack cannot otherwise
-see — the kind that never prints and reaches you as a map that will not sit still.
-
-**Wire the IMU's DATA_RDY line** (`pins.imu.int`) if the chip breaks it out. A polled IMU
-is sampled on the control loop's schedule rather than the sensor's, so every reading
-carries an unknown age and that age *jitters with loop load*. The filter fuses each one as
-if it were current. On the interrupt the sample time is known, and the bus is not spent
-learning that nothing has changed. The boot log tells you which path is live, with the
-measured edge rate to check against the configured ODR — so this is a claim you can verify
-rather than assume.
+It is optional and cheap, and it removes an error the stack cannot otherwise see — the kind
+that never prints and reaches you as a map that will not sit still.
 
 **Fit and calibrate a magnetometer.** A wheeled robot's EKF fuses *velocities*, and
 velocities integrate: without an absolute reference the heading error only grows, and it
@@ -239,12 +228,9 @@ uncorrected hard iron is worth several degrees on its own (7.4° for the offset 
 simulated robot carries). See `docs/ros2-stack.md` and the wiki's
 [Heading & Magnetometer Calibration](https://github.com/hippo5329/linorobot2-cockpit/wiki/Heading-and-Magnetometer-Calibration).
 
-The IMU is read by polling, on every board. A data-ready interrupt path existed and was
-removed: an ISR cannot touch the I2C bus on an ESP32 (the Arduino driver takes a FreeRTOS
-mutex), so the read happened later and the precise edge time belonged to an uncertain
-sample — a precise time paired with the wrong reading. Where a chip has a FIFO with its own
-timestamp counter, that gives the same information with the sample attached to it, and needs
-no wiring at all.
+The IMU is read by polling on every board, at the control loop's rate. Where a chip has a
+FIFO with its own timestamp counter, that carries the sample time with the sample and needs
+no extra wiring.
 
 To switch fake mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.

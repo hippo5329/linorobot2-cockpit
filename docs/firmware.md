@@ -224,7 +224,6 @@ answer in 30 ms. Every override is printed and syslogged, so a config that disag
 visible rather than silently routed around. A chip this image has no driver for (a BNO055, say) gets
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
 
-### An IMU with its interrupt wired is read when it says so, not when the timer fires
 ### Which sensors this image carries, and what has been proven on silicon
 
 Every driver below is compiled into every release image -- the table is the *sensor
@@ -237,12 +236,10 @@ module and its numbers were read -- not that a robot drove with it. Nothing in t
 project has run on a real robot yet (first is October 2026), and a bare-module reading is
 the strongest evidence any row here has.
 
-Three separate claims, three columns. *Driver* is what the image can drive.
-*DATA_RDY* is whether that driver knows how to turn its chip's data-ready
-output on. *Read on* is where a real chip of that part answered and its numbers
-were taken. *DRDY proven on* is narrower still: where the line was actually
-observed firing. A part can be read on a board whose interrupt pin is not
-wired, and most are -- only `yb_eet01` ships a `pins.imu.int` at all.
+Two separate claims, two columns. *Identified by* is the register read that
+tells this part from the others sharing its address. *Read on* is where a real
+chip of that part answered and its numbers were taken -- a much narrower claim
+than "the driver exists", and the only one backed by a measurement.
 
 | IMU | I2C addr | identified by | read on |
 |---|---|---|---|
@@ -255,12 +252,9 @@ wired, and most are -- only `yb_eet01` ships a `pins.imu.int` at all.
 | GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | — |
 | BNO085 | 0x4A, 0x4B | — | — |
 
-**Only one entry in the last column, and that is the honest state.** The
-ICM-42670-P on the YB-EET01 is the single part whose DATA_RDY line this project
-has watched fire. Every other `yes` in the DATA_RDY column is a driver that
-writes the right registers and has never had a wire on the pin -- the GenDrv's
-QMI8658 included, which is read at 50 Hz by polling because `gendrv_config.yaml`
-carries no `pins.imu.int`.
+**Read the last column as the honest state.** A dash means the driver exists
+and no real chip of that part has answered on a bench yet. The GenDrv's QMI8658
+is read at 50 Hz, like every other part here.
 
 | Magnetometer | I2C addr | notes | bench |
 |---|---|---|---|
@@ -270,16 +264,8 @@ carries no `pins.imu.int`.
 | QMC5883L | 0x0D | | no |
 | HMC5883L | 0x1E | | no |
 
-**Every part is read by polling.** There was a data-ready interrupt path -- `pins.imu.int`,
-an ISR, per-driver `enableDataReadyInterrupt()` -- and it was removed on 2026-09-24. The
-reasoning is worth keeping, because it applies to any "interrupt that only sets a flag":
-the ISR could not read the bus (the ESP32 Arduino I2C driver takes a FreeRTOS mutex with
-`portMAX_DELAY`, which is illegal from an ISR), so the read happened later in the publish
-path -- by which time further samples may have arrived, making the precise edge time belong
-to an *uncertain* sample. A precise time paired with the wrong reading is not an
-improvement, and what remained was one avoided transaction. The chip's own FIFO and
-timestamp counter give the same information with the sample attached to it, need no pin, no
-ISR, no masking and no per-part interrupt registers.
+**Every part is read by polling**, at the control loop's rate. Where a chip has a FIFO with
+its own timestamp counter, that carries the sample time with the sample and needs no wiring.
 
 **One chip, two roles.** The ICM-20948 carries an AK09918 on its internal auxiliary bus.
 `ICM20948IMU::startSensor()` sets `INT_PIN_CFG.BYPASS_EN`, which puts that magnetometer on
@@ -290,31 +276,6 @@ keyed on the ICM-20948 being present, so a genuine standalone AK09918 is untouch
 consequences worth knowing: the magnetometer only works because IMU init runs before MAG
 init, and after a power cycle 0x0C is silent until it does.
 
-`pins.imu.int` in the config (env key `imu_int`, header fallback `IMU_INT_PIN`, `-1` in every
-config that predates the key) names the GPIO the chip's DATA_RDY line is on. With it set, the
-ISR does one thing -- set a flag -- and `IMUInterface::getData()` only touches the bus when the
-flag says a fresh sample is there: no stale re-read at the publish edge, and no I2C transaction
-spent learning that nothing changed. Everything else still runs in the publish context, where
-the bus is safe to use.
-
-Three things keep a wired line from being worse than polling. A driver that cannot turn its
-chip's DATA_RDY output on says so (`enableDataReadyInterrupt()` returns false; the boot log
-prints which); if the pin then never fires within a second of attaching, `getData()` polls --
-once logged -- rather than returning the same sample forever; and a line that fired once and
-then stopped (a chip that lost power, a wire that came off) is caught by a staleness ceiling,
-`IMU_INT_STALE_MS` (200 ms), past which the bus is read anyway. The boot log names the case:
-
-```
-[imu] data-ready interrupt on GPIO 41 (driver enabled DATA_RDY)
-[imu] data-ready pin 41 never fired in 1 s - polling instead      <- only when the wire is wrong
-[imu] polling (set imu_int to use a DATA_RDY pin)                <- no pin configured
-```
-
-The ISR is declared in `imu_interface.h` and **defined in `imu_interface.cpp`**. An `IRAM_ATTR`
-function defined inside its class is inline, and the Xtensa linker places the COMDAT section's
-literal pool after the code -- `dangerous relocation: l32r: literal placed after use` -- on
-every ESP32 image. Out of line it is an ordinary IRAM function. The ESP32 core also compiles as
-gnu++11, so the ISR's instance pointer is a plain static, not a C++17 inline variable.
 
 **The QMI8658 driver is the base's own.** The QST/Waveshare reference copy it replaced carried
 a 2.2 s on-chip calibration at every boot that `calibrateGyro()` then repeated, a hard-coded
@@ -323,20 +284,16 @@ the sketch holds never reached -- `getData()` is not virtual, so its bias handli
 code. The driver in `default_imu.h` is 200 lines: WHO_AM_I at 0x6B then 0x6A, a soft reset,
 ±8 g and ±1024 dps at 224 Hz with the on-chip low-pass at ~30 Hz (the base publishes at 50 Hz,
 so the filter sits at its Nyquist), and **one 20-byte burst per sample** -- STATUSINT, STATUS0,
-the 24-bit sample counter, temperature, six axes -- which is also what re-arms DATA_RDY.
-`readGyroscope()` does the burst and `readAccelerometer()` hands back the other half of it,
-which is the order `getData()` calls them in. The chip drives DATA_RDY on INT2 in its normal
-mode and on INT1 in SyncSample mode, and a board that breaks out "INT" rarely says which, so
-`enableDataReadyInterrupt()` turns on both pins and both modes; neither pin is driven until
-asked, so a board with the line unwired (the GenDrv) keeps them high-impedance.
-`tests/test_qmi8658_driver.py` pins each of these.
+the 24-bit sample counter, temperature, six axes. `readGyroscope()` does the burst and
+`readAccelerometer()` hands back the other half of it, which is the order `getData()` calls
+them in. `tests/test_qmi8658_driver.py` pins each of these.
 
 **Fake wheels do not imply a fake IMU.** Skipping the I2C sensors whenever `use_fake_wheel: true`
 would be right for a bare module with nothing on the bus and wrong for a board with no encoders and
 a real IMU: `/imu/data_raw` would be the simulation at 50 Hz and the driver you meant to test would
 never run. Only the sensors that are themselves fake are synthesised from the simulated wheels (`sim_imu = fake_wheels && imu_is_fake`, likewise
-the magnetometer): a real IMU the config or the bus names is initialised and its DATA_RDY
-attached with fake wheels too, and one that fails to init on such a board falls back to the
+the magnetometer): a real IMU the config or the bus names is initialised with fake wheels
+too, and one that fails to init on such a board falls back to the
 simulation with `[imu] init FAILED on a fake-wheel board - falling back to the simulated IMU`
 rather than the fatal LED loop. The bus probe also prints reg 0x00 / 0x0F / 0x75 for a device
 it cannot name, so an unfamiliar chip is identified from the boot log.
@@ -370,12 +327,8 @@ translation unit that prints without the wrapper.
 **The Yahboom's IMU is a TDK ICM-42670-P, not the QMI8658 its documentation names.** The bus
 probe now prints reg 0x00 / 0x0F / 0x75 for a device it cannot name, and the V2.0 board on the
 bench answered at 0x68 with WHO_AM_I (0x75) = 0x67. `ICM42670IMU` in `default_imu.h` is the
-driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, one 14-byte burst
-(temperature, six axes) in the byte order `INTF_CONFIG0` declares, DATA_RDY routed to INT1 and
-INT2 as a push-pull active-high pulse when asked. At least five seconds after a DATA_RDY pin is
-attached the base prints `[imu] data-ready line GPIO 41 fired N times in T s = R Hz`, and `R`
-should be the configured ODR -- 200 Hz here, 0 when the wire is on a pin the chip is not driving
--- so the interrupt path is verified by a rate in the boot log, not by faith.
+driver: ±8 g and ±1000 dps at 200 Hz low-noise with the 25 Hz UI filter, and one 14-byte
+burst (temperature, six axes) in the byte order `INTF_CONFIG0` declares.
 
 The window is measured rather than assumed, because the report rides in the publish path and that
 path does not start until the micro-ROS agent connects. On a serial leg the agent is already

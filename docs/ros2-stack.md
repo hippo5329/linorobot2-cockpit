@@ -165,6 +165,40 @@ pluginlib rejects — jazzy declares `nav2_bt_navigator::NavigateToPoseNavigator
 source** — one file drifting from nine is the likelier story, and `grep -rn "nav2_[a-z_]*/" config/`
 finds it in one command.
 
+### `slam_toolbox` is a lifecycle node too, and "no map" is three different faults
+`slam_toolbox`'s own launch file drives its transitions from a launch event handler, so when the
+configure result event is missed the node sits in `inactive` forever: it logs `Configuring`, picks its
+solver, and then says nothing. No map is published, the `map` frame never comes into existence, and
+half a minute later Nav2 fails with `planner_server` unable to transform `base_link` to `map` — 121
+identical `Invalid frame ID "map" ... frame does not exist` complaints downstream of a fault that is
+not Nav2's. The transition is idempotent and cheap, so `one_click_pipeline.py` asks for it directly
+(`ros2 lifecycle set --no-daemon /slam_toolbox activate`) rather than give up on somebody's race.
+
+Use `--no-daemon`. The `ros2` CLI daemon caches the graph and was measured answering "Node not found"
+for 36 s straight about a `slam_toolbox` that was active at the time, in the same container where
+`--no-daemon` answered `active [3]` immediately. A recovery that asks the cache can be told the node
+is not there.
+
+**`SLAM: no map was published` is produced by three different faults**, and they are three different
+repairs: the lifecycle node stuck in `inactive`; a solver plugin that would not load; or scans
+dropped because `odom`→`laser` was not in the TF buffer yet, which looks identical from outside
+because `/scan` is publishing at its full rate the whole time. So the pipeline no longer tells you to
+read `logs/slam.log` — on a bench that file lives inside a container the next run destroys. It reports
+the **last lifecycle transition reached** (no `Activating` is the stuck-in-`inactive` case by itself)
+and the distinct complaints, with numbers normalised so one dropped-scan fault carrying a moving
+timestamp is a single counted row instead of a page of near-identical ones:
+
+```
+     --- slam_toolbox reached: Creating -> Configuring
+     it never activated: the lifecycle node is stuck in `inactive`, so no map is
+     published and the map frame never exists
+     --- what slam_toolbox complained about (distinct, most frequent first) ---
+        12x Message Filter dropping message: frame 'laser' ... queue is full
+```
+
+Same reason, and the same shape, as the Nav2 complaint report: **extract the evidence while the log
+still exists.** A failure whose explanation dies with its container is a failure you get to have twice.
+
 ### A node may subscribe to a topic with exactly one type, and a swallowed stderr hides why
 `test_nav2_goal.py` subscribed to `/cmd_vel` as **both** `Twist` and `TwistStamped`, meaning to accept
 whichever the run used. rcl rejects the second — *"create_subscription() called for existing topic name
