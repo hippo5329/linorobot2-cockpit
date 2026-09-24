@@ -158,3 +158,49 @@ def test_a_passing_run_reports_its_worst_gap_too():
     src = _src()
     reached = src[src.index('f"NAV2 GOAL REACHED {n}/{n} legs'):]
     assert "_map_odom_gap_note(node)" in reached[:600], "the passing line drops the gap"
+
+
+# --- the metric measured the tester, not the robot ---------------------------
+#
+# `gap = stamp - last` is the stamp delta between two samples, and map->odom
+# always carries a near-current stamp -- so that delta IS the sampling interval.
+# This node is single-threaded, so whenever its executor was busy the metric
+# reported the tester's own scheduling as the robot's transform standing still.
+# Every GenDrv leg read "map->odom's stamp stood still for up to 560 ms" while a
+# dedicated subscriber on the same transform through the same drive measured
+# 49.1 publishes/s, 49.1 stamp advances/s and no stall over 250 ms (2026-09-24).
+
+def test_the_metric_is_lag_behind_wall_time_not_the_sampling_interval():
+    """A healthy transform must read ~0 however late the sampler ran."""
+    src = _src()
+    body = src[src.index("def _sample_map_odom"):src.index("def _map_odom_gap_note")]
+    assert "lag = (now - last_wall) - (stamp - last)" in body, \
+        "the gap is not computed as lag behind wall time"
+    assert "gap = stamp - last" not in body, "the old sampling-interval metric is back"
+
+
+def test_a_starved_sampler_on_a_healthy_transform_reports_no_stall():
+    """The exact case that produced the false 560 ms: the sampler runs 600 ms
+    late, and the transform advanced 600 ms of stamp in that time because it is
+    publishing at 50 Hz. Lag is zero; the old metric said 600 ms."""
+    wall_dt, stamp_advance = 0.600, 0.600
+    lag = wall_dt - stamp_advance
+    assert abs(lag) < 1e-9
+    old_metric = stamp_advance
+    assert old_metric > 0.5, "the old metric would have called this a stall"
+
+
+def test_a_real_stall_still_shows_at_its_true_size():
+    """Transform frozen for 400 ms while 500 ms of wall time passes."""
+    wall_dt, stamp_advance = 0.500, 0.100
+    assert abs((wall_dt - stamp_advance) - 0.400) < 1e-9
+
+
+def test_the_note_reports_the_samplers_own_interval_when_it_was_late():
+    """So a small lag measured by a badly starved sampler is not read as a
+    strong result."""
+    src = _src()
+    note = src[src.index("def _map_odom_gap_note"):]
+    assert "map_odom_max_sample_dt" in note
+    assert "fell behind wall time" in note
+    assert "stood still" not in note, "the old wording implies a robot fault"

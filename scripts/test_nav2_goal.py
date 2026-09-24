@@ -179,7 +179,12 @@ class Nav2GoalTester(Node):
         # Longest observed interval between map->odom stamps; see
         # sample_map_odom_freshness().
         self.map_odom_max_gap = 0.0
+        # The sampler's own worst interval, reported alongside the lag: this
+        # node is single-threaded, and a lag measured by a starved sampler
+        # deserves less weight than one measured by a prompt one.
+        self.map_odom_max_sample_dt = 0.0
         self._last_map_odom_stamp = None
+        self._last_map_odom_wall = None
         self.tf_ok = False
         
         self.path_received: Optional[Path] = None
@@ -734,12 +739,33 @@ def _sample_map_odom(node):
         return
     stamp = tr.header.stamp.sec + tr.header.stamp.nanosec * 1e-9
     last = getattr(node, "_last_map_odom_stamp", None)
-    if last is not None and stamp > last:
-        gap = stamp - last
-        if gap > getattr(node, "map_odom_max_gap", 0.0):
-            node.map_odom_max_gap = gap
+    last_wall = getattr(node, "_last_map_odom_wall", None)
+    if last is not None and last_wall is not None and stamp > last:
+        # How far the transform fell BEHIND wall time, not how long between our
+        # own samples.
+        #
+        # This used to report `stamp - last`, the stamp delta between two
+        # samples -- and since map->odom always carries a near-current stamp,
+        # that delta IS the sampling interval. This node is single-threaded, so
+        # whenever its executor was busy the metric reported the tester's own
+        # scheduling as the robot's transform standing still. Every GenDrv leg
+        # said "map->odom's stamp stood still for up to 560 ms" while a
+        # dedicated subscriber watching the same transform through the same
+        # drive measured 49.1 publishes/s, 49.1 stamp advances/s and not one
+        # stall over 250 ms (2026-09-24).
+        #
+        # The lag is the honest quantity: wall time elapsed minus stamp advance.
+        # A healthy transform gives ~0 however late this sampler ran, and a real
+        # stall shows up at its true size.
+        lag = (now - last_wall) - (stamp - last)
+        if lag > getattr(node, "map_odom_max_gap", 0.0):
+            node.map_odom_max_gap = lag
+        sample_dt = now - last_wall
+        if sample_dt > getattr(node, "map_odom_max_sample_dt", 0.0):
+            node.map_odom_max_sample_dt = sample_dt
     if last is None or stamp > last:
         node._last_map_odom_stamp = stamp
+        node._last_map_odom_wall = now
     # HOW BIG the correction is, not just how fresh.
     #
     # The same lookup already has it and was throwing it away. map->odom is
@@ -786,8 +812,14 @@ def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
     # Sampled at 10 Hz, so a gap is known to within ~100 ms and a reported
     # value at or below that is "no stall seen", not a measurement.
     if worst <= 0.12:
-        return f"; map->odom kept up (no gap over {worst * 1000:.0f} ms seen at 10 Hz sampling)"
-    note = f"; map->odom's stamp stood still for up to {worst * 1000:.0f} ms"
+        # Say what the sampler itself did, so a small lag measured by a badly
+        # starved sampler is not read as a strong result.
+        late = getattr(node, "map_odom_max_sample_dt", 0.0)
+        extra = (f", this sampler's own worst interval {late * 1000:.0f} ms"
+                 if late > 0.25 else "")
+        return (f"; map->odom kept up (fell behind wall time by at most "
+                f"{worst * 1000:.0f} ms{extra})")
+    note = f"; map->odom fell behind wall time by up to {worst * 1000:.0f} ms"
     if worst >= tolerance:
         note += (f" -- at or past the {tolerance:.1f} s transform tolerance, so a "
                  f"controller TF error here is a symptom of the scan gap, not of TF")
