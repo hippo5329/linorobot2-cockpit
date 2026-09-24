@@ -657,6 +657,53 @@ def _gap(node) -> str:
     return out
 
 
+# How far the three printed numbers may disagree before the reading is incoherent.
+# map->base_link, /odom and map->odom are sampled by separate callbacks, so they
+# never agree exactly; 0.5 m is far looser than the millimetres a settled tree
+# shows and far tighter than the metres a frame mix-up produces.
+POSE_COHERENCE_TOL_M = 0.5
+
+
+def _pose_is_coherent(node):
+    """Do the map pose, the odom pose and map->odom describe ONE robot?
+
+    They are related by definition: map_pose = odom_pose + (map->odom). When that
+    identity fails, the three were latched at incompatible instants and the "map"
+    pose is not a map pose -- it is an odom pose wearing the label.
+
+    Returns None when there is not enough to judge (no TF, no odom), which is not
+    a failure: it just means no verdict may rest on the frame.
+
+    THIS IS THE SECOND TIME THIS PROJECT HAS PAID FOR THE SAME MISTAKE, in the
+    opposite direction. The first was the soak stopping a healthy run because it
+    measured drift in map instead of /odom. This is a *false red* built the same
+    way: on 2026-09-25, round ~180 of a 500-round soak, the verdict read
+
+        ended at (-5.73, +1.91) in map, odom pose (-5.73, +1.91),
+        map->odom (+5.91, -1.69) m after 0 s
+
+    -- a "RAN AWAY" 6 m outside the room, declared after ZERO seconds. The map
+    pose equalled the odom pose exactly while map->odom was nearly 6 m, so
+    odom + offset put the robot at (+0.18, +0.22): home, where it actually was.
+    The leg was judged in the first instant of the stack's life, before SLAM had
+    published a converged map->odom, so map->base_link was composed through an
+    identity offset.
+
+    It gets worse with time, which is what makes it worth a guard rather than a
+    note: /odom wanders steadily from its origin over hundreds of rounds (SLAM
+    absorbs it into map->odom and the base stays home in map), so the longer a
+    soak runs, the more certain it is that any incoherent instant reads as a
+    runaway. A 500-round soak would have produced these indefinitely.
+    """
+    xy = getattr(node, "_last_xy", None)
+    odom = getattr(node, "latest_odom", None)
+    off = node.map_odom_offset() if hasattr(node, "map_odom_offset") else None
+    if xy is None or odom is None or off is None or not getattr(node, "tf_ok", False):
+        return None
+    p = odom.pose.pose.position
+    return math.hypot((p.x + off[0]) - xy[0], (p.y + off[1]) - xy[1]) <= POSE_COHERENCE_TOL_M
+
+
 def _runaway(node) -> bool:
     """Has the base left the room?
 
@@ -664,13 +711,32 @@ def _runaway(node) -> bool:
     3 m of the origin, so one number covers both directions of every leg. A
     pose that has never been seen is not a runaway.
 
+    Two things disqualify a runaway verdict before the distance is even looked at,
+    and both are about whether the measurement could mean what it says:
+
+      * an incoherent pose (see _pose_is_coherent) -- the number is in the wrong
+        frame, and in a long soak the wrong frame ALWAYS looks like a runaway;
+      * a base that never moved. Leaving a 6 m room requires crossing 6 m of
+        floor, and `odom_max_dist` is the peak excursion the wheels themselves
+        reported. A "runaway" whose base travelled ~nothing is an estimate that
+        jumped, not a robot that drove -- and the base cannot be fooled about its
+        own wheels, which is exactly why this test records that number separately.
+
     Module level, like _why/_gap/_where, so the rule is one implementation and
     can be exercised without a ROS graph.
     """
     xy = getattr(node, "_last_xy", None)
     if xy is None:
         return False
-    return math.hypot(xy[0], xy[1]) > RUNAWAY_RADIUS_M
+    if math.hypot(xy[0], xy[1]) <= RUNAWAY_RADIUS_M:
+        return False
+    if _pose_is_coherent(node) is False:
+        return False
+    # Half the radius: generous enough that a genuine runaway which slipped or
+    # was pushed still counts, strict enough that a pose jump never does.
+    if getattr(node, "odom_max_dist", 0.0) < RUNAWAY_RADIUS_M / 2:
+        return False
+    return True
 
 
 def _sample_map_odom(node):
@@ -892,6 +958,17 @@ def _where(node) -> str:
     off = node.map_odom_offset() if hasattr(node, "map_odom_offset") else None
     if off is not None:
         bits.append(f"map->odom ({off[0]:+.2f}, {off[1]:+.2f}) m")
+    # The three numbers above are related by definition. When they are not, say so
+    # HERE, next to them, rather than leaving a reader to do the subtraction: an
+    # incoherent triple is why a leg can fail in the stack's first instant, and it
+    # is the difference between "the robot went there" and "nobody knows where it
+    # was". _runaway() refuses to fire on one; this is how it gets reported.
+    if _pose_is_coherent(node) is False:
+        p = node.latest_odom.pose.pose.position
+        bits.append(f"INCOHERENT: odom+offset puts it at ({p.x + off[0]:+.2f}, "
+                    f"{p.y + off[1]:+.2f}), so these were latched at different "
+                    f"instants and the map pose is not one (SLAM had not published "
+                    f"a converged map->odom yet)")
     return ("; " + ", ".join(bits)) if bits else ""
 
 

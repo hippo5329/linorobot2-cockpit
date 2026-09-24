@@ -426,6 +426,13 @@ def test_a_base_that_leaves_the_room_is_a_runaway_not_a_missed_goal():
     """
     class Gone(FakeNode):
         def __init__(self, **kw):
+            # dist is the peak excursion the WHEELS reported, and the real event
+            # had 11.235 m of it. The fixture used to leave it at 0.0, which made
+            # this stand-in describe something physically impossible -- a base
+            # 11.2 m from home that never turned a wheel. _runaway now rejects
+            # that, because on 2026-09-25 a pose jump in an unsettled TF tree
+            # produced exactly that shape and was printed as a runaway.
+            kw.setdefault("dist", 11.235)
             super().__init__(**kw)
             self._last_xy = (-11.2, 0.4)
 
@@ -435,6 +442,12 @@ def test_a_base_that_leaves_the_room_is_a_runaway_not_a_missed_goal():
     assert MOD._runaway(node) is False
     node._last_xy = None                # no pose yet is not a runaway
     assert MOD._runaway(node) is False
+
+    # And the distinction the fixture now carries: the same displacement with no
+    # wheel travel is an estimate that jumped, not a robot that drove.
+    node = Gone(dist=0.0)
+    assert MOD._runaway(node) is False, \
+        "a base 11 m from home that never turned a wheel is a pose jump"
 
 
 def test_the_runaway_radius_is_bigger_than_the_room_and_the_goals():
