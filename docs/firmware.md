@@ -925,23 +925,71 @@ because each behaves differently:
 | viscous drag | — | `FAKE_WHEEL_FRICTION`, proportional to current RPM; bearings and the motor's own windage. |
 | pack sag | `battery_sag`, `battery_sag_tau_ms` | `V_bus = V_oc − I·R_internal`, and for a brushed motor the current is proportional to the same `(no_load − ω)` term the torque uses — so a hard acceleration browns out its own supply. One pack, four wheels: **this is the only coupling between the simulated wheels.** It is also *lagged*: internal resistance drops the voltage at once but the chemistry polarises over hundreds of ms, so a **held** load sags deeper than a brief one. That is the real reason a heavy robot suffers more than its peak current suggests — being heavy means drawing that current for longer. |
 | driver loss | `driver_drop`, `driver_resistance` | the bridge keeps some of the voltage. A fixed fraction (body-diode / V_ce floor, worst at low duty) plus a current-proportional one (R_ds(on) and the shunt) that follows the current **instantly**, unlike the pack. Two terms rather than one fudge factor because their time constants differ. |
+| current limiter | `motor_stall_amps`, `driver_current_limit` | many small drivers chop at a fixed current — a TB6612 around 1.2 A per channel, an AT8236 or DRV8871 set by a sense resistor. It caps **torque**, not speed, so it bites hardest from rest at full duty and is barely engaged near top speed: a limited robot is *sluggish, not slow*. `0` means none fitted. |
 | supply voltage | `motor_v` / `power_v` | scales no-load RPM: a motor rated at 12 V on a 2S pack does not reach `MOTOR_MAX_RPM`. |
 
-Two consequences are worth stating, because both were mistakes first:
+Four consequences are worth stating, because each was a mistake first:
 
 - **`MOTOR_MAX_RPM` and `max_rpm_ratio` are different ceilings.** 140 rpm is what
-  the motor can spin; `0.85` is a derating Kinematics applies to *commands*, so
-  the controller will never ask for more than 119. A report that quotes one where
-  it means the other either flatters the robot or accuses a healthy bench
-  measurement of exceeding the motor.
+  the motor can spin; `max_rpm_ratio` derates *commands*, so the controller asks
+  for less. A report that quotes one where it means the other either flatters the
+  robot or accuses a healthy bench measurement of exceeding the motor.
+- **`max_rpm_ratio` is the driver margin, and it is derived now.** It was 0.85 on
+  every robot — a 15% derating somebody picked. What it expresses is the share of
+  no-load speed that survives all the losses above, and that share is *not a
+  constant*: 0.93 on a 1.4 kg robot, 0.87 on this chassis, 0.50 on a 15 kg one.
+  `suggest_max_rpm_ratio()` measures it off the model on `test_acc`'s 1 s profile.
+  Nothing is shaded off it and it is not clamped into a "sensible" band — the
+  velocity smoother bounds what the robot is asked to do, and its envelope comes
+  from the same measurement, so a second fudge here would derate the same physics
+  twice.
+- **Only the *ratio* of limit to stall current matters.** The model carries the
+  motor's torque capability in `FAKE_WHEEL_TAU_MS`; the amps only say at what
+  current that torque arrives. So a motor drawing twice the current for the same
+  torque is hurt exactly twice as much by the same driver. The tempting reading —
+  "a bigger motor behind a small driver changes nothing" — is *not* what this
+  model says, because a bigger motor is a different `max_rpm` and `tau` too.
 - **Stall is where every loss bites at once.** At stall the current proxy is 1.0,
   so the motor sees `(1 − driver_drop) / (1 + battery_sag + driver_resistance)` of
-  the pack — which is why a real stalled motor never produces its datasheet stall
-  torque.
+  the pack, times whatever the limiter allows — which is why a real stalled motor
+  never produces its datasheet stall torque.
 
 Nothing here needs a rebuild: every term above is an env key, so a sweep is a
 4 KB env write per value. That is the point — it is how you find out *which* loss
 a navigation failure was sensitive to.
+
+#### The model is *run*, not only solved — so `test_acc` is not how you read it
+
+`performance()` solves the model in closed form, which answers "what can this
+chassis do". That is not what `test_acc` reports, and the two differ in ways that
+matter: the tool samples at 20 ms and differentiates the samples, it drives raw
+PWM in 1 s phases so the pack's sag has a specific amount of time to develop, and
+it gets the stop distance by integrating the coast, which no closed form gives.
+
+So `drivetrain_report.py` transcribes `FakeEncoder::integrate()` and `busScale()`
+— same terms, same order, same clamps, same shared pack — and runs them on
+`test_acc.cpp`'s own profile, printing the same four lines the tool prints. It is
+noiseless on purpose: `getRPM()` adds ±`FAKE_WHEEL_NOISE_RPM` and the tool
+differentiates it, which is about 0.4 m/s² of pure instrument error in the board's
+`MAX ACC` column.
+
+Given that, **flashing `test_acc` is no longer how these numbers are obtained.**
+On a fake-wheel board the tool now refuses and points at the host script, because
+what it would otherwise print is a measurement *of the simulator*, taken over a
+serial line after a flash, unable to vary mass or gearing without another one. It
+remains the right tool for a robot with motors on it — and then it is how this
+transcription gets checked, which is a different and much rarer job.
+
+Two numbers come out, and the gap between them is real rather than an error:
+
+```
+max speed           0.69 m/s      <- the asymptote, given longer than a second
+MAX VEL             0.64 m/s      <- what test_acc's 1 s phase actually reaches
+```
+
+Torque falls as the wheel speeds up, so the last few percent arrive slowly.
+**Tune a velocity smoother from the measured block**, because that is what the
+robot does in the second a manoeuvre lasts.
 
 ### `drivetrain_report.py` — enter a config, get what the motors can deliver
 
@@ -985,6 +1033,48 @@ Two rules keep it honest:
 Because the whole model is env-driven, the report also works as a **design tool**:
 put a candidate chassis, gearing, mass and pack into a config and read off the
 speed and acceleration before ordering anything.
+
+### The same numbers live in the Config Studio, and Nav2's limits follow them
+
+The Kinematics HUD on the **Base & MCU** tab shows all of it, and recomputes on
+every keystroke: achievable top speed, first-kick and settled acceleration, the
+simulated `test_acc` columns, the rotation radius *with the rule that produced
+it*, the wheel-speed budget, and each Nav2 limit checked against the right one of
+those. Mass, gearbox efficiency, gear drag, pack sag and its time constant, the
+two driver losses and the current limiter are editable fields right below it.
+
+It is computed server-side (`POST /api/drivetrain/performance`, which calls
+`drivetrain_report.py`) rather than in the browser. A JavaScript reimplementation
+would be a second opinion about the robot that drifts from `fake_wheel.h`
+silently — the same rule the report itself follows by parsing its constants out
+of the header instead of restating them.
+
+**Nav2's limits are then derived from the motors on save, by default.** The
+alternative is what shipped: limits asking 103% of a differential base's motors,
+171% at the smoother's ceiling and 129% on mecanum, with nothing checking.
+`kinematics.auto_nav2_limits: false` hands control back to somebody tuning by
+hand, and then nothing is rewritten — the HUD still shows what the motors
+suggest, which is the point of showing it separately from what the file says.
+
+What gets written, and the rule behind each fraction:
+
+| key | rule |
+| --- | --- |
+| `velocity_smoother.max_velocity` | 47% of the measured top speed; 26% of the measured yaw rate. Rotation gets the *smaller* share because that is where tracking error grows fastest and, on a mecanum, where wheel speed is most expensive. |
+| `velocity_smoother.max_accel` | 31% of the **settled** acceleration, not the first kick: a rate limit the base meets only while the pack is still stiff is one it misses for the rest of the manoeuvre. Angular: whatever reaches the angular ceiling in 0.8 s, capped at the same 31% of settled angular acceleration. |
+| `FollowPath.desired_linear_vel`, `rotate_to_heading_angular_vel` | 83% of the smoother's ceiling, so the controller asks for something the smoother can pass through. |
+| `behavior_server` spin limits | brisker than path following — a recovery spin happens when the robot is stuck, with nothing to track. |
+| `kinematics.max_rpm_ratio` | the driver margin, above. |
+
+The pair is then checked against the wheel-speed budget and **both** scaled down
+together if it does not fit, because a translation and a rotation add at the
+outer wheel and each looked survivable alone. Shaving only one would silently
+change the robot's character into a base that turns but will not drive.
+
+The fractions reproduce the limits this project settled on for its default
+chassis on 2026-09-23, then scale with the model — so switching the feature on
+does not re-tune a robot that was already right, and a mecanum finally gets the
+lower yaw ceiling its `(lr + fr)/2` radius always required (1.23 → 0.74 rad/s).
 
 ### `topic_prefix` is an env key too, so the names are built at run time
 
