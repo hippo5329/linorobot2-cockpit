@@ -92,3 +92,23 @@ def test_release_mode_still_proves_which_firmware_ran():
         "release mode does not pin the leg's download to the tag being gated")
     assert re.search(r'\[ "\$noprov" = 0 \]', src), \
         "the pass no longer requires every profile to have provenance"
+
+
+def test_a_verdict_does_not_name_the_firmware_with_a_pair_of_expansions():
+    """`${REL:+release $REL}${REL:-the staged firmware}` prints BOTH halves.
+
+    `:-` yields the variable when it is set rather than the default, so with
+    GATE_RELEASE set the slice verdict read
+
+        GATE: SLICE PASS (skid_steer) -- ten, all on release rc-20260925.1rc-20260925.1.
+
+    Harmless to a grep and confusing to a person, which is the wrong way round
+    for a line whose whole job is to be read. Name the firmware once, in a
+    variable, and echo that.
+    """
+    for name in ("gate_check.sh", "gate_all.sh"):
+        for i, line in enumerate(_read(name).split("\n"), 1):
+            if not line.lstrip().startswith("echo"):
+                continue
+            assert not (":+" in line and ":-" in line), (
+                f"{name}:{i} picks a name with a :+/:- pair, which expands to both")
