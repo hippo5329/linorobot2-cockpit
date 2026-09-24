@@ -86,22 +86,41 @@ def _where(x: float, y: float) -> str:
     return ", ".join(notes) if notes else "clear"
 
 
-def _statistic(samples: list, want: float) -> float:
-    """What to compare against the command.
+def _peak(samples: list, want: float) -> float:
+    """The extreme in the commanded direction -- did the base ever reach it.
 
-    Asked for motion, the question is whether the base REACHED that speed, so
-    the extreme in the commanded direction is right -- a base that tracks badly
-    still passes, which is the point of a sign-and-magnitude test. Asked for
-    zero, the question is whether it stayed still, and an extremum answers a
-    different question: it reports the worst sample instead of the behaviour.
+    Reported, never judged. It was judged, against a SYMMETRIC tolerance, and
+    that combination cannot be satisfied by a base with a transient: a peak can
+    only be further from the command than the sustained speed is, so the more a
+    base overshoots on the way up, the worse it scored on a statistic chosen to
+    be generous about tracking. On 2026-09-25 the GenDrv mecanum jazzy leg was
+    marked BAD for `vy -0.464 (want -0.20)` while its pose moved 0.92 m in the
+    5 s command -- 0.184 m/s, the commanded speed almost exactly -- and the
+    Yahboom on the same drivetrain, same firmware, reported -0.225 and passed.
     """
     if not samples:
         return 0.0
-    if want > 0:
-        return max(samples)
-    if want < 0:
-        return min(samples)
-    return sum(samples) / len(samples)
+    return max(samples) if want > 0 else min(samples) if want < 0 else 0.0
+
+
+def _statistic(samples: list, want: float) -> float:
+    """What to compare against the command: the SUSTAINED speed.
+
+    Asked for motion, the median -- it is the speed the base held for most of
+    the window, which is what "did it do what it was told" means, and one
+    startup overshoot or one dropped sample cannot move it. Asked for zero, the
+    question is whether it stayed still, and there the mean is right: it
+    reports the behaviour rather than the worst sample.
+    """
+    if not samples:
+        return 0.0
+    if want == 0:
+        return sum(samples) / len(samples)
+    ordered = sorted(samples)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def _topics(prefix: str) -> tuple:
@@ -199,7 +218,7 @@ def main() -> int:
         vx = seen["vx"] or [0.0]
         vy = seen["vy"] or [0.0]
         wz = seen["wz"] or [0.0]
-        # The extreme in the commanded direction -- but only when there IS one.
+        # The sustained speed, judged -- and the peak, reported beside it.
         # A zero command has no direction to peak in, and judging it by its
         # largest positive excursion fails on noise by construction: measured on
         # the GenDrv, a 1.5 rad/s spin reported vx peaks of +0.15 m/s while the
@@ -208,6 +227,7 @@ def main() -> int:
         got_vx = _statistic(vx, lin)
         got_vy = _statistic(vy, lat)
         got_wz = _statistic(wz, ang)
+        pk_vx, pk_vy, pk_wz = _peak(vx, lin), _peak(vy, lat), _peak(wz, ang)
         ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)
         ok_vy = abs(got_vy - lat) < max(0.12, abs(lat) * 0.45)
         ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)
@@ -216,12 +236,17 @@ def main() -> int:
         # vy is only printed when it is part of the question: on a differential
         # base every line would carry a column that is always zero, and a column
         # that is always zero stops being read.
-        lat_col = ("   vy %+.3f (want %+.2f) %s"
-                   % (got_vy, lat, "ok" if ok_vy else "BAD")) if lat or STRAFES else ""
-        print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (want %+.2f) %s%s   wz %+.3f (want %+.2f) %s"
+        # The peak goes on the line beside the number that was judged. It is the
+        # only thing that separates "the base held the wrong speed" from "the
+        # base overshot once on the way up", and the two call for opposite
+        # responses -- so a line carrying just one of them cannot be read.
+        lat_col = ("   vy %+.3f (pk %+.3f, want %+.2f) %s"
+                   % (got_vy, pk_vy, lat, "ok" if ok_vy else "BAD")) if lat or STRAFES else ""
+        print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (pk %+.3f, want %+.2f) %s%s"
+              "   wz %+.3f (pk %+.3f, want %+.2f) %s"
               "   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
-              % (label, lin, ang, got_vx, lin, "ok" if ok_vx else "BAD", lat_col,
-                 got_wz, ang, "ok" if ok_wz else "BAD", x0, y0, x1, y1, where), flush=True)
+              % (label, lin, ang, got_vx, pk_vx, lin, "ok" if ok_vx else "BAD", lat_col,
+                 got_wz, pk_wz, ang, "ok" if ok_wz else "BAD", x0, y0, x1, y1, where), flush=True)
         ok = ok_vx and ok_vy and ok_wz
         if not ok and where not in ("clear", "pose unknown"):
             print("             ^ held against %s: the clamp moves the pose every cycle and "

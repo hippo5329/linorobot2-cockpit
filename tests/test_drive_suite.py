@@ -9,13 +9,15 @@ apart. The suite talks to a live ROS graph, so here we exercise its decision
 rule in isolation.
 """
 # drive_suite.py imports rclpy at module scope (it drives a live ROS graph), so
-# it is not importable on the build host. Its DECISION RULE is pure, though, and
-# that is the part worth guarding -- so it is mirrored here verbatim. If the two
-# ever drift, that is the bug this file exists to catch: keep them identical.
+# it is not importable on the build host. Its pure functions are lifted out with
+# ast by _from_suite() below -- they used to be copied here, and a copy is how
+# this file went green through `_statistic` changing meaning. The three TOLERANCE
+# lines are still a copy, because they are expressions inside a closure rather
+# than a function; test_the_tolerances_match_the_suite_verbatim holds them.
 def judge(want_lin, want_ang, got_lin, got_ang, want_lat=0.0, got_lat=0.0):
-    """The suite's rule, extracted: the extreme in the commanded direction,
-    within a loose sign-and-magnitude tolerance. vy is judged by the same rule
-    as vx -- a sideways command is a command like any other."""
+    """The suite's rule, copied: a loose sign-and-magnitude tolerance around the
+    command. vy is judged by the same rule as vx -- a sideways command is a
+    command like any other."""
     ok_vx = abs(got_lin - want_lin) < max(0.12, abs(want_lin) * 0.45)
     ok_vy = abs(got_lat - want_lat) < max(0.12, abs(want_lat) * 0.45)
     ok_wz = abs(got_ang - want_ang) < max(0.45, abs(want_ang) * 0.45)
@@ -28,15 +30,37 @@ def strafe_expectation(base_type, strafe_speed=0.20):
     return strafe_speed if base_type == "mecanum" else 0.0
 
 
-def statistic(samples, want):
-    """Which sample stands for the run: mirrored from drive_suite._statistic."""
-    if not samples:
-        return 0.0
-    if want > 0:
-        return max(samples)
-    if want < 0:
-        return min(samples)
-    return sum(samples) / len(samples)
+def _suite_src():
+    import os
+    return open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "scripts", "drive_suite.py")).read()
+
+
+def _from_suite(*names):
+    """The suite's own functions, lifted out by ast.
+
+    They used to be MIRRORED here, and the mirror is why this file went green
+    through a change of meaning: `_statistic` stopped being the peak in the
+    commanded direction and became the median, and the test that exists to keep
+    the copy honest -- "matches the suite verbatim" -- was checking a signature
+    line and a `return sum(...)/len(...)` that both survived the rewrite. A copy
+    cannot be kept in step by checking some of it. drive_suite imports rclpy at
+    module scope, so the module will not import on a desk; ast will.
+    """
+    import ast
+    tree = ast.parse(_suite_src())
+    want = {n: None for n in names}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in want:
+            want[node.name] = node
+    missing = [n for n, v in want.items() if v is None]
+    assert not missing, f"{missing} are gone from drive_suite.py"
+    ns = {}
+    exec(compile(ast.Module([want[n] for n in names], []), "drive_suite.py", "exec"), ns)
+    return tuple(ns[n] for n in names)
+
+
+statistic, peak = _from_suite("_statistic", "_peak")
 
 
 def test_a_faithful_report_passes():
@@ -115,11 +139,43 @@ def test_the_note_matches_the_suite_verbatim():
         assert needle in src, needle
 
 
-def test_a_commanded_speed_is_judged_by_whether_it_was_reached():
-    """A base that tracks badly still passes: this is sign and magnitude, not
-    performance. So the extreme in the commanded direction is the statistic."""
-    assert statistic([0.10, 0.24, 0.05], 0.25) == 0.24
-    assert statistic([-0.10, -0.26, -0.05], -0.25) == -0.26
+def test_a_commanded_speed_is_judged_by_the_speed_it_HELD():
+    """The median, not the extreme.
+
+    The extreme was judged against a SYMMETRIC tolerance, and that pair cannot
+    be satisfied by a base with a transient: a peak is always at least as far
+    from the command as the sustained speed, so the more a base overshoots on
+    the way up, the worse it scores on a statistic picked for being generous.
+    """
+    assert statistic([0.10, 0.24, 0.26], 0.25) == 0.24
+    assert statistic([-0.10, -0.24, -0.26], -0.25) == -0.24
+
+
+def test_one_overshoot_on_the_way_up_does_not_fail_the_manoeuvre():
+    """2026-09-25, GenDrv mecanum jazzy: `vy -0.464 (want -0.20)` marked BAD
+    while the pose moved 0.92 m in the 5 s command -- 0.184 m/s, the commanded
+    speed almost exactly. The Yahboom, same drivetrain and firmware, reported
+    -0.225 and passed. One sample decided a gate leg."""
+    strafe = [-0.464, -0.21, -0.20, -0.19, -0.20, -0.21, -0.20]
+    assert judge(0.0, 0.0, 0.0, 0.0, statistic(strafe, -0.20), -0.20)
+    # and the old rule is what failed it
+    assert not judge(0.0, 0.0, 0.0, 0.0, peak(strafe, -0.20), -0.20)
+
+
+def test_a_base_that_really_holds_the_wrong_speed_still_fails():
+    """The looser statistic must not become a blind one: a base running at
+    more than twice the commanded strafe for the whole window is a fault, and
+    the median says so."""
+    runaway = [-0.46, -0.47, -0.45, -0.46, -0.48]
+    assert not judge(0.0, 0.0, 0.0, 0.0, statistic(runaway, -0.20), -0.20)
+
+
+def test_the_peak_is_reported_so_the_two_can_be_told_apart():
+    """"Held the wrong speed" and "overshot once" call for opposite responses,
+    so a line carrying only the judged number cannot be read."""
+    src = _suite_src()
+    assert "pk %+.3f" in src, "the peak is no longer printed beside the judged value"
+    assert "pk_vx, pk_vy, pk_wz = _peak(" in src
 
 
 def test_a_commanded_zero_is_judged_by_the_mean_not_the_worst_sample():
@@ -143,16 +199,17 @@ def test_a_base_that_really_creeps_forward_while_spinning_still_fails():
     assert not judge(0.0, 1.5, statistic(creep, 0.0), 1.52)
 
 
-def test_the_statistic_matches_the_suite_verbatim():
-    import os
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "scripts", "drive_suite.py")).read()
-    assert "def _statistic(samples: list, want: float) -> float:" in src
-    assert "return sum(samples) / len(samples)" in src
-    assert "got_vx = _statistic(vx, lin)" in src
-    assert "got_vy = _statistic(vy, lat)" in src
-    assert "want = STRAFE_SPEED if MECANUM else 0.0" in src
-    assert "STRAFE_SPEED = 0.20" in src
+def test_the_suite_judges_the_sustained_value_and_not_the_peak():
+    """`_statistic` is exercised for real above; what a source check still has
+    to say is WHICH number reaches the verdict."""
+    src = _suite_src()
+    for needle in ("got_vx = _statistic(vx, lin)", "got_vy = _statistic(vy, lat)",
+                   "got_wz = _statistic(wz, ang)",
+                   "want = STRAFE_SPEED if MECANUM else 0.0", "STRAFE_SPEED = 0.20"):
+        assert needle in src, needle
+    for judged in ("ok_vx = abs(got_vx", "ok_vy = abs(got_vy", "ok_wz = abs(got_wz"):
+        assert judged in src, f"{judged} -- the verdict no longer reads the sustained value"
+    assert "abs(pk_" not in src, "the peak is being judged again"
 
 
 # --- the sideways pair -------------------------------------------------------
@@ -201,3 +258,14 @@ def test_the_strafe_pair_runs_on_every_drivetrain():
     assert 'run("strafe right", 0.00, 0.00, lat=-want)' in src
     # every base runs them
     assert "STRAFES = True" in src
+
+
+def test_the_tolerances_match_the_suite_verbatim():
+    """`judge` above is a copy of three expressions. Copies drift, and the last
+    one drifted silently for the whole of a release gate, so the copy is only
+    allowed to exist while something checks it character for character."""
+    src = _suite_src()
+    for needle in ("ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)",
+                   "ok_vy = abs(got_vy - lat) < max(0.12, abs(lat) * 0.45)",
+                   "ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)"):
+        assert needle in src, f"the suite's tolerance changed: {needle}"

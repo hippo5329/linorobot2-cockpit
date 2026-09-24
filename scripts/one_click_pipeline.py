@@ -487,6 +487,36 @@ def stop_bg(proc, first=signal.SIGINT):
             continue
 
 
+def _nav2_unmatched(lines: list, log_path: str, keep: int = 6) -> str:
+    """Nothing matched, so widen instead of reporting silence.
+
+    The pattern above is the list of phrases PAST failures used. A failure
+    whose phrase is not on it got "nav2.log logged no transform or path
+    complaint", which reads as "Nav2 had nothing to say" when it means "we did
+    not ask the right question" -- and the log dies with the container before
+    anyone can ask a better one.
+
+    Measured 2026-09-25: the mecanum RP2350 lyrical leg drove 6 m out of the
+    room on both attempts, with Nav2's own feedback reporting 0.000 m
+    remaining, and this reporter said Nav2 complained about nothing. A reader
+    that finds nothing must widen its window, not narrow its claim.
+    """
+    sev = [l.rstrip() for l in lines if "[ERROR]" in l or "[WARN]" in l]
+    if sev:
+        head = "     --- no known complaint matched; Nav2's last WARN/ERROR lines instead ---"
+        tail = sev[-keep:]
+    else:
+        servers = ("controller_server", "planner_server", "bt_navigator",
+                   "behavior_server", "collision_monitor", "velocity_smoother")
+        tail = [l.rstrip() for l in lines if any(sv in l for sv in servers)][-keep:]
+        head = ("     --- no known complaint and no WARN/ERROR; "
+                "the last lines from Nav2's own servers ---")
+    if not tail:
+        return (f"     ({os.path.basename(log_path)} has nothing from Nav2 at all "
+                f"-- {len(lines)} lines)")
+    return "\n".join([head] + [f"     {l[:400]}" for l in tail])
+
+
 def _nav2_complaints(log_path: str, keep: int = 6) -> str:
     """The distinct complaints Nav2 logged, most frequent first.
 
@@ -540,7 +570,7 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
                 # the very bug this reporter was written to fix, one level up.
                 exemplar[key] = msg[:400] + _tf_frames(msg) + _tf_lateness(msg)
     if not counts:
-        return "     (nav2.log logged no transform or path complaint)"
+        return _nav2_unmatched(lines, log_path, keep)
     out = ["     --- what Nav2 complained about (distinct, most frequent first) ---"]
     for key, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
         out.append(f"     {n:5d}x {exemplar[key]}")

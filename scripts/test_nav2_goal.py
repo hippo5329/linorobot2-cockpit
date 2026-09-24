@@ -1326,21 +1326,35 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 print(f"❌ NAV2 GOAL REJECTED by bt_navigator on leg {i}/{n} "
                       f"({gx:.2f}, {gy:.2f}){_why(node)}.")
                 return False
-            # An abort in the first seconds, with no plan and no motion, is the
-            # stack still coming up -- not a navigation failure. The lifecycle
-            # says "active" once every node has configured, which is before the
-            # costmaps have a scan to build from, so the first goal can be
-            # accepted and dropped with nothing attempted. Measured on the
-            # GenDrv (2026-09-22, jazzy): ABORTED after 0 s, 0.000 m traversed,
-            # planned_around_wall=False, on a stack whose /scan was 8.8 Hz and
-            # whose /map was publishing. A real abort takes time and shows
-            # movement, so this costs nothing when the failure is genuine.
+            # An abort in the first seconds with no motion is the stack still
+            # settling, not a navigation failure. The lifecycle says "active"
+            # once every node has configured, which is before the costmaps have
+            # a scan to build from, so a goal can be accepted and dropped with
+            # nothing attempted. Measured on the GenDrv (2026-09-22, jazzy):
+            # ABORTED after 0 s, 0.000 m traversed, on a stack whose /scan was
+            # 8.8 Hz and whose /map was publishing. A real abort takes time and
+            # shows movement, so this costs nothing when the failure is genuine.
+            #
+            # It used to require that nothing had been PLANNED either, which
+            # over-fitted the rule to that one observation and left out the
+            # commoner case. Legs 2..8 do not start on a cold stack; they start
+            # half a second after the previous goal was cancelled, and
+            # bt_navigator answering a cancel is not bt_navigator finished --
+            # the tree is still unwinding behind it. On 2026-09-25 the Yahboom
+            # mecanum jazzy leg was dispatched 0.5 s after leg 1's cancel
+            # returned, accepted, and ABORTED 1.25 s later having moved 0.003 m,
+            # with a plan that routed round the wall and no complaint anywhere
+            # in nav2.log. The plan is what made the retry refuse -- yet a leg
+            # that planned and then never moved is MORE clearly not a planning
+            # failure, not less. Time and motion are the discriminators; a plan
+            # is not one.
             if (not arrived and node.goal_status == 6 and took < STARTUP_ABORT_SEC
                     and node.leg_max_dist < STARTUP_ABORT_DIST
-                    and not node.path_avoids_wall and not retried_startup):
+                    and not retried_startup):
                 retried_startup = True
-                print(f"   leg {i}/{n}: aborted after {took:.1f} s having moved "
-                      f"{node.leg_max_dist:.3f} m and planned nothing — the stack was still "
+                planned = "planned around the wall but" if node.path_avoids_wall else "planned nothing and"
+                print(f"   leg {i}/{n}: aborted after {took:.1f} s having {planned} moved "
+                      f"{node.leg_max_dist:.3f} m — the stack was still "
                       f"settling. Waiting {STARTUP_SETTLE_SEC} s and asking once more.")
                 t_w = time.time()
                 while time.time() - t_w < STARTUP_SETTLE_SEC:

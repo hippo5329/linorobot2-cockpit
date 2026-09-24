@@ -165,3 +165,51 @@ def test_the_frames_survive_the_truncation(tmp_path):
 
 def test_no_frame_note_when_tf2_did_not_name_them():
     assert ocp._tf_frames("Failed to make progress") == ""
+
+
+# --- when nothing matches ----------------------------------------------------
+# The pattern list is the phrases PAST failures used, so a new failure mode gets
+# "nav2.log logged no transform or path complaint" -- a sentence that reads as
+# "Nav2 had nothing to say" and means "we did not ask the right question". The
+# log dies with the container, so there is no asking again later.
+#
+# 2026-09-25: the mecanum RP2350 lyrical leg drove 6 m out of the room on both
+# attempts, Nav2's own feedback reporting 0.000 m remaining, and this reporter
+# said Nav2 complained about nothing.
+
+def test_an_unmatched_failure_falls_back_to_the_last_warnings(tmp_path):
+    out = _report(tmp_path, [
+        "[controller_server-4] [INFO] [1790.0] [controller_server]: Activating\n",
+        "[controller_server-4] [WARN] [1791.0] [MPPIController]: Optimizer fail to improve\n",
+        "[bt_navigator-6] [ERROR] [1792.0] [bt_navigator]: Goal failed\n",
+    ])
+    assert "no known complaint matched" in out
+    assert "Optimizer fail to improve" in out, "the unmatched warning is still dropped"
+    assert "Goal failed" in out
+
+
+def test_with_no_warnings_at_all_it_keeps_nav2s_own_lines(tmp_path):
+    """A controller that drives the robot away without complaining leaves only
+    INFO. That is still the only evidence there is."""
+    out = _report(tmp_path, [
+        "[controller_server-4] [INFO] [1790.0] [controller_server]: Activating\n",
+        "[random_thing-9] [INFO] [1790.5] [something_else]: unrelated\n",
+        "[controller_server-4] [INFO] [1791.0] [controller_server]: Passing new path\n",
+    ])
+    assert "no known complaint and no WARN/ERROR" in out
+    assert "Passing new path" in out
+    assert "unrelated" not in out, "it kept lines from nodes that are not Nav2"
+
+
+def test_a_log_with_nothing_from_nav2_says_how_much_it_read(tmp_path):
+    """"Nothing to report" and "nothing to read" are different findings, and the
+    line count is what separates them."""
+    out = _report(tmp_path, ["[other-1] [INFO] [1790.0] [other]: hello\n"] * 3)
+    assert "nothing from Nav2 at all" in out and "3 lines" in out
+
+
+def test_the_old_silent_sentence_is_gone():
+    src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py"),
+               encoding="utf-8").read()
+    assert "logged no transform or path complaint" not in src, \
+        "the reporter can still answer a failure it does not recognise with silence"

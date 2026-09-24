@@ -831,6 +831,54 @@ def test_an_instant_abort_with_no_plan_is_the_stack_still_settling(monkeypatch, 
     assert "the stack was still settling" in capsys.readouterr().out
 
 
+def test_an_instant_abort_that_DID_plan_is_also_the_stack_settling(monkeypatch, capsys):
+    """The retry used to require that nothing had been planned either, and that
+    left out the commoner case.
+
+    Legs 2..8 do not start on a cold stack -- they start half a second after the
+    previous goal was cancelled, and bt_navigator answering a cancel is not
+    bt_navigator finished: the tree is still unwinding behind it. On 2026-09-25
+    the Yahboom mecanum jazzy leg was dispatched 0.5 s after leg 1's cancel
+    returned, accepted, and ABORTED 1.25 s later having moved 0.003 m, with a
+    plan that routed round the wall and no complaint anywhere in nav2.log. The
+    plan is what made the retry refuse -- yet a leg that planned and then never
+    moved is MORE clearly not a planning failure, not less. Time and motion are
+    the discriminators.
+    """
+    class PlansThenAbortsOnce(StubNode):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self._sends = 0
+        def send_goal(self):
+            self._sends += 1
+            if self._sends == 1:
+                self.goal_status = 6          # ABORTED after planning, no motion
+                self.leg_max_dist = 0.003
+                self.path_avoids_wall = True
+                self.goal_dist_now = self.goal_dist_min = 2.858
+            else:
+                self.goal_status = 4
+                self.goal_dist_now = self.goal_dist_min = 0.1
+                self.leg_max_dist = 3.0
+                self.path_avoids_wall = True
+            return True
+    node = PlansThenAbortsOnce(odom_lin=0.25, dist=3.1, goal_dist=0.1, goal_status=6)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, round_trips=1,
+                goal_x=3.0, goal_y=0.0) is True
+    out = capsys.readouterr().out
+    assert "the stack was still settling" in out
+    assert "planned around the wall but" in out, \
+        "the line does not say a plan existed, so a reader cannot tell the two cases apart"
+
+
+def test_a_plan_is_not_a_reason_to_refuse_the_settle_retry():
+    src = open(os.path.join(SCRIPTS, "test_nav2_goal.py")).read()
+    guard = src[src.index("if (not arrived and node.goal_status == 6 and took < STARTUP_ABORT_SEC"):]
+    guard = guard[:guard.index("retried_startup = True")]
+    assert "path_avoids_wall" not in guard, \
+        "the settle retry is refusing a leg because it planned again"
+
+
 def test_the_startup_retry_happens_once_per_run_not_once_per_leg(monkeypatch):
     """Otherwise a stack that aborts everything retries eight times and the run
     takes an hour to say what it knew after the first leg."""
