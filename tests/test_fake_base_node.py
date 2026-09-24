@@ -27,6 +27,28 @@ import fake_base_node as fb  # noqa: E402
 REF = os.path.join(REPO_ROOT, "config", "reference")
 
 
+def _code_only(path):
+    """The file with comments and docstrings removed.
+
+    Scanning raw text for a constant or a macro name matches the COMMENT that
+    explains where the value comes from -- which is exactly the prose these
+    checks want to encourage. Parsing and re-emitting keeps the check
+    behavioural: what the code does, not what it says about itself.
+    """
+    import ast
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            node.body = body[1:] or [ast.Pass()]
+    return ast.unparse(ast.fix_missing_locations(tree))
+
+
 def _params(name="gendrv"):
     with open(os.path.join(REF, f"{name}_config.yaml"), encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -131,8 +153,7 @@ def test_the_command_times_out_like_the_firmware():
 def test_it_does_not_carry_its_own_wheel_model():
     """One copy of the model. A second would drift from fake_wheel.h silently,
     and this node exists to be believed."""
-    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
-               encoding="utf-8").read()
+    src = _code_only(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
     assert "import drivetrain_report as dr" in src
     assert "dr._Wheel(" in src and "dr._Pack(" in src
     for token in ("FAKE_", "gear_eff", "battery_sag", "math.exp"):
@@ -163,3 +184,68 @@ def test_the_node_is_installed_with_the_package():
     cmake = open(os.path.join(REPO_ROOT, "CMakeLists.txt"), encoding="utf-8").read()
     assert "scripts" in cmake
     assert os.path.isfile(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
+
+
+# --- the sensors, not just the motion ---------------------------------------
+#
+# The first version of this node published a perfect gyro and perfect encoders,
+# and passed an eight-leg Nav2 run that three boards were failing. That is the
+# worst possible outcome for a diagnostic instrument: an absence of reproduction
+# that means nothing. The board's simulated IMU carries a fixed 0.004 rad/s bias
+# and a bounded random walk, and its encoders report +/-1 rpm of noise, so the
+# EKF downstream is fusing a different robot entirely.
+
+def test_the_reported_wheel_speed_carries_the_boards_noise():
+    d, wheels = _rig()
+    seen = set()
+    for _ in range(50):
+        seen.update(round(r, 6) for r in wheels.step([0.0] * 4, 0.02))
+    assert len(seen) > 5, "the reported rpm is noiseless; getRPM() adds +/-1 rpm"
+
+
+def test_the_gyro_has_a_bias_and_it_is_bounded():
+    d, _ = _rig()
+    imu = fb.FakeIMU(d)
+    for _ in range(20000):                       # far longer than any run
+        imu.read(0.0, 0.0, 0.02)
+        assert abs(imu.gyro_bias) <= d["gyro_bias"] + 1e-9
+    # ...and it actually wandered, rather than sitting at zero.
+    walked = any(abs(fb.FakeIMU(d).read(0.0, 0.0, 0.02)[0]) > 0 for _ in range(5))
+    assert walked
+
+
+def test_the_random_walk_rate_does_not_depend_on_the_call_rate():
+    """The step scales with sqrt(dt), so a node at 50 Hz and one at 200 Hz drift
+    at the same rate. Getting this wrong makes the instrument's drift a function
+    of its own timer."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    assert "math.sqrt(max(dt, 0.0))" in src
+    firmware = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
+                                 "fake_wheel.h"), encoding="utf-8").read()
+    assert "const float rw = sqrtf(dt);" in firmware
+
+
+def test_the_gyro_reading_is_the_firmwares_expression():
+    """angular_z * k + bias + noise, with k the scale-factor error."""
+    d, _ = _rig()
+    imu = fb.FakeIMU(d)
+    imu.gyro_bias = 0.0
+    readings = [imu.read(1.0, 0.0, 0.0)[0] for _ in range(400)]   # dt 0 -> no walk
+    mean = sum(readings) / len(readings)
+    assert mean == pytest.approx(1.0 * (1.0 + d["scale_error"]), abs=0.002)
+
+
+def test_the_noise_constants_come_from_the_firmware_header():
+    """Parsed, not restated -- the same rule the rest of the model follows."""
+    d = dr.model_defaults()
+    for key in ("noise_rpm", "gyro_bias", "gyro_drift", "gyro_noise",
+                "accel_noise", "scale_error"):
+        assert key in d, key
+    src = _code_only(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"))
+    for literal in ("0.004", "0.0015", "0.003", "0.03912"):
+        assert literal not in src, f"{literal} is restated instead of parsed"
+    # ...and every one of them is reached through the parsed table.
+    for key in ("gyro_bias", "gyro_drift", "gyro_noise", "accel_noise",
+                "scale_error", "noise_rpm"):
+        assert f"d['{key}']" in src, key

@@ -60,6 +60,15 @@ def model_defaults(path=FAKE_WHEEL_H):
         "FAKE_DRV_R": "drv_r",
         "FAKE_MOTOR_STALL_A": "stall_a",
         "FAKE_DRV_ILIMIT_A": "ilimit_a",
+        # The simulated SENSORS. Not used by this report, which is noiseless on
+        # purpose, but fake_base_node has to imitate the board's output and not
+        # just its motion -- a perfect IMU is a different robot to fuse.
+        "FAKE_WHEEL_NOISE_RPM": "noise_rpm",
+        "FAKE_IMU_GYRO_BIAS": "gyro_bias",
+        "FAKE_IMU_GYRO_DRIFT": "gyro_drift",
+        "FAKE_IMU_GYRO_NOISE": "gyro_noise",
+        "FAKE_IMU_ACCEL_NOISE": "accel_noise",
+        "FAKE_IMU_SCALE_ERROR": "scale_error",
     }
     out = {}
     with open(path, encoding="utf-8") as fh:

@@ -28,6 +28,7 @@
 # ==============================================================================
 import math
 import os
+import random
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,6 +65,45 @@ except ImportError as exc:                                  # pragma: no cover
 
 def _quat_from_yaw(yaw):
     return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+
+
+def _noise(peak):
+    """fakeWheelNoise(): uniform on +/-peak, which is what the board uses."""
+    return random.uniform(-peak, peak)
+
+
+def _clamp_bias(v, limit):
+    limit = abs(limit)
+    return max(min(v, limit), -limit)
+
+
+class FakeIMU:
+    """The board's simulated IMU, output and all.
+
+    This matters more than it looks. The first version of this node published a
+    PERFECT gyro, and a perfect gyro is a different robot to fuse: the board's
+    has a fixed 0.004 rad/s bias and a bounded random walk on top, which over a
+    four-round-trip run is minutes of integration for the EKF to fight. An
+    instrument that leaves that out will happily pass runs the board fails, and
+    then the absence of a reproduction means nothing.
+
+    Bounded, like the firmware's: a free random walk has no limit, and an
+    unbounded one let uptime decide whether SLAM worked -- a stationary gyro
+    read 4.5x its nominal bias after a long session, which the EKF turned into
+    52 degrees of yaw drift in a minute.
+    """
+
+    def __init__(self, d):
+        self.d = d
+        self.gyro_bias = 0.0
+        self.k = 1.0 + d["scale_error"]
+
+    def read(self, wz, ax, dt):
+        rw = math.sqrt(max(dt, 0.0))
+        self.gyro_bias += _noise(self.d["gyro_drift"]) * rw
+        self.gyro_bias = _clamp_bias(self.gyro_bias, self.d["gyro_bias"])
+        return (wz * self.k + self.gyro_bias + _noise(self.d["gyro_noise"]),
+                ax * self.k + _noise(self.d["accel_noise"]))
 
 
 class Wheels:
@@ -104,7 +144,11 @@ class Wheels:
             # on the board, where the other three call busScale() in the same
             # microsecond and its dt is zero.
             wheel.step(dt, i == 0)
-        return [w.rpm for w in self.wheels]
+        # getRPM() adds +/-FAKE_WHEEL_NOISE_RPM to what it REPORTS, so the
+        # odometry -- and therefore SLAM and Nav2 -- sees a noisy wheel. The PID
+        # above reads wheel.rpm directly, which is what the board does too:
+        # feed() and getRPM() are separate calls and only the latter is noisy.
+        return [w.rpm + _noise(self.d["noise_rpm"]) for w in self.wheels]
 
 
 def target_rpm(d, vx, vy, wz):
@@ -171,6 +215,7 @@ class FakeBaseNode(Node):
         else:
             self.create_subscription(Twist, "cmd_vel", self._cmd, 10)
 
+        self.imu = FakeIMU(self.d)
         self.cmd = (0.0, 0.0, 0.0)
         self.cmd_time = self.get_clock().now()
         self.x = self.y = self.yaw = 0.0
@@ -239,8 +284,10 @@ class FakeBaseNode(Node):
         imu.header.frame_id = "imu_link"
         imu.orientation.x, imu.orientation.y = qx, qy
         imu.orientation.z, imu.orientation.w = qz, qw
-        imu.angular_velocity.z = meas_wz
-        imu.linear_acceleration.x = (meas_x - self.prev_vx) / self.dt
+        gyro_z, accel_x = self.imu.read(meas_wz, (meas_x - self.prev_vx) / self.dt,
+                                        self.dt)
+        imu.angular_velocity.z = gyro_z
+        imu.linear_acceleration.x = accel_x
         imu.linear_acceleration.z = 9.81
         self.imu_pub.publish(imu)
         self.prev_vx = meas_x
