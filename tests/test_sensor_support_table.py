@@ -87,4 +87,9 @@ def test_no_driver_claims_a_data_ready_interrupt_any_more():
     assert "enableDataReadyInterrupt" not in src, \
         "a driver implements a data-ready interrupt again; the path was removed"
     doc = _src(DOC)
-    assert "Every part is read by polling." in doc
+    # Asserted on the CLAIM, not its punctuation: the sentence was reworded on
+    # 2026-09-24 ("**Every part is read by polling**, at the control loop's
+    # rate.") and an exact-match tripwire went red over a comma.
+    assert "read by polling" in doc, "the docs no longer say every part is polled"
+    for gone in ("enableDataReadyInterrupt", "pins.imu.int", "imu_int", "DATA_RDY"):
+        assert gone not in doc, f"the docs describe {gone} again; the path was removed"

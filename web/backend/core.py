@@ -454,8 +454,18 @@ def resolve_command(data: Dict[str, Any], default: str = "") -> str:
                 return actions.build(action, data.get("args") or {})
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=f"action {action!r}: {exc}")
-        # An action name that is not in the registry is not a command -- fall
-        # through to raw/command handling, which is where the label used to live.
+        # An unknown action is an ERROR, not a request for the endpoint's default.
+        # Falling through used to mean a misspelled or renamed action ran the
+        # fallback instead: /api/agent/exec started a SERIAL agent when a UDP one
+        # was asked for, and /api/bringup/exec brought up an UNPREFIXED robot when
+        # a namespaced one was asked for -- the request looked like it worked. The
+        # legacy shape (a human label in `action` beside a raw `command`) only ever
+        # worked with raw enabled, so it is the one case still allowed through.
+        if not (_allow_raw_exec() and text_field(data, "command")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown action {action!r}; the server builds commands from a named "
+                       f"action, so a name it does not know cannot be run")
     raw = text_field(data, "command")
     if raw:
         if not _allow_raw_exec():
