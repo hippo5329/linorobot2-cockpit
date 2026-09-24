@@ -258,7 +258,22 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
     # file and a hand-written one diff cleanly against each other.
     order = ["robot", "base_controller", "kinematics", "geometry", "ekf", "slam",
              "nav2", "ros_distro"]
-    return {k: params[k] for k in order if k in params}
+    params = {k: params[k] for k in order if k in params}
+
+    # NOT auto-derived here, deliberately.
+    #
+    # Deriving the limits for the regenerated bare config is the consistent
+    # thing to do -- the drivetrain VARIANTS get it, and a bare config otherwise
+    # pairs the donor's derived envelope with an underived max_rpm_ratio. But
+    # doing it RAISES a 2wd base's limits (it sags less than the four-wheel case
+    # the fractions were calibrated on), and 2wd is the slice failing 3/10 on
+    # hardware across two independent matrix runs while skid_steer and mecanum
+    # pass 10/10. Raising the limits of the one drivetrain that is already
+    # marginal is not something the evidence supports.
+    #
+    # So the bare config keeps the donor's numbers until the 2wd flakiness is
+    # understood. See cockpit/PROGRESS.md.
+    return params
 
 
 def main() -> int:

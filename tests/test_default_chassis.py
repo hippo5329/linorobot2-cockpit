@@ -229,6 +229,13 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         ("nav2", "controller_server", "ros__parameters", "FollowPath",
          "rotate_to_heading_angular_vel"),
         ("nav2", "controller_server", "ros__parameters", "FollowPath", "max_angular_accel"),
+        # ...and the linear target with them. A mecanum's envelope is scaled DOWN
+        # as a pair when the translate-plus-rotate demand does not fit its
+        # budget -- shaving only the yaw would change the robot's character into
+        # a base that turns but will not drive -- so its linear target moves too,
+        # by the same factor and for the same geometric reason.
+        ("nav2", "controller_server", "ros__parameters", "FollowPath",
+         "desired_linear_vel"),
         ("nav2", "behavior_server", "ros__parameters", "max_rotational_vel"),
         ("nav2", "behavior_server", "ros__parameters", "min_rotational_vel"),
         ("nav2", "behavior_server", "ros__parameters", "rotational_acc_lim"),

@@ -373,13 +373,13 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 0.61
-        max_angular_accel: 0.92
+        rotate_to_heading_angular_vel: 0.57
+        max_angular_accel: 0.87
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
         use_path_orientations: false
-        desired_linear_vel: 0.25
+        desired_linear_vel: 0.24
         lookahead_dist: 0.6
         min_lookahead_dist: 0.3
         max_lookahead_dist: 0.9
@@ -429,9 +429,9 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 0.5
-      min_rotational_vel: 0.24
-      rotational_acc_lim: 1.84
+      max_rotational_vel: 0.46
+      min_rotational_vel: 0.23
+      rotational_acc_lim: 1.74
   velocity_smoother:
     ros__parameters:
       enable_stamped_cmd_vel: false
@@ -464,21 +464,21 @@ nav2:
       # 0.1355 m, so the same yaw rate costs it 66% more wheel speed and it is
       # given a correspondingly lower ceiling.
       max_velocity:
-      - 0.3
-      - 0.3
-      - 0.74
+      - 0.29
+      - 0.29
+      - 0.69
       min_velocity:
-      - -0.3
-      - -0.3
-      - -0.74
+      - -0.29
+      - -0.29
+      - -0.69
       max_accel:
       - 0.8
       - 0.8
-      - 0.92
+      - 0.87
       max_decel:
       - -0.8
       - -0.8
-      - -0.92
+      - -0.87
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:

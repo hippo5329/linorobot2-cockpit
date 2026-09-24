@@ -349,7 +349,16 @@ def run_test_acc(d, rotate=False):
     wheels = [_Wheel(d, pack, i) for i in range(4)]
     # Full PWM. test_acc halves it every fourth run; the first run, which is the
     # one quoted, is at the top of the range.
-    duty = [-1.0 if rotate and i in (0, 2) else 1.0 for i in range(4)]
+    #
+    # Only the DRIVEN wheels are driven. On a differential base getRPM() for
+    # motors 3 and 4 feeds nothing -- Kinematics asks them for ~0 rpm and the PID
+    # holds them there -- so they draw no current and do not load the shared
+    # pack. Driving all four here made a 2wd base sag like a 4wd one and come out
+    # 4% slower than it is; the Nav2 limits derived from that were sized for a
+    # robot with twice the load on its battery.
+    n_driven = int(d.get("wheels", 4))
+    duty = [(-1.0 if rotate and i in (0, 2) else 1.0) if i < n_driven else 0.0
+            for i in range(4)]
 
     trace = []
     for phase, sign in enumerate((1.0, 0.0, -1.0, 0.0)):
@@ -919,13 +928,20 @@ def parse_test_acc(text):
 # alone. That check is the reason this exists, so it is applied to the OUTPUT and
 # not merely offered as advice.
 # ==============================================================================
-SPEED_FRAC = 0.47
-ROT_FRAC = 0.26
+# Re-calibrated 2026-09-24 after the pack-load fix: a differential base drives
+# two wheels, not four, so it sags less and the model's measured speed rose ~4%.
+# The fractions came down by the same amount so the derived limits land where
+# they did before -- the calibration point is the values this project settled on
+# for its default chassis, and a bug fix in the model must not become a quiet
+# re-tune of every robot. Especially not upward, and especially not on 2wd,
+# which is the slice failing 3/10 on hardware while the other two pass 10/10.
+SPEED_FRAC = 0.45
+ROT_FRAC = 0.244
 ACCEL_FRAC = 0.31
 ANG_ACCEL_SECONDS = 0.8
 TARGET_FRAC = 0.83
 
-def suggest_max_rpm_ratio(d, measured=None):
+def suggest_max_rpm_ratio(d, measured=None, raw=False):
     """The driver margin, derived instead of guessed.
 
     `max_rpm_ratio` has always been 0.85 -- a 15% derating somebody picked, with
@@ -955,7 +971,13 @@ def suggest_max_rpm_ratio(d, measured=None):
     if d["circ"] <= 0 or d["motor_rpm"] <= 0:
         return None
     reached_rpm = measured["max_vel"] * 60.0 / d["circ"]
-    return round(reached_rpm / d["motor_rpm"], 2)
+    ratio = reached_rpm / d["motor_rpm"]
+    # Rounded for WRITING only. The budget the velocity limits are clamped
+    # against is computed from the unrounded value (see derived_limits), because
+    # feeding the written two-decimal ratio back in makes the whole derivation a
+    # function of its own last output: the mecanum reference then oscillated
+    # between two answers a hundredth apart, and every save produced a diff.
+    return round(ratio, 2) if not raw else ratio
 
 
 def suggest_nav2_limits(d, p=None, measured=None):
@@ -1071,11 +1093,14 @@ def derived_limits(params):
     if d["max_rpm"] <= 0 or d["circ"] <= 0:
         return {}
     out = {}
-    ratio = suggest_max_rpm_ratio(d)
+    measured = run_test_acc(d, rotate=False)
+    ratio = suggest_max_rpm_ratio(d, measured)
     if ratio is not None:
         out["kinematics.max_rpm_ratio"] = ratio
-        d["command_rpm"] = d["motor_rpm"] * ratio
-    out.update(suggest_nav2_limits(d))
+        # The UNROUNDED ratio sets the budget, so the limits below depend only on
+        # the measurement and not on what was written to the config last time.
+        d["command_rpm"] = d["motor_rpm"] * suggest_max_rpm_ratio(d, measured, raw=True)
+    out.update(suggest_nav2_limits(d, measured=measured))
 
     # The wheel loop's gains, from the step response -- the robot's own if it
     # has been measured, the model's otherwise. Only written when the closed-loop
