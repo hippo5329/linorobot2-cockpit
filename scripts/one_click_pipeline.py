@@ -547,6 +547,74 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
     return "\n".join(out)
 
 
+def _slam_complaints(log_path: str, keep: int = 6) -> str:
+    """How far slam_toolbox got, and what it complained about.
+
+    "no map was published" is the least informative sentence the pipeline can
+    print, because every interesting failure produces it: the lifecycle node
+    stuck in `inactive`, a solver plugin that would not load, or scans dropped
+    because odom->laser was not in the TF buffer yet. Those are three different
+    repairs and the transcript said "check logs/slam.log" -- a file inside the
+    leg's container, which the next leg destroys. On 2026-09-24 the Yahboom
+    skid_steer jazzy leg failed exactly this way, with every topic green at
+    rate, and the log that could have named the layer was gone by the time
+    anyone read the gate.
+
+    Same reason as _nav2_complaints, same shape: extract while it still exists.
+    """
+    try:
+        with open(log_path, errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return f"     (no {os.path.basename(log_path)} to explain it)"
+
+    # Where it stopped. slam_toolbox logs each lifecycle transition as it takes
+    # it, so the LAST one reached is the whole diagnosis for the stuck-inactive
+    # case: "Configuring" and no "Activating" means the configure result event
+    # was missed and the node is sitting in `inactive` -- the case the manual
+    # `lifecycle set activate` above exists to rescue. Reaching "Activating"
+    # and still publishing no map is a different fault entirely.
+    seen = [s for s in ("Creating", "Configuring", "Activating", "Deactivating", "Cleaning up")
+            if any(s in ln for ln in lines)]
+    out = []
+    if seen:
+        out.append(f"     --- slam_toolbox reached: {' -> '.join(seen)}")
+        if "Activating" not in seen:
+            out.append("     it never activated: the lifecycle node is stuck in `inactive`, so"
+                       " no map is published and the map frame never exists")
+    else:
+        out.append("     --- slam_toolbox logged no lifecycle transition at all")
+
+    pat = re.compile(r"(?:Message Filter dropping message|discarding message|queue is full|"
+                     r"Failed to compute odom pose|Unable to get transform|"
+                     r"Could not transform|Lookup would require extrapolation|"
+                     r"Invalid frame ID|does not exist|"
+                     r"failed to load|plugin|solver|"
+                     r"scan (?:topic )?(?:is )?(?:empty|not)|no laser)", re.I)
+    counts: dict = {}
+    exemplar: dict = {}
+    for line in lines:
+        if pat.search(line):
+            msg = line.strip()
+            for cut in (" [ERROR] ", " [WARN] ", " [INFO] "):
+                if cut in msg:
+                    msg = msg.split(cut)[-1]
+            # Two complaints are the same complaint when only their numbers
+            # differ -- a dropped-scan message carries a moving timestamp and
+            # would otherwise fill the whole report with one fault.
+            key = re.sub(r"[0-9]+(?:\.[0-9]+)?", "N", msg)
+            counts[key] = counts.get(key, 0) + 1
+            if key not in exemplar:
+                exemplar[key] = msg[:400] + _tf_frames(msg) + _tf_lateness(msg)
+    if counts:
+        out.append("     --- what slam_toolbox complained about (distinct, most frequent first) ---")
+        for key, n in sorted(counts.items(), key=lambda kv: -kv[1])[:keep]:
+            out.append(f"     {n:5d}x {exemplar[key]}")
+    else:
+        out.append("     (slam.log logged no transform, scan or plugin complaint)")
+    return "\n".join(out)
+
+
 def _tf_frames(msg: str) -> str:
     """Which transform the lookup wanted, as a note, or "" when tf2 did not say.
 
@@ -1357,7 +1425,10 @@ def main():
                                   require_message="info.width"):
                     print("  ✅ /map is publishing (slam_toolbox needed a manual activate).")
                 else:
-                    print("  ⚠️ still no map — check logs/slam.log for 'Activating'.")
+                    # Not "check logs/slam.log" -- that file dies with this
+                    # leg's container. Read it here, while it exists.
+                    print("  ⚠️ still no map after a manual activate.")
+                    print(_slam_complaints(os.path.join(LOG_DIR, "slam.log")))
                     failures.append("SLAM: no map was published")
             else:
                 print("  ✅ /map is publishing.")
