@@ -29,12 +29,12 @@ def test_it_returns_as_soon_as_picotool_can_see_the_board(monkeypatch):
     """The point of the change: no fixed wait once the device is there."""
     calls = {"n": 0}
 
-    def fake_run(argv, **kw):
+    def stub_run(argv, **kw):
         calls["n"] += 1
         return _Res(0)
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", stub_run)
     assert flash_mcu.wait_for_bootsel(timeout_s=5.0) is True
     assert calls["n"] == 1, "should stop at the first success, not keep polling"
 
@@ -44,13 +44,13 @@ def test_it_keeps_looking_while_the_device_is_still_attaching(monkeypatch):
     seq = [1, 1, 1, 0]          # fails three times, then the device appears
     calls = {"n": 0}
 
-    def fake_run(argv, **kw):
+    def stub_run(argv, **kw):
         rc = seq[min(calls["n"], len(seq) - 1)]
         calls["n"] += 1
         return _Res(rc)
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", stub_run)
     assert flash_mcu.wait_for_bootsel(timeout_s=10.0) is True
     assert calls["n"] == 4
 

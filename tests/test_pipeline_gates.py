@@ -25,7 +25,7 @@ def test_a_listed_but_silent_topic_does_not_satisfy_require_message(monkeypatch)
 
     seen = []
 
-    def fake_run_ros(cmd, timeout=60, distro="jazzy"):
+    def stub_run_ros(cmd, timeout=60, distro="jazzy"):
         seen.append(cmd)
         # The node is configured: the topic is listed and has a publisher, but
         # `echo --once` never yields a message.
@@ -35,7 +35,7 @@ def test_a_listed_but_silent_topic_does_not_satisfy_require_message(monkeypatch)
             return _result(stdout="Publisher count: 1\n")
         return _result(stdout="/map\n")
 
-    monkeypatch.setattr(ocp, "run_ros", fake_run_ros)
+    monkeypatch.setattr(ocp, "run_ros", stub_run_ros)
     assert ocp.wait_for_topic("/map", timeout_sec=2, distro="jazzy",
                               require_message="info.width") is False
     assert any("topic echo" in c for c in seen), "the gate never tried to read a message"

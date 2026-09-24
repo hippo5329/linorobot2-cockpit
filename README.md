@@ -21,7 +21,7 @@ into — and you drive it from any browser on the network.
 - **One config file per robot**, kept in your own git repository outside this one.
 - **The board says what it runs.** Every boot prints its application, distro, build date and
   git revision; the cockpit only reflashes a board that actually differs.
-- **Nothing about a robot is compiled in.** Pins, sensors, transport, baud, the sim-sensor
+- **Nothing about a robot is compiled in.** Pins, sensors, transport, baud, the simulated-sensor
   flags, the LiDAR sink, the sonar, the motor brake mode — all of it comes from a 4 KB `env`
   flash partition and can be changed on a flashed board without a compiler. The firmware's
   remaining `#if`s are about the silicon or the ROS 2 distro's message ABI, nothing else.
@@ -148,7 +148,7 @@ python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --
 | **flash** | write the firmware image to the board |
 | **agent** | `micro_ros_agent`, the bridge between the board's serial port and ROS 2 |
 | **bringup** | starting the ROS 2 nodes that turn the board's data into `/odom`, TF and `/scan` |
-| **sim mode** | the firmware simulating wheels, IMU and a LiDAR room, so a bare board runs the whole pipeline |
+| **simulation mode** | the firmware simulating wheels, IMU and a LiDAR room, so a bare board runs the whole pipeline |
 | **description** | the robot's URDF — body, wheels, where the LiDAR and IMU sit — generated from your config at every bringup into `generated/` next to it; `robot_state_publisher` broadcasts it as the TF tree |
 
 ## How it is put together
@@ -164,7 +164,7 @@ python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --
 
 **The firmware** (`firmware/`) is the low-level motor controller and sensor interface. It
 subscribes to `/cmd_vel`, drives the wheels with PID, and publishes `/odom/unfiltered`,
-`/imu/data` and, in sim mode, a LiDAR scan. One image per board carries the robot firmware
+`/imu/data` and, in simulation mode, a LiDAR scan. One image per board carries the robot firmware
 *and* every diagnostic application (`test_sensors`, `test_motors`, `test_acc`, `i2c_detect`,
 `bno085_cal`, `adc_calibrate`); which one boots is a key in a 4 KB `env` flash block, not a
 build.
@@ -232,7 +232,7 @@ The IMU is read by polling on every board, at the control loop's rate. Where a c
 FIFO with its own timestamp counter, that carries the sample time with the sample and needs
 no extra wiring.
 
-To switch sim mode off and describe real hardware, use Config Studio or edit
+To switch simulation mode off and describe real hardware, use Config Studio or edit
 `base_controller.sensors` and `base_controller.pins`, then press Start again.
 
 ### The URDF is generated from your config
@@ -257,7 +257,7 @@ geometry:
 Config Studio edits these on the Base tab ("Body & Sensor Placement"). A config from
 before this block gets one derived from its kinematics by `scripts/migrate_config_schema.py`,
 written into the file so the numbers are yours to correct. The LiDAR driver stamps `/scan`
-with `geometry.laser.frame`, and in sim mode the emulator raycasts from `geometry.laser.x`,
+with `geometry.laser.frame`, and in simulation mode the emulator raycasts from `geometry.laser.x`,
 so the scan and the transform always agree. Warnings you get for free: a LiDAR inside the
 body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than the body.
 
@@ -277,7 +277,7 @@ Four microcontrollers. **One image per MCU per ROS 2 distro — not one per robo
 A Waveshare General Driver board and a bare ESP32 DevKit run the same `esp32-jazzy` image:
 the pin matrix, I2C bus, LiDAR pin and baud, micro-ROS transport and credentials all live in
 the `env` flash partition, not the binary. A robot is a configuration, not a build: the pin
-matrix, `comm_mode`, the sonar pins, the sim-sensor flags, the motor brake mode and the
+matrix, `comm_mode`, the sonar pins, the simulated-sensor flags, the motor brake mode and the
 forward safety stop are all env keys. The only conditionals in the firmware are about the
 silicon (ESP32 vs RP2) or the ROS 2 distro's message ABI.
 
@@ -303,7 +303,7 @@ than the cable.
 
 The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
 ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
-before micro-ROS is up, and a bench board in sim mode needs it as much as a wired one. The
+before micro-ROS is up, and a bench board in simulation mode needs it as much as a wired one. The
 RP2 design assumes non-W hardware and keeps GP25; on an actual W board GP25 belongs to the
 CYW43 bus, so those set `led` in the env. GPIO 2 on an ESP32 is also a strapping pin, so the
 pin checker warns about it; that is correct and harmless here, since an LED to ground pulls
@@ -373,9 +373,9 @@ want touched; **Force firmware update** rewrites even a matching image.
 
 ---
 
-## Sim mode
+## Simulation mode
 
-Sim mode is what makes a bare board useful. Under `base_controller.sensors`:
+Simulation mode is what makes a bare board useful. Under `base_controller.sensors`:
 
 | key | emulates | how |
 |---|---|---|
@@ -425,7 +425,7 @@ has sagged, the rotation radius with the rule that produced it — and whether t
 in that same config are asking for more than the robot has. It parses the model's constants
 out of `sim_wheel.h` rather than restating them, and it prints what `test_acc` *would*
 measure by running the model on that tool's own 20 ms sampling. Which means **you no longer
-flash a board to find those numbers**; on a sim-wheel board `test_acc` says so and points
+flash a board to find those numbers**; on a simulated-wheel board `test_acc` says so and points
 here.
 
 The Nav2 velocity limits and `max_rpm_ratio` are derived from it on save
@@ -450,7 +450,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 |---|---|---|
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` or `imu/data_raw` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/mag` only with a magnetometer (`PUBLISH_MAG`) |
-| `raw_scan` | `std_msgs/UInt8MultiArray` | sim LD19 on the MCU |
+| `raw_scan` | `std_msgs/UInt8MultiArray` | simulated LD19 on the MCU |
 | `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name

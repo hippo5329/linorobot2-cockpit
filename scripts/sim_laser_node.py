@@ -93,7 +93,7 @@ class SimLaserNode(Node):
         self.angle_max = math.pi
         self.angle_step = (self.angle_max - self.angle_min) / self.num_points
 
-        self.get_logger().info("Sim LD19 LaserScan Node active (10 Hz, 10x6m virtual room).")
+        self.get_logger().info("Simulated LD19 LaserScan Node active (10 Hz, 10x6m virtual room).")
 
     def _odom_cb(self, msg: Odometry):
         self.pose_x = msg.pose.pose.position.x

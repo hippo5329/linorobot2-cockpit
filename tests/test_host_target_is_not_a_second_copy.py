@@ -7,7 +7,7 @@ being the SAME sources a board runs. The moment a copy is taken "just to get it
 building", the target starts passing for code no robot executes, and it becomes
 the most convincing kind of false green: a test named after the thing it stopped
 testing. `tests/test_sim_base_node.py` exists to stop exactly that happening to
-the Python sim base; this stops it happening here.
+the Python simulated base; this stops it happening here.
 
 Four invariants, each one a way that could go wrong quietly.
 """

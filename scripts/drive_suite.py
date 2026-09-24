@@ -2,7 +2,7 @@
 """Eight manoeuvres, checked for sign and magnitude against odometry.
 
 Rates prove the board talks. Only this proves it MOVES, and moves the way it
-was told: the sim-wheel invert bug and the PID integral windup both produced
+was told: the simulated-wheel invert bug and the PID integral windup both produced
 perfect 50 Hz topics on a robot that was spinning on the spot or pinned at
 both rails. Every hardware run ends with this, after the topic gate.
 

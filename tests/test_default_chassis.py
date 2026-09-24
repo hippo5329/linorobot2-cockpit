@@ -1,6 +1,6 @@
 """One default chassis, everywhere.
 
-A Nav2 sim-mode failure can only be attributed to a board if every default config
+A Nav2 simulation-mode failure can only be attributed to a board if every default config
 shares the same chassis: the same body and sensor mounts (laser at the base origin),
 the same costmap radii, consistent frame names, the same bare kinematics, and no
 inherited hardware quirks. The Yahboom reference failed the Nav2 goal on both
@@ -326,9 +326,9 @@ def test_topics_only_runs_no_slam_no_nav2_no_map():
 
 def test_a_real_imu_on_simulated_wheels_is_called_out():
     """The EKF fuses vyaw from odom AND imu. A board bolted to a bench reports
-    gyro=(0, 0, 0) while the sim wheels report a turn, so the filtered heading
+    gyro=(0, 0, 0) while the simulated wheels report a turn, so the filtered heading
     is dragged toward zero on every IMU sample. Measured on the GenDrv: 8/8 legs
-    in sim mode, stalled 1.615 m (jazzy) and 1.625 m (lyrical) short of the same
+    in simulation mode, stalled 1.615 m (jazzy) and 1.625 m (lyrical) short of the same
     goal in auto mode, both reporting "Failed to make progress". A run that mixes
     them must say so, or the transcript reads like a navigation fault."""
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
@@ -448,7 +448,7 @@ def test_the_simulated_sensors_are_a_typical_real_one():
 
     simWheelNoise() is uniform on +/-peak, so var = peak^2/3. The placeholders
     said 1e-5 while the accelerometer produced 5.1e-4 -- the EKF was told the
-    simulated IMU was 50x quieter than it was, on every sim-mode leg.
+    simulated IMU was 50x quieter than it was, on every simulation-mode leg.
     """
     import statistics as st
     import mcu_env
@@ -475,11 +475,11 @@ def test_the_sim_sensor_declares_the_covariance_it_produces():
     assert "constexpr float simCov(float peak) { return peak * peak / 3.0f; }" in src
     for macro in ("SIM_IMU_ACCEL_NOISE", "SIM_IMU_GYRO_NOISE", "SIM_MAG_NOISE_T"):
         assert f"simCov({macro})" in src, f"{macro} covariance is not derived from its noise"
-    # and the generic placeholders must no longer stand in for the sim sensor
+    # and the generic placeholders must no longer stand in for the simulated sensor
     head = src[src.index("void initMsgs("):src.index("for (int i = 0; i < 3; i++)")]
     for placeholder in ("float accel_cov[3] = ACCEL_COV", "float gyro_cov[3] = GYRO_COV",
                         "float mag_cov[3] = MAG_COV"):
-        assert placeholder not in head, f"{placeholder}: the sim sensor is using a placeholder"
+        assert placeholder not in head, f"{placeholder}: the simulated sensor is using a placeholder"
 
 
 def test_the_simulated_magnetometer_ships_calibrated():

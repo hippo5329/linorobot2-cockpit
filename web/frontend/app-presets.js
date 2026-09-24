@@ -1,4 +1,4 @@
-// Linorobot2 Cockpit frontend -- reference build presets & hardware design engine, sim-mode.
+// Linorobot2 Cockpit frontend -- reference build presets & hardware design engine, simulation-mode.
 // Part of the app.js split: a classic script sharing global scope. See app-core.js.
 
 // ==============================================================================
@@ -42,7 +42,7 @@ const REFERENCE_DESIGNS = {
     },
     {
       id: "pico2_diff",
-      name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Sim IMU Default)",
+      name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Simulated IMU Default)",
       mcu: "pico2",
       kinematics: "2wd",
       driver: "BTS7960",
@@ -75,7 +75,7 @@ const REFERENCE_DESIGNS = {
     },
     {
       id: "pico2_mecanum",
-      name: "⚡ Pico 2 · 4WD Mecanum · BTS7960 (Sim IMU)",
+      name: "⚡ Pico 2 · 4WD Mecanum · BTS7960 (Simulated IMU)",
       mcu: "pico2",
       kinematics: "mecanum",
       driver: "BTS7960",
@@ -665,13 +665,13 @@ function updateSimModeUI(enabled) {
   if (hdrMode) hdrMode.value = enabled ? "sim" : "real";
   if (cockpitMode) cockpitMode.value = enabled ? "sim" : "real";
 
-  const stateBadge = document.getElementById("sim-mode-state-badge");
-  const descElem = document.getElementById("sim-mode-desc");
+  const stateBadge = document.getElementById("simulation-mode-state-badge");
+  const descElem = document.getElementById("simulation-mode-desc");
   const toggleBtn = document.getElementById("btn-toggle-sim-mode");
   const odomStatus = document.getElementById("sim-odom-status");
-  const imuStatus = document.getElementById("sim-imu-status");
-  const lidarStatus = document.getElementById("sim-lidar-status");
-  const cardTitle = document.getElementById("sim-mode-card-title");
+  const imuStatus = document.getElementById("simulated-imu-status");
+  const lidarStatus = document.getElementById("simulated-lidar-status");
+  const cardTitle = document.getElementById("simulation-mode-card-title");
 
   if (stateBadge) {
     stateBadge.textContent = enabled ? "Zero-Wiring Default ON" : "Real Hardware Active";
@@ -749,7 +749,7 @@ async function setSimMode(enabled, transitionToDetails = false) {
       }
     }
   } catch (err) {
-    console.error("Failed to update sim mode on backend:", err);
+    console.error("Failed to update simulation mode on backend:", err);
   }
 
   if (transitionToDetails) {

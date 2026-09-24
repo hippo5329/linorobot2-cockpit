@@ -318,7 +318,7 @@ class SimBaseNode(Node):
         self.dt = 1.0 / rate
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
-            f"sim base: {self.d['base']}, {self.d['wheels']} wheels, "
+            f"simulated base: {self.d['base']}, {self.d['wheels']} wheels, "
             f"{self.d['mass']:.1f} kg, turns on {self.d['radius']:.4f} m, "
             f"budget {self.d['command_rpm']:.0f} rpm, at {rate:.0f} Hz"
             + ("" if self.wire.instant else

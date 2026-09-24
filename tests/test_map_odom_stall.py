@@ -94,7 +94,7 @@ def test_the_gap_logic_is_monotonic():
     healthy 50 Hz one it must stay silent.
 
     Module-level and taking `node`, like _why/_gap/_where/_runaway: a method
-    would break every test that drives this file with a FakeNode, which is
+    would break every test that drives this file with a StubNode, which is
     exactly how it broke when first written.
     """
     class Node:

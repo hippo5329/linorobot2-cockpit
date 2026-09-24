@@ -92,7 +92,7 @@ def _bare_comm_mode(mcu: str) -> str:
 #
 # The firmware is happy either way -- an absent key keeps its compiled default,
 # which is what makes a blank env boot -- so this is for the person reading the
-# config. Sim mode is this project's default, so the simulated room, mass and
+# config. Simulation mode is this project's default, so the simulated room, mass and
 # drivetrain losses ARE the robot on every bench run, and a config that lists
 # only what someone chose to override describes none of it. Sweeping one of them
 # then starts from a value you can see.
@@ -182,7 +182,7 @@ def bare_simulation(strict: bool = False) -> dict:
 def bare_pins(mcu: str = "esp32") -> dict:
     """Every pin unconnected -- except the onboard LED.
 
-    A bare module still has its LED, sim mode drives the real one, and a board
+    A bare module still has its LED, simulation mode drives the real one, and a board
     on a bench should blink out of the box (user rule, 2026-09-22): the pin is
     the MCU's own, from the same table the release image uses. Invert flags are
     OFF: the default is forward, for motors and encoders alike; a real chassis
@@ -236,7 +236,7 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
 
     params["robot"] = {
         "name": robot_name,
-        "description": f"{label} bare module -- all pins N/C, sim sensors",
+        "description": f"{label} bare module -- all pins N/C, simulated sensors",
     }
     params["base_controller"] = {
         "name": key,

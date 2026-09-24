@@ -520,7 +520,7 @@ public:
         if (next_slot < 4)
             slot_ = next_slot++;
 
-        // The pins are deliberately ignored. Sim wheel mode exists for boards
+        // The pins are deliberately ignored. Simulated wheel mode exists for boards
         // with nothing wired, where the encoder pins are normally left unset
         // (-1); keying off them would leave every simulated wheel at 0 RPM,
         // which is the one case this class is for. Nothing here touches GPIO.
@@ -535,7 +535,7 @@ public:
         // inverts what it drives and the encoder inverts what it reads. The two
         // cancel: the wheel turns forward and reports forward.
         //
-        // In sim mode there is no motor. Pins are -1, so MotorInterface::spin()
+        // In simulation mode there is no motor. Pins are -1, so MotorInterface::spin()
         // returns without touching anything, and NOTHING applies the motor half
         // of that pair -- but feed() was still applying the encoder half. Wheel
         // 2 therefore ran backwards whenever wheel 1 ran forwards, and the
@@ -691,7 +691,7 @@ private:
     // slowly wandering sensor biases, seeded to a fixed offset and then walked
     // Start calibrated. A real IMU has its static bias measured and subtracted
     // at startup -- IMUInterface::init() calls calibrateGyro(), which averages
-    // 40 samples and stores the offset. Sim wheel mode never calls that (there
+    // 40 samples and stores the offset. Simulated wheel mode never calls that (there
     // is no chip to talk to), so seeding these with the full bias simulated an
     // IMU that had skipped its own calibration: the gyro read a steady offset
     // forever, the EKF integrated it, and yaw walked away from the wheels.
@@ -708,7 +708,7 @@ public:
     void initMsgs(sensor_msgs__msg__Imu &imu_msg,
                   sensor_msgs__msg__MagneticField &mag_msg)
     {
-        // The same env keys a real IMU uses. Sim mode publishes through this
+        // The same env keys a real IMU uses. Simulation mode publishes through this
         // class rather than IMUInterface, so without this the covariance a
         // config sets reached every robot EXCEPT the simulated one -- which is
         // the default here, and the one an EKF is usually tuned against first.
@@ -732,7 +732,7 @@ public:
         envFloatVec("mag_cov", mag_cov, 3);
 
         // initMsgs() runs from setup(), so the env is readable and the robot's
-        // namespace goes on here. Sim mode is the DEFAULT on a bare module,
+        // namespace goes on here. Simulation mode is the DEFAULT on a bare module,
         // so this is the path a two-robot bench actually exercises.
         imu_msg.header.frame_id =
             micro_ros_string_utilities_set(imu_msg.header.frame_id, envPrefixed("imu_link"));

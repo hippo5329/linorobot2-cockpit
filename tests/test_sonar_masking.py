@@ -9,7 +9,7 @@ publishing /sonar at 8.45 Hz. Neither had one. Two causes, both fixed:
   - mcu_env omitted the keys entirely when a config had no sonar, so there was
     nothing to override that fallback with.
 
-And the rule that follows: in sim mode the sonar is the simulated cone, not
+And the rule that follows: in simulation mode the sonar is the simulated cone, not
 the pins -- otherwise /sonar and /scan describe two different worlds.
 """
 import os
@@ -75,7 +75,7 @@ def test_sim_mode_drops_the_pins_before_anything_is_configured():
 def test_main_masks_the_sonar_whenever_anything_is_simulated():
     src = open(MAIN).read()
     m = re.search(r"const bool sonar_simd = ([^;]+);", src)
-    assert m, "the sim-mode mask is gone"
+    assert m, "the simulation-mode mask is gone"
     assert "sim_wheels" in m.group(1) and "sim_ld19" in m.group(1)
     assert "initRange(!sonar_simd)" in src
 

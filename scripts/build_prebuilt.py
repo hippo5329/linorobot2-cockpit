@@ -2,7 +2,7 @@
 """
 build_prebuilt.py — produce the ready-to-flash images in firmware/prebuilt/.
 
-Sim-mode images, one per MCU per ROS 2 distribution, so a user can bring a
+Simulation-mode images, one per MCU per ROS 2 distribution, so a user can bring a
 board up without installing a toolchain at all:
 
     pico2    RP2350, micro-ROS over USB serial
@@ -23,7 +23,7 @@ which one it is, rather than the jazzy half being spelled as the bare board name
     pico2-jazzy    pico-jazzy    esp32-jazzy    esp32s3-jazzy
     pico2-lyrical  pico-lyrical  esp32-lyrical  esp32s3-lyrical
 
-Sim mode throughout: the firmware simulates the IMU, magnetometer and wheels,
+Simulation mode throughout: the firmware simulates the IMU, magnetometer and wheels,
 so a bare board with nothing wired to it still produces odometry and, where the
 profile has a scan source, a /scan. That is what makes a prebuilt image useful
 without knowing anything about the user's hardware.

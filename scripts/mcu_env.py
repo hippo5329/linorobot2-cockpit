@@ -346,7 +346,7 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
 
     "real" is the opposite. "config" (or None) lets the YAML stand -- that is
     --mode auto, and what the real-sensor legs use. The status LED is not a
-    sensor and is never touched: sim mode drives the real one.
+    sensor and is never touched: simulation mode drives the real one.
 
     Returns the keys it changed, so the caller can say so in the transcript.
     """
@@ -445,7 +445,7 @@ def hardware_env(params: dict) -> dict:
     # Which sensor topics this robot publishes. A chip answering the I2C probe
     # is not on its own a reason to spend link budget on it: `mag: NONE` in the
     # config means "do not publish /imu/mag", even on a board that carries an
-    # AK09918. This is what makes "only the sim IMU, nothing else" expressible
+    # AK09918. This is what makes "only the simulated IMU, nothing else" expressible
     # on the 921600 boards, where six publishers at 50 Hz do not fit.
     #   auto (or the key left out)  the I2C probe decides
     #   NONE / off / disable        never publish, even though the chip is there
@@ -466,7 +466,7 @@ def hardware_env(params: dict) -> dict:
     # above read the first and set pub_mag=0, so the sim field the firmware
     # rotates to the room heading (SimIMUFromWheels::applyMag, built for one
     # purpose: to anchor madgwick) was computed and never sent. /imu/mag had no
-    # publisher at all. bringup.launch.py now fuses the sim mag, and madgwick
+    # publisher at all. bringup.launch.py now fuses the simulated mag, and madgwick
     # with a magnetometer waits for imu/data_raw AND imu/mag as a synchronised
     # pair -- so with nothing on /imu/mag it published nothing, /imu/data went
     # to 0 Hz and the EKF was left blind. Measured 2026-09-22. `NONE` means
@@ -476,7 +476,7 @@ def hardware_env(params: dict) -> dict:
 
     # `imu: auto` / `mag: auto` mean the same thing one level down: take whatever
     # answered the bus. The probe is what decides, so ask for it explicitly --
-    # otherwise a board with sim wheels skips the scan (see all_sim in
+    # otherwise a board with simulated wheels skips the scan (see all_sim in
     # main.cpp) and "auto" would quietly mean "sim".
     if str(sensors.get("imu", "")).strip().upper() == "AUTO" or \
        str(sensors.get("mag", "")).strip().upper() == "AUTO":
@@ -496,7 +496,7 @@ def hardware_env(params: dict) -> dict:
     if lidar_cfg.get("baudrate") is not None:
         env["lidar_baud"] = int(lidar_cfg["baudrate"])
     # Whether the board runs the LiDAR emulator at all. It was a build macro
-    # only, so a prebuilt image (built from a sim-mode reference) raycast its
+    # only, so a prebuilt image (built from a simulation-mode reference) raycast its
     # room and streamed it on every robot that flashed it, real LiDAR or not.
     # An explicit lidar.use_sim_ld19 outranks the sensors flag, as in the
     # header generator.
@@ -580,7 +580,7 @@ def hardware_env(params: dict) -> dict:
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
 
-    # --- sensors. Sim wins: a config asking for a sim IMU on a board that
+    # --- sensors. Sim wins: a config asking for a simulated IMU on a board that
     # also names a QMI8658 wants the simulation, not the chip.
     # `auto` and `NONE` both come out as "sim" on the wire: it is the only name
     # createIMU()/createMAG() are guaranteed to accept, and for `auto` the I2C
@@ -643,7 +643,7 @@ def hardware_env(params: dict) -> dict:
     # one is a firmware behaviour that a config can now ask for WITHOUT a
     # rebuild -- but only if it reaches the partition, and `sim_env` did not:
     # env.cpp fell back to the image's compiled default forever, so a bench
-    # board flashed with a sim-mode image reported a synthetic 25 C / 1013 hPa
+    # board flashed with a simulation-mode image reported a synthetic 25 C / 1013 hPa
     # as a "BMP280" no matter what its config said.
     # --- covariance, and the simulated world -------------------------------
     #
@@ -770,7 +770,7 @@ def hardware_env(params: dict) -> dict:
         except (TypeError, ValueError):
             pass
 
-    # The simulated world. Sim mode is this project's DEFAULT, so the room the
+    # The simulated world. Simulation mode is this project's DEFAULT, so the room the
     # emulator raycasts and the mass it accelerates are configuration, not
     # constants -- a Nav2 test wants to move the obstacle wall without
     # rebuilding, and a 20 kg robot does not accelerate like a 3.5 kg one.
@@ -860,12 +860,12 @@ def hardware_env(params: dict) -> dict:
     # A REAL sensor only. main.cpp computes
     #     range_sim = sim_lidar_on && envFlag("sim_sonar", true)
     # and would happily brake on a range raycast out of the simulated room, so
-    # a bench board running a real robot's config in sim mode would behave
+    # a bench board running a real robot's config in simulation mode would behave
     # differently from every other bench board -- and a hazard stop is the
     # last thing that should be exercised against an imaginary obstacle.
     #
     # Same rule the firmware uses, mirrored here so the decision is visible in
-    # the env rather than implied by two flags. Sim mode overriding an
+    # the env rather than implied by two flags. Simulation mode overriding an
     # explicit config setting is the established behaviour for every other
     # sim_* key (see apply_sensor_mode).
     if _truthy(env.get("sim_ld19")) and _truthy(env.get("sim_sonar")):

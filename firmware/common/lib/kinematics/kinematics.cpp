@@ -21,9 +21,9 @@
 // calculateRPM() and once more in getVelocities(). It is right for a
 // differential drive and wrong for the other two, and because the SAME wrong
 // radius is used to command the wheels and to read them back, a simulated
-// robot is perfectly self-consistent: sim wheels turn the command into an
+// robot is perfectly self-consistent: simulated wheels turn the command into an
 // RPM and the RPM back into a velocity, the error cancels, and odom agrees
-// with cmd_vel to three decimals. Every bench result to date is sim mode, so
+// with cmd_vel to three decimals. Every bench result to date is simulation mode, so
 // nothing on the bench can see this. It appears the first time real wheels
 // touch a real floor.
 //

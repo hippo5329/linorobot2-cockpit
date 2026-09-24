@@ -8,7 +8,7 @@ construction.
 Nothing used it that way. The gains were kp 0.6 / ki 0.8 / kd 0.5 on every
 robot, and closed on the identified plant they overshoot 13% and cross the
 setpoint three times. They also could not be tested: before the wheel model,
-sim mode's encoders tracked the command instead of responding to PWM, so every
+simulation mode's encoders tracked the command instead of responding to PWM, so every
 set of gains looked perfect on the bench.
 
 Two things this file holds down:

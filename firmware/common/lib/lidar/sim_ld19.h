@@ -264,7 +264,7 @@ private:
     static const uint16_t UDP_DATAGRAM_LIMIT = UDP_PACKS_PER_DATAGRAM * 47;  // 1410
 #endif
 
-    // The room, from the env. Sim mode is the DEFAULT here, so the world the
+    // The room, from the env. Simulation mode is the DEFAULT here, so the world the
     // emulator raycasts is configuration like everything else: a Nav2 test
     // wants the obstacle wall somewhere else without rebuilding, and a bigger
     // robot wants a bigger room. The macros stay as the fallback.

@@ -193,10 +193,10 @@ at exactly `5.0 − 0.31` and `3.0 − 0.31`.
 
 **The heading.** `SimIMUFromWheels::applyMag` rotates a world field into the body frame by the
 wheel heading for one purpose — to give Madgwick an absolute heading that agrees with the room.
-Two separate decisions then silenced it: `bringup.launch.py` excluded the sim mag from fusion
+Two separate decisions then silenced it: `bringup.launch.py` excluded the simulated mag from fusion
 (`... and not use_sim_mag`, a leftover from when the field pointed +X), and `mcu_env.py` derived
 `pub_mag` from `mag: NONE` so the firmware never published it. Madgwick therefore integrated the
-gyro alone, the sim gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
+gyro alone, the simulated gyro's bias walked onto its ±0.004 rad/s clamp and stayed there — 13.7°/min —
 and the EKF, which takes Madgwick's yaw as *absolute* and only the wheels' yaw *rate*, inherited it.
 (That last clause described the intent, not the code: `imu0_config` did not fuse absolute yaw in any
 shipped config until 2026-09-23. It does now — `docs/ros2-stack.md`, "The heading needs an anchor".)
@@ -288,13 +288,13 @@ the 24-bit sample counter, temperature, six axes. `readGyroscope()` does the bur
 `readAccelerometer()` hands back the other half of it, which is the order `getData()` calls
 them in. `tests/test_qmi8658_driver.py` pins each of these.
 
-**Sim wheels do not imply a sim IMU.** Skipping the I2C sensors whenever `use_sim_wheel: true`
+**Simulated wheels do not imply a simulated IMU.** Skipping the I2C sensors whenever `use_sim_wheel: true`
 would be right for a bare module with nothing on the bus and wrong for a board with no encoders and
 a real IMU: `/imu/data_raw` would be the simulation at 50 Hz and the driver you meant to test would
 never run. Only the sensors that are themselves sim are synthesised from the simulated wheels (`imu_from_wheels = sim_wheels && imu_is_sim`, likewise
-the magnetometer): a real IMU the config or the bus names is initialised with sim wheels
+the magnetometer): a real IMU the config or the bus names is initialised with simulated wheels
 too, and one that fails to init on such a board falls back to the
-simulation with `[imu] init FAILED on a sim-wheel board - falling back to the simulated IMU`
+simulation with `[imu] init FAILED on a simulated-wheel board - falling back to the simulated IMU`
 rather than the fatal LED loop. The bus probe also prints reg 0x00 / 0x0F / 0x75 for a device
 it cannot name, so an unfamiliar chip is identified from the boot log.
 
@@ -527,7 +527,7 @@ rather than extending it, so a value in `[base_pico2]` is silently dropped.
 
 ### A tool must take its sensors from the bus, not from the build
 `test_sensors` declared `IMU imu; MAG mag;` — the macro types the config header chose — so in a
-shared image built for a robot whose config says `imu: SIM` it reported the sim driver's zeros on
+shared image built for a robot whose config says `imu: SIM` it reported the simulated driver's zeros on
 a board with a real MPU6050 answering at 0x68. Any application that reads a sensor goes through
 `createIMU()`/`createMAG()` and `i2cProbeSelect()`, the same two calls `base` makes. A diagnostic
 that takes its sensor from the build is diagnosing the build.
@@ -542,10 +542,10 @@ wrong chip. When auditing a tool for this, grep for the macro types **`IMU `/`MA
 in `firmware/src/tools/*.cpp` — the declaration is the whole bug, and it reads as ordinary until you
 know the rule.
 
-**Sim mode is a `base` feature and stops there.** `use_sim_*` exists so a bare module with nothing
+**Simulation mode is a `base` feature and stops there.** `use_sim_*` exists so a bare module with nothing
 wired can still bring a ROS 2 stack up; every other application in the image is a bench diagnostic
-for a REAL robot, and a sim sensor or a simulated wheel is worth nothing to it. So do not "add sim
-support" to a tool, and do not read a tool's output as evidence about sim mode — if a tool reports
+for a REAL robot, and a simulated sensor or a simulated wheel is worth nothing to it. So do not "add sim
+support" to a tool, and do not read a tool's output as evidence about simulation mode — if a tool reports
 zeros, the question is what is on the bus, not which simulation is selected.
 
 ### Generate the header for the robot you are about to flash
@@ -736,7 +736,7 @@ afternoon's audit (2026-09-19) found, in this repo:
   used a `BATTERY_ADJUST` macro no file defined, so a config with a battery pin did not build.
   `battery_pin bat_r1 bat_r2 bat_min bat_max bat_cap` are env keys now, read by `battery.cpp`.
 - The LiDAR emulator was a build macro only (`USE_SIM_LD19`). A prebuilt image is built from
-  a sim-mode reference, so every real robot that flashed it raycast a room and streamed it.
+  a simulation-mode reference, so every real robot that flashed it raycast a room and streamed it.
   `sim_ld19=0` in the env (from `sensors.use_sim_ld19`) switches it off; `lidar_x` tells it
   where on the robot to raycast from (`geometry.laser.x`, the same number the URDF uses).
 - `telemetry.ota_port` had a field in the UI and no reader; `ota_port` is read now.
@@ -855,7 +855,7 @@ table the config engine uses. Without it a config that names its IMU still
 ships the firmware's `1e-5` placeholder, which reads as "this sensor is
 nearly perfect".
 
-The simulated room is configuration because **sim mode is the default here**:
+The simulated room is configuration because **simulation mode is the default here**:
 a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 12 kg robot does not accelerate like a 3.5 kg one.
 
@@ -864,7 +864,7 @@ a Nav2 test wants the obstacle wall somewhere else without rebuilding, and a
 `sim_wheel.h` used to move the wheel toward its commanded RPM with a first-order
 lag, which made every robot equally capable: four driven wheels accelerated
 exactly like two, and a 12 kg base like a 3.5 kg one. That is not a motor, and
-the difference matters because **sim mode gates the release** — a Nav2 limit that
+the difference matters because **simulation mode gates the release** — a Nav2 limit that
 a real robot cannot meet has to fail on the bench, not in October.
 
 So the model is the motor's actual torque–speed line, and each term is separate
@@ -933,7 +933,7 @@ differentiates it, which is about 0.4 m/s² of pure instrument error in the boar
 `MAX ACC` column.
 
 Given that, **flashing `test_acc` is no longer how these numbers are obtained.**
-On a sim-wheel board the tool now refuses and points at the host script, because
+On a simulated-wheel board the tool now refuses and points at the host script, because
 what it would otherwise print is a measurement *of the simulator*, taken over a
 serial line after a flash, unable to vary mass or gearing without another one. It
 remains the right tool for a robot with motors on it — and then it is how this
@@ -1073,7 +1073,7 @@ robot, because a single-robot stack is usually run without a prefix at all.
 
 So `envPrefixed()` lives in `mcu_env`, beside the env reader it depends on, and
 every frame the firmware stamps goes through it: `odom` and `base_footprint` in
-the odometry, `imu_link` in the IMU, the magnetometer and the sim wheels,
+the odometry, `imu_link` in the IMU, the magnetometer and the simulated wheels,
 `sonar_link` in the range driver, `base_link` on the environmental sensors.
 `topicName()` is now just its old name.
 
@@ -1089,7 +1089,7 @@ ever stamped with a literal that nothing re-stamps.
 
 Auditing those sites turned up an older bug with nothing to do with namespaces.
 The **simulated** sonar fills `range_msg` field by field in `main.cpp` and never
-touched the header, so every sim-mode board -- which is the default -- published
+touched the header, so every simulation-mode board -- which is the default -- published
 `/sonar` with an **empty** `frame_id`, a Range message no consumer can place
 anywhere. The real path assigns the whole message from `getRange()`, which
 carries the frame the range driver set, and was never affected. It went unseen

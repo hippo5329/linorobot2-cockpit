@@ -48,10 +48,10 @@ def _header(cfg_stem, tmp_path, distro="jazzy"):
             open(hdr, "w").write(saved)
 
 
-def _fake_udp_config(tmp_path):
+def _stub_udp_config(tmp_path):
     """gendrv turned into what esp32_wifi_config.yaml used to be.
 
-    That file -- the sim-mode, udp-sink ESP32 reference -- was deleted on
+    That file -- the simulation-mode, udp-sink ESP32 reference -- was deleted on
     2026-09-20 along with esp32_config.yaml: same silicon as gendrv, differing
     only in keys the env partition decides at boot. The COMBINATION it supplied
     is still worth testing, so it is built here instead of stored.
@@ -62,7 +62,7 @@ def _fake_udp_config(tmp_path):
     ctrl["transport"] = "udp4"
     ctrl["sensors"]["use_sim_ld19"] = True
     ctrl.setdefault("lidar", {})["comm_mode"] = "udp"
-    cfg = tmp_path / "fake_udp_config.yaml"
+    cfg = tmp_path / "stub_udp_config.yaml"
     cfg.write_text(_yaml.safe_dump(src))
     return cfg, src
 
@@ -145,10 +145,10 @@ def test_the_udp_destination_exists_even_in_a_serial_build(tmp_path):
 
 def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
     """lidar.cpp's path is gated `USE_LIDAR_UDP && !USE_SIM_LD19` -- forwarding a
-    PHYSICAL LiDAR's bytes over UDP. A sim-mode udp robot must not define it, or
+    PHYSICAL LiDAR's bytes over UDP. A simulation-mode udp robot must not define it, or
     the emulator's sink goes back to being chosen by the build."""
     import subprocess
-    cfg, _src = _fake_udp_config(tmp_path)
+    cfg, _src = _stub_udp_config(tmp_path)
     hdr = os.path.join(FW, "include", "custom", "lino_base_config.h")
     saved = open(hdr).read() if os.path.exists(hdr) else None
     env = dict(os.environ)
@@ -166,7 +166,7 @@ def test_use_lidar_udp_is_only_the_real_lidar_forwarder(tmp_path):
     # decides. What it still carries is the DEFAULT the board falls back to,
     # and lidar.cpp forwards a real LiDAR only when the env says the emulator
     # is off -- checked here rather than asserting on a macro that is gone.
-    assert 'SIM_LD19_DEFAULT true' in text, "the built config is a sim-mode one"
+    assert 'SIM_LD19_DEFAULT true' in text, "the built config is a simulation-mode one"
     assert "#define USE_LIDAR_UDP" not in text, (
         "USE_LIDAR_UDP is gone: forwarding a real LiDAR over UDP is a run-time "
         "decision from lidar_comm + sim_ld19, not a build.")
@@ -222,7 +222,7 @@ def test_the_serial_lidar_driver_respawns():
 
 
 def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_absent():
-    """use_sim_ld19 + serial + no lidar tty must use the host-side sim laser.
+    """use_sim_ld19 + serial + no lidar tty must use the host-side simulated laser.
 
     A bare ESP32 module has only its one micro-ROS USB; there is no second
     USB-serial bridge for a lidar. A serial ldlidar driver then dies on a
@@ -246,7 +246,7 @@ def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_abse
         "the bare-module fallback no longer checks whether the serial lidar "
         "port exists; a bare board will strand SLAM/Nav2 on a missing /scan"
     )
-    # The sim-laser Node must be selected by exactly this guard.
+    # The simulated-laser Node must be selected by exactly this guard.
     assert "if use_host_sim_laser" in text, (
         "sim_laser_node is no longer gated on use_host_sim_laser"
     )

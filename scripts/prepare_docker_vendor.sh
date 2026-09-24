@@ -103,7 +103,7 @@ fi
 # that same branch -- so the points pile up until the overrun bail throws them
 # away, and demo.cpp prints nothing for the DATA_WAIT that results.
 #
-# Found 2026-09-20 by driving the driver from a harness: our sim LD19 room is
+# Found 2026-09-20 by driving the driver from a harness: our simulated LD19 room is
 # geometrically perfect, so all 456 points of a revolution form one group and
 # every scan after the first was discarded. The first survives only because the
 # driver drops the very first packet to seed its timestamp, which leaves an arc

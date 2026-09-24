@@ -322,7 +322,7 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
 
     # The sonar frame, whether or not a sonar is fitted. It costs one static
     # transform and it means a board that IS publishing Range is never dropped
-    # for want of a frame -- and the sim sonar is on by default
+    # for want of a frame -- and the simulated sonar is on by default
     # (mcu_env.py: use_sim_sonar defaults true), so that is most boards.
     sonar_frame = str(sonar.get("frame") or DEFAULT_SONAR_FRAME)
     ET.SubElement(robot, "link", name=sonar_frame)

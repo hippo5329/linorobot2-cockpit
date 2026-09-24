@@ -135,8 +135,8 @@ def launch_setup(context, *args, **kwargs):
 
     lidar_cfg = controller.get("lidar", {})
     # A robot whose config carries no lidar: block has no scan source at all.
-    # On a 921600-baud serial ESP32 that is the only supported sim-mode shape:
-    # the sim LD19 cannot ride the micro-ROS link and a bare DevKit has no
+    # On a 921600-baud serial ESP32 that is the only supported simulation-mode shape:
+    # the simulated LD19 cannot ride the micro-ROS link and a bare DevKit has no
     # LIDAR_RXD bridge, so the robot runs teleop only. Starting a driver anyway
     # would leave it blocked forever on an empty tty and publish no /scan.
     robot_has_lidar = bool(lidar_cfg)
@@ -167,7 +167,7 @@ def launch_setup(context, *args, **kwargs):
     )
     effective_lidar_comm_mode = "udp_server" if lidar_comm_mode in ("udp", "udp_server") else lidar_comm_mode
 
-    # Should the host-side sim laser (the "virtual room") stand in for a real
+    # Should the host-side simulated laser (the "virtual room") stand in for a real
     # driver? Only when the scan is meant to be simd (use_sim_ld19), and:
     #   - the comm mode is not a real serial tty, or
     #   - it *is* serial but that tty is absent.
@@ -260,7 +260,7 @@ def launch_setup(context, *args, **kwargs):
     else:
         # The simulated magnetometer is fused, not just published. This used to
         # read `mag_sensor != "NONE" and not use_sim_mag`, which excluded the
-        # sim mag on purpose -- from the era when it pointed along +X and gave
+        # simulated mag on purpose -- from the era when it pointed along +X and gave
         # madgwick a fixed 90-degree error (see SimIMUFromWheels::applyMag).
         # The mag now points North and is rotated by the wheel heading for
         # exactly one reason: to anchor heading fusion to the simulated room.

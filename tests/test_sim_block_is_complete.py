@@ -6,7 +6,7 @@ will use default value; config yaml will show them in full."*
 The firmware is deliberately tolerant -- `envFloat("sim_sag", SIM_BATT_SAG)`
 keeps the compiled default when the key is absent, which is what lets a blank env
 boot a freshly flashed board. That tolerance is exactly why the config has to be
-explicit: sim mode is this project's default, so on every bench run the room,
+explicit: simulation mode is this project's default, so on every bench run the room,
 the mass and the drivetrain losses ARE the robot, and a config listing only the
 overrides describes none of it. Someone sweeping `battery_sag` should be able to
 see what they are sweeping from.
@@ -92,7 +92,7 @@ def test_the_generator_reads_the_headers_rather_than_restating_them():
     import pytest
     original = gbc.SIM_DEFAULTS
     gbc.SIM_DEFAULTS = (("battery_sag", "encoder/sim_wheel.h", "SIM_BATT_SAG", float),
-                        ("bogus", "encoder/sim_wheel.h", "FAKE_NO_SUCH_MACRO", float))
+                        ("bogus", "encoder/sim_wheel.h", "NO_SUCH_MACRO", float))
     try:
         got = gbc.bare_simulation()
         assert "battery_sag" in got, "a readable macro must still be read"

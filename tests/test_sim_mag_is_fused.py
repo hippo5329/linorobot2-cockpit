@@ -1,9 +1,9 @@
-"""The sim magnetometer must be fused, or the simulated heading walks away.
+"""The simulated magnetometer must be fused, or the simulated heading walks away.
 
 SimIMUFromWheels::applyMag rotates a world field into the body frame by the
 wheel heading for one purpose: to give madgwick an absolute heading that agrees
 with the simulated room. bringup.launch.py then excluded it from fusion
-(`... and not use_sim_mag`), so madgwick ran gyro-only, the sim gyro's bias
+(`... and not use_sim_mag`), so madgwick ran gyro-only, the simulated gyro's bias
 walked onto its clamp and stayed there, and the EKF -- which takes madgwick's
 yaw as absolute and only the wheels' yaw RATE -- drifted 52 degrees from the
 wheel heading in an hour. Measured at rest: wheel 59.4, EKF 7.2. Nav2 steers by
@@ -39,17 +39,17 @@ def test_sim_mag_is_not_excluded_from_fusion():
     simulated field outside the fusion. Asked as behaviour, so it holds however
     the expression is spelled."""
     assert use_mag_default("NONE", True) is True, (
-        "the sim magnetometer is excluded from fusion again, and madgwick will "
+        "the simulated magnetometer is excluded from fusion again, and madgwick will "
         "integrate the gyro alone and drift off the wheels")
 
 
 def test_sim_mag_alone_turns_fusion_on():
     """A bare module declares mag: NONE but use_sim_mag: true -- that must fuse."""
-    assert use_mag_default("NONE", True) is True, "False for a sim-mag bare module"
+    assert use_mag_default("NONE", True) is True, "False for a simulated-mag bare module"
 
 
 def test_no_mag_at_all_leaves_fusion_off():
-    """And this is the real-robot case: sim mode off, no magnetometer fitted."""
+    """And this is the real-robot case: simulation mode off, no magnetometer fitted."""
     assert use_mag_default("NONE", False) is False
 
 

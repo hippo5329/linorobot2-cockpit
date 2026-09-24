@@ -16,7 +16,7 @@ heading -- the estimate pinned to the starting yaw however the robot turns, with
 nothing in the log. Shipping the firmware topic rename without the EKF change is
 worse than shipping neither, so all three are asserted together here.
 
-The sim-mode Nav2 matrix is unaffected by design: every sim leg has
+The simulation-mode Nav2 matrix is unaffected by design: every sim leg has
 sim_wheels true, so publish_mag is true, so the topic names and madgwick stay
 exactly as they were and the 30-leg gate does not have to be re-qualified for a
 rename.
@@ -44,8 +44,8 @@ def test_the_board_publishes_imu_data_when_there_is_no_magnetometer():
 
 
 def test_the_choice_is_keyed_on_publish_mag_not_a_new_flag():
-    """publish_mag is already (a real magnetometer answered) OR (sim wheels are
-    synthesising a field). Keying on it is what keeps every sim-mode leg on
+    """publish_mag is already (a real magnetometer answered) OR (simulated wheels are
+    synthesising a field). Keying on it is what keeps every simulation-mode leg on
     imu/data_raw, so the Nav2 matrix does not move."""
     src = _read(MAIN)
     assert re.search(r"publish_mag = envFlag\(\"pub_mag\"", src), "publish_mag is gone"

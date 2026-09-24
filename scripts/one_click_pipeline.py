@@ -835,7 +835,7 @@ def sensors_for_mode(mode: str):
 
     sim forces every sim_* flag on and real forces them off, whatever the
     config says; auto lets the YAML stand. This is the whole meaning of the
-    switch: a config that describes a real LD19 run in sim mode used to reach
+    switch: a config that describes a real LD19 run in simulation mode used to reach
     the board with sim_ld19 0, and /scan then structurally could not arrive.
     """
     return {"sim": "sim", "real": "real"}.get(mode)
@@ -937,7 +937,7 @@ def main():
                              "0 = a single one-way goal.")
     parser.add_argument("--no-pose-reset", dest="pose_reset", action="store_false",
                         help="do not return the simulated robot to the origin between the "
-                             "drive suite and SLAM (sim mode only; a real base is never touched)")
+                             "drive suite and SLAM (simulation mode only; a real base is never touched)")
     parser.add_argument("--require-goal", action="store_true",
                         help="the Nav2 goal must actually be reached -- judged by the "
                              "displacement from the goal pose, with Nav2's error_code "
@@ -1022,11 +1022,11 @@ def main():
                 and controller_cfg.get("sensors", {}).get("use_sim_wheel", False):
             print("   ⚠️ A real IMU with simulated wheels: this EKF fuses vyaw from BOTH "
                   "odom/unfiltered and imu/data, and a board on a bench reports "
-                  "gyro=(0, 0, 0) while the sim wheels report a turn. The filtered "
+                  "gyro=(0, 0, 0) while the simulated wheels report a turn. The filtered "
                   "heading is then pulled toward zero on every IMU sample and lags the "
                   "simulated one, so a Nav2 goal from this combination measures the "
                   "bench, not the robot. Measured: the same board and config reach "
-                  "8/8 legs in sim mode and stall ~1.6 m short in auto, on both distros.")
+                  "8/8 legs in simulation mode and stall ~1.6 m short in auto, on both distros.")
     if args.topics_only:
         print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> Drive")
     else:

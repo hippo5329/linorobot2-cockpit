@@ -155,7 +155,7 @@ the transport (the firmware's four functions, under `RMW_UXRCE_TRANSPORT=custom`
 `tests/test_host_target_is_not_a_second_copy.py` guarding both from the desk — no container, no
 board.
 
-**Still to do** before this is a sim base rather than a transport instrument: the probe
+**Still to do** before this is a simulated base rather than a transport instrument: the probe
 publishes an `Int32`, not `/odom` and `/imu/data`. The model headers compile against the shim
 (`kinematics.h` needs nothing from Arduino at all; `sim_wheel.h` needs `micros`, `random`,
 `map`, all present), so what remains is to build the base application itself on this target and

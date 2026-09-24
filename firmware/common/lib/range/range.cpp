@@ -151,7 +151,7 @@ void initRange(bool allow_hardware)
     trig_pin = envInt("sonar_trig", TRIG_PIN);
     echo_pin = envInt("sonar_echo", ECHO_PIN);
 
-    // Sim mode masks a real sonar. A simulated robot must not drive real pins:
+    // Simulation mode masks a real sonar. A simulated robot must not drive real pins:
     // its range has to come from the same simulated room its scan does, or
     // /sonar and /scan describe two different worlds. The caller decides --
     // main.cpp knows whether the wheels and the LiDAR are simulated -- and here

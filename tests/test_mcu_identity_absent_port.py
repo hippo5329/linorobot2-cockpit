@@ -29,14 +29,14 @@ def _bench(monkeypatch):
     """This box has no ttyACM0; the host has one, and it is a Pico 2."""
     real_exists = os.path.exists
 
-    def fake_exists(path):
+    def stub_exists(path):
         if path == PORT:
             return False
         if path == NAMESAKE:
             return True
         return real_exists(path)
 
-    monkeypatch.setattr(mcu_identity.os.path, "exists", fake_exists)
+    monkeypatch.setattr(mcu_identity.os.path, "exists", stub_exists)
     monkeypatch.setattr(mcu_identity, "read_usb_ids",
                         lambda p: ("2e8a", "000f", "Pico 2"))
 

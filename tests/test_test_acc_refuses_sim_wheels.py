@@ -4,7 +4,7 @@ The history here is two mistakes in opposite directions, and the second is the
 instructive one.
 
 First, SimEncoder::feed() was called from main.cpp's moveBase() and nowhere
-else, so on a sim-wheel board test_acc drove nothing -- and still printed a
+else, so on a simulated-wheel board test_acc drove nothing -- and still printed a
 full table:
 
     MAX VEL   0.00   0.00 m/s    0.03 rad/s
@@ -22,14 +22,14 @@ efficiency, pack sag, driver losses) without another one. The model lives in
 sim_wheel.h and the host can simply run it: scripts/drivetrain_report.py steps
 the same equations on this tool's own 20 ms / 1 s profile.
 
-So the rule is now: with sim wheels, print where the answer comes from and
+So the rule is now: with simulated wheels, print where the answer comes from and
 stop. Which matters for the same reason the first bug did -- the project wiki
 tells people to set the velocity smoother's max_velocity and max_accel "according
 to test_acc test result", so anything this tool prints will be used to configure
 a robot.
 
 main.cpp is the opposite case and must keep feeding: the simulated wheels are
-what makes a sim-mode Nav2 run move, and that is the bench's whole gate.
+what makes a simulation-mode Nav2 run move, and that is the bench's whole gate.
 """
 import os
 import re
@@ -113,7 +113,7 @@ def test_the_guard_is_set_after_the_env_is_read():
 
 
 def test_main_still_feeds_the_simulated_wheels():
-    """The control loop is the remaining caller and must stay one: sim mode is
+    """The control loop is the remaining caller and must stay one: simulation mode is
     how every Nav2 leg on the bench moves."""
     m = _src(MAIN)
     for n in (1, 2, 3, 4):

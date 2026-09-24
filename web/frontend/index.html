@@ -209,15 +209,15 @@
     </div>
 
     <!-- Sim Mode Simulation Preview Card (Active by Default) -->
-    <div class="card" id="sim-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
+    <div class="card" id="simulation-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:1.3rem;">✨</span>
-          <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="sim-mode-card-title">Sim Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
+          <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="simulation-mode-card-title">Sim Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
         </div>
-        <span class="badge-pill badge-ok" id="sim-mode-state-badge" style="font-size:0.72rem; padding:2px 8px; font-weight:700;">Zero-Wiring Default ON</span>
+        <span class="badge-pill badge-ok" id="simulation-mode-state-badge" style="font-size:0.72rem; padding:2px 8px; font-weight:700;">Zero-Wiring Default ON</span>
       </div>
-      <p class="hint" id="sim-mode-desc" style="color:#cbd5e1; margin:8px 0; line-height:1.5;">
+      <p class="hint" id="simulation-mode-desc" style="color:#cbd5e1; margin:8px 0; line-height:1.5;">
         Linorobot2 defaults to safe <b>Sim Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_SIM_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_SIM_IMU</code>), and simulated planar LiDAR scans (<code>USE_SIM_LD19</code>).
         This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.
       </p>
@@ -225,10 +225,10 @@
         <div id="sim-odom-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (50 Hz /odom)</b>
         </div>
-        <div id="sim-imu-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
+        <div id="simulated-imu-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data_raw)</b>
         </div>
-        <div id="sim-lidar-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
+        <div id="simulated-lidar-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated LiDAR:</span> <b style="color:#34d399;">Active (10 Hz /scan)</b>
         </div>
       </div>
@@ -325,7 +325,7 @@
              from -- it is what the robot does in the second a manoeuvre lasts,
              where the cards above are the asymptote it converges on given
              longer. Flashing test_acc is no longer how these are obtained; on a
-             sim-wheel board the tool now refuses and points here. -->
+             simulated-wheel board the tool now refuses and points here. -->
         <div class="hud-subhead">
           <span class="hud-subtitle">📈 Simulated <code>test_acc</code> run</span>
           <span class="hint" style="margin:0;">what the tool would print — 20 ms samples, 1 s phases, no board</span>
@@ -569,7 +569,7 @@
       <div class="form-section">
         <h3 class="section-title">Load &amp; Drivetrain Losses</h3>
         <p class="hint" style="margin-bottom:12px;">Feeds the performance HUD at the top of this
-          tab, and the simulated drivetrain on a sim-wheel board. Leave a field blank to keep the
+          tab, and the simulated drivetrain on a simulated-wheel board. Leave a field blank to keep the
           firmware's own default (shown as the placeholder). A heavier robot is slower AND sags its
           pack for longer, which is why the two numbers move together.</p>
         <div class="form-grid">
@@ -962,7 +962,7 @@
         <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px,1fr));">
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-imu" checked>
-            <span>Sim IMU</span>
+            <span>Simulated IMU</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-mag" checked>
@@ -974,7 +974,7 @@
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-ld19" checked>
-            <span>Sim LD19</span>
+            <span>Simulated LD19</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-env">
@@ -1640,7 +1640,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <section class="tab-pane" id="tab-slam-nav">
 
     <!-- Sim Mode Preview Callout in SLAM & Nav -->
-    <div class="card sim-mode-preview-callout" id="slam-sim-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
+    <div class="card simulation-mode-preview-callout" id="slam-sim-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
         <div style="flex:1; min-width:280px;">
           <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Transition · Autonomy Preview</span>

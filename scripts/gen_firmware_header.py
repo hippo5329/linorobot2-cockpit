@@ -7,7 +7,7 @@
 #
 # Enforces:
 # 1. Parenthesized PWM_MAX cast: ((float)(pow(2, PWM_BITS) - 1))
-# 2. Bare-board sim IMU / sim MAG definitions to prevent I2C bus stall timeouts
+# 2. Bare-board simulated IMU / sim MAG definitions to prevent I2C bus stall timeouts
 # 3. Base controller selection (gendrv, pico, pico2) -- one per robot config
 # ==============================================================================
 
@@ -645,7 +645,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         f"#define SIM_ENV_DEFAULT {'true' if sensors.get('use_sim_env', False) else 'false'}",
     ])
 
-    # The MCU-side sim scan and the host-side one are separate things. Bringup
+    # The MCU-side simulated scan and the host-side one are separate things. Bringup
     # launches scripts/sim_laser_node.py off sensors.use_sim_ld19, whereas this
     # define makes the firmware raycast the room itself and stream it as raw_scan
     # over the micro-ROS link. That stream does not fit alongside the 50 Hz
@@ -1040,7 +1040,7 @@ def bare_mcu_params(mcu: str) -> dict:
                 "encoder1": dict(unset_enc), "encoder2": dict(unset_enc),
                 "encoder3": dict(unset_enc), "encoder4": dict(unset_enc),
                 "i2c": {"sda": -1, "scl": -1},
-                # A bare module still has its onboard LED, and sim mode drives
+                # A bare module still has its onboard LED, and simulation mode drives
                 # the real one: a board on a bench should blink out of the box.
                 # Everything else stays N/C.
                 "led": {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32,

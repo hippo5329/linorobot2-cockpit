@@ -186,7 +186,7 @@ def test_sim_mode_overrides_a_config_that_names_real_hardware():
     assert env["sim_ld19"] == "1" and env["sim_wheel"] == "1" and env["sim_env"] == "1"
     assert env["imu"] == "sim" and env["mag"] == "sim"
     assert "sim_ld19" in changed and "imu" in changed
-    # the LED is not a sensor: sim mode drives the real one
+    # the LED is not a sensor: simulation mode drives the real one
     assert env.get("led") == mcu_env.env_from_config(
         os.path.join(REF, "gendrv_config.yaml"), SECRETS_EXAMPLE, "192.0.2.1").get("led")
 

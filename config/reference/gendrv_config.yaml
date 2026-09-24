@@ -98,7 +98,7 @@ base_controller:
     # lidar block.
     use_sim_ld19: false
     use_sim_env: false
-  # The simulated world. Written out in full because sim mode is the default:
+  # The simulated world. Written out in full because simulation mode is the default:
   # on a bench run these ARE the robot. Every key is optional -- absent, the
   # firmware keeps its compiled default, which is the value shown here.
   # robot_radius is omitted on purpose: it follows the costmaps' robot_radius.

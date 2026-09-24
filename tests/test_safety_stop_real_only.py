@@ -14,7 +14,7 @@ cannot cover that case because it IS the ROS side.
 
 It had never been enabled anywhere: mcu_env defaulted it to "0" and no
 reference config, doc or test asked for it. Now the one config with a real
-HC-SR04 wired turns it on -- and sim mode turns it back off, because
+HC-SR04 wired turns it on -- and simulation mode turns it back off, because
 main.cpp's range_sim raycasts the simulated room and a hazard stop must not
 be exercised against an imaginary obstacle.
 """
@@ -60,7 +60,7 @@ def test_only_the_config_with_a_real_sonar_asks_for_it():
 
 
 def test_a_simd_range_disarms_it_however_the_config_asks():
-    """Sim mode overriding an explicit setting is the established rule for
+    """Simulation mode overriding an explicit setting is the established rule for
     every other sim_* key."""
     env = {"sim_ld19": "1", "sim_sonar": "1", "safety_stop": "1"}
     assert mcu_env._truthy(env["sim_ld19"]) and mcu_env._truthy(env["sim_sonar"])

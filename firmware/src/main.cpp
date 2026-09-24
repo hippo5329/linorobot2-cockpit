@@ -163,7 +163,7 @@ extern void rcSoftFail(int line, int code);
 // Whether /imu/mag exists is decided at BOOT, not at build time. A released
 // image is built for an MCU, not for a robot, so "does this robot have a
 // magnetometer" cannot be a macro: the answer is whichever chip answered the
-// I2C probe, plus sim wheel mode, which synthesises a real field from the
+// I2C probe, plus simulated wheel mode, which synthesises a real field from the
 // simulated heading -- hard-iron bias and all -- and is exactly what a
 // calibration run needs even though no chip is present.
 static bool publish_mag = false;
@@ -288,7 +288,7 @@ SimIMUFromWheels sim_imu;
 static bool sim_wheels = false;
 SimLD19 *sim_ld19 = nullptr;
 // Whether the emulator runs at all is a robot fact, not an image fact: a
-// prebuilt image is built from a sim-mode reference, and every real robot
+// prebuilt image is built from a simulation-mode reference, and every real robot
 // that flashes it would otherwise raycast a room and stream it (env key
 // sim_ld19; the compiled-in default is on, so a blank env keeps the bench).
 static bool sim_lidar_on = false;
@@ -399,7 +399,7 @@ MAGInterface *mag = nullptr;
 // Set in setup() once the name is resolved (config, then env, then the bus).
 static bool imu_is_sim = false;
 // Which of the two simulated sensors actually ride on the simulated wheels.
-// Sim wheels used to imply a sim IMU and a sim magnetometer, full stop --
+// Simulated wheels used to imply a simulated IMU and a simulated magnetometer, full stop --
 // right for a bare module with nothing on the bus, wrong for a bare custom
 // board (the Yahboom YB-EET01 on the bench: no encoders, a real IMU). Now a
 // real sensor that the config or the bus names is initialised even when the
@@ -955,7 +955,7 @@ void setup()
     // Keying this on wheelsAreSim() alone was wrong, and the bench board that
     // exists to test this feature is exactly the counter-example: an RP2350 with
     // a real MPU6050 on GP0/GP1 and no drivetrain at all. Real sensors are a
-    // fact about the BUS; sim wheels are a fact about the drivetrain.
+    // fact about the BUS; simulated wheels are a fact about the drivetrain.
     // `i2c_scan` in the env forces the answer either way.
     const bool all_sim = wheelsAreSim()
                           && strcasecmp(imu_name, "sim") == 0
@@ -972,7 +972,7 @@ void setup()
     // any board whose IMU was chosen by detection rather than by the config.
     imu_is_sim = (strcasecmp(imu_name, "sim") == 0);
 
-    // A real magnetometer answered the bus, or sim wheels are synthesising a
+    // A real magnetometer answered the bus, or simulated wheels are synthesising a
     // field to calibrate against. Either way there is something to publish; a
     // SimMAG standing in for absent hardware has nothing to say and the topic
     // stays off the wire.
@@ -993,7 +993,7 @@ void setup()
                 // A bare board whose IMU did not answer is still a working
                 // simulated robot; say so loudly and carry on with the
                 // simulation rather than trapping the board before it connects.
-                Serial.println("[imu] init FAILED on a sim-wheel board - falling back to the simulated IMU");
+                Serial.println("[imu] init FAILED on a simulated-wheel board - falling back to the simulated IMU");
                 syslog(LOG_INFO, "%s IMU init failed, simulated IMU instead %lu", __FUNCTION__, millis());
                 imu_from_wheels = true;
                 imu_is_sim = true;
@@ -1013,7 +1013,7 @@ void setup()
         if (!mag->init())
         {
             if (sim_wheels) {
-                Serial.println("[mag] init FAILED on a sim-wheel board - falling back to the simulated field");
+                Serial.println("[mag] init FAILED on a simulated-wheel board - falling back to the simulated field");
                 syslog(LOG_INFO, "%s MAG init failed, simulated field instead %lu", __FUNCTION__, millis());
                 mag_from_wheels = true;
             } else {
@@ -1029,7 +1029,7 @@ void setup()
         }
     }
     initBattery();
-    // Sim mode masks the sonar. `sim_ld19` is read directly rather than
+    // Simulation mode masks the sonar. `sim_ld19` is read directly rather than
     // waiting for sim_lidar_on below, because initRange() has to happen before
     // the LiDAR block and the answer is the same either way.
     const bool sonar_simd = sim_wheels || envFlag("sim_ld19", SIM_LD19_DEFAULT);
@@ -1092,14 +1092,14 @@ void setup()
     // header, so without this it published an empty frame_id -- a Range that no
     // consumer can place anywhere. The real path overwrites the whole message
     // from getRange(), which carries the same frame, so setting it here is
-    // right for both. (Empty on every sim-mode board until 2026-09-21; nothing
+    // right for both. (Empty on every simulation-mode board until 2026-09-21; nothing
     // in the pipeline subscribes to /sonar yet, which is why it went unseen.)
     if (range_msg)
         range_msg->header.frame_id =
             micro_ros_string_utilities_set(range_msg->header.frame_id, envPrefixed("sonar_link"));
     initLidar(); // after wifi connected
     sim_lidar_on = envFlag("sim_ld19", true);
-    // The emulator is built only when sim mode asks for it. As a static
+    // The emulator is built only when simulation mode asks for it. As a static
     // object its 176 bytes sat in .bss on every board, real LiDAR or not; on
     // esp32_lyrical that segment is at its limit. Built once, never freed.
     if (sim_lidar_on && !sim_ld19)
@@ -1157,7 +1157,7 @@ void setup()
     stall_ms = (uint16_t)constrain(atoi(envGet("stall_ms", "1500")), 200, 10000);
     stall_rpm_floor = (float)atof(envGet("stall_rpm_floor", "5.0"));
     // The simulated cone when anything is simulated, the real sensor only on a
-    // robot that is entirely real. rangePresent() is already false in sim mode
+    // robot that is entirely real. rangePresent() is already false in simulation mode
     // -- initRange() dropped the pins -- so this cannot drive hardware either
     // way; it decides what, if anything, /sonar carries.
     range_sim = sim_lidar_on && envFlag("sim_sonar", true);
@@ -1401,10 +1401,10 @@ bool createEntities()
     //                    message carries, i.e. a constant zero heading.
     //
     // `publish_mag` is the right discriminator and not a new flag: it is
-    // already (a real magnetometer answered) OR (sim wheels are synthesising a
-    // field). A magless real robot gets imu/data; a bench board in sim mode
+    // already (a real magnetometer answered) OR (simulated wheels are synthesising a
+    // field). A magless real robot gets imu/data; a bench board in simulation mode
     // keeps imu/data_raw and madgwick exactly as before, which is why the
-    // 30-leg sim-mode matrix does not move under this change.
+    // 30-leg simulation-mode matrix does not move under this change.
     const char *imu_topic = publish_mag ? "imu/data_raw" : "imu/data";
     Serial.printf("[imu] publishing %s (%s)\n", imu_topic,
                   publish_mag ? "magnetometer fitted: madgwick fuses this into imu/data"

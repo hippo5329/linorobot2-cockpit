@@ -3,7 +3,7 @@
 // The IMU and magnetometer a board carries -- and whether they are real at all
 // -- used to be a compile-time fact: gen_firmware_header.py emitted
 // USE_MPU6050_IMU or USE_SIM_IMU, and imu.h turned that into `#define IMU
-// <class>`. One robot, one binary, and a bench board running sim sensors
+// <class>`. One robot, one binary, and a bench board running simulated sensors
 // needed a different build from the same board with a real IMU soldered on.
 //
 // Every driver class in default_imu.h and default_mag.h is already compiled
@@ -18,7 +18,7 @@
 // and `sensors.mag` values, so the YAML, the env block and the firmware all
 // spell a sensor the same way.
 //
-// An unknown or empty name falls back to the sim driver rather than failing to
+// An unknown or empty name falls back to the simulated driver rather than failing to
 // boot: a board that reports simulated data over a working micro-ROS link can
 // be diagnosed, one stuck in a fatal init loop cannot.
 #ifndef SENSOR_FACTORY_H

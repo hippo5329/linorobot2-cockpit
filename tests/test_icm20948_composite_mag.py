@@ -49,7 +49,7 @@ STUB_ARDUINO = """
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-struct FakeWire {
+struct StubWire {
     void begin() {}
     void beginTransmission(int) {}
     void write(uint8_t) {}
@@ -58,9 +58,9 @@ struct FakeWire {
     int  available() { return 0; }
     int  read() { return 0xFF; }
 };
-static FakeWire Wire;
-struct FakeSerial { int printf(const char *, ...) { return 0; } void println(const char *) {} };
-static FakeSerial Serial;
+static StubWire Wire;
+struct StubSerial { int printf(const char *, ...) { return 0; } void println(const char *) {} };
+static StubSerial Serial;
 static inline unsigned long millis() { return 0; }
 static inline void delay(unsigned long) {}
 """

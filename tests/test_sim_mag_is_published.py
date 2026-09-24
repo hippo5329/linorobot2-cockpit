@@ -1,4 +1,4 @@
-"""If the sim magnetometer is fused, it must also be published.
+"""If the simulated magnetometer is fused, it must also be published.
 
 bringup.launch.py decides whether madgwick fuses /imu/mag; scripts/mcu_env.py
 decides, at flash time, whether the firmware publishes it. They were derived

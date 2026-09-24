@@ -103,7 +103,7 @@ def test_the_barometer_address_can_be_named():
 
 
 def test_the_simulated_room_is_configurable():
-    """Sim mode is this project's default, so the room the emulator raycasts
+    """Simulation mode is this project's default, so the room the emulator raycasts
     is configuration: a Nav2 test wants the obstacle wall somewhere else
     without rebuilding."""
     env = _env(_with(simulation={"map_width": 8.0, "wall_obstacle": 0,
@@ -196,7 +196,7 @@ def test_a_global_does_not_read_the_env_in_its_constructor():
 
 
 def test_the_simulated_imu_reads_the_same_covariance_keys():
-    """Sim mode publishes through SimIMUFromWheels, not IMUInterface, so
+    """Simulation mode publishes through SimIMUFromWheels, not IMUInterface, so
     without this the covariance a config sets reached every robot EXCEPT the
     simulated one -- which is the default here, and the one an EKF is usually
     tuned against first."""

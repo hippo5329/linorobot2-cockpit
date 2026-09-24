@@ -51,8 +51,8 @@ template <class T, class A, class B> T constrain(T v, A lo, B hi) { return v < (
 #define MOTOR_MAX_RPM 140
 #define PWM_BITS 10
 #define PWM_MAX (pow(2, PWM_BITS) - 1)
-struct FakeSerial { int printf(const char *, ...) { return 0; } void println(const char *) {} };
-static FakeSerial Serial;
+struct StubSerial { int printf(const char *, ...) { return 0; } void println(const char *) {} };
+static StubSerial Serial;
 """
 
 SHIM = """

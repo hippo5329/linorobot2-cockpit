@@ -13,7 +13,7 @@ that same branch, so the points pile up until the overrun bail throws them
 away, and `demo.cpp` prints nothing for the DATA_WAIT that results. The node
 logs "ldlidar communication is normal", advertises /scan, and never publishes.
 
-Our sim LD19 room is geometrically perfect, so every revolution is one group.
+Our simulated LD19 room is geometrically perfect, so every revolution is one group.
 Measured 2026-09-20 by driving the driver from a harness with our exact bytes:
 
     in=456 pending=456 groups=1 -> WRAP MERGE fires -> groups=0 -> filtered=0

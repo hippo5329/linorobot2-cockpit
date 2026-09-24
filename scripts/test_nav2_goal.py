@@ -130,7 +130,7 @@ LEG_SETTLE_SEC = 0.5
 #
 # On the bench that is a wasted leg. On a real robot it is the hazard, and the
 # thing that would stop it there -- nav2_collision_monitor with a real scan --
-# is exactly what sim mode does not have. Catching it here is what makes the
+# is exactly what simulation mode does not have. Catching it here is what makes the
 # behaviour visible before there is a robot to be hurt by it.
 RUNAWAY_RADIUS_M = 6.0
 
@@ -270,7 +270,7 @@ class Nav2GoalTester(Node):
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
         # The base's OWN pose, beside the filtered one. The firmware clamps a
         # simulated robot to the wall and corrects its odometry; this EKF fuses
-        # velocities only, and on contact the sim wheels keep reporting speed
+        # velocities only, and on contact the simulated wheels keep reporting speed
         # (they slip, by design -- main.cpp), so the filtered pose walks through
         # a wall the base is pinned against. Reading both is what lets a verdict
         # say which of the two happened.
@@ -1006,7 +1006,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
     def moved() -> bool:
         """Did the base respond to what it was told?
 
-        The reported TWIST, not the integrated pose. A sim-mode board at rest
+        The reported TWIST, not the integrated pose. A simulation-mode board at rest
         still reports a little of both -- one bench run sampled vel_lin=0.006 m/s
         and vel_ang=0.036 rad/s while standing still -- and integrating that over
         a 25-second window accumulates 0.15 m of "travel", which sails past any
@@ -1373,7 +1373,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"left the {RUNAWAY_RADIUS_M:.0f} m room instead"
                               f"{_why(node)}{_gap(node)}{_where(node)} after {took:.0f} s. "
                               f"The base was still taking commands, so this is the controller "
-                              f"driving it away, not a stall -- and nothing in sim mode would "
+                              f"driving it away, not a stall -- and nothing in simulation mode would "
                               f"have stopped it.")
                         return False
                     # WHERE first, then why. The order is not cosmetic: on the
@@ -1662,7 +1662,7 @@ def main():
                              "integrated velocity")
     parser.add_argument("--noise-ang", type=float, default=0.10,
                         help="Angular speed (rad/s) at or below which /odom is considered at rest; "
-                             "a sim-mode board at rest has been seen reporting 0.036")
+                             "a simulation-mode board at rest has been seen reporting 0.036")
     parser.add_argument("--no-require-motion", action="store_true",
                         help="Pass on planning alone, without the base responding. For bringing "
                              "a host-side stack up with no board attached; never for a release "

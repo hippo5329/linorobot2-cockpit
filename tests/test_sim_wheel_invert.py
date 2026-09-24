@@ -3,7 +3,7 @@
 On a real robot the right-hand side is mirrored, so the motor driver inverts
 what it drives and the encoder inverts what it reads. The two cancel.
 
-In sim mode there is no motor: the pins are -1, MotorInterface::spin() returns
+In simulation mode there is no motor: the pins are -1, MotorInterface::spin() returns
 without touching anything, and nothing applies the motor half of that pair --
 but SimEncoder::feed() was still applying the encoder half. Wheel 2 ran
 backwards whenever wheel 1 ran forwards, so the simulated robot spun on the
@@ -41,7 +41,7 @@ def _sim_encoder_src():
 def test_the_simulated_wheel_does_not_apply_invert():
     body = _sim_encoder_src()
     assert "invert_" not in body, (
-        "SimEncoder keeps an invert flag again -- in sim mode nothing applies "
+        "SimEncoder keeps an invert flag again -- in simulation mode nothing applies "
         "the MOTOR inversion, so applying the encoder's makes wheel 2 run "
         "backwards and the robot spins instead of driving")
     assert "(void)invert;" in body, "invert should be explicitly ignored, and said so"

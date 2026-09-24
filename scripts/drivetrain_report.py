@@ -488,7 +488,7 @@ def simulate_closed_loop(d, gains, setpoint_rpm=None, seconds=2.0):
 
     This is the part the bench could never do. A step response measured open
     loop tells you the plant; it does not tell you whether the gains in the
-    config make a STABLE loop, and sim mode used to be no help because the
+    config make a STABLE loop, and simulation mode used to be no help because the
     wheels did not respond to PWM at all -- they tracked the command, so every
     set of gains looked perfect. Now the wheel is a plant driven by PWM, so the
     loop is a real loop and a bad gain oscillates here exactly as it would on a

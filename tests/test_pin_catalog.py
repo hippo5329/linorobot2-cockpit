@@ -134,7 +134,7 @@ def _led(reference, name):
 def test_boards_with_an_onboard_led_default_to_driving_it(reference):
     """The blink pattern is the only thing a board says before micro-ROS is up.
 
-    A bench board in sim mode needs it as much as a real one: a simulated
+    A bench board in simulation mode needs it as much as a real one: a simulated
     robot fails in the same ways, and with led: -1 it fails silently.
 
     Each shipped design names the LED ITS OWN board wires, not one default:

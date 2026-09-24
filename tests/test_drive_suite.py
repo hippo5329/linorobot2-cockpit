@@ -1,7 +1,7 @@
 """The drive suite judges the RIGHT sign and a plausible magnitude.
 
 Its whole reason to exist is that 50 Hz topics do not prove motion: the
-sim-wheel invert bug and the PID windup both produced perfect rates on a base
+simulated-wheel invert bug and the PID windup both produced perfect rates on a base
 that was spinning in place or pinned at a rail. So the test that guards the
 suite is: a report matching the command passes, a reversed-sign report fails,
 and a dead-still report fails -- exactly the three the suite is there to tell

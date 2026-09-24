@@ -73,22 +73,22 @@ def test_the_tty_is_resolved_by_device_number_not_by_name(monkeypatch):
 
     monkeypatch.setattr(flash_mcu.os, "stat", lambda p: _St())
 
-    def fake_glob(pattern):
+    def stub_glob(pattern):
         seen["pattern"] = pattern
         return ["/sys/class/tty/ttyACM0/dev", "/sys/class/tty/ttyACM1/dev"]
 
-    monkeypatch.setattr(flash_mcu.glob, "glob", fake_glob)
+    monkeypatch.setattr(flash_mcu.glob, "glob", stub_glob)
     contents = {"/sys/class/tty/ttyACM0/dev": "166:0\n",
                 "/sys/class/tty/ttyACM1/dev": "166:1\n"}
     real_open = open
 
-    def fake_open(path, *a, **kw):
+    def stub_open(path, *a, **kw):
         if path in contents:
             import io
             return io.StringIO(contents[path])
         return real_open(path, *a, **kw)
 
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr("builtins.open", stub_open)
     monkeypatch.setattr(flash_mcu.os.path, "realpath",
                         lambda p: "/sys/devices/pci/usb7/7-1/7-1.1/7-1.1:1.0"
                         if "ttyACM1" in p else "/sys/devices/pci/usb3/3-2/3-2:1.0")
@@ -110,14 +110,14 @@ def test_the_load_carries_the_target(tmp_path, monkeypatch):
         stdout = ""
         stderr = ""
 
-    def fake_run(cmd, **kw):
+    def stub_run(cmd, **kw):
         cmds.append(cmd)
         return _Res()
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
     monkeypatch.setattr(flash_mcu, "picotool_target",
                         lambda: ["--bus", "7", "--address", "57"])
-    monkeypatch.setattr(flash_mcu, "run_tool", fake_run)
+    monkeypatch.setattr(flash_mcu, "run_tool", stub_run)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
 
     assert flash_mcu.flash_via_picotool(str(uf2), "pico2w") is False

@@ -357,7 +357,7 @@ jobs:
             # pair (esp32_config / esp32_wifi_config) was deleted on
             # 2026-09-20: they described the same silicon as gendrv and
             # differed only in keys the env partition decides at boot --
-            # transport, lidar_comm, wifi, the sim flags.
+            # transport, lidar_comm, wifi, the simulated flags.
             esp32*)  cfg=config/reference/gendrv_config.yaml ;;
             # Every RP2 env -- pico, picow, pico2, pico2w and their _lyrical
             # twins -- builds from the one mecanum reference. The header is

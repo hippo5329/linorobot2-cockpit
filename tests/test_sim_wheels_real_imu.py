@@ -1,11 +1,11 @@
-"""Sim wheels no longer imply a sim IMU.
+"""Simulated wheels no longer imply a simulated IMU.
 
 A bare custom board (Yahboom YB-EET01 on the bench: no encoders, a real
 QMI8658) used to have its real IMU skipped entirely because the wheels were
 simulated -- the measured /imu/data_raw was the simulation, and the driver
 under test never ran. Now only the sensors that are themselves sim are
 synthesised from the wheels, and a real one that fails to init on a
-sim-wheel board falls back to the simulation with a loud line instead of
+simulated-wheel board falls back to the simulation with a loud line instead of
 the fatal LED loop.
 """
 import os
@@ -31,8 +31,8 @@ def test_the_simulation_follows_the_sensor_not_the_wheels():
 
 def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():
     m = _read(MAIN)
-    assert "init FAILED on a sim-wheel board - falling back to the simulated IMU" in m
-    assert "init FAILED on a sim-wheel board - falling back to the simulated field" in m
+    assert "init FAILED on a simulated-wheel board - falling back to the simulated IMU" in m
+    assert "init FAILED on a simulated-wheel board - falling back to the simulated field" in m
     blk = m[m.index("if (!imu->init())"):]
     # Bounded by the MAG init, which is the next thing setup() does. It used to
     # slice to the second `if (!imu_from_wheels) {` -- the data-ready attach block --

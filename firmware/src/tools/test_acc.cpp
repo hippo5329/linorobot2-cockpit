@@ -165,7 +165,7 @@ void setup_()
         Serial.printf("[+] IMU %s initialized.\n", imu_name);
     mag->init();
 
-    // A sim-wheel board has nothing to measure. Checked here, after
+    // A simulated-wheel board has nothing to measure. Checked here, after
     // initMcuEnv(), because it is the env that decides -- not the build.
     sim_wheels = wheelsAreSim();
 
@@ -283,7 +283,7 @@ void dump_record(const Kinematics::velocities *buf) {
 //
 // It does NOT drive the simulated wheels, and that is deliberate: this tool is
 // for a robot with motors on it. SimEncoder::feed() was called here for a
-// while so that a sim-mode run produced a full table instead of zeros -- but
+// while so that a simulation-mode run produced a full table instead of zeros -- but
 // the table it produced was a measurement OF THE SIMULATOR, taken on an MCU,
 // over a serial line, after a flash. The simulator is a host-side model whose
 // constants live in sim_wheel.h, so the honest way to read it is to run it on
@@ -291,7 +291,7 @@ void dump_record(const Kinematics::velocities *buf) {
 // test_acc's own 20 ms / 1 s profile and prints the same four lines in
 // milliseconds, with no board involved.
 //
-// So a sim-wheel board is refused in setup_() rather than answered. What is
+// So a simulated-wheel board is refused in setup_() rather than answered. What is
 // left here is the real measurement: a real motor's real acceleration, which is
 // the only thing a board can tell you that the model cannot.
 static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
@@ -498,7 +498,7 @@ void run()
 void loop_() {
     if (!imu_msg) return;   // setup_ could not allocate; nothing to run
 
-    // Refuse rather than answer. With sim wheels there is no motor to
+    // Refuse rather than answer. With simulated wheels there is no motor to
     // accelerate: every number below would be a property of the simulated
     // drivetrain in sim_wheel.h, measured the hard way. The host runs that
     // model directly, on this tool's own 20 ms / 1 s profile, from the robot's

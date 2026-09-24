@@ -39,7 +39,7 @@ base_controller:
     use_sim_env: false
     current: INA219
     env: BMP280
-  # The simulated world. Written out in full because sim mode is the default:
+  # The simulated world. Written out in full because simulation mode is the default:
   # on a bench run these ARE the robot. Every key is optional -- absent, the
   # firmware keeps its compiled default, which is the value shown here.
   # robot_radius is omitted on purpose: it follows the costmaps' robot_radius.
@@ -115,7 +115,7 @@ base_controller:
     # The RP2 images are BUILT from the W envs so the radio is available to
     # anyone who enters an AP list, but the hardware assumption stays non-W:
     # the blink is the only thing a board says before micro-ROS is up, and a
-    # bench board in sim mode needs it as much as a wired one. On an actual
+    # bench board in simulation mode needs it as much as a wired one. On an actual
     # W board GP25 belongs to the CYW43 bus, so those set `led` in the env.
     led: 25
     # ADC0. 30k / 7.5k divider: 5:1, so a 3S pack (12.6 V) reads 2.52 V.
@@ -144,8 +144,8 @@ base_controller:
   # robot that stopped against something would have no way to back off.
   #
   # Never armed against a simulated obstacle: mcu_env.py forces this off when
-  # the range is raycast out of the sim room, so a bench board running this
-  # config in sim mode behaves exactly as it did before.
+  # the range is raycast out of the simulated room, so a bench board running this
+  # config in simulation mode behaves exactly as it did before.
   safety_stop:
     enabled: true
     range_m: 0.25
