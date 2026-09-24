@@ -301,6 +301,13 @@ class Nav2GoalTester(Node):
         self.scan_count: int = 0
         self.scan_max_stamp_gap: float = 0.0
         self.scan_max_arrival_gap: float = 0.0
+        # WHEN the worst gap happened, in wall time. Without it the gap is a
+        # whole-run maximum printed inside a per-leg failure sentence, and a
+        # reader joins the two: on 2026-09-25 the aborted GenDrv leg and the
+        # 8/8 leg that followed it both reported "worst stamp interval 3100 ms",
+        # because both were quoting the same startup hole minutes earlier.
+        self.scan_max_stamp_gap_at: float = 0.0
+        self.scan_max_arrival_gap_at: float = 0.0
         self._scan_prev_stamp = None
         self._scan_prev_arrival = None
         self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
@@ -416,10 +423,12 @@ class Nav2GoalTester(Node):
             gap = stamp - self._scan_prev_stamp
             if gap > self.scan_max_stamp_gap:
                 self.scan_max_stamp_gap = gap
+                self.scan_max_stamp_gap_at = arrival
         if self._scan_prev_arrival is not None:
             gap = arrival - self._scan_prev_arrival
             if gap > self.scan_max_arrival_gap:
                 self.scan_max_arrival_gap = gap
+                self.scan_max_arrival_gap_at = arrival
         # A zero or backwards stamp is a board whose clock has not synced yet;
         # it would otherwise register as one enormous gap on the first scans.
         if stamp > 0.0:
@@ -898,7 +907,32 @@ def _map_odom_gap_note(node, tolerance: float = 0.5) -> str:
     return note
 
 
-def _scan_gap_note(node, nominal_hz: float = 10.0) -> str:
+def _scan_gap_when(node, since: float) -> str:
+    """Place the worst gap in time, when the caller can say what "now" is.
+
+    These maxima run for the whole process, never per leg, so printing one
+    inside a leg's failure sentence invites the reader to treat it as that
+    leg's evidence. On 2026-09-25 the GenDrv lyrical serial leg aborted and
+    quoted "worst stamp interval 3100 ms"; the 8/8 leg that passed on the same
+    board minutes later quoted 3100 ms too. It was one hole during startup,
+    reported identically by a failure and a success -- so it distinguished
+    nothing, while looking exactly like a cause.
+
+    A gap the leg cannot have seen says so in the same breath as the number.
+    """
+    if since is None:
+        return ""
+    at = max(getattr(node, "scan_max_stamp_gap_at", 0.0),
+             getattr(node, "scan_max_arrival_gap_at", 0.0))
+    if at <= 0.0:
+        return ""
+    delta = at - since
+    if delta < 0:
+        return f" -- the worst gap was {-delta:.0f} s BEFORE this leg began, so it is not this leg's"
+    return f" -- the worst gap was {delta:.0f} s into this leg"
+
+
+def _scan_gap_note(node, nominal_hz: float = 10.0, since: float = None) -> str:
     """Name which end of the scan path gapped: the board's, or the wire's.
 
     Reported together, because the interesting case is the DIFFERENCE. Scans
@@ -916,6 +950,7 @@ def _scan_gap_note(node, nominal_hz: float = 10.0) -> str:
     note = (f"; /scan gapped: worst stamp interval {stamp_gap * 1000:.0f} ms, "
             f"worst arrival interval {arrival_gap * 1000:.0f} ms "
             f"({node.scan_count} scans, {period * 1000:.0f} ms nominal)")
+    note += _scan_gap_when(node, since)
     if stamp_gap > period * 1.5 and arrival_gap <= stamp_gap * 1.2:
         note += " -- scans were not produced, so this is upstream of the wire"
     elif arrival_gap > stamp_gap * 1.5:
@@ -1397,7 +1432,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"{took:.0f} s; needed within {goal_tolerance:.2f} m; "
                           f"planned_around_wall={node.path_avoids_wall}, "
                           f"traversed {node.leg_max_dist:.3f} m this leg"
-                          f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}{_scan_gap_note(node)}")
+                          f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}"
+                          f"{_scan_gap_note(node, since=t0)}")
                 return False
             around = route_note()
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "

@@ -18,6 +18,7 @@ not the explanation for these.
 """
 import ast
 import os
+import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOAL = os.path.join(ROOT, "scripts", "test_nav2_goal.py")
@@ -36,9 +37,10 @@ def _func(name):
 
 
 def _note():
-    fn = _func("_scan_gap_note")
+    """_scan_gap_note plus the helper it calls, so the note can be exercised."""
     ns = {}
-    exec(compile(ast.Module([fn], []), GOAL, "exec"), ns)
+    mod = ast.Module([_func("_scan_gap_when"), _func("_scan_gap_note")], [])
+    exec(compile(mod, GOAL, "exec"), ns)
     return ns["_scan_gap_note"]
 
 
@@ -46,6 +48,8 @@ class N:
     scan_count = 100
     scan_max_stamp_gap = 0.0
     scan_max_arrival_gap = 0.0
+    scan_max_stamp_gap_at = 0.0
+    scan_max_arrival_gap_at = 0.0
 
 
 def test_the_tester_subscribes_to_scan_itself():
@@ -124,7 +128,55 @@ def test_the_note_reaches_both_verdict_lines():
     src = _src()
     reached = src[src.index('f"NAV2 GOAL REACHED {n}/{n} legs'):]
     assert "_scan_gap_note(node)" in reached[:700], "the passing line drops it"
-    assert src.count("_scan_gap_note(node)") >= 2, "the failing line drops it"
+    # The failing line passes the leg's start time as well, so it is a
+    # different call -- count the calls, not one spelling of them.
+    assert len(re.findall(r"_scan_gap_note\(node[,)]", src)) >= 2, \
+        "the failing line drops it"
+
+
+def test_the_failing_line_dates_the_gap_and_the_passing_line_does_not():
+    """A per-leg sentence must say whether the gap was this leg's.
+
+    The maxima run for the whole process. The whole-run summary has no leg to
+    date them against, so it stays undated; the leg that failed must pass its
+    own start time or the number is evidence for a claim nobody checked.
+    """
+    src = _src()
+    failing = src[src.index('f"\u274c NAV2 LEG {i}/{n} NOT REACHED'):]
+    assert "_scan_gap_note(node, since=t0)" in failing[:1200], \
+        "the failing leg no longer dates the worst gap"
+    reached = src[src.index('f"NAV2 GOAL REACHED {n}/{n} legs'):]
+    assert "since=" not in reached[:700], \
+        "the whole-run summary is claiming a leg frame it does not have"
+
+
+def test_a_gap_before_the_leg_is_disowned_in_the_same_breath():
+    """2026-09-25: an aborted GenDrv leg and the 8/8 leg that followed both
+    quoted "worst stamp interval 3100 ms" -- the same startup hole, minutes
+    earlier. A number that a failure and a success report identically
+    distinguishes nothing, and read beside the failure it looks like a cause."""
+    n = N()
+    n.scan_max_stamp_gap = 3.1
+    n.scan_max_stamp_gap_at = 1000.0
+    out = _note()(n, since=1214.0)
+    assert "214 s BEFORE this leg began" in out
+    assert "not this leg's" in out
+
+
+def test_a_gap_inside_the_leg_is_placed_within_it():
+    n = N()
+    n.scan_max_stamp_gap = 3.1
+    n.scan_max_stamp_gap_at = 1030.0
+    assert "30 s into this leg" in _note()(n, since=1000.0)
+
+
+def test_an_undated_gap_makes_no_claim_either_way():
+    """Before the timestamps existed every note was undated; one written by an
+    older tester must not be read as "during this leg"."""
+    n = N()
+    n.scan_max_stamp_gap = 3.1
+    out = _note()(n, since=1000.0)
+    assert "BEFORE this leg" not in out and "into this leg" not in out
 
 
 def test_an_unsynced_clock_does_not_register_as_one_huge_gap():
