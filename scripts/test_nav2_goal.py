@@ -1418,12 +1418,24 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                               f"got there; check the frames (a goal in map, a pose read from odom).")
                 else:
                     if _runaway(node):
+                        # The timing notes belong HERE most of all. A runaway is
+                        # the failure whose likeliest cause is starvation -- a
+                        # controller loop that misses cycles keeps issuing the
+                        # last command, and the base does exactly what it is
+                        # told for as long as nobody updates it. This line
+                        # carried no timing at all, so the 2026-09-25 mecanum
+                        # RP2350 lyrical runaways, which reproduced on both
+                        # attempts, left nothing to test that against: the
+                        # numbers the file did hold belonged to the OTHER
+                        # profile's verdict line.
                         print(f"❌ NAV2 LEG {i}/{n} RAN AWAY: asked for ({gx:.2f}, {gy:.2f}), "
                               f"left the {RUNAWAY_RADIUS_M:.0f} m room instead"
                               f"{_why(node)}{_gap(node)}{_where(node)} after {took:.0f} s. "
                               f"The base was still taking commands, so this is the controller "
                               f"driving it away, not a stall -- and nothing in simulation mode would "
-                              f"have stopped it.")
+                              f"have stopped it."
+                              f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}"
+                              f"{_scan_gap_note(node, since=t0)}")
                         return False
                     # WHERE first, then why. The order is not cosmetic: on the
                     # 2026-09-23 mecanum 203 this line stopped INSIDE _why's

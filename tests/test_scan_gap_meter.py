@@ -184,3 +184,18 @@ def test_an_unsynced_clock_does_not_register_as_one_huge_gap():
     previous stamp turns the first real scan into a 56-year interval."""
     body = ast.get_source_segment(_src(), _func("_scan_cb"))
     assert "stamp > 0.0" in body, "a zero stamp is accepted as a baseline"
+
+
+def test_the_runaway_line_carries_the_timing_too():
+    """A runaway is the failure whose likeliest cause is starvation: a
+    controller loop that misses cycles keeps issuing the last command, and the
+    base does what it was told until somebody updates it. The line carried no
+    timing at all, so the 2026-09-25 mecanum RP2350 lyrical runaways -- both
+    attempts -- left nothing to test that against, and the numbers the log DID
+    hold belonged to the other profile's verdict line.
+    """
+    src = _src()
+    ran = src[src.index('f"\u274c NAV2 LEG {i}/{n} RAN AWAY'):]
+    ran = ran[:ran.index("return False")]
+    for needle in ("_map_odom_gap_note(node)", "_scan_gap_note(node, since=t0)"):
+        assert needle in ran, f"the runaway verdict drops {needle}"
