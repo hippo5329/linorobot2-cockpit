@@ -328,7 +328,26 @@ nav2:
       robot_base_frame: base_link
       odom_topic: /odom
       bt_loop_duration: 10
-      default_server_timeout: 20
+      # 20 ms is Nav2's own default and it is how long a BT action node waits for
+      # a server to ACKNOWLEDGE a goal -- not to do the work. On a loaded bench a
+      # 20 ms hiccup in controller_server therefore aborts the whole navigation
+      # with error_code=107 'Behavior Tree action client timed out waiting.', and
+      # the leg is scored as a navigation failure with the robot untouched at home
+      # (traversed 0.001 m). Measured twice in 261 rounds of the 2026-09-24 soak
+      # (rounds 157 and 258), both on follow_path:
+      #
+      #   Begin navigating from current location (0.20, -0.21) to (3.00, 0.00)
+      #   Timed out while waiting for action server to acknowledge goal request
+      #     for follow_path
+      #   goalCompleted error 107: Behavior Tree action client timed out waiting..
+      #
+      # ~0.8% of legs. That is small in a soak and NOT small in a gate: over 30
+      # legs it is better than a one-in-five chance of a spurious red per matrix,
+      # which is a plausible share of this project's unexplained gate flakiness.
+      # 200 ms costs nothing real -- it delays noticing a genuinely dead server by
+      # 180 ms, and a server that never appears is caught by
+      # wait_for_service_timeout below, not by this.
+      default_server_timeout: 200
       wait_for_service_timeout: 30000
       action_server_result_timeout: 900.0
       navigators:
