@@ -124,25 +124,58 @@ SIM_DEFAULTS = (
 )
 
 
-def bare_simulation() -> dict:
-    """The `simulation:` block, every key present, values from the firmware."""
+def bare_simulation(strict: bool = False) -> dict:
+    """The `simulation:` block, every key present, values from the firmware.
+
+    A macro this cannot find is SKIPPED, with a warning, rather than raising --
+    and that is the whole lesson of 2026-09-24. The first version exited, on the
+    reasoning that writing a stale default is worse than stopping. True of the
+    value; false of the blast radius. Inside a released container the firmware
+    tree under /ws is the IMAGE's copy, while the bench stages the repo's
+    scripts over the top, so a header that moved in the repo and not in the
+    image made this generator exit -- and it is called during bringup, so the
+    exit took down the whole Nav2 run. Every RP2 leg of a matrix died in three
+    seconds with "cannot find #define FAKE_GEAR_EFFICIENCY" and nothing to do
+    with the robot.
+
+    An absent key is not a stale value: mcu_env writes nothing for it and the
+    firmware keeps its own #ifndef default, which is the correct behaviour and
+    is what happened before any of these keys existed. So the degraded case is
+    exactly the old case, and the run continues.
+
+    Drift is still caught -- in the tests, which is where the repo's own copies
+    are compared and where a failure costs nobody an hour of bench time. Pass
+    `strict=True` to get the old behaviour when that is what you want.
+    """
     cache = {}
     out = {}
+    missing = []
     for cfg_key, rel, macro, cast in SIM_DEFAULTS:
         path = os.path.join(REPO_ROOT, "firmware", "common", "lib", rel)
         if rel not in cache:
-            with open(path, encoding="utf-8") as fh:
-                cache[rel] = fh.read()
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    cache[rel] = fh.read()
+            except OSError as exc:
+                cache[rel] = ""
+                print(f"[gen_bare_config] {path}: {exc}", file=sys.stderr)
         # The FIRST definition wins: these headers guard each macro with #ifndef
         # and a #define, so a later line is the same value, and FAKE_ROBOT_MASS
         # has an earlier ROBOT_WEIGHT branch that is not a number at all.
         m = re.search(r"^\s*#define\s+" + macro + r"\s+(-?[0-9.]+)f?\s*(?://.*)?$",
                       cache[rel], re.MULTILINE)
         if not m:
-            raise SystemExit(f"{path}: cannot find #define {macro} -- the simulated "
-                             f"world moved and this generator would write a stale value")
+            missing.append((cfg_key, macro))
+            continue
         value = float(m.group(1))
         out[cfg_key] = bool(value) if cast is bool else value
+    if missing:
+        names = ", ".join(f"{k} (#define {m})" for k, m in missing)
+        if strict:
+            raise SystemExit(f"gen_bare_config: cannot read {names} from the firmware "
+                             f"headers -- the simulated world moved")
+        print(f"[gen_bare_config] not in this tree's firmware headers, so left out of "
+              f"the config (the firmware's own defaults stand): {names}", file=sys.stderr)
     return out
 
 

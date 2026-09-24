@@ -18,6 +18,24 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+# The firmware headers a HOST script reads.
+#
+# scripts/gen_bare_config.py parses the simulated world's defaults out of
+# fake_wheel.h and fake_ld19.h rather than restating them, and it runs at
+# bringup from the INSTALLED copy under share/ -- where there was no firmware
+# tree at all, so it found nothing and generated a config with the whole
+# simulation block missing. That is not a crash, and that is the problem: the
+# firmware then falls back to its compiled defaults, silently, and a config
+# somebody reads no longer describes the robot they are running.
+#
+# Only the headers. The firmware itself travels as a built image, and installing
+# the sources would put a second copy of the tree in every container.
+install(
+  DIRECTORY firmware/common/lib/encoder firmware/common/lib/lidar
+  DESTINATION share/${PROJECT_NAME}/firmware/common/lib
+  FILES_MATCHING PATTERN "*.h"
+)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()

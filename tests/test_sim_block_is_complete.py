@@ -79,17 +79,42 @@ def test_the_shown_values_are_the_firmware_defaults_not_a_second_opinion():
 
 
 def test_the_generator_reads_the_headers_rather_than_restating_them():
-    """Rename a macro and the generator must stop, not write a stale number."""
+    """A macro it cannot find is left OUT, not guessed at -- and not fatal.
+
+    Both halves matter, and the second was learned the hard way. Writing a
+    number the firmware does not use would make the config lie; but raising
+    took down a whole Nav2 matrix, because this runs during bringup inside a
+    container whose /ws/firmware is the image's older copy while the bench
+    stages the repo's scripts over it. An absent key is the pre-existing,
+    correct behaviour: nothing is written and the firmware's #ifndef default
+    stands.
+    """
     import pytest
-    bad = os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder", "fake_wheel.h")
     original = gbc.SIM_DEFAULTS
-    gbc.SIM_DEFAULTS = (("battery_sag", "encoder/fake_wheel.h", "FAKE_NO_SUCH_MACRO", float),)
+    gbc.SIM_DEFAULTS = (("battery_sag", "encoder/fake_wheel.h", "FAKE_BATT_SAG", float),
+                        ("bogus", "encoder/fake_wheel.h", "FAKE_NO_SUCH_MACRO", float))
     try:
+        got = gbc.bare_simulation()
+        assert "battery_sag" in got, "a readable macro must still be read"
+        assert "bogus" not in got, "an unreadable one must be omitted, not invented"
         with pytest.raises(SystemExit):
-            gbc.bare_simulation()
+            gbc.bare_simulation(strict=True)
     finally:
         gbc.SIM_DEFAULTS = original
-    assert os.path.exists(bad)
+
+
+def test_a_missing_firmware_tree_does_not_stop_a_bringup():
+    """The failure mode that cost a matrix: gen_bare_config runs during bringup,
+    so it must degrade rather than exit however broken its inputs are."""
+    original = gbc.SIM_DEFAULTS
+    gbc.SIM_DEFAULTS = (("battery_sag", "no/such/header.h", "FAKE_BATT_SAG", float),)
+    try:
+        assert gbc.bare_simulation() == {}
+    finally:
+        gbc.SIM_DEFAULTS = original
+    # ...and the config it generates is still a valid config.
+    cfg = gbc.bare_config("pico2")
+    assert cfg["kinematics"]["base_type"] == "2wd"
 
 
 def test_an_absent_key_is_not_written_so_the_firmware_default_stands():
@@ -103,3 +128,31 @@ def test_an_absent_key_is_not_written_so_the_firmware_default_stands():
     for key in ("fake_gear_eff", "fake_coulomb", "fake_sag", "fake_sag_tau",
                 "fake_drv_drop", "fake_drv_r", "fake_mass"):
         assert key not in env, f"{key} written from a config that never mentioned it"
+
+
+def test_the_headers_the_generator_reads_are_installed_with_the_package():
+    """gen_bare_config runs from the INSTALLED copy under share/, at bringup.
+
+    It used to run from a share tree with no firmware directory at all, so it
+    read nothing and generated a config with the whole simulation block missing
+    -- not a crash, which is worse: the firmware falls back to its compiled
+    defaults silently and a config somebody reads stops describing the robot.
+    Whatever SIM_DEFAULTS names has to be installed alongside the scripts.
+    """
+    cmake = open(os.path.join(REPO_ROOT, "CMakeLists.txt"), encoding="utf-8").read()
+    install = cmake[cmake.index("share/${PROJECT_NAME}/firmware"):]
+    install = cmake[cmake.rindex("install(", 0, cmake.index("share/${PROJECT_NAME}/firmware")):]
+    install = install[:install.index(")") + 1]
+    for _, rel, _, _ in gbc.SIM_DEFAULTS:
+        directory = "firmware/common/lib/" + os.path.dirname(rel)
+        assert directory in install, \
+            f"{rel} is read by the generator but {directory} is not installed"
+
+
+def test_the_generator_finds_its_headers_from_this_checkout():
+    """The repo layout itself: REPO_ROOT/firmware/common/lib/<rel> must resolve,
+    or every run falls back to the degraded path and nobody notices."""
+    for _, rel, macro, _ in gbc.SIM_DEFAULTS:
+        path = os.path.join(REPO_ROOT, "firmware", "common", "lib", rel)
+        assert os.path.isfile(path), path
+        assert f"#define {macro}" in open(path, encoding="utf-8").read(), (rel, macro)
