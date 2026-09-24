@@ -244,7 +244,24 @@ class FakeBaseNode(Node):
         self.declare_parameter("params", "")
         self.declare_parameter("stamped_cmd_vel", False)
         self.declare_parameter("rate", 50.0)          # CONTROL_TIMER, 50 Hz
-        self.declare_parameter("publish_tf", True)
+        # OFF, because the board does not publish a transform either.
+        #
+        # main.cpp has no TransformBroadcaster at all: it publishes
+        # odom/unfiltered as a TOPIC and the EKF owns `odom -> base_link`
+        # (`publish_tf: true` in every reference config). A base that also
+        # broadcasts it puts two publishers on one transform -- the exact
+        # collision bringup.launch.py already avoids by forcing madgwick's
+        # publish_tf to false.
+        #
+        # It is not a harmless duplicate. On 2026-09-24 it silently invalidated
+        # a latency sweep: the EKF's FRESH transform masked this node's delayed
+        # one, so legs at 800 and 1200 ms appeared to navigate when the config's
+        # transform tolerances are 0.2-0.5 s and should have refused them. The
+        # instrument was reporting a robot that could not exist.
+        #
+        # Left as a parameter for a stack run without an EKF, which is the only
+        # case where something has to publish it.
+        self.declare_parameter("publish_tf", False)
         # Milliseconds, because that is the unit anybody reasoning about a
         # serial link thinks in. -1 means "take it from the config".
         self.declare_parameter("transport_delay_ms", -1.0)

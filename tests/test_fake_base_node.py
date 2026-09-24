@@ -338,6 +338,26 @@ def test_the_tf_goes_through_the_same_link_as_the_odometry():
     assert "self.tf.sendTransform(t)" not in tick, "the TF bypasses the link"
 
 
+def test_the_base_does_not_publish_a_transform_by_default():
+    """The board does not either. main.cpp has no TransformBroadcaster -- it
+    publishes odom/unfiltered as a topic and the EKF owns `odom -> base_link`.
+    Two publishers on one transform is the collision bringup already avoids by
+    forcing madgwick's publish_tf false, and here it silently invalidated a
+    latency sweep: the EKF's fresh transform masked this node's delayed one, so
+    legs at 800 and 1200 ms appeared to navigate against 0.2-0.5 s tolerances."""
+    src = open(os.path.join(REPO_ROOT, "scripts", "fake_base_node.py"),
+               encoding="utf-8").read()
+    assert 'declare_parameter("publish_tf", False)' in src
+
+    firmware = open(os.path.join(REPO_ROOT, "firmware", "src", "main.cpp"),
+                    encoding="utf-8").read()
+    assert "TransformBroadcaster" not in firmware,         "the board publishes a TF now; this node's default should follow it"
+
+    ekf = open(os.path.join(REPO_ROOT, "config", "reference", "gendrv_config.yaml"),
+               encoding="utf-8").read()
+    assert "publish_tf: true" in ekf, "the EKF no longer owns odom->base_link"
+
+
 def test_the_link_uses_a_monotonic_clock():
     """It models wall time on a wire. A simulated or stepped ROS clock would
     stall the link rather than the robot."""
