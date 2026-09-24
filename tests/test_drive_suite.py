@@ -269,3 +269,13 @@ def test_the_tolerances_match_the_suite_verbatim():
                    "ok_vy = abs(got_vy - lat) < max(0.12, abs(lat) * 0.45)",
                    "ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)"):
         assert needle in src, f"the suite's tolerance changed: {needle}"
+
+
+def test_a_zero_commands_peak_column_shows_the_excursion_not_zero():
+    """The judged number for a zero command is the mean, and a peak column that
+    printed 0.000 beside it would claim the base never moved -- the opposite of
+    what the column is for. The GenDrv spin whose vx reached +0.15 m/s while the
+    pose held still is exactly the row a reader needs the excursion on."""
+    spin = [0.15, -0.14, 0.12, -0.13, 0.01]
+    assert abs(statistic(spin, 0.0)) < 0.05
+    assert peak(spin, 0.0) == 0.15

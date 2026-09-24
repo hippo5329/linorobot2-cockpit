@@ -100,7 +100,16 @@ def _peak(samples: list, want: float) -> float:
     """
     if not samples:
         return 0.0
-    return max(samples) if want > 0 else min(samples) if want < 0 else 0.0
+    if want > 0:
+        return max(samples)
+    if want < 0:
+        return min(samples)
+    # A zero command has no commanded direction, so the informative extreme is
+    # the largest excursion either way. Printing 0.000 here would claim the base
+    # never moved, which is the opposite of what the column is for: the 1.5 rad/s
+    # spin whose vx peaked at +0.15 m/s while the pose held still is exactly the
+    # row a reader needs to see the excursion on.
+    return max(samples, key=abs)
 
 
 def _statistic(samples: list, want: float) -> float:
