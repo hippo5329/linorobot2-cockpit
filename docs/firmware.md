@@ -246,12 +246,12 @@ wired, and most are -- only `yb_eet01` ships a `pins.imu.int` at all.
 
 | IMU | I2C addr | identified by | read on |
 |---|---|---|---|
-| MPU6050 / MPU6500 / MPU9150 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x68 / 0x70 | z13 Pico 2, GP0/GP1 |
+| MPU6050 / MPU6500 / MPU9150 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x68 / 0x70 | bench Pico 2, GP0/GP1 |
 | MPU9250 | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x71 / 0x73 | — |
 | ICM-42670-P | 0x68, 0x69 | `WHO_AM_I` 0x75 = 0x67 | Yahboom YB-EET01 |
-| ICM-20948 | 0x68, 0x69 | reg 0x00 = 0xEA | z13 Pico 2, 2026-09-23 |
+| ICM-20948 | 0x68, 0x69 | reg 0x00 = 0xEA | bench Pico 2, 2026-09-23 |
 | QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | GenDrv |
-| LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | z13 Pico 2, 2026-09-23 |
+| LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | bench Pico 2, 2026-09-23 |
 | GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | — |
 | BNO085 | 0x4A, 0x4B | — | — |
 
@@ -266,7 +266,7 @@ carries no `pins.imu.int`.
 |---|---|---|---|
 | AK09918 | 0x0C | standalone, or inside an ICM-20948 (see below) | yes — GenDrv |
 | AK8963 / AK8975 | 0x0C | `WIA` 0x00 = 0x48 | no |
-| AK09916 | via ICM-20948 | reached through the IMU's bypass at 0x0C | yes — z13 Pico 2 |
+| AK09916 | via ICM-20948 | reached through the IMU's bypass at 0x0C | yes — bench Pico 2 |
 | QMC5883L | 0x0D | | no |
 | HMC5883L | 0x1E | | no |
 

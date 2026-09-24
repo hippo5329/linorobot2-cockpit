@@ -9,7 +9,7 @@ ignores the orientation of its input. It matters now: under the two-configuratio
 rule a robot with no magnetometer has the BASE publish /imu/data, and that is the
 topic consumers read.
 
-Measured on the z13 Pico 2 with an LSM6DSOX, 2026-09-23, over a bare micro-ROS
+Measured on a bench Pico 2 with an LSM6DSOX, 2026-09-23, over a bare micro-ROS
 agent -- the run that was otherwise clean:
 
     PUBLISHERS imu/data      1

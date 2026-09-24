@@ -277,7 +277,7 @@ def launch_setup(context, *args, **kwargs):
         # /imu/data_raw against /imu/mag; if no magnetometer ever publishes, the
         # filter never fires and /imu/data is silent -- so a 6-axis part under
         # `mag: AUTO` produces no fused IMU at all, the topic verifier reports
-        # "NO DATA", and the run aborts before SLAM. Measured on the z13 Pico 2
+        # "NO DATA", and the run aborts before SLAM. Measured on a bench Pico 2
         # with an LSM6DSOX (accel+gyro only) on 2026-09-23.
         #
         # The two failure modes are not symmetric, which is what decides this:

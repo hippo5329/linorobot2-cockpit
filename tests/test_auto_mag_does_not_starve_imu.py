@@ -10,7 +10,7 @@ at all. The topic verifier then reports
 and the run aborts before SLAM, on a board whose accelerometer and gyroscope
 are both working perfectly.
 
-Measured on the z13 Pico 2 with an LSM6DSOX (accel + gyro, no magnetometer) on
+Measured on a bench Pico 2 with an LSM6DSOX (accel + gyro, no magnetometer) on
 2026-09-23, under the same `mag: AUTO` that the auto-detection path wants.
 
 The two failure modes are not symmetric, and that is what decides the default:

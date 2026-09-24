@@ -218,7 +218,7 @@ class IMUInterface
             // It mattered little while this message was only imu/data_raw,
             // because madgwick ignores the orientation of its input. It matters
             // now: on a robot with no magnetometer the base publishes imu/data
-            // itself, and that is the topic consumers read. Measured on the z13
+            // itself, and that is the topic consumers read. Measured on the bench's
             // Pico 2 with an LSM6DSOX, 2026-09-23: /imu/data at 48.9 Hz with a
             // quaternion norm of 0.0000.
             //
