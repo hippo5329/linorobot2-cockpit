@@ -481,33 +481,73 @@ private:
         }
         no_load_rpm *= busScale();
 
-        // back-EMF: driving torque is proportional to the remaining speed error,
-        // and the gearbox returns only part of it
-        float accel = ilim_scale * simGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
-        // viscous friction always opposes motion
-        accel -= wheel_rpm_ * (float)SIM_WHEEL_FRICTION;
-        // ...and the gear train's constant drag, which does not scale with speed.
-        // Signed against motion, and never enough to drive the wheel backwards
-        // through zero: that would be a gearbox pushing the robot.
-        if (wheel_rpm_ > 0.0f)
-            accel -= simCoulombRpm();
-        else if (wheel_rpm_ < 0.0f)
-            accel += simCoulombRpm();
-        // traction and current limit the achievable acceleration
-        if (accel > (float)SIM_WHEEL_MAX_ACCEL_RPM) accel = (float)SIM_WHEEL_MAX_ACCEL_RPM;
-        if (accel < -(float)SIM_WHEEL_MAX_ACCEL_RPM) accel = -(float)SIM_WHEEL_MAX_ACCEL_RPM;
+        // Sub-step, so a long interval cannot outrun the model.
+        //
+        // What follows is an explicit Euler step of d(rpm)/dt = (no_load - rpm)/tau.
+        // It overshoots once the step exceeds tau and DIVERGES once it exceeds
+        // 2*tau -- and tau is SIM_WHEEL_TAU_MS = 150 ms at the reference mass,
+        // while the rollover guard above admits dts up to a full SECOND. Measured
+        // against this header (tests/test_sim_wheel_gearbox_and_sag.py), holding
+        // full duty for two seconds:
+        //
+        //     loop step   peak rpm   ticks
+        //      10-200 ms   127-131   ~3830     the model as designed
+        //         300 ms       197     3425
+        //         900 ms       592     8872     4.2x the motor, 2.3x the distance
+        //
+        // MOTOR_MAX_RPM is 140. So a single loop stall in the 0.3-1.0 s band made
+        // the simulated encoder report a speed the motor cannot reach over a
+        // distance the robot did not travel, and odometry integrates that as
+        // ground truth. `RAN AWAY` is an RP2-only verdict on this bench -- 21 in
+        // 286 RP2 leg attempts against 0 in 434 ESP32 ones -- and one of them
+        // reported 30.8 m from the goal after 7 s, which at the 0.25 m/s cap is
+        // not a distance that can be driven in the time. This is what produces it.
+        //
+        // SLICING rather than clamping or skipping. At the normal 20 ms the loop
+        // body runs exactly ONCE with h == dts, so the calibrated model is
+        // untouched wherever nothing is wrong. Skipping the step would throw away
+        // the distance the wheels really covered during the stall; clamping the
+        // gain would under-report it. The battery-sag integrator above clamps its
+        // own gain for the same reason -- it was the only one of the two that did.
+        int slices = (int)(dts / (0.25f * tau)) + 1;
+        if (slices > 64) slices = 64;      // dts is already capped at 1 s above
+        const float h = dts / (float)slices;
+        for (int slice = 0; slice < slices; ++slice) {
+            // back-EMF: driving torque is proportional to the remaining speed error,
+            // and the gearbox returns only part of it
+            float accel = ilim_scale * simGearEfficiency() * (no_load_rpm - wheel_rpm_) / tau;
+            // viscous friction always opposes motion
+            accel -= wheel_rpm_ * (float)SIM_WHEEL_FRICTION;
+            // ...and the gear train's constant drag, which does not scale with speed.
+            // Signed against motion, and never enough to drive the wheel backwards
+            // through zero: that would be a gearbox pushing the robot.
+            if (wheel_rpm_ > 0.0f)
+                accel -= simCoulombRpm();
+            else if (wheel_rpm_ < 0.0f)
+                accel += simCoulombRpm();
+            // traction and current limit the achievable acceleration
+            if (accel > (float)SIM_WHEEL_MAX_ACCEL_RPM) accel = (float)SIM_WHEEL_MAX_ACCEL_RPM;
+            if (accel < -(float)SIM_WHEEL_MAX_ACCEL_RPM) accel = -(float)SIM_WHEEL_MAX_ACCEL_RPM;
 
-        const float was = wheel_rpm_;
-        wheel_rpm_ += accel * dts;
-        // Coulomb drag brakes; it must not become a motor. A wheel that crossed
-        // zero in one step with no drive stops at zero instead of reversing.
-        if (no_load_rpm == 0.0 && was != 0.0f && (was > 0.0f) != (wheel_rpm_ > 0.0f))
-            wheel_rpm_ = 0.0;
-        // an unpowered wheel settles rather than creeping forever
-        if (no_load_rpm == 0.0 && fabsf(wheel_rpm_) < 0.5) wheel_rpm_ = 0.0;
+            const float was = wheel_rpm_;
+            wheel_rpm_ += accel * h;
+            // Coulomb drag brakes; it must not become a motor. A wheel that crossed
+            // zero in one step with no drive stops at zero instead of reversing.
+            if (no_load_rpm == 0.0 && was != 0.0f && (was > 0.0f) != (wheel_rpm_ > 0.0f))
+                wheel_rpm_ = 0.0;
+            // an unpowered wheel settles rather than creeping forever
+            if (no_load_rpm == 0.0 && fabsf(wheel_rpm_) < 0.5) wheel_rpm_ = 0.0;
+            // A simulated motor may not turn faster than its own no-load speed.
+            // With the slicing above it cannot, and this is the invariant that
+            // says so: if it ever trips, the encoder must not be the part that
+            // publishes an impossible speed as real motion.
+            const float ceiling = (float)MOTOR_MAX_RPM * simVoltageRatio();
+            if (wheel_rpm_ > ceiling) wheel_rpm_ = ceiling;
+            if (wheel_rpm_ < -ceiling) wheel_rpm_ = -ceiling;
 
-        // accumulate ticks so read() stays consistent with getRPM()
-        ticks_ += (double)wheel_rpm_ / 60.0 * counts_per_rev_ * dts;
+            // accumulate ticks so read() stays consistent with getRPM()
+            ticks_ += (double)wheel_rpm_ / 60.0 * counts_per_rev_ * h;
+        }
     }
 
 public:

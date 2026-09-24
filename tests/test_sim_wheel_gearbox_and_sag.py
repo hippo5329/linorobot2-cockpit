@@ -49,6 +49,14 @@ template <class T, class A, class B> T constrain(T v, A lo, B hi) { return v < (
 #define PI 3.14159265358979323846
 #define DEG_TO_RAD (PI / 180.0)
 #define MOTOR_MAX_RPM 140
+// The board config supplies these; the stub must follow the header. It did not,
+// and `MOTOR_OPERATING_VOLTAGE` -- added with the voltage derating -- made
+// sim_wheel.h stop COMPILING here. Every case in this file then reported
+// "skipped", so the simulated motor had no local coverage at all while the model
+// was being changed. See the fixture: a subject that will not build is a
+// failure, not a skip.
+#define MOTOR_OPERATING_VOLTAGE 12.0
+#define MOTOR_POWER_MAX_VOLTAGE 12.0
 #define PWM_BITS 10
 #define PWM_MAX (pow(2, PWM_BITS) - 1)
 struct StubSerial { int printf(const char *, ...) { return 0; } void println(const char *) {} };
@@ -62,6 +70,7 @@ void *enc_new(int cpr) { return (void *)new SimEncoder(-1, -1, cpr); }
 void enc_feed(void *e, int pwm) { ((SimEncoder *)e)->feed(pwm); }
 float enc_rpm(void *e) { return ((SimEncoder *)e)->getRPM(); }
 void tick(unsigned long us) { __advance(us); }
+int enc_read(void *e) { return ((SimEncoder *)e)->read(); }
 }
 """
 
@@ -123,7 +132,16 @@ def lib(tmp_path_factory):
          os.path.join(d, "shim.cpp"), "-I", str(d), "-I", ENC],
         capture_output=True, text=True)
     if res.returncode != 0:
-        pytest.skip(f"sim_wheel.h does not build against the stub: {res.stderr[:500]}")
+        # FAIL, not skip. A missing compiler is the environment's business and
+        # skips above; a subject that will not COMPILE is the finding, and
+        # reporting it as "skipped" is how six cases in this file sat out every
+        # run from the moment MOTOR_OPERATING_VOLTAGE entered the header. The
+        # simulated motor then had no local coverage at all, through a stretch in
+        # which the model was repeatedly changed -- and the defect that was
+        # waiting in it sent a robot 30 m out of a 6 m room. Same lesson as
+        # backend-tests-skip-without-fastapi: a green run that skipped the
+        # subject is not a green run.
+        pytest.fail(f"sim_wheel.h does not build against the stub: {res.stderr[:1500]}")
     l = ctypes.CDLL(so)
     l.enc_new.restype = ctypes.c_void_p
     l.enc_new.argtypes = [ctypes.c_int]
@@ -131,6 +149,8 @@ def lib(tmp_path_factory):
     l.enc_rpm.restype = ctypes.c_float
     l.enc_rpm.argtypes = [ctypes.c_void_p]
     l.tick.argtypes = [ctypes.c_ulong]
+    l.enc_read.restype = ctypes.c_int
+    l.enc_read.argtypes = [ctypes.c_void_p]
     return l
 
 
@@ -283,3 +303,85 @@ def test_the_config_keys_reach_the_env():
                              ("sim_sag", "battery_sag")):
         assert f'"{env_key}": "{cfg_key}"' in src, f"{cfg_key} is not mapped to {env_key}"
         assert f'("{env_key}", float)' in src, f"{env_key} is not cast as a float"
+
+
+# --- what a stalled loop does to the model ----------------------------------
+# `integrate()` is an explicit Euler step of d(rpm)/dt = (no_load - rpm)/tau.
+# tau is SIM_WHEEL_TAU_MS = 150 ms at the reference mass, so the step is free of
+# overshoot only while dt < tau and stable only while dt < 2*tau. The rollover
+# guard admits dt up to 1 SECOND -- a gain of dt/tau = 6.7 -- and the wheel speed
+# is never bounded by the motor's own no-load speed, so one long loop interval
+# takes the simulated wheel to a speed the motor cannot reach and the encoder
+# integrates it faithfully.
+#
+# Why it matters beyond tidiness: RAN AWAY verdicts are an RP2-only event on this
+# bench -- 21 in 286 RP2 leg attempts against 0 in 434 ESP32 ones -- and one of
+# them reported 30.8 m from the goal after 7 s, which at the 0.25 m/s cap is
+# distance that cannot be driven in the time. That is an integration jump.
+#
+# The battery-sag integrator in this same header already clamps its own gain to
+# 1.0. Only the wheel was left unbounded.
+
+def _peak_and_ticks(lib, step_us, secs=2.0, pwm=PWM_MAX, cpr=1000):
+    """Hold full duty for `secs` of MODEL time, sampled in `step_us` slices."""
+    ws = [lib.enc_new(cpr) for _ in range(4)]
+    peak = 0.0
+    for _ in range(int(secs * 1e6 / step_us)):
+        lib.tick(step_us)
+        for w in ws:
+            lib.enc_feed(w, pwm)
+        peak = max(peak, abs(lib.enc_rpm(ws[0])))
+    return peak, lib.enc_read(ws[0])
+
+
+def test_a_stalled_loop_cannot_take_the_wheel_past_its_own_motor(lib):
+    """400 ms between calls is a loop hiccup, not a different motor."""
+    peak, _ = _peak_and_ticks(lib, 400_000)
+    assert peak <= 140 * 1.10, (
+        f"a 400 ms loop interval drove the simulated wheel to {peak:.0f} rpm, "
+        "past MOTOR_MAX_RPM=140 -- the encoder reports it as real motion")
+
+
+def test_a_stalled_loop_never_reports_MORE_distance_than_it_travelled(lib):
+    """The asymmetry is the point, so the bound is one-sided.
+
+    Before the slicing, two seconds of full duty read 3830 ticks at 20 ms steps
+    and 8872 at 900 ms -- 2.3x the distance, which odometry takes as ground
+    truth and which is how a robot ends up 30 m outside a 6 m room. After it,
+    the coarse figure is at or below the fine one.
+
+    It is not exactly equal, and the residual is worth naming rather than
+    hiding behind a symmetric tolerance: the pack sag and the current limiter
+    are evaluated ONCE per call, from the speed at entry, so a long call spends
+    its whole interval at the brown-out the first instant implied and
+    UNDER-reports (3059 against 3828 at 400 ms). Under-reporting during a stall
+    is the conservative direction -- it cannot invent motion -- so it is left
+    as it is rather than risk changing how the four wheels share the pack.
+    """
+    _, fine = _peak_and_ticks(lib, 20_000)
+    _, coarse = _peak_and_ticks(lib, 400_000)
+    assert fine > 0
+    assert coarse <= fine * 1.05, (
+        f"a stalled loop reported {coarse} ticks where 50 Hz reported {fine} -- "
+        "distance the robot did not travel")
+    assert coarse > fine * 0.5, (
+        f"{coarse} against {fine}: the model has stopped advancing, not just damped")
+
+
+def test_the_model_is_already_resolved_at_the_normal_loop_rate(lib):
+    """The guard above must not be bought by changing what the model does when
+    nothing is wrong: halving an ordinary 20 ms step changes almost nothing."""
+    _, at20 = _peak_and_ticks(lib, 20_000)
+    _, at10 = _peak_and_ticks(lib, 10_000)
+    assert abs(at20 - at10) / at10 < 0.05, f"{at10} vs {at20} ticks"
+
+
+def test_a_subject_that_will_not_build_fails_rather_than_skipping():
+    """The guard on the guard. Written as a source check because the alternative
+    is breaking the stub on purpose inside a live fixture."""
+    src = open(os.path.abspath(__file__), encoding="utf-8").read()
+    build = src[src.index("res = subprocess.run("):]
+    build = build[:build.index("l = ctypes.CDLL")]
+    assert "pytest.fail(" in build, \
+        "a header that does not compile is being reported as a skip again"
+    assert "pytest.skip" not in build, "the build failure branch skips"
