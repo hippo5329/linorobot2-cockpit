@@ -215,9 +215,30 @@ jobs:
           published is missing at least one archive (firmware job: ${{ needs.firmware.result }})"
           exit 1
 
+  # Built once per ARCHITECTURE, on a runner of that architecture, and stitched
+  # into one multi-arch tag by the `manifest` job below.
+  #
+  # arm64 is not optional any more: the October robots are a Pi 5 and a Jetson
+  # Orin Nano, and an amd64-only image does not fail slowly on them, it fails
+  # with `exec format error`. Every base this project uses already publishes
+  # arm64/v8 (ros:jazzy-ros-base, ros:lyrical-ros-base, python:3.12-slim --
+  # checked against the registry), so nothing in the Dockerfiles has to change.
+  #
+  # NATIVE runners, not QEMU. `platforms: linux/amd64,linux/arm64` on one x86
+  # runner is the one-line version and it does not survive contact with this
+  # image: the robot image compiles picotool, the micro-ROS agent and the LD19
+  # driver from source, and emulated that is hours against GitHub's six-hour job
+  # ceiling. `ubuntu-24.04-arm` is free for public repositories and builds at
+  # native speed, so each architecture takes about as long as amd64 does today
+  # and they run in parallel.
+  #
+  # Each job pushes BY DIGEST (no tag) and hands its digest to the manifest job.
+  # Pushing both to the same tag would leave whichever finished last as the whole
+  # image, silently -- an arm64-only :jazzy is worse than no arm64 at all,
+  # because the bench would pull it.
   images:
-    name: Docker image ${{ matrix.name }}
-    runs-on: ubuntu-24.04
+    name: Docker image ${{ matrix.name }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -226,14 +247,38 @@ jobs:
             dockerfile: docker/Dockerfile
             image: linorobot2-cockpit-robot
             distro: jazzy
+            arch: amd64
+            runner: ubuntu-24.04
+          - name: robot-jazzy
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: jazzy
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - name: robot-lyrical
             dockerfile: docker/Dockerfile
             image: linorobot2-cockpit-robot
             distro: lyrical
+            arch: amd64
+            runner: ubuntu-24.04
+          - name: robot-lyrical
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: lyrical
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - name: pio
             dockerfile: docker/Dockerfile.pio
             image: linorobot2-cockpit-pio
             distro: ''
+            arch: amd64
+            runner: ubuntu-24.04
+          - name: pio
+            dockerfile: docker/Dockerfile.pio
+            image: linorobot2-cockpit-pio
+            distro: ''
+            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - name: Stage the sibling ROS package (LD19 driver)
@@ -269,13 +314,93 @@ jobs:
             case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }},$tags" ;; esac
           fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          platforms: linux/${{ matrix.arch }}
           build-args: |
             ROS_DISTRO=${{ matrix.distro || 'jazzy' }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # No tag here. The digest goes to the manifest job, which is the only
+          # thing that writes a tag -- see the job comment.
+          outputs: type=image,name=${{ steps.tags.outputs.base }},push-by-digest=true,name-canonical=true,push=true
+          # Per ARCH, or the two architectures evict each other's layers and
+          # every build is cold.
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+      - name: Hand the digest to the manifest job
+        run: |
+          mkdir -p /tmp/digests
+          # The file NAME is the digest; the content does not matter. Slashes
+          # cannot go in a filename, so the algorithm prefix is stripped.
+          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          ls /tmp/digests
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.name }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One tag per image, listing both architectures. Nothing else writes a tag.
+  manifest:
+    name: Multi-arch tag ${{ matrix.name }}
+    needs: images
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: robot-jazzy
+            image: linorobot2-cockpit-robot
+            distro: jazzy
+          - name: robot-lyrical
+            image: linorobot2-cockpit-robot
+            distro: lyrical
+          - name: pio
+            image: linorobot2-cockpit-pio
+            distro: ''
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.name }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Create and push the multi-arch tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -eu
+          base="docker.io/$DOCKERHUB_USERNAME/${{ matrix.image }}"
+          if [ -n "${{ matrix.distro }}" ]; then
+            tags="$base:${{ matrix.distro }}"
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }}-${{ matrix.distro }} $tags" ;; esac
+          else
+            tags="$base:latest"
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }} $tags" ;; esac
+          fi
+          # Both architectures, or do not publish. A manifest with one arch in
+          # it looks like a success and is the exact failure this job exists to
+          # prevent: the bench would pull an amd64-only :jazzy and never notice
+          # until a Pi did.
+          n=$(ls -1 /tmp/digests | wc -l)
+          [ "$n" -eq 2 ] || { echo "expected 2 digests, found $n:"; ls -l /tmp/digests; exit 1; }
+          args=""
+          for d in /tmp/digests/*; do args="$args $base@$(basename "$d")"; done
+          for t in $tags; do
+            docker buildx imagetools create --tag "$t" $args
+          done
+          for t in $tags; do
+            echo "=== $t"
+            docker buildx imagetools inspect "$t" | grep -E "Name|Platform"
+          done
