@@ -416,6 +416,43 @@ soldered to it still reaches SLAM and Nav2.
 The Nav2 goal test sends the robot behind that interior wall, so a green run proves planning,
 not just motion.
 
+### The simulated drivetrain is a real motor, and the whole stack can run without a board
+
+`use_fake_wheel` is not a ramp toward the commanded speed. It is a brushed DC gear motor:
+torque falling linearly from stall to no-load, a gearbox that returns 70–80% of it, constant
+gear drag, viscous friction, one battery shared by four wheels whose sag *lags*, the bridge's
+fixed and current-proportional losses, and an optional driver current limiter in amps. So a
+12 kg robot does not accelerate like a 3.5 kg one, four driven wheels cost more than two, and
+a motor rated above its pack never reaches its rated speed.
+
+Every term is a `base_controller.simulation` key and therefore an env key, so sweeping one
+costs a 4 KB write rather than a firmware build — and the generated configs write the block
+out in full, at the firmware's own defaults, so a config you read describes the whole
+simulated robot.
+
+```bash
+python3 scripts/drivetrain_report.py --params config/reference/gendrv_config.yaml
+```
+
+tells you what those motors can deliver — top speed, acceleration from rest and once the pack
+has sagged, the rotation radius with the rule that produced it — and whether the Nav2 limits
+in that same config are asking for more than the robot has. It parses the model's constants
+out of `fake_wheel.h` rather than restating them, and it prints what `test_acc` *would*
+measure by running the model on that tool's own 20 ms sampling. Which means **you no longer
+flash a board to find those numbers**; on a fake-wheel board `test_acc` says so and points
+here.
+
+The Nav2 velocity limits and `max_rpm_ratio` are derived from it on save
+(`kinematics.auto_nav2_limits: false` turns that off). That matters: a 2.5% rise in one
+yaw ceiling took a drivetrain from ten green legs to seven, twice, because the shipped
+tuning had no margin.
+
+And `scripts/fake_base_node.py` puts the same model on the robot computer, so `ros2 launch
+linorobot2_cockpit bringup.launch.py fake_base:=true` brings up EKF, SLAM, Nav2 and the goal
+test **with no microcontroller at all** — for config questions, sweeps and CI. It is not a
+substitute for hardware: it removes micro-ROS, both transports, the board's timing and the
+flash, which is most of what a hardware run tests.
+
 ---
 
 ## Topics
