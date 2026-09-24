@@ -680,6 +680,160 @@ def auto_pid_enabled(params):
 T90_OVER_TAU = math.log(10.0)          # 2.3026
 
 
+# ------------------------------------------------------------------------------
+# The richer identification a real board can now produce.
+#
+# test_acc's `IDENT` lines are per WHEEL and include a closed-loop pass, which
+# the aggregate MAX VEL / time-to-0.9x table cannot give:
+#
+#   per wheel   four real wheels have different friction, different gearboxes
+#               and, on a used robot, different wear. One set of gains is then
+#               wrong for three of them, and the aggregate table -- which
+#               averages four wheels into one velocity -- cannot say so.
+#   closed loop a plant fit says what the motor does when shoved. Whether the
+#               PID around it is stable is a different question, and the
+#               simulated check here cannot answer it for a real robot: it knows
+#               nothing about that robot's backlash, encoder quantisation or
+#               load.
+# ------------------------------------------------------------------------------
+IDENT_LINE = re.compile(r"^IDENT (\w+) (.*)$", re.MULTILINE)
+
+
+def parse_ident(text):
+    """The IDENT block from a real test_acc run, as plain dicts.
+
+    Returns None when the transcript has no IDENT lines at all -- an older
+    firmware, which is a fact worth reporting rather than an error.
+    """
+    out = {"gains": {}, "robot": {}, "deadzone": {}, "plant": {}, "loop": {}}
+    found = False
+    for kind, rest in IDENT_LINE.findall(text):
+        fields = {}
+        for token in rest.split():
+            if "=" not in token:
+                continue
+            k, _, v = token.partition("=")
+            try:
+                fields[k] = float(v)
+            except ValueError:
+                fields[k] = v
+        if kind in ("gains", "robot"):
+            out[kind] = fields
+            found = True
+        elif kind in ("deadzone", "plant"):
+            wheel = int(fields.get("wheel", 0))
+            out[kind][wheel] = fields
+            found = True
+        elif kind == "loop":
+            wheel = int(fields.get("wheel", 0))
+            out["loop"].setdefault(wheel, []).append(fields)
+            found = True
+    return out if found else None
+
+
+def wheels_disagree(ident, tol=0.15):
+    """Which wheels differ from the median by more than `tol`, and in what.
+
+    The question the aggregate table cannot ask. A wheel whose gain or time
+    constant is 15% off its siblings will not be well served by their gains, and
+    on a real robot that shows up as a base that pulls to one side under
+    acceleration -- which reads like a kinematics error and is not one.
+    """
+    findings = []
+    for field, label in (("K", "plant gain"), ("tau_ms", "time constant"),
+                         ("steady_rpm", "top speed")):
+        vals = {w: p.get(field) for w, p in (ident.get("plant") or {}).items()
+                if isinstance(p.get(field), float) and p[field] > 0}
+        if len(vals) < 2:
+            continue
+        ordered = sorted(vals.values())
+        mid = ordered[len(ordered) // 2]
+        if mid <= 0:
+            continue
+        for w, v in sorted(vals.items()):
+            if abs(v - mid) / mid > tol:
+                findings.append((w, label, v, mid, (v - mid) / mid))
+    return findings
+
+
+def ident_report(ident, d=None):
+    """What a real board's IDENT block says, and what to do about it."""
+    out = ["--- measured on the robot (test_acc IDENT)"]
+    g = ident.get("gains") or {}
+    if g:
+        out.append(f"    running gains kp {g.get('kp')} ki {g.get('ki')} "
+                   f"kd {g.get('kd')}, {g.get('rate_hz', 50):.0f} Hz, "
+                   f"{g.get('pwm_max', 0):.0f} counts full scale")
+
+    for w in sorted(ident.get("plant") or {}):
+        pl = ident["plant"][w]
+        dz = (ident.get("deadzone") or {}).get(w, {})
+        dz_txt = (f", dead below {dz['pwm']:.0f} counts ({dz['duty'] * 100:.1f}%)"
+                  if dz.get("pwm", -1) >= 0 else ", dead zone not found")
+        out.append(f"    wheel {w}: {pl.get('steady_rpm', 0):.1f} rpm, "
+                   f"tau {pl.get('tau_ms', 0):.0f} ms, K {pl.get('K', 0):.5f}{dz_txt}")
+
+    odd = wheels_disagree(ident)
+    if odd:
+        out.append("    ** the wheels do not match, so one set of gains cannot suit "
+                   "all of them:")
+        for w, label, v, mid, frac in odd:
+            out.append(f"       wheel {w} {label} {v:.4g} vs {mid:.4g} median "
+                       f"({frac * 100:+.0f}%)")
+    elif len(ident.get("plant") or {}) > 1:
+        out.append("    the wheels agree within 15%, so one set of gains suits them all")
+
+    loops = ident.get("loop") or {}
+    if loops:
+        out.append("    closed loop, as configured:")
+        for w in sorted(loops):
+            for run in loops[w]:
+                verdict = ("calm" if run.get("overshoot", 1) <= PID_MAX_OVERSHOOT
+                           and run.get("crossings", 9) <= PID_MAX_CROSSINGS else "RINGS")
+                settle = run.get("settle_ms", -1)
+                settle_txt = "never    " if settle < 0 else f"{settle:.0f} ms"
+                if settle < 0:
+                    verdict = "RINGS"      # it never got inside the band at all
+                out.append(f"       wheel {w} at {run.get('sp', 0):5.1f} rpm: "
+                           f"overshoot {run.get('overshoot', 0) * 100:5.1f}%  "
+                           f"crossings {run.get('crossings', 0):.0f}  "
+                           f"settle {settle_txt}  "
+                           f"steady err {run.get('err', 0):+.2f} rpm   {verdict}")
+    return out
+
+
+def plant_from_ident(d, ident):
+    """One plant for the tuner, from the per-wheel measurements.
+
+    The MEDIAN wheel, not the mean: a single seized or miswired wheel would drag
+    an average and produce gains that suit no wheel at all, where the median
+    still describes a real one.
+    """
+    plants = [p for p in (ident.get("plant") or {}).values()
+              if isinstance(p.get("K"), float) and p["K"] > 0 and p.get("tau_ms", 0) > 0]
+    if not plants:
+        return None
+    ks = sorted(p["K"] for p in plants)
+    taus = sorted(p["tau_ms"] for p in plants)
+    steadies = sorted(p["steady_rpm"] for p in plants)
+    mid = len(plants) // 2
+    pwm_max = float((ident.get("gains") or {}).get("pwm_max") or d["pwm_max"])
+    return {
+        "steady_rpm": steadies[mid],
+        "pwm_step": pwm_max,
+        "gain": ks[mid],
+        "tau": taus[mid] / 1000.0,
+        "t_rise": math.log(9.0) * taus[mid] / 1000.0,
+        "t_settle": math.log(50.0) * taus[mid] / 1000.0,
+        "settled": True,
+        "dead_counts": ((ident.get("deadzone") or {}).get(1, {}) or {}).get("pwm", 0.0),
+        "overshoot": 0.0,
+        "ts": TICK_S,
+        "measured": True,
+        "per_wheel": True,
+    }
+
+
 def plant_from_measurements(d, max_vel, t_to_90, pwm_step=None):
     """The same plant dict, from a real robot's numbers instead of the model."""
     if d["circ"] <= 0 or max_vel <= 0 or t_to_90 <= 0:
@@ -1120,6 +1274,14 @@ def report(params, name=""):
     return "\n".join(out), over
 
 
+def dr_drivetrain_safe(params):
+    """drivetrain() for the CLI, where a half-written config must not traceback."""
+    try:
+        return drivetrain(params)
+    except (TypeError, ValueError, KeyError):
+        return {"pwm_max": 1023.0, "circ": 0.0, "stall_duty": 0.04}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1142,10 +1304,16 @@ def main():
     args = ap.parse_args()
 
     step = None
+    ident = None
     if args.from_test_acc:
         with open(args.from_test_acc, encoding="utf-8") as fh:
-            step = parse_test_acc(fh.read())
-        if not step:
+            transcript = fh.read()
+        # The IDENT block wins when it is there: per wheel, and with the loop
+        # closed. The two summary lines are the fallback for a board running
+        # firmware from before test_acc learned to identify itself.
+        ident = parse_ident(transcript)
+        step = parse_test_acc(transcript)
+        if not ident and not step:
             raise SystemExit(f"{args.from_test_acc}: no 'MAX VEL' and 'time to 0.9x max "
                              f"vel' lines -- is this a test_acc transcript?")
     elif args.max_vel and args.t90:
@@ -1158,7 +1326,22 @@ def main():
     for path in args.params:
         with open(path, encoding="utf-8") as fh:
             params = yaml.safe_load(fh) or {}
-        if step:
+        if ident:
+            plant = plant_from_ident(dr_drivetrain_safe(params), ident)
+            if plant:
+                # The median wheel's plant, recorded the same way the two-number
+                # fallback is -- so a later save re-derives the same gains
+                # without the board being present.
+                params.setdefault("kinematics", {})["step_response"] = {
+                    "max_vel": round(plant["steady_rpm"] * math.pi
+                                     * float((params.get("kinematics") or {})
+                                             .get("wheel_diameter", 0)) / 60.0, 4),
+                    "t_to_90": round(plant["tau"] * T90_OVER_TAU, 4),
+                    "pwm": plant["pwm_step"],
+                    "measured": datetime.date.today().isoformat(),
+                    "source": "test_acc IDENT, median wheel",
+                }
+        elif step:
             # Recorded in the config, not just used: gains are only reproducible
             # if the two numbers behind them are written down.
             rec = {"max_vel": step["max_vel"], "t_to_90": step["t_to_90"],
@@ -1176,6 +1359,9 @@ def main():
             print()
         text, over = report(params, os.path.basename(path))
         print(text)
+        if ident:
+            print()
+            print("\n".join(ident_report(ident)))
         print()
         any_over = any_over or over
     return 1 if any_over else 0

@@ -302,6 +302,199 @@ static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
     motor4_controller->spin(pwm4);
 }
 
+// ==============================================================================
+// Identification: what a host needs to TUNE this robot, measured on this robot.
+//
+// The open-loop table below (MAX VEL / MAX ACC / time to 0.9x) is a step
+// response, and scripts/drivetrain_report.py already fits a first-order plant to
+// it and hands back IMC gains. Two things that aggregate table cannot answer,
+// and both of them decide whether the gains are right:
+//
+//   PER WHEEL. The table averages four wheels into one velocity. Four real
+//   wheels have different friction, different gearboxes and, on a used robot,
+//   different wear -- and the model assumes they do not differ. If they do, one
+//   set of gains is wrong for three of them, and nothing anywhere would say so.
+//
+//   CLOSED LOOP. A plant fit says what the motor does when you shove it. It does
+//   not say whether the PID around it is stable, and the simulated check on the
+//   host cannot either: it knows nothing about this robot's backlash, its
+//   encoder quantisation or the load on its wheels. Overshoot and setpoint
+//   crossings have to be measured with the loop actually closed.
+//
+// Everything here is accumulated ONLINE -- running peak, crossing count,
+// settling time -- and never stored as a trace. A per-wheel trace at the control
+// rate would be several kilobytes on a board whose whole static segment is
+// 124580 bytes, and the summary is what gets used anyway.
+//
+// The output is deliberately machine-readable and one fact per line, because it
+// is read by a script and pasted into issues by people:
+//
+//   IDENT gains kp=... ki=... kd=... pwm_max=... rate_hz=...
+//   IDENT deadzone wheel=1 pwm=... duty=...
+//   IDENT plant wheel=1 steady_rpm=... tau_ms=... K=...
+//   IDENT loop wheel=1 sp=... overshoot=... crossings=... settle_ms=... err=...
+// ==============================================================================
+namespace ident {
+
+const unsigned TICK_MS = 20;            // CONTROL_TIMER: the loop's own period
+
+EncoderInterface *enc(int i)
+{
+    return (i == 0) ? motor1_encoder : (i == 1) ? motor2_encoder
+         : (i == 2) ? motor3_encoder : motor4_encoder;
+}
+
+MotorInterface *mot(int i)
+{
+    return (i == 0) ? motor1_controller : (i == 1) ? motor2_controller
+         : (i == 2) ? motor3_controller : motor4_controller;
+}
+
+PID *pid(int i)
+{
+    return (i == 0) ? &motor1_pid : (i == 1) ? &motor2_pid
+         : (i == 2) ? &motor3_pid : &motor4_pid;
+}
+
+void stopAll()
+{
+    for (unsigned i = 0; i < total_motors; i++) mot(i)->spin(0);
+    delay(700);                          // let the wheels actually stop
+}
+
+// The smallest PWM that turns the wheel. FAKE_WHEEL_STALL_DUTY is a guess at 4%;
+// this is the real number, and it differs per wheel because stiction does.
+void deadzone()
+{
+    const int pwm_max = (1 << PWM_BITS) - 1;
+    for (unsigned i = 0; i < total_motors; i++) {
+        int found = -1;
+        for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
+            mot(i)->spin(pwm);
+            delay(120);
+            // Two samples: the first getRPM() after a stop can still carry the
+            // previous motion on a filtered encoder.
+            enc(i)->getRPM();
+            delay(80);
+            if (fabs(enc(i)->getRPM()) > 2.0) found = pwm;
+        }
+        mot(i)->spin(0);
+        delay(300);
+        Serial.printf("IDENT deadzone wheel=%u pwm=%d duty=%.3f\n",
+                      i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
+    }
+}
+
+// Open-loop step, per wheel: the plant the PID has to control.
+//
+// tau is the 63.2% crossing, which is the definition for a first-order step, and
+// K is rpm per PWM count -- the units the loop gain is the inverse of.
+void plant()
+{
+    const int pwm_max = (1 << PWM_BITS) - 1;
+    for (unsigned i = 0; i < total_motors; i++) {
+        enc(i)->getRPM();
+        mot(i)->spin(pwm_max);
+        float peak = 0.0;
+        unsigned tau_ticks = 0;
+        float samples[50];
+        for (unsigned t = 0; t < 50; t++) {          // 1 s at 20 ms
+            delay(TICK_MS);
+            samples[t] = fabs(enc(i)->getRPM());
+            if (samples[t] > peak) peak = samples[t];
+        }
+        mot(i)->spin(0);
+        const float steady = samples[49];
+        for (unsigned t = 0; t < 50; t++) {
+            if (samples[t] >= steady * 0.632f) { tau_ticks = t; break; }
+        }
+        Serial.printf("IDENT plant wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
+                      i + 1, steady, tau_ticks * TICK_MS,
+                      pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak);
+        delay(700);
+    }
+}
+
+// Closed loop, per wheel: is the PID in this config actually stable on it?
+//
+// Overshoot alone is not enough -- a loop can creep past the setpoint once and
+// settle, or cross it repeatedly by a hair and never settle. The crossing count
+// is the second test, and it is the one that catches ringing.
+void loopStep(float setpoint_rpm)
+{
+    const unsigned ticks = 150;                      // 3 s
+    for (unsigned i = 0; i < total_motors; i++) {
+        // Start from a known state. The integral carries between steps, so the
+        // second setpoint would be measured on a loop that is already wound --
+        // and the overshoot figure would belong to the previous step.
+        //
+        // Done through the PID's OWN zeroing path (`setpoint == 0` with the
+        // wheel stopped clears integral and derivative) rather than by adding a
+        // reset method: this is the state the robot is in every time it stops,
+        // so the identification starts where real driving starts.
+        for (unsigned t = 0; t < 30; t++) {
+            mot(i)->spin((int)pid(i)->compute(0.0f, enc(i)->getRPM()));
+            delay(TICK_MS);
+        }
+        enc(i)->getRPM();
+        float peak = 0.0, last = 0.0, err_sum = 0.0;
+        int crossings = 0;
+        unsigned settle_tick = ticks;
+        bool was_below = true;
+        for (unsigned t = 0; t < ticks; t++) {
+            const float rpm = enc(i)->getRPM();
+            mot(i)->spin((int)pid(i)->compute(setpoint_rpm, rpm));
+            if (fabs(rpm) > peak) peak = fabs(rpm);
+            const bool below = rpm < setpoint_rpm;
+            if (t > 0 && below != was_below) crossings++;
+            was_below = below;
+            // Settling: the LAST tick outside the 2% band, so a curve that
+            // wanders back out is not called settled at its first touch.
+            if (fabs(rpm - setpoint_rpm) > fabs(setpoint_rpm) * 0.02f)
+                settle_tick = t + 1;
+            if (t >= ticks - 25) err_sum += (setpoint_rpm - rpm);   // last 0.5 s
+            last = rpm;
+            delay(TICK_MS);
+        }
+        mot(i)->spin(0);
+        const float over = setpoint_rpm != 0.0f
+                         ? (peak - fabs(setpoint_rpm)) / fabs(setpoint_rpm) : 0.0f;
+        // -1, not 0, for "never settled". Zero reads as "settled instantly",
+        // which is the opposite of what it means and is exactly the wheel you
+        // most want to notice.
+        Serial.printf("IDENT loop wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
+                      "settle_ms=%d err=%.2f final=%.1f\n",
+                      i + 1, setpoint_rpm, over, crossings,
+                      settle_tick >= ticks ? -1 : (int)(settle_tick * TICK_MS),
+                      err_sum / 25.0f, last);
+        delay(700);
+    }
+}
+
+void run()
+{
+    Serial.printf("IDENT gains kp=%.4f ki=%.4f kd=%.4f pwm_max=%d rate_hz=%u\n",
+                  (float)K_P, (float)K_I, (float)K_D, (1 << PWM_BITS) - 1,
+                  1000 / TICK_MS);
+    Serial.printf("IDENT robot base=%d wheels=%u max_rpm=%d ratio=%.3f wheel_d=%.4f\n",
+                  (int)Kinematics::LINO_BASE, total_motors, (int)MOTOR_MAX_RPM,
+                  (float)MAX_RPM_RATIO, (float)WHEEL_DIAMETER);
+    stopAll();
+    deadzone();
+    plant();
+    // Three setpoints, because a wheel loop is not linear: stiction and the
+    // dead zone dominate at a crawl, the PWM rail and the pack's sag near the
+    // top. Gains that are calm at cruise and ring at a crawl are not calm.
+    const float top = (float)MOTOR_MAX_RPM * (float)MAX_RPM_RATIO;
+    loopStep(top * 0.20f);
+    loopStep(top * 0.55f);
+    loopStep(top * 0.90f);
+    stopAll();
+    Serial.println("IDENT done");
+}
+
+}  // namespace ident
+
 void loop_() {
     if (!imu_msg) return;   // setup_ could not allocate; nothing to run
 
@@ -327,6 +520,15 @@ void loop_() {
         syslog(LOG_INFO, "test_acc refused: fake_wheel=1, nothing to measure");
         delay(10000);
         return;
+    }
+
+    // Identification first, while the motors are cold and the pack is full:
+    // once, not once per run, because the twelve runs below halve the PWM as
+    // they go and a plant fitted across different step sizes is not a plant.
+    static bool identified = false;
+    if (!identified) {
+        identified = true;
+        ident::run();
     }
 
     // The velocity trace lives here, on the stack, for exactly as long as the
