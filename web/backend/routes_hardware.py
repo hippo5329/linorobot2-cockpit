@@ -58,8 +58,9 @@ async def api_hardware_test(request: Request):
     # asking for "gendrv" sent fetch_prebuilt after a release artifact that
     # does not exist -- firmware upload 404ed on the one ESP32 board this
     # project ships a reference design for.
-    if action == "upload":
-        refuse_sim_flash(data.get("mcu_env"))
+    # Build and monitor too: the Sim MCU has no firmware to compile and no
+    # serial port, and a build fell through to "pio run -e pico2".
+    refuse_sim_flash(data.get("mcu_env"))
     mcu_env = mcu_identity.pio_env_for(data.get("mcu_env"), "pico2")
 
     if action in ("upload", "monitor"):

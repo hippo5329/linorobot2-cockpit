@@ -525,7 +525,15 @@ function ws() {
 }
 
 // ---------- status polling ----------
+// Bumped by selectRobot() when it asks for a robot and again when the server
+// has switched. A poll sent before that answers with the OLD robot, and it
+// landed after the switch: state.robot_name went back to bare_sim while Tabs
+// 1-5 were being filled for bare_pico2, so every check made then (the Sim MCU
+// guards among them) judged the wrong robot. Such a response is dropped whole;
+// selectRobot() polls again when it is done.
+let robotEpoch = 0;
 async function refreshStatus() {
+  const epoch = robotEpoch;
   try {
     // Tell the server which controller 1-Click would actually run, so the
     // board-mismatch verdict it computes is about the run the user would get
@@ -535,6 +543,7 @@ async function refreshStatus() {
     const q = sel && sel.value ? `?controller=${encodeURIComponent(sel.value)}` : "";
     const res = await fetch(`/api/status${q}`);
     const s = await res.json();
+    if (epoch !== robotEpoch) return;
     state.status = s;
     state.config = s.config;
     // On first load the robot is already chosen server-side, so selectRobot()
@@ -573,6 +582,7 @@ async function refreshStatus() {
     if (robotInput && document.activeElement !== robotInput) {
       robotInput.value = state.robot_name;
     }
+    if (typeof updateBoardOnlyButtons === "function") updateBoardOnlyButtons();
     const branchInput = document.getElementById("hdr-git-branch");
     if (branchInput && document.activeElement !== branchInput) {
       branchInput.value = state.git_branch;
@@ -932,11 +942,13 @@ async function selectRobot(name, byUser = true) {
   if (name === state.robot_name) return;
   if (byUser) userChoseController = true;   // a real change of robot, by the user
   try {
+    robotEpoch++;
     const res = await fetch("/api/robot/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     }).then((r) => r.json());
+    robotEpoch++;
     if (res.error || res.detail) {
       logLine(`[console] ${res.error || res.detail}`);
       const ri = document.getElementById("hdr-robot-name");

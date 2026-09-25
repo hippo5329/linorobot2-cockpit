@@ -399,6 +399,11 @@ function initBaseControllerConfigModule() {
   const btnRefreshPorts = document.getElementById("btn-refresh-ports-hw");
   if (btnRefreshPorts) btnRefreshPorts.addEventListener("click", refreshHwSerialPorts);
 
+  updateBoardOnlyButtons();
+  document.addEventListener("change", (e) => {
+    if (["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) updateBoardOnlyButtons();
+  });
+
   const btnHwFlash = document.getElementById("btn-hw-flash");
   if (btnHwFlash) btnHwFlash.addEventListener("click", () => executeHardwareAction("upload"));
 
@@ -529,3 +534,31 @@ function initBaseControllerConfigModule() {
   initReferenceDesigns();
 }
 
+
+// Buttons that act on a board. The Sim MCU has none, so while it is the robot
+// they are disabled with the reason rather than left to end in a ❌ from the
+// backend (user, 2026-09-25: the Sim MCU is so "user can run without board, no
+// flash error"). Only a disable made HERE is undone here: a button disabled by
+// a running action keeps its own state.
+const BOARD_ONLY_BUTTONS = [
+  "btn-hw-flash", "btn-hw-build", "btn-hw-monitor",
+  "btn-upload-sensors", "btn-upload-motors", "btn-upload-i2c", "btn-upload-acc",
+  "btn-upload-adc", "btn-upload-firmware", "btn-auto-detect-i2c", "btn-adc-run-cal",
+];
+function updateBoardOnlyButtons() {
+  const sim = state.robot_name === "bare_sim" || document.getElementById("cfg-mcu")?.value === "sim";
+  for (const id of BOARD_ONLY_BUTTONS) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (sim && b.dataset.simDisabled === undefined) {
+      b.dataset.simDisabled = b.title || "";
+      b.disabled = true;
+      b.title = "The Sim MCU has no board. Pick the board you plugged in on the Base & MCU tab.";
+    } else if (!sim && b.dataset.simDisabled !== undefined) {
+      b.title = b.dataset.simDisabled;
+      delete b.dataset.simDisabled;
+      b.disabled = false;
+    }
+  }
+  document.querySelectorAll(".sim-mcu-note").forEach((n) => { n.hidden = !sim; });
+}

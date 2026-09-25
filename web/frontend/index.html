@@ -765,6 +765,7 @@
             <span>⚡ Auto-Detect Sensors</span>
           </button>
         </div>
+        <p class="hint sim-mcu-note" style="margin:0.5rem 0 0 0;" hidden>🧪 The Sim MCU has no I2C bus to probe: its IMU, magnetometer and barometer are simulated.</p>
         <div id="i2c-detect-results" style="display:none; padding:0.6rem; background:rgba(0,0,0,0.3); border-radius:6px; font-size:0.85rem; margin-top: 0.75rem;"></div>
       </div>
 
@@ -1187,6 +1188,7 @@
         <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">🔄 Refresh Ports</button>
       </div>
       <p class="hint">Directly compile, flash, and verify microcontroller hardware sub-systems without starting the ROS 2 autonomy stack. Stop <code>micro_ros_agent</code> automatically, flash diagnostic binaries, and inspect serial output streams in real-time.</p>
+      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (<code>sim_base_node</code> on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the Base &amp; MCU tab to use these.</p>
 
       <!-- Diagnostic firmware selection & serial port bar -->
       <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">

@@ -32,6 +32,7 @@ from core import (
     regenerate_robot_description,
     save_params,
     set_active_params_path,
+    SIM_MCU,
     text_field,
     yaml_merge,
 )
@@ -217,6 +218,12 @@ async def api_toggle_sim_mode(request: Request):
     params = load_params()
     ctrl = params.setdefault("base_controller", {})
     controller_name = data.get("controller") or ctrl.get("name") or "pico2"
+    # The Sim MCU has no real device to switch to: turning its simulation off
+    # left bare_sim with no IMU, wheels, LiDAR, sonar or battery at all.
+    if not enabled and str(ctrl.get("name") or "").lower() == SIM_MCU:
+        raise HTTPException(status_code=400, detail=(
+            "The Sim MCU is simulation only. To design real hardware, pick your board "
+            "on the Base & MCU tab."))
 
     sensors = ctrl.setdefault("sensors", {})
     sensors["use_sim_wheel"] = enabled

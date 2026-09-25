@@ -566,9 +566,9 @@ function updateSimModeUI(enabled) {
   }
   if (descElem) {
     if (enabled) {
-      descElem.innerHTML = `Linorobot2 defaults to safe <b>Sim Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_SIM_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_SIM_IMU</code>), and simulated planar LiDAR scans (<code>USE_SIM_LD19</code>). This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.`;
+      descElem.innerHTML = `Linorobot2 defaults to safe <b>Sim Mode</b> simulation. The board simulates its wheel encoders (env <code>sim_wheel</code>), a 6-DOF IMU (<code>sim_imu</code>) and a planar LiDAR (<code>sim_ld19</code>), switched in its env partition with no rebuild. This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.`;
     } else {
-      descElem.innerHTML = `<b>Real Physical Hardware Mode Active.</b> Synthetic simulation flags (<code>USE_SIM_WHEEL</code>, <code>USE_SIM_IMU</code>, <code>USE_SIM_LD19</code>) are turned OFF. The microcontroller interacts with real physical motor drivers, wheel encoders, and real I2C sensors. Proceed to Step 2 (Drive &amp; Motors) and Step 4 (Pin Matrix) to finalize wiring pinouts.`;
+      descElem.innerHTML = `<b>Real Physical Hardware Mode Active.</b> The simulation env keys (<code>sim_wheel</code>, <code>sim_imu</code>, <code>sim_ld19</code>) are off. The microcontroller interacts with real physical motor drivers, wheel encoders, and real I2C sensors. Proceed to Step 2 (Drive &amp; Motors) and Step 4 (Pin Matrix) to finalize wiring pinouts.`;
     }
   }
   if (toggleBtn) {
@@ -610,9 +610,29 @@ function updateSimModeUI(enabled) {
   document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => {
     btn.textContent = enabled ? "⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design ➔" : "⚙️ Proceed to Step 2: Drive & Motors ➔";
   });
+
+  // The Sim MCU is simulation by definition -- no board, no real sensor to
+  // switch to -- so "Sim Mode OFF" is not offered on it. (A browser walk
+  // pressed it and bare_sim was left with every simulated device off.) Real
+  // hardware starts by picking the board on the Base & MCU tab. Re-enabling
+  // stays available, so a robot left in that state can be repaired.
+  const simMcu = state.robot_name === "bare_sim";
+  [toggleBtn, ...document.querySelectorAll(".btn-switch-real-hw")].forEach((b) => {
+    if (!b) return;
+    const lock = simMcu && enabled;
+    if (lock && b.dataset.simMcuTitle === undefined) {
+      b.dataset.simMcuTitle = b.title || "";
+      b.title = "The Sim MCU is simulation only. To design real hardware, pick your board on the Base & MCU tab.";
+    } else if (!lock && b.dataset.simMcuTitle !== undefined) {
+      b.title = b.dataset.simMcuTitle;
+      delete b.dataset.simMcuTitle;
+    }
+    b.disabled = lock;
+  });
 }
 
 async function setSimMode(enabled, transitionToDetails = false) {
+  if (!enabled && state.robot_name === "bare_sim") return;   // see updateSimModeUI
   updateSimModeUI(enabled);
   const activeController = state.status?.controller || "pico2";
 

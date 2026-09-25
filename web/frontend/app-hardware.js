@@ -279,7 +279,10 @@ async function loadHardwareConfig() {
 
     const elSerialPort = document.getElementById("cfg-serial-port");
     if (elSerialPort) {
-      const portVal = tgt.serial_port || tgt.port || (targetMcu.includes("pico") ? "/dev/ttyACM0" : "/dev/ttyUSB0");
+      // `targetMcu` here was never defined: every config without a port (every
+      // bare robot, the Sim MCU included) threw, and the rest of this function --
+      // pin safety, kinematics HUD, DAC availability, port refresh -- never ran.
+      const portVal = tgt.serial_port || tgt.port || (siliconOf(loadedControllerName).includes("pico") ? "/dev/ttyACM0" : "/dev/ttyUSB0");
       elSerialPort.value = portVal;
     }
     syncMcuSerialSettings();
@@ -294,6 +297,15 @@ async function loadHardwareConfig() {
     // no hardware DAC" and the calibration studio stayed hidden on the one
     // family that can use it.
     applyDacAvailability();
+    // Sim Mode as the robot just loaded has it (the rule routes_status.py uses).
+    // The header synced it once at startup, so after a robot switch it showed
+    // the previous robot's mode, and the Sim MCU lock stayed where it was.
+    if (typeof updateSimModeUI === "function") {
+      updateSimModeUI(siliconOf(loadedControllerName) === "sim" ||
+        !!(sensors.use_sim_wheel || sensors.use_sim_imu || sensors.use_sim_ld19));
+    }
+    // app-adc.js: the Sim MCU has no board to flash or probe.
+    if (typeof updateBoardOnlyButtons === "function") updateBoardOnlyButtons();
     refreshHwSerialPorts();
   } catch (err) {
     console.error("[HardwareConfig] Error loading hardware config:", err);
@@ -875,9 +887,9 @@ function validateHardwareSafety() {
 
     // Microcontroller specific checks
     if (mcu.includes("pico")) {
+      if (id === "pin-led" && val === 64 && (mcu === "picow" || mcu === "pico2w")) return;
       if (val > 29) errors.push(`GP${val} (${label}) is out of range for RP2040/RP2350 (0-29).`);
       if ((mcu === "picow" || mcu === "pico2w") && [23, 24, 25, 29].includes(val)) {
-      if (id === "pin-led" && val === 64 && (mcu === "picow" || mcu === "pico2w")) return;
         warnings.push(`GP${val} (${label}) is connected to CYW43439 Wi-Fi chip.`);
       }
     } else if (mcu === "esp32" || mcu === "gendrv") {

@@ -638,7 +638,8 @@ def refuse_sim_flash(name: str) -> None:
     if (name or "").strip().lower() == SIM_MCU:
         raise HTTPException(status_code=400, detail=(
             "The base controller is the simulated MCU (sim_base_node): there is no board "
-            "to flash. Pick the board you plugged in on the Base & MCU tab to flash it."))
+            "to build for, flash or monitor. Pick the board you plugged in on the Base & MCU "
+            "tab to use it."))
 
 
 def get_controller(params: Dict[str, Any]) -> Dict[str, Any]:

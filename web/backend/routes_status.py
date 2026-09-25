@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from core import (
+    SIM_MCU,
     active_robot_name,
     CONFIG_DIR,
     REPO_ROOT,
@@ -153,6 +154,7 @@ def get_status(controller: Optional[str] = None):
 
     ctrl_sensors = controller.get("sensors", {}) or {}
     sim_mode_active = bool(
+        str(controller.get("name") or "").lower() == SIM_MCU or
         ctrl_sensors.get("use_sim_wheel") or
         ctrl_sensors.get("use_sim_imu") or
         ctrl_sensors.get("use_sim_ld19")
