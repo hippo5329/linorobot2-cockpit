@@ -392,11 +392,30 @@ def api_nav2_stack(distro: str = "jazzy", ws: Optional[str] = None):
 
 
 @app.get("/api/list_dir")
-def api_list_dir(path: str = "", only: str = "any", exts: str = ""):
-    target = path or REPO_ROOT
+def api_list_dir(path: str = "", only: str = "any", exts: str = "", start: bool = False):
+    """One folder for the browser's picker, with the parent it may go up to.
+
+    `start=true` marks `path` as where the picker OPENS -- the field's current
+    value, which may be a file, or a folder outside the fence (the robot
+    image's workspace is /opt/lino_ws). That opens the default folder with a
+    notice rather than a 403: every picker on such a field failed to open.
+    """
+    target = os.path.expanduser(path or REPO_ROOT)
+    notice = ""
+    if start and os.path.isfile(target):
+        target = os.path.dirname(target)
     if not access.path_allowed(target, CONFIG_DIR, REPO_ROOT):
-        raise HTTPException(status_code=403, detail=f"Not a browsable location: {target}")
-    return list_dir(target, only=only, exts=exts)
+        if not start:
+            raise HTTPException(status_code=403, detail=f"Not a browsable location: {target}")
+        notice = f"{target} is outside the folders this page may browse; showing {REPO_ROOT}."
+        target = REPO_ROOT
+    out = list_dir(target, only=only, exts=exts)
+    here = out.get("path") or target
+    parent = os.path.dirname(here)
+    out["parent"] = parent if parent != here and access.path_allowed(parent, CONFIG_DIR, REPO_ROOT) else ""
+    if notice:
+        out["notice"] = notice
+    return out
 
 
 # ==============================================================================

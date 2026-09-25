@@ -14,6 +14,8 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
+from runners import ros_setup_shell
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SUPPORTED_DISTROS = ["jazzy", "lyrical", "rolling"]
 
@@ -334,7 +336,7 @@ def setup_rootless_docker() -> Dict[str, Any]:
 def install_container_engine(engine: str = "docker") -> Dict[str, Any]:
     engine = engine.lower().strip()
     is_podman = engine in ("podman", "podman_systemd")
-    pkg_name = "podman" if is_podman else "docker.io"
+    pkg_name = "podman"
     bin_name = "podman" if is_podman else "docker"
 
     if shutil.which(bin_name):
@@ -358,6 +360,35 @@ def install_container_engine(engine: str = "docker") -> Dict[str, Any]:
                     sudo_prefix = ["sudo", "-n"]
             except Exception:
                 pass
+
+    if not is_podman:
+        # Docker Engine from download.docker.com, set up rootless, through the
+        # same script the README runs. This installed Ubuntu's docker.io, which
+        # has no rootless support at all, while the page announced "Installing
+        # Rootless Docker" -- and on a failure it told the user to install
+        # docker.io by hand (every-control browser walk, 2026-09-25).
+        script = os.path.join(REPO_ROOT, "scripts", "install_docker.sh")
+        command = f"bash {script}"
+        if os.geteuid() == 0 or not sudo_prefix:
+            why = ("rootless Docker belongs to the robot's user, not root" if os.geteuid() == 0
+                   else "it needs passwordless sudo")
+            return {
+                "status": "error",
+                "installed": False,
+                "engine": engine,
+                "message": f"Cannot install Docker from here: {why}. Run `{command}` in a terminal as the robot's user.",
+                "command": command,
+            }
+        r = subprocess.run(["bash", script], capture_output=True, text=True, timeout=900)
+        installed = shutil.which(bin_name) is not None and r.returncode == 0
+        return {
+            "status": "ok" if installed else "error",
+            "installed": installed,
+            "engine": engine,
+            "message": ("Docker (rootless) installed and configured." if installed
+                         else f"Docker install failed; see the log, or run `{command}` in a terminal."),
+            "logs": (r.stdout + r.stderr)[-4000:],
+        }
 
     if not can_sudo:
         return {
@@ -391,11 +422,6 @@ def install_container_engine(engine: str = "docker") -> Dict[str, Any]:
     )
     r = subprocess.run(install_cmd, capture_output=True, text=True, env=env, timeout=300)
     installed = shutil.which(bin_name) is not None
-    if installed and not is_podman:
-        current_user = os.environ.get("USER", "ubuntu")
-        if sudo_prefix:
-            subprocess.run(sudo_prefix + ["usermod", "-aG", "docker", current_user], check=False)
-            subprocess.run(sudo_prefix + ["systemctl", "enable", "--now", "docker"], check=False)
 
     return {
         "status": "ok" if installed else "error",
@@ -542,13 +568,7 @@ def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
                 if s.get("id") == sensor:
                     pkg = s.get("pkg", "")
                     break
-    installed = False
-    if pkg:
-        try:
-            res = subprocess.run(["ros2", "pkg", "prefix", pkg], capture_output=True, text=True, timeout=3)
-            installed = (res.returncode == 0)
-        except Exception:
-            pass
+    installed = ros_pkg_installed(pkg) if pkg else False
     return {"sensor": sensor, "pkg": pkg, "installed": installed}
 
 
@@ -577,27 +597,30 @@ def build_base_install_cmd(ws: str, distro: str = "jazzy") -> str:
     return f"cd {ws} && colcon build --symlink-install --packages-select linorobot2_cockpit"
 
 
-def get_package_install_info(pkg: str, distro: str = "jazzy", ws: str = "") -> Dict[str, Any]:
-    installed = False
+def ros_pkg_installed(pkg: str, distro: str = "auto") -> bool:
+    """Whether ROS can find `pkg`, asked from a shell that has sourced ROS.
+
+    The supervisor itself runs unsourced -- `ros2` is not on its PATH -- so a
+    bare `ros2 pkg prefix` raised FileNotFoundError and every package read as
+    missing: Start SLAM and Start Navigation refused on the robot image, whose
+    /opt/ros/<distro> has both (every-control browser walk, 2026-09-25).
+    """
     try:
-        res = subprocess.run(["ros2", "pkg", "prefix", pkg], capture_output=True, text=True, timeout=3)
-        installed = (res.returncode == 0)
+        res = subprocess.run(["bash", "-c", f"{ros_setup_shell(distro)}; ros2 pkg prefix {shlex.quote(pkg)}"],
+                             capture_output=True, text=True, timeout=15)
+        return res.returncode == 0
     except Exception:
-        pass
-    return {"pkg": pkg, "installed": installed, "distro": distro}
+        return False
+
+
+def get_package_install_info(pkg: str, distro: str = "jazzy", ws: str = "") -> Dict[str, Any]:
+    return {"pkg": pkg, "installed": ros_pkg_installed(pkg, distro), "distro": distro}
 
 
 def nav2_stack_status(distro: Optional[str] = "jazzy", ws: Optional[str] = None) -> Dict[str, Any]:
     dist = distro or "jazzy"
-    nav2_installed = False
-    slam_installed = False
-    try:
-        r1 = subprocess.run(["ros2", "pkg", "prefix", "nav2_bringup"], capture_output=True, text=True, timeout=3)
-        nav2_installed = (r1.returncode == 0)
-        r2 = subprocess.run(["ros2", "pkg", "prefix", "slam_toolbox"], capture_output=True, text=True, timeout=3)
-        slam_installed = (r2.returncode == 0)
-    except Exception:
-        pass
+    nav2_installed = ros_pkg_installed("nav2_bringup", dist)
+    slam_installed = ros_pkg_installed("slam_toolbox", dist)
     return {
         "status": "ok",
         "distro": dist,
@@ -609,7 +632,7 @@ def nav2_stack_status(distro: Optional[str] = "jazzy", ws: Optional[str] = None)
 def list_dir(dir_path: str, only: str = "any", exts: str = "") -> Dict[str, Any]:
     p = os.path.abspath(os.path.expanduser(dir_path or REPO_ROOT))
     if not os.path.isdir(p):
-        return {"error": f"Not a directory: {p}", "items": []}
+        return {"error": f"Not a directory: {p}", "entries": []}
     ext_list = [e.strip().lower() for e in exts.split(",") if e.strip()]
     items = []
     try:
@@ -629,8 +652,8 @@ def list_dir(dir_path: str, only: str = "any", exts: str = "") -> Dict[str, Any]
                 "size": os.path.getsize(ep) if not is_dir else 0,
             })
     except Exception as e:
-        return {"error": str(e), "items": []}
-    return {"path": p, "items": items}
+        return {"error": str(e), "entries": []}
+    return {"path": p, "entries": items}
 
 
 def analyze_robotics_ai(prompt: str, base: str = "2wd", distro: str = "jazzy", model: Any = None) -> Dict[str, Any]:

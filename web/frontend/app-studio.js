@@ -469,13 +469,18 @@ if (btnAiRobotDeploy) {
     if (e.key === "Escape" && overlay.classList.contains("open")) close();
   });
 
-  async function loadDir(path) {
+  // `start`: path is the field's value, where the picker opens -- the backend
+  // falls back to the default folder (with a notice) when it cannot be browsed.
+  async function loadDir(path, start = false) {
     elList.replaceChildren(row("Loading…"));
     let data;
     try {
-      const q = new URLSearchParams({ path: path || "", only: ctx.only, exts: ctx.exts || "" });
-      data = await fetch("/api/list_dir?" + q).then((r) => r.json());
+      const q = new URLSearchParams({ path: path || "", only: ctx.only, exts: ctx.exts || "", start });
+      const r = await fetch("/api/list_dir?" + q);
+      data = await r.json();
+      if (!r.ok) { elList.replaceChildren(row("(" + (data.detail || r.statusText) + ")")); return; }
     } catch (e) { elList.replaceChildren(row("Error: " + e.message)); return; }
+    elHint.textContent = data.notice || "click a folder to open it";
     ctx.cwd = data.path;
     elCwd.textContent = data.path;
     btnUp.disabled = !data.parent;
@@ -523,7 +528,7 @@ if (btnAiRobotDeploy) {
     btnRefresh.onclick = () => (isSerial ? loadSerial() : loadDir(ctx.cwd));
     overlay.classList.add("open");
     if (isSerial) loadSerial();
-    else loadDir((target.value || "").trim());
+    else loadDir((target.value || "").trim(), true);
   }
 
   document.querySelectorAll(".pick-btn[data-target]").forEach((b) => {
@@ -973,4 +978,7 @@ document.getElementById("btn-ignore-port-conflict")?.addEventListener("click", (
   document.getElementById("port-modal-overlay")?.classList.remove("open");
 });
 document.getElementById("btn-release-port-conflict")?.addEventListener("click", () => releaseAgentPort());
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.getElementById("port-modal-overlay")?.classList.remove("open");
+});
 
