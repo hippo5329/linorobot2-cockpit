@@ -238,6 +238,16 @@ def launch_setup(context, *args, **kwargs):
     frame_prefix = f"{ns}/" if ns else ""
     if ns:
         laser_frame = frame_prefix + laser_frame
+    # The simulated sonar's frame, for the host cone below (Sim MCU only).
+    sonar_frame = str((geometry.get("sonar") or {}).get("frame") or "sonar_link")
+    if frame_prefix:
+        sonar_frame = frame_prefix + sonar_frame
+    # With no board the host publishes /sonar too: a config whose collision
+    # monitor lists `sonar` as a source (pico2_mecanum) was otherwise stopped
+    # for good -- "Robot to stop due to invalid source" -- because the board
+    # that normally publishes it is the thing that is missing. With a board the
+    # firmware's own cone is the publisher; two would disagree.
+    host_sonar = no_board and bool(controller.get("sensors", {}).get("use_sim_sonar", True))
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
     lidar_product, lidar_bins = LDLIDAR_MODELS.get(lidar_model, LDLIDAR_MODELS["ld19"])
 
@@ -521,7 +531,9 @@ def launch_setup(context, *args, **kwargs):
                     name="sim_laser_node",
                     output="screen",
                     parameters=[{"frame_id": laser_frame,
-                                 "offset_x": float(geometry["laser"]["x"])}],
+                                 "offset_x": float(geometry["laser"]["x"]),
+                                 "sonar": host_sonar,
+                                 "sonar_frame_id": sonar_frame}],
                 )
                 # The virtual room stands in for the driver on a bare bench; see
                 # use_host_sim_laser above for why a present serial port is not.

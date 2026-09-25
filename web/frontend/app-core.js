@@ -918,7 +918,10 @@ function initHeaderPicker({ inputId, caretId, menuId, loadItems, onPick, emptyTe
   });
 }
 
-async function selectRobot(name) {
+// byUser: the header's robot selector. A robot the user picks is a choice the
+// no-board switch must respect, exactly like a controller pick -- otherwise
+// choosing pico2_mecanum with nothing plugged in was undone by the next poll.
+async function selectRobot(name, byUser = true) {
   name = (name || "").trim();
   if (!name || !/^[a-z0-9_]+$/.test(name)) {
     logLine(`[console] invalid robot name: "${name}" (use lowercase, digits, _)`);
@@ -927,6 +930,7 @@ async function selectRobot(name) {
     return;
   }
   if (name === state.robot_name) return;
+  if (byUser) userChoseController = true;   // a real change of robot, by the user
   try {
     const res = await fetch("/api/robot/select", {
       method: "POST",
@@ -972,7 +976,8 @@ async function selectRobot(name) {
       if ([...tsel.options].some((o) => o.value === bcName)) {
         if (tsel.value !== bcName) {
           tsel.value = bcName;
-          tsel.dispatchEvent(new Event("change"));
+          syntheticControllerChange = true;
+          try { tsel.dispatchEvent(new Event("change")); } finally { syntheticControllerChange = false; }
           logLine(`[console] base controller -> ${bcBoard}`);
         }
         if (window.__syncControllerSelects) window.__syncControllerSelects(bcName, "cockpit-target-select");
@@ -1230,13 +1235,15 @@ initGitVersionBadge();
 // the switch was ours; a Sim MCU the user picked stays picked.
 let noBoardSwitchedFrom = null;
 let userChoseController = false;
+// Set while selectRobot() re-fires "change" on the controller select to follow
+// the robot it just loaded: that is not a user choice. (isTrusted cannot tell:
+// automation and assistive tools fire untrusted events for real choices.)
+let syntheticControllerChange = false;
 // Any choice the user makes is final: someone who picks the Sim MCU (or picks
 // it again after we switched) may want to try it before the board, so a board
 // appearing later must not take it away. Programmatic sets fire no "change".
 document.addEventListener("change", (e) => {
-  // isTrusted: a real user action. Switching robots dispatches a synthetic
-  // "change" on the select, which is not a choice.
-  if (e.isTrusted && ["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) {
+  if (!syntheticControllerChange && ["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) {
     noBoardSwitchedFrom = null;
     userChoseController = true;
   }
@@ -1244,27 +1251,33 @@ document.addEventListener("change", (e) => {
 // The Sim MCU is a robot of its own, bare_sim (every simulated device on,
 // every pin -1), not the current robot relabelled -- so choosing it switches
 // the active robot, and leaving it switches back to the robot you had.
-let robotBeforeSim = null;
+let robotBeforeSim = null, robotBeforeSimSilicon = null;
 async function useSimRobot() {
   if (state.robot_name === "bare_sim") return;
   robotBeforeSim = state.robot_name;
-  await selectRobot("bare_sim");
+  robotBeforeSimSilicon = siliconOf(loadedControllerName);
+  await selectRobot("bare_sim", false);
 }
+// Leaving the Sim MCU for a silicon: back to the robot you had if it is that
+// silicon, else to that silicon's bare robot. A robot is one board, so a Pico 2
+// design is never relabelled as an ESP32 (the reference design and the MCU
+// must match).
 async function leaveSimRobot(silicon) {
   if (state.robot_name !== "bare_sim") return;
-  const back = robotBeforeSim && robotBeforeSim !== "bare_sim" ? robotBeforeSim : `bare_${silicon}`;
-  robotBeforeSim = null;
-  await selectRobot(back);
-  // The robot you return to may be other silicon than the one just picked; the pick wins.
+  const back = robotBeforeSim && robotBeforeSim !== "bare_sim" && robotBeforeSimSilicon === silicon
+    ? robotBeforeSim : `bare_${silicon}`;
+  robotBeforeSim = robotBeforeSimSilicon = null;
+  await selectRobot(back, false);
   const sel = document.getElementById("cfg-mcu");
   if (sel && silicon && sel.value !== silicon) {
     sel.value = silicon;
     if (window.__syncControllerSelects) window.__syncControllerSelects(silicon, "cfg-mcu");
   }
+  if (typeof updateReferenceDesigns === "function") updateReferenceDesigns(silicon);
 }
 // A user's pick in any controller select.
 document.addEventListener("change", (e) => {
-  if (!e.isTrusted || !["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) return;
+  if (syntheticControllerChange || !["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) return;
   if (e.target.value === "sim") useSimRobot();
   else leaveSimRobot(e.target.value);
 });
@@ -1283,7 +1296,7 @@ async function noBoardSwitch(s) {
         const back = noBoardSwitchedFrom;
         noBoardSwitchedFrom = null;
         robotBeforeSim = null;
-        await selectRobot(back);
+        await selectRobot(back, false);
       }
     } finally {
       noBoardBusy = false;

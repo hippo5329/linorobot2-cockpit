@@ -16,7 +16,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
     from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import LaserScan
+    from sensor_msgs.msg import LaserScan, Range
 except ImportError as exc:
     # Name the module that actually failed, per AGENTS.md 12: this block used to
     # report "rclpy not found" for every import error in the group, and rclpy is
@@ -67,6 +67,14 @@ class SimLaserNode(Node):
         self.declare_parameter("frame_id", "laser")
         self.declare_parameter("offset_x", 0.0)
         self.frame_id = str(self.get_parameter("frame_id").value)
+        # The simulated ultrasonic cone the firmware publishes (main.cpp, range_sim),
+        # for the Sim MCU, which has no board to publish it: the nearest return
+        # within SONAR_CONE_DEG ahead, raycast from the LiDAR's position like the
+        # board's. The launcher turns it on only when there is no board.
+        self.declare_parameter("sonar", False)
+        self.declare_parameter("sonar_frame_id", "sonar_link")
+        self.sonar = bool(self.get_parameter("sonar").value)
+        self.sonar_frame_id = str(self.get_parameter("sonar_frame_id").value)
         self.offset_x = float(self.get_parameter("offset_x").value)
         self.pose_x = 0.0
         self.pose_y = 0.0
@@ -87,6 +95,7 @@ class SimLaserNode(Node):
         self.scan_pub = self.create_publisher(LaserScan, "scan", sensor_qos)
         self.create_subscription(Odometry, "odom", self._odom_cb, 10)
         self.timer = self.create_timer(0.1, self._publish_scan)  # 10 Hz
+        self.sonar_pub = self.create_publisher(Range, "sonar", sensor_qos) if self.sonar else None
 
         self.num_points = 456
         self.angle_min = -math.pi
@@ -158,6 +167,33 @@ class SimLaserNode(Node):
         msg.ranges = ranges
         msg.intensities = intensities
         self.scan_pub.publish(msg)
+        if self.sonar_pub is not None:
+            self._publish_sonar(msg.header.stamp, ranges)
+
+    # sim_ld19.h: SIM_SONAR_CONE_DEG / SIM_SONAR_MIN_RANGE_M / SIM_SONAR_MAX_RANGE_M.
+    SONAR_CONE_DEG = 30.0
+    SONAR_MIN_M = 0.02
+    SONAR_MAX_M = 4.0
+
+    def _publish_sonar(self, stamp, ranges):
+        half = math.radians(self.SONAR_CONE_DEG) / 2.0
+        nearest = float("inf")
+        for i, r in enumerate(ranges):
+            rel = self.angle_min + i * self.angle_step    # angle from straight ahead
+            if abs(rel) <= half and r < nearest:
+                nearest = r
+        msg = Range()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self.sonar_frame_id
+        msg.radiation_type = Range.ULTRASOUND
+        msg.field_of_view = math.radians(self.SONAR_CONE_DEG)
+        msg.min_range = self.SONAR_MIN_M
+        msg.max_range = self.SONAR_MAX_M
+        # Clear is max_range, never inf: nav2_collision_monitor rejects a Range
+        # outside [min_range, max_range] and treats the source as DEAD, so an
+        # open room would stop the robot exactly as a missing sensor does.
+        msg.range = float(min(max(nearest, self.SONAR_MIN_M), self.SONAR_MAX_M))
+        self.sonar_pub.publish(msg)
 
 
 def main(args=None):
