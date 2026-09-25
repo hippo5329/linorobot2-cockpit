@@ -33,8 +33,7 @@ import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
 import gen_bare_config  # noqa: E402
 import mcu_identity  # noqa: E402
-import robot_stack  # noqa: E402
-import migrate_config_schema  # noqa: E402  (stale_faults, the pre-flight refusal)  (what a kept-running stack leaves behind)
+import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
@@ -268,6 +267,52 @@ NOT_FITTED = {"", "none", "null", "off", "false", "no"}
 # GenDrv's runtime rate is 1.5 M and there is no reason to put a proven upload
 # path at risk to match it.
 FLASH_BAUD_CEILING = 921600
+
+
+# Values that were right once and now fail a run without saying so. Measured
+# 2026-09-25 on the UI's Start 1-Click, against configs from older releases:
+#   * ekf base_link_frame: base_footprint -- the EKF parents a frame the URDF
+#     already parents; the TF tree splits and Nav2's controller never configures.
+#   * imu0_remove_gravitational_acceleration: true -- the board removes gravity
+#     since the AHRS moved on board; a second subtraction fabricates 9.81 m/s2.
+#   * sensors.imu/mag: FAKE -- the pre-rename name of SIM; outside --mode sim it
+#     reaches the firmware as an unknown driver.
+# Such a file is REPLACED, not repaired: a fresh config is one copy away, and a
+# repaired one still carries whatever else its release got wrong.
+def _ekf_params(params: dict) -> dict:
+    ekf = params.get("ekf") or {}
+    return ((ekf.get("ekf_filter_node") or {}).get("ros__parameters")) or ekf
+
+
+def _all_keys(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            yield from _all_keys(v)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _all_keys(item)
+
+
+def stale_faults(params: dict) -> list:
+    """What in this config breaks a run today, one line each; [] when nothing."""
+    faults = []
+    fake = sorted({k for k in _all_keys(params) if k.startswith("use_fake_")})
+    if fake:
+        faults.append(f"{', '.join(fake)}: renamed use_sim_* on 2026-09-24")
+    ekf = _ekf_params(params)
+    frame = ekf.get("base_link_frame")
+    if frame is not None and str(frame) != "base_link":
+        faults.append(f"ekf base_link_frame is {frame!r}: the EKF must publish odom -> base_link, "
+                      f"or the TF tree splits and Nav2 never configures")
+    if ekf.get("imu0_remove_gravitational_acceleration") is True:
+        faults.append("ekf imu0_remove_gravitational_acceleration is true: the board already "
+                      "removes gravity, a second subtraction fabricates 9.81 m/s2")
+    sensors = ((params.get("base_controller") or {}).get("sensors")) or {}
+    for field in ("imu", "mag"):
+        if str(sensors.get(field, "")).strip().upper() == "FAKE":
+            faults.append(f"sensors.{field} is FAKE: renamed SIM")
+    return faults
 
 
 def lidar_fitted(controller_cfg: dict) -> bool:
@@ -1085,15 +1130,15 @@ def main():
     # Before anything touches the board: a config from before the fake->sim rename
     # is refused later by mcu_env, deep inside the flash step, and the UI then
     # reports only "Flashing or verification failed". Say it here, plainly, with
-    # the fix -- the migrator does the rename.
-    # The same for every value that has since changed meaning and fails a run
-    # silently -- an EKF parenting base_footprint, gravity removed twice, FAKE.
-    stale = migrate_config_schema.stale_faults(params)
+    # the fix -- and the same for every value that has since changed meaning and
+    # fails a run silently. The file is replaced, not repaired (see stale_faults).
+    stale = stale_faults(params)
     if stale:
         raise SystemExit(f"{os.path.basename(params_path)} predates conventions this "
                          f"release depends on:\n  - " + "\n  - ".join(stale) +
-                         "\nRun scripts/migrate_config_schema.py -- it rewrites every one of "
-                         "these in place and keeps your comments.")
+                         f"\nReplace it with a fresh config: select a bare_<board> robot, "
+                         f"or copy one from config/reference/ over it and re-apply your "
+                         f"own pins and kinematics.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
     is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")
