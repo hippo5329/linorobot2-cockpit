@@ -316,6 +316,16 @@ It is not shared memory (fails with `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` and on a 
 `/dev/shm`), not CPU (fails on a tuned, idle machine), not config (both robot configs fail), and not
 a nav2 bug (`1.5.1..1.5.2` changes nothing here).
 
+A second way to the same end remains on both distros: a lifecycle **reply** that cannot be delivered.
+`lifecycle_manager` configures and activates each server with one `change_state` call. When the
+server answers before the manager's response reader has matched, rmw logs `failed to send response
+to /<node>/change_state (timeout): client will not receive response`, the call never returns, and
+Nav2 never activates. It is in 26 of 1683 Nav2 starts kept on the bench cells, and none of those 26
+activated. `one_click_pipeline.py` ends the wait as soon as that line appears, rather than after the
+four-minute window, and restarts Nav2 **once** into `logs/nav2_retry.log`. A hang with no verdict is
+restarted the same way. A manager that reports `Failed to bring up all requested nodes` has named a
+real fault, so that is reported and not retried.
+
 ### Never add the ROS 2 apt source twice
 The `ros2-apt-source` .deb writes `/etc/apt/sources.list.d/ros2-apt-source.**sources**` with the key
 embedded; the classic recipe writes `ros2.list` with `Signed-By` pointing at a keyring. Apply both

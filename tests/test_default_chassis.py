@@ -373,7 +373,10 @@ def test_a_failed_goal_reports_what_nav2_complained_about():
 
 def test_the_pipeline_asks_for_them_on_a_failed_goal():
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
-    assert 'print(_nav2_complaints(os.path.join(LOG_DIR, "nav2.log")))' in pipe
+    # The log of the Nav2 that is up: after a restart that is nav2_retry.log,
+    # and nav2.log belongs to the launch that was stopped.
+    assert "print(_nav2_complaints(nav2_log))" in pipe
+    assert "nav2_ok, nav2_detail, nav2_log = start_nav2(" in pipe
 
 
 # --- the EKF's heading source ------------------------------------------------

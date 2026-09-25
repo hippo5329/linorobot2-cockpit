@@ -812,8 +812,14 @@ def _tf_lateness(msg: str) -> str:
     return f"   [the TF buffer began {gap * 1000:.0f} ms after the request: it was still filling]"
 
 
-def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
-    """Watch logs/nav2.log for lifecycle_manager's verdict.
+# rmw's own line when a server could not deliver a service reply: the client's
+# response reader had not matched yet. For a lifecycle transition that client is
+# lifecycle_manager, which then waits for the reply forever.
+_LOST_REPLY = re.compile(r"failed to send response to /([A-Za-z0-9_/]+)/change_state")
+
+
+def wait_for_nav2_activation(timeout_sec: int = 240, log_tag: str = "nav2") -> tuple:
+    """Watch logs/<log_tag>.log for lifecycle_manager's verdict.
 
     "Launched" and "active" are different events: one node that fails to
     configure aborts the whole managed set, after the healthy ones logged a
@@ -826,7 +832,7 @@ def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
     and the run reported "the stack never activated" about a stack that was
     still coming up.
     """
-    log_path = os.path.join(LOG_DIR, "nav2.log")   # this run's, never a previous one's
+    log_path = os.path.join(LOG_DIR, f"{log_tag}.log")   # this run's, never a previous one's
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
@@ -846,8 +852,58 @@ def wait_for_nav2_activation(timeout_sec: int = 240) -> tuple:
             return False, detail
         if "Managed nodes are active" in text:
             return True, "managed nodes are active"
+        # No verdict is coming: say so now rather than after four minutes.
+        lost = _LOST_REPLY.search(text)
+        if lost:
+            return False, (f"{lost.group(1)} could not deliver its change_state reply to "
+                           f"lifecycle_manager, which waits for it forever")
         time.sleep(1.0)
     return False, f"lifecycle_manager reported neither success nor failure within {timeout_sec}s"
+
+
+def start_nav2(cmd: str, distro: str, bg_processes: list, stack_processes: list) -> tuple:
+    """Launch Nav2 and wait for it to activate, restarting it once if it hangs. Returns (ok, detail, log_path).
+
+    lifecycle_manager drives twelve servers through configure and activate,
+    one service call each. When a server's reply cannot be delivered -- rmw
+    logs "failed to send response to /<node>/change_state (timeout)", because
+    the manager's response reader had not matched yet -- the call never
+    returns and Nav2 never activates. The RP2040 jazzy 2wd leg of gate
+    20260926-disp8 stopped exactly there, on route_server; the same line is in
+    26 of 1683 Nav2 starts kept on the bench cells since 2026-09-22, and not
+    one of those 26 activated; on the cell counted in full, the 3 of 105 starts
+    that never activated were exactly its 3 with the line. It is a discovery
+    race, so a new launch clears it: restart once, into logs/nav2_retry.log.
+
+    A manager that REPORTS a failure ("Failed to bring up all requested
+    nodes") has named a real fault -- a plugin that will not load, a bad
+    parameter -- and a restart would only hide it, so that is reported, not
+    retried.
+    """
+    for attempt, tag in enumerate(("nav2", "nav2_retry")):
+        proc = launch_bg(cmd, log_tag=tag, distro=distro)
+        bg_processes.append(proc)
+        stack_processes.append(("nav2", proc))
+        log_path = os.path.join(LOG_DIR, f"{tag}.log")
+        print("  Waiting for Nav2 lifecycle activation...")
+        ok, detail = wait_for_nav2_activation(log_tag=tag)
+        if ok:
+            print("  ✅ Nav2 stack active." + (" (Nav2 needed a restart)" if attempt else ""))
+            return True, detail, log_path
+        try:
+            with open(log_path, errors="replace") as fh:
+                reported = "Failed to bring up all requested nodes" in fh.read()
+        except OSError:
+            reported = False
+        if attempt == 0 and not reported:
+            print(f"  ⚠️ Nav2 did not activate: {detail}")
+            print("  ↻ restarting Nav2 once: a new launch matches its services afresh.")
+            _stop_group_and_wait(proc)
+            stack_processes[:] = [(t, q) for t, q in stack_processes if q is not proc]
+            bg_processes[:] = [q for q in bg_processes if q is not proc]
+            continue
+        return False, detail, log_path
+    return False, detail, log_path
 
 
 def _odom_xy(distro: str):
@@ -1725,16 +1781,12 @@ def main():
             print("\n[6/6] [NAV2] Skipped per --topics-only.")
         elif not args.no_nav2 and has_lidar:
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
-            bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
-                                          f"distro:={args.distro} config_file:={params_path}",
-                                          log_tag="nav2", distro=args.distro))
-            stack_processes.append(("nav2", bg_processes[-1]))
-            print("  Waiting for Nav2 lifecycle activation...")
-            nav2_ok, nav2_detail = wait_for_nav2_activation()
-            if nav2_ok:
-                print("  ✅ Nav2 stack active.")
-            else:
-                print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/nav2.log.")
+            nav2_ok, nav2_detail, nav2_log = start_nav2(
+                f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
+                f"distro:={args.distro} config_file:={params_path}",
+                args.distro, bg_processes, stack_processes)
+            if not nav2_ok:
+                print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
             cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
             n_legs = 2 * args.goal_round_trips if args.goal_round_trips else 1
@@ -1761,7 +1813,7 @@ def main():
                 test_res = subprocess.CompletedProcess(
                     args=[], returncode=3, stderr="",
                     stdout=f"❌ NAV2 GOAL NOT SENT: the stack never activated ({nav2_detail}); "
-                           f"a goal would only be rejected. See logs/nav2.log.")
+                           f"a goal would only be rejected. See logs/{os.path.basename(nav2_log)}.")
             print(test_res.stdout)
             if test_res.returncode != 0:
                 # A goal that ABORTED says error_code=203 and nothing else, and the
@@ -1769,7 +1821,7 @@ def main():
                 # the reason HERE, where the transcript is kept: measured
                 # 2026-09-22, five legs aborted with TF error codes and there was
                 # nothing left afterwards to say which transform, or how late.
-                print(_nav2_complaints(os.path.join(LOG_DIR, "nav2.log")))
+                print(_nav2_complaints(nav2_log))
             if test_res.returncode == 0:
                 print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
             else:
