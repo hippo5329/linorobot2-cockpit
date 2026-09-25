@@ -337,13 +337,17 @@ function updateReferenceDesigns(mcuHint) {
     esp32s3: "ESP32-S3",
   };
 
-  // The reference design and the MCU must match (user, 2026-09-25): a design
-  // is a board wired around ONE silicon, so only that silicon's designs are
-  // offered. The Sim MCU has no silicon; any design can be simulated, so it
-  // offers them all, grouped by the board each one is written for.
+  // Every design is offered, whatever MCU is detected or selected (user,
+  // 2026-09-26): someone starting a new design picks it before the board is on
+  // the desk, and choosing one moves the MCU to its silicon (applyReferenceDesign).
+  // The MCU must match only for what touches a board -- flash, 1-Click, an app
+  // switch -- and those are refused with a warning (boardMatchesOrWarn). This
+  // replaces 2026-09-25's filter, which offered only the detected silicon's
+  // designs. The current MCU's group comes first; the Sim MCU keeps the order.
   let html = "";
   const isSim = String(mcuHint || "").toLowerCase() === "sim";
-  const families = isSim ? Object.keys(REFERENCE_DESIGNS) : [family];
+  const families = isSim ? Object.keys(REFERENCE_DESIGNS)
+    : [family, ...Object.keys(REFERENCE_DESIGNS).filter((k) => k !== family)];
   const primaryDesigns = REFERENCE_DESIGNS[families[0]] || [];
   for (const fKey of families) {
     html += `<optgroup label="${isSim ? "Sim MCU — any design, " : "MCU: "}${mcuLabels[fKey] || fKey.toUpperCase()}">`;

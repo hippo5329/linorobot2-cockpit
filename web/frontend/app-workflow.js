@@ -1023,6 +1023,7 @@ function initCockpitDashboard() {
   async function runOneClick() {
     if (!btnOneClick && !btnHdrDeploy) return;
     const controller = targetSelect ? controllerForRun(targetSelect.value) : (state.status?.controller || "pico2");
+    if (!(await boardMatchesOrWarn(controller, "1-Click"))) return;
     const sec = exploreSec ? parseInt(exploreSec.value, 10) || 15 : 15;
     const noNav2 = noNav2Check ? noNav2Check.checked : false;
     const mode = (hdrMode && hdrMode.value) || (cockpitMode && cockpitMode.value) || "sim";

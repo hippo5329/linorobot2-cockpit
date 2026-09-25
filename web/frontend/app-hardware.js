@@ -1355,6 +1355,9 @@ async function executeHardwareAction(action, customFirmware = null) {
   const port = document.getElementById("cfg-serial-port")?.value.trim() || document.getElementById("hw-flash-port")?.value.trim() || "/dev/ttyACM0";
   const mcuEnv = document.getElementById("hw-flash-env")?.value || document.getElementById("cfg-mcu")?.value || "pico2";
   const baud = parseInt(document.getElementById("cfg-baudrate")?.value || 921600, 10);
+  // "upload" writes the board (a flash, or an app switch as an env write);
+  // "build" compiles and "monitor" only reads, so neither needs the board to match.
+  if (action === "upload" && !(await boardMatchesOrWarn(mcuEnv, "Flash"))) return;
 
   const btnStop = document.getElementById("btn-hw-stop");
   if (btnStop) btnStop.style.display = "inline-block";

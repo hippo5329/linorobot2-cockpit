@@ -135,6 +135,33 @@ function hideActionBanner() {
   document.getElementById("action-banner")?.remove();
 }
 
+// An action that writes to a board -- flash, 1-Click, an app switch -- needs the
+// board on the bus to be the silicon the design builds for. Anything else (any
+// reference design, any edit, a build) needs no board at all, so this is asked
+// only at the moment of the action, with the controller that action will use,
+// rather than by filtering what can be chosen. The status endpoint judges it
+// from the one vid/pid table the flasher's own guard uses, and only on decisive
+// evidence (an ESP32 behind a USB bridge never blocks). flash_mcu.py still
+// refuses on its own: this is the warning before the request, not the only wall.
+async function boardMatchesOrWarn(controller, action) {
+  if (!controller || String(controller).toLowerCase() === "sim") return true;
+  let mm = null;
+  try {
+    const s = await fetch(`/api/status?controller=${encodeURIComponent(controller)}`).then((r) => r.json());
+    mm = s && s.mcu_mismatch;
+  } catch (e) {
+    return true;   // no answer is no evidence; the flasher's guard still stands
+  }
+  if (!mm) return true;
+  const title = `${action} blocked: the board does not match this design.`;
+  const detail = `${mm.controller} builds for ${mm.expected}, but the board on the bus is ` +
+    `${mm.detected} (${mm.chip}). Nothing was sent. Plug in a ${mm.expected} board to ${action.toLowerCase()} ` +
+    `this design, or pick a design for the board you have. Editing the design needs no board.`;
+  logLine(`⚠️ [MCU MISMATCH] ${title} ${detail}`);
+  showActionBanner(title, detail);
+  return false;
+}
+
 // A git value worth painting. The Docker image carries no .git, so the
 // backend answers "unknown"; a chip that can only ever say that is hidden
 // (hideGitChips) rather than shown.
@@ -668,8 +695,8 @@ async function refreshStatus() {
           mmEl.innerHTML = `⚠️ <b>Board does not match this robot.</b> ` +
             `<code>${escapeHtml(mm.controller)}</code> builds for <b>${escapeHtml(mm.expected)}</b>, ` +
             `but the board on the bus is <b>${escapeHtml(mm.detected)}</b> (${escapeHtml(mm.chip)}). ` +
-            `1-Click will refuse to flash. Pick the robot that matches the board, or plug in the ` +
-            `board this robot is written for.`;
+            `Editing this design is fine; Flash, 1-Click and app switches are blocked until the ` +
+            `board it is written for is plugged in.`;
           mmEl.hidden = false;
         } else {
           mmEl.hidden = true;
