@@ -190,6 +190,30 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
     return GOAL_TIMEOUT_ARRIVE if (require_goal or round_trips) else GOAL_TIMEOUT_PLAN
 
 
+def stop_previous_stack(state_dir: str = None) -> list:
+    """Stop what an earlier 1-Click run left running before this one starts.
+
+    A run keeps its stack alive for the person who pressed Start, and the next
+    Start used to launch a second one beside it. Measured 2026-09-25 on the UI
+    path: the old launch respawned its micro-ROS agent onto the tty the flasher
+    had just released (the 1200-baud pulse then timed out), two agents shared one
+    serial port (/imu/data went silent), and the old Nav2 kept driving the new
+    run's robot. The new run owns the robot; the old one goes first."""
+    entries = robot_stack.load(state_dir)
+    if not entries:
+        return []
+    live = [e for e in entries if robot_stack.is_alive(e)]
+    stopped = robot_stack.stop(state_dir=state_dir)
+    if live:
+        print("   Stopping what the previous 1-Click run left running: "
+              + ", ".join(f"{e['tag']} (pgid {e['pgid']})" for e in live))
+    left = [e for e in live if robot_stack.is_alive(e)]
+    for e in left:
+        print(f"   ⚠️ {e['tag']} (pgid {e['pgid']}) did not stop -- started by another "
+              f"user? Stop it from that user, or it will fight this run for the robot.")
+    return stopped
+
+
 def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bool:
     """Is /cmd_vel TwistStamped for this run?
 
@@ -1115,6 +1139,7 @@ def main():
     else:
         print("   Sequence: Config -> Firmware -> Probe -> Flash -> Bringup -> Topics -> SLAM -> Nav2 -> Map")
     print("==================================================================")
+    stop_previous_stack()
     os.makedirs(os.path.dirname(args.map_output), exist_ok=True)
 
     # Step 1: the firmware header (the compile-time fallback for the env block).
