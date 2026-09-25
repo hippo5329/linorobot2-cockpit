@@ -1,8 +1,8 @@
 """The matrix must ship the leg drivers it is about to run.
 
 The legs do not run from the repo. Each one runs a copy inside its cell --
-`/home/ubuntu/release_test_rp2.sh`, `/home/ubuntu/gendrv_both/a21_both_inside.sh`
-and so on -- and for a long time nothing refreshed those copies. patch_cells.sh
+`/home/ubuntu/release_test_rp2.sh`, the GenDrv's two-transport driver and so
+on -- and for a long time nothing refreshed those copies. patch_cells.sh
 pushes the cockpit's own files; the leg drivers were written by hand, once.
 
 On 2026-09-25 the 2wd slice came back 0 of 10 in six minutes. Every leg died in
@@ -68,9 +68,12 @@ def test_every_leg_driver_the_matrix_runs_is_also_pushed():
 
 
 def test_the_push_happens_before_the_first_leg():
-    """A refresh after the legs start is a refresh of nothing."""
+    """A refresh after the legs start is a refresh of nothing.
+
+    Any host: the pattern keys on the cell argument, so this public file names
+    no machine of the bench (AGENTS.md rule 8)."""
     matrix = _uncommented(_read("full_matrix.sh"))
-    last_push = max(m.start() for m in re.finditer(r"push_leg_script\s+z13|push_leg_script\s+a21", matrix))
+    last_push = max(m.start() for m in re.finditer(r"push_leg_script\s+\S+\s+lino-", matrix))
     start = matrix.index("MATRIX_START")
     assert last_push < start, \
         "a leg driver is pushed after MATRIX_START -- by then a leg may already have run"
