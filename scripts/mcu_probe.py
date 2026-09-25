@@ -373,6 +373,27 @@ def env_digest(params_path: str, secrets_path: str, app: str = None,
     return hashlib.sha256(blob).hexdigest(), env
 
 
+def stamp_for(env_name: str, port: str, prebuilt_dir: str = None) -> dict:
+    """The stamp for this port, under whichever env the flasher wrote it.
+
+    A prebuilt profile carries its own pio_env: 'pico2-jazzy' is the pico2w image
+    (it runs on both boards), so flash_mcu.py records pico2w_<port> while the
+    pipeline probes as 'pico2'. Measured 2026-09-25: every Start 1-Click read
+    "this host has no record of flashing it" a minute after writing that record,
+    and reflashed a board already running the build."""
+    stamp = read_stamp(env_name, port)
+    if stamp or not prebuilt_dir:
+        return stamp
+    try:
+        with open(os.path.join(prebuilt_dir, "manifest.json")) as fh:
+            flashed_as = json.load(fh).get("pio_env")
+    except Exception:
+        return stamp
+    if flashed_as and flashed_as != env_name:
+        return read_stamp(flashed_as, port)
+    return stamp
+
+
 def probe(env_name: str, port: str, baud: int, params: str = None, secrets: str = None,
           app: str = None, listen: float = 0.0, reset: bool = False,
           prebuilt_dir: str = None) -> dict:
@@ -380,7 +401,7 @@ def probe(env_name: str, port: str, baud: int, params: str = None, secrets: str 
         "env": env_name,
         "port": port,
         "usb_mode": usb_mode(env_name, port),
-        "stamp": read_stamp(env_name, port),
+        "stamp": stamp_for(env_name, port, prebuilt_dir),
         "local": local_build(env_name, prebuilt_dir),
         "banner": {},
     }
