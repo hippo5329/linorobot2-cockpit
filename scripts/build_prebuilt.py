@@ -282,39 +282,45 @@ def build(profile, keep_going=False):
 
     # The /cmd_vel contract, checked on the ARTIFACT before it is published.
     #
-    # A jazzy image that subscribes TwistStamped enumerates, publishes odometry
-    # and never moves: nav2 on jazzy publishes plain Twist and nothing is
-    # delivered. It is silent on both sides. This happened -- a pico2-jazzy
-    # image went onto the bench stamped, and the Nav2 goal test reported "494
-    # cmd_vel msgs, base moved 0.002 m" with no other symptom.
+    # A board subscribing the wrong type enumerates, publishes odometry and
+    # never moves: nav2 on jazzy publishes plain Twist, from kilted on
+    # TwistStamped, and a mismatch delivers nothing, silently on both sides. It
+    # happened -- a pico2-jazzy image went onto the bench stamped, and the Nav2
+    # goal test reported "494 cmd_vel msgs, base moved 0.002 m".
     #
-    # release.yml has a version of this check, but it only fires one way: it
-    # catches a lyrical image MISSING TwistStamped, not a jazzy image that has
-    # it. Both directions are failures and both are checked here, in the script
-    # that writes the artifact, so a locally cut release is checked too.
+    # Since 2026-09-25 the type is a run-time choice (env `stamped_cmd_vel`),
+    # so every image links BOTH, and its default comes from the distro the
+    # image was built for. So the artifact must carry both types, and its
+    # distro stamp (main.cpp `fw_distro_tag`) must be this profile's -- that
+    # stamp alone decides which of the two a board with no override subscribes.
+    # A lyrical profile linked against the jazzy library would default to plain
+    # Twist; this is where that is caught.
     img = next((os.path.join(out_dir, n) for n in ("firmware.uf2", "firmware.bin")
                 if os.path.isfile(os.path.join(out_dir, n))), None)
     if img:
         try:
-            found = subprocess.run(["strings", "-a", img], capture_output=True,
-                                   text=True, timeout=120).stdout.count("TwistStamped")
+            lines = set(subprocess.run(["strings", "-a", img], capture_output=True,
+                                       text=True, timeout=120).stdout.split())
         except Exception:
-            found = None
-        if found is not None:
-            wants_stamped = distro not in ("humble", "iron", "jazzy")
-            if wants_stamped and found == 0:
+            lines = None
+        if lines is not None:
+            missing = [t for t in ("geometry_msgs/msg/Twist", "geometry_msgs/msg/TwistStamped")
+                       if t not in lines]
+            if missing:
                 raise SystemExit(
-                    f"{profile}: built for {distro}, which publishes /cmd_vel as "
-                    f"TwistStamped, but the image contains none. It would enumerate "
-                    f"and never move.")
-            if not wants_stamped and found:
+                    f"{profile}: the image does not link {', '.join(missing)}. "
+                    f"/cmd_vel is chosen at run time, so every image needs both; "
+                    f"a board told to use the missing one would never move.")
+            stamps = sorted(l for l in lines if l.startswith("FW_ROS_DISTRO="))
+            if stamps != [f"FW_ROS_DISTRO={distro}"]:
                 raise SystemExit(
-                    f"{profile}: built for {distro}, which publishes /cmd_vel as "
-                    f"plain Twist, but the image contains {found} TwistStamped "
-                    f"references. nav2 would publish Twist, the board would "
-                    f"subscribe TwistStamped, and nothing would be delivered.")
-            print(f"  /cmd_vel contract ok ({distro}: "
-                  f"{'TwistStamped' if wants_stamped else 'Twist'})", flush=True)
+                    f"{profile}: built for {distro}, but the image is stamped "
+                    f"{stamps or 'with no distro'}. Its /cmd_vel default follows "
+                    f"that stamp, so nav2 on {distro} would publish a type the "
+                    f"board does not subscribe, and nothing would be delivered.")
+            print(f"  /cmd_vel contract ok ({distro}: both types linked, default "
+                  f"{'TwistStamped' if distro not in ('humble', 'iron', 'jazzy') else 'Twist'})",
+                  flush=True)
 
     manifest = {
         "profile": profile,

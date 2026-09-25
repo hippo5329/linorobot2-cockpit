@@ -678,6 +678,12 @@ static inline void wdtFeed()  {}
 #ifndef FW_BUILD_DATE
 #define FW_BUILD_DATE "unknown"
 #endif
+// The distro as one string an image can be searched for. build_prebuilt.py and
+// release.yml read it with `strings` to prove the /cmd_vel default (chosen from
+// the distro, in setup) is the profile's own. A bare "jazzy" cannot prove it:
+// that comparison puts the literal into every image, lyrical ones included.
+static const char fw_distro_tag[] = "FW_ROS_DISTRO=" FW_ROS_DISTRO;
+#define FW_DISTRO (fw_distro_tag + sizeof("FW_ROS_DISTRO=") - 1)
 // A name for the board, so two identical ones on a bench are telling apart from
 // their own output. What can honestly answer differs by family, and the KEY says
 // which question was answered -- the two are not interchangeable:
@@ -731,7 +737,7 @@ static void printBanner(void)
     char ident[32];
     identityField(ident, sizeof(ident));
     Serial.printf("\n[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s\n",
-                  toolName(app_mode), FW_ROS_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident,
+                  toolName(app_mode), FW_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident,
                   mcuEnvValid() ? "" : " (env blank or invalid - using header defaults)");
 }
 
@@ -1103,7 +1109,7 @@ void setup()
     {
         // Twist through jazzy, TwistStamped from kilted on -- the host's rule
         // (gen_firmware_header.distro_stamps_cmd_vel), from this image's distro.
-        const char *d = FW_ROS_DISTRO;
+        const char *d = FW_DISTRO;
         const bool unstamped = !strcmp(d, "humble") || !strcmp(d, "iron") || !strcmp(d, "jazzy");
         stamped_cmd_vel = envFlag("stamped_cmd_vel", !unstamped);
     }

@@ -90,9 +90,9 @@ jobs:
       # is checked on the BYTES that are about to be attached rather than on the
       # header that produced them. nav2 1.4 (kilted) flipped TwistPublisher to
       # TwistStamped, so lyrical drives /cmd_vel stamped and jazzy drives it
-      # plain; every reference config says `stamped_cmd_vel: auto` and
-      # gen_firmware_header.py resolves that from --distro alone, falling back to
-      # $ROS_DISTRO, which does not exist on this runner.
+      # plain. The board picks the type at run time, defaulting from the distro
+      # the image was built for (board_microros_distro), which it carries as
+      # the string FW_ROS_DISTRO=<distro>.
       #
       # Nothing downstream catches a mismatch. The image links, flashes,
       # enumerates with the agent and publishes odometry at 50 Hz; it simply never
@@ -112,18 +112,19 @@ jobs:
           done
           test -n "$img" || { echo "::error::no firmware image for ${{ matrix.profile }}"; exit 1; }
           distro=$(python3 -c "import json;print(json.load(open('firmware/prebuilt/${{ matrix.profile }}/manifest.json'))['ros_distro'])")
-          n=$(strings -a "$img" | grep -c TwistStamped || true)
-          case "$distro" in
-            humble|iron|jazzy) want=0 ;;
-            *)                 want=1 ;;
-          esac
-          echo "profile=${{ matrix.profile }} distro=$distro TwistStamped strings=$n want>0=$want"
-          if [ "$want" = 1 ] && [ "$n" -eq 0 ]; then
-            echo "::error::${{ matrix.profile }} is built for $distro, which publishes /cmd_vel as TwistStamped, but the image contains no TwistStamped. It would enumerate and never move. Check that build_prebuilt.py passes --distro."
-            exit 1
-          fi
-          if [ "$want" = 0 ] && [ "$n" -gt 0 ]; then
-            echo "::error::${{ matrix.profile }} is built for $distro, which publishes /cmd_vel as plain Twist, but the image subscribes to TwistStamped."
+          # Both types are linked -- /cmd_vel is chosen at run time by the env
+          # key `stamped_cmd_vel` -- and the default follows the image's distro
+          # stamp, so the stamp must be this profile's distro and nothing else.
+          # (A bare "jazzy" string proves nothing: the firmware compares against
+          # that literal, so every image has it.)
+          words=$(strings -a "$img" | tr -s ' \t' '\n')
+          for t in geometry_msgs/msg/Twist geometry_msgs/msg/TwistStamped; do
+            grep -qxF "$t" <<<"$words" || { echo "::error::${{ matrix.profile }} does not link $t; a board told to use it would never move."; exit 1; }
+          done
+          stamps=$( (grep -x 'FW_ROS_DISTRO=.*' <<<"$words" || true) | sort -u | tr '\n' ' ')
+          echo "profile=${{ matrix.profile }} distro=$distro stamps=$stamps"
+          if [ "$stamps" != "FW_ROS_DISTRO=$distro " ]; then
+            echo "::error::${{ matrix.profile }} is built for $distro but stamped '$stamps'. Its /cmd_vel default follows the stamp, so nav2 on $distro would publish a type the board does not subscribe. Check the pio env's board_microros_distro."
             exit 1
           fi
       - uses: actions/upload-artifact@v4
