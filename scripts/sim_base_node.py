@@ -210,17 +210,87 @@ class Wire:
     you find out how much latency the stack tolerates before the gate goes red.
     """
 
-    def __init__(self, delay_s=0.0, jitter_s=0.0):
+    # WHAT A MESSAGE COSTS ON THE WIRE, in bytes, counted off the message
+    # definitions rather than guessed:
+    #
+    #   Odometry        header + child_frame_id + 7 doubles of pose + 36 of its
+    #                   covariance + 6 doubles of twist + 36 of its covariance
+    #   Imu             header + 4 doubles of orientation + 9 of covariance,
+    #                   then 3 + 9 for angular velocity and 3 + 9 for linear
+    #                   acceleration
+    #   MagneticField   header + 3 doubles + 9 of covariance
+    #
+    # Plus CDR alignment and the XRCE framing around each one, which is why these
+    # are round numbers slightly above the arithmetic rather than exact: the
+    # point is the RATIO between the three, and that a 50 Hz triple does not fit
+    # in a 115200 baud budget.
+    SIZES = {"odom": 720, "imu": 330, "mag": 120, "tf": 130}
+
+    def __init__(self, delay_s=0.0, jitter_s=0.0, bytes_per_s=0.0):
         self.delay = max(float(delay_s), 0.0)
         self.jitter = max(float(jitter_s), 0.0)
         self.queue = []
         self.last_due = 0.0
+        # THE LINK'S BANDWIDTH, and the drops that follow from running out of it.
+        #
+        # Latency alone is not what a serial link does to a robot. A micro-ROS
+        # session over 8N1 carries baudrate/10 bytes per second, and the 50 Hz
+        # triple (odom + imu + mag) is about 1170 bytes per cycle, i.e. 58 kB/s.
+        # That fits in 921600 baud (92 kB/s) and does not fit in 115200
+        # (11.5 kB/s) -- and the firmware publishes BEST EFFORT, so what does not
+        # fit is not delayed, it is GONE.
+        #
+        # Which matters more than it looks, because madgwick pairs imu/data_raw
+        # with imu/mag through an ApproximateTime synchroniser five deep: an
+        # unpaired IMU sample produces no imu/data at all. So a link that drops
+        # 30% of messages costs far more than 30% of the EKF's orientation
+        # input, and the bench has already shown the asymmetry it predicts --
+        # /odom at 33 Hz beside /imu/data at 10 Hz on the same leg.
+        #
+        # 0 is unlimited, which is what every existing leg gets.
+        self.bytes_per_s = max(float(bytes_per_s), 0.0)
+        self.budget = 0.0
+        self.budget_time = None
+        self.dropped = {}
+        self.sent = {}
 
     @property
     def instant(self):
+        # Delay and jitter only. The budget decides WHETHER a message goes, the
+        # delay decides WHEN -- two independent properties of a link, and folding
+        # the budget in here made a rate-limited leg with no delay queue every
+        # message behind a pump it did not need.
         return self.delay <= 0.0 and self.jitter <= 0.0
 
-    def send(self, now, publish):
+    def afford(self, now, kind):
+        """Token bucket, one cycle deep. True when this message fits.
+
+        The bucket holds one control cycle's worth and no more: a real UART has
+        no backlog to spend later, and a deeper bucket would let a quiet second
+        pay for a burst the link could never actually carry.
+        """
+        if self.bytes_per_s <= 0.0:
+            return True
+        if self.budget_time is None:
+            self.budget_time = now
+            self.budget = self.bytes_per_s * 0.02
+        else:
+            self.budget += (now - self.budget_time) * self.bytes_per_s
+            self.budget_time = now
+            cap = self.bytes_per_s * 0.02
+            if self.budget > cap:
+                self.budget = cap
+        cost = self.SIZES.get(kind, 200)
+        if self.budget >= cost:
+            self.budget -= cost
+            self.sent[kind] = self.sent.get(kind, 0) + 1
+            return True
+        self.dropped[kind] = self.dropped.get(kind, 0) + 1
+        return False
+
+    def send(self, now, publish, kind=None):
+        if kind is not None and not self.afford(now, kind):
+            return              # best effort: what does not fit is gone
         if self.instant:
             publish()
             return
@@ -244,6 +314,48 @@ class SimBaseNode(Node):
         self.declare_parameter("params", "")
         self.declare_parameter("stamped_cmd_vel", False)
         self.declare_parameter("rate", 50.0)          # CONTROL_TIMER, 50 Hz
+        # The firmware steps the model on micros() DELTAS. This node stepped it on
+        # the nominal 1/rate instead, which is deterministic and therefore lovely
+        # for CI -- and it is also the one property that makes this instrument
+        # blind to a whole class of defect. A late timer callback on a loaded box
+        # is exactly the long interval that breaks an explicit Euler step, and a
+        # model told "20 ms" when 400 ms passed cannot reproduce it; worse, the
+        # pose then advances slower than wall time while Nav2 plans in wall time,
+        # so the simulated robot goes sluggish under load for a reason no board
+        # has. Measured by default; set false for a bit-reproducible run.
+        self.declare_parameter("measured_dt", True)
+        # A STARVED CONTROL LOOP, on demand.
+        #
+        # The defect this instrument exists to reproduce needs a long interval,
+        # and a20 at load 2.4 on 32 cores never produces one: across six 40-goal
+        # legs on 2026-09-25, not a single tick passed 100 ms. Waiting for a fast
+        # machine to stutter is not an experiment. So the stall is a parameter --
+        # every `control_stall_every_s` seconds the callback blocks for
+        # `control_stall_ms`, which is what a board whose loop is starved does to
+        # the interval, and to the publishing, at the same time.
+        #
+        # Sweeping it answers the question the bench cannot: with the model
+        # bounded, how long a stall can the stack absorb before Nav2 loses the
+        # robot -- and is that anywhere near what a starved board actually shows?
+        # -1 means "take it from the config", the same convention the transport
+        # delay uses, so a sweep can write it into the YAML it already writes.
+        self.declare_parameter("control_stall_ms", -1.0)
+        self.declare_parameter("control_stall_every_s", -1.0)
+        # WHERE the stall lands decides whether it is an experiment at all.
+        #
+        # Measured 2026-09-25 on the unsliced model (gendrv/mecanum, ceiling
+        # 140 rpm): one 920 ms interval taken at CRUISE duty peaks at 70.7 rpm --
+        # no divergence whatsoever, because an explicit Euler step of a
+        # first-order system is only unstable where the driving term is large, and
+        # at equilibrium (no_load - rpm) is nearly zero. The same interval taken at
+        # a full-duty step peaks at 324 rpm, and from rest at 574.
+        #
+        # So a stall on a fixed 5 s cadence mostly fires at cruise and proves
+        # nothing, which is what a sweep of them returning all-green was about to
+        # be read as. `on_command_change` fires it where the fault actually lives:
+        # a starved loop crossing a command change, which is what a Nav2 stack
+        # hands a board several times per goal.
+        self.declare_parameter("control_stall_on_command_change", False)
         # OFF, because the board does not publish a transform either.
         #
         # main.cpp has no TransformBroadcaster at all: it publishes
@@ -307,8 +419,23 @@ class SimBaseNode(Node):
                 got = float(sim.get(key, 0.0) or 0.0)
             return max(got, 0.0) / 1000.0
 
+        # The link's bandwidth, from the BAUD RATE the config already states --
+        # 8N1, so ten bits per byte. A board that says `baudrate: 921600` is
+        # telling us its budget; there is no second number to invent.
+        # `transport_bytes_per_s` overrides it directly for a sweep, and 0 (the
+        # default everywhere until asked) means unlimited, as before.
+        baud = float((params.get("base_controller") or {}).get("baudrate") or 0.0)
+        bps = float(sim.get("transport_bytes_per_s", 0.0) or 0.0)
+        if bps <= 0.0 and sim.get("transport_rate_limit"):
+            bps = baud / 10.0
         self.wire = Wire(_link("transport_delay_ms", "transport_delay_ms"),
-                         _link("transport_jitter_ms", "transport_jitter_ms"))
+                         _link("transport_jitter_ms", "transport_jitter_ms"),
+                         bps)
+        if bps > 0.0:
+            self.get_logger().info(
+                f"link budget {bps / 1000.0:.1f} kB/s"
+                + (f" (from baudrate {baud:.0f}, 8N1)" if baud else "")
+                + "; best effort, so what does not fit is dropped")
         self.imu = SimIMU(self.d)
         self.cmd = (0.0, 0.0, 0.0)
         self.cmd_time = self.get_clock().now()
@@ -316,6 +443,29 @@ class SimBaseNode(Node):
         self.prev_vx = 0.0
         rate = float(self.get_parameter("rate").value)
         self.dt = 1.0 / rate
+        self.measured_dt = bool(self.get_parameter("measured_dt").value)
+        self.prev_mono = None
+        self.max_dt = 0.0          # the worst interval this run, reported below
+        self.stall = _link("control_stall_ms", "control_stall_ms")
+        # Seconds, not milliseconds, so it does not go through _link's /1000.
+        self.stall_every = float(self.get_parameter("control_stall_every_s").value)
+        if self.stall_every < 0.0:
+            self.stall_every = float(sim.get("control_stall_every_s", 0.0) or 0.0)
+        if self.stall_every <= 0.0:
+            self.stall_every = 5.0
+        self.stall_next = None
+        self.stalls = 0
+        # Config fallback like the rest of the simulation block, so a sweep that
+        # writes the YAML can aim the stall without a launch argument.
+        self.stall_on_change = bool(
+            self.get_parameter("control_stall_on_command_change").value
+            or sim.get("control_stall_on_command_change", False))
+        self.prev_cmd = None
+        if self.stall > 0.0 and not self.measured_dt:
+            # Otherwise the stall is invisible to the model -- it would be told
+            # the nominal period while a quarter of a second passed, which is the
+            # exact blindness this was added to remove.
+            raise SystemExit("control_stall_ms needs measured_dt:=true to mean anything")
         self.create_timer(self.dt, self._tick)
         self.get_logger().info(
             f"simulated base: {self.d['base']}, {self.d['wheels']} wheels, "
@@ -339,7 +489,74 @@ class SimBaseNode(Node):
         # time on a wire, and a simulated or stepped ROS clock would stall the
         # link rather than the robot.
         mono = time.monotonic()
+        # Starve the loop BEFORE the interval is measured, so the stall lands in
+        # dt exactly as a board's would -- a stall measured afterwards is a stall
+        # the model never sees.
+        if self.stall > 0.0:
+            if self.stall_on_change:
+                # A change in the commanded twist is a change in the speed the
+                # wheels are driving towards -- the term that makes the step
+                # unstable. Two qualifications, both needed:
+                #
+                #  * a THRESHOLD. Nav2's smoothed cmd_vel changes by a little on
+                #    almost every 20 Hz message, so "any change" would stall on
+                #    nearly every tick, run the loop at about 1 Hz for the whole
+                #    leg, and trip the firmware's own 200 ms command timeout --
+                #    which stops the robot and hides the very thing being tested.
+                #  * the same MINIMUM SPACING the fixed cadence uses, so a burst
+                #    of changes cannot become sustained starvation by accident.
+                #    The two mechanisms then differ only in WHERE the stall lands.
+                # The threshold was 0.05 m/s per tick and that was wrong by an
+                # order of magnitude: Nav2's velocity smoother ramps at about
+                # 2.5 m/s2, which is 0.05 m/s per 20 ms tick EXACTLY, so the test
+                # sat on its own boundary and, with the minimum spacing on top,
+                # fired essentially never. Measured 2026-09-25: the 900 ms leg
+                # logged ZERO intervals over 100 ms across sixteen goals, and
+                # came back green -- a treatment that was never administered,
+                # about to be read as evidence the model was fine.
+                big = (self.prev_cmd is not None and
+                       (abs(self.cmd[0] - self.prev_cmd[0]) > 0.005 or
+                        abs(self.cmd[1] - self.prev_cmd[1]) > 0.005 or
+                        abs(self.cmd[2] - self.prev_cmd[2]) > 0.010))
+                self.prev_cmd = self.cmd
+                due = big and (self.stall_next is None or mono >= self.stall_next)
+            else:
+                if self.stall_next is None:
+                    self.stall_next = mono + self.stall_every
+                    due = False
+                else:
+                    due = mono >= self.stall_next
+            if due:
+                time.sleep(self.stall)
+                self.stalls += 1
+                self.stall_next = mono + self.stall_every
+                mono = time.monotonic()
         self.wire.pump(mono)
+        # SimEncoder::integrate()'s own two guards, for the same two reasons: the
+        # first call has no previous reading to subtract, and an interval longer
+        # than a second is a suspended process rather than a robot.
+        dt = self.dt
+        if self.measured_dt:
+            if self.prev_mono is None:
+                self.prev_mono = mono
+                return
+            dt = mono - self.prev_mono
+            self.prev_mono = mono
+            if dt <= 0.0 or dt > 1.0:
+                return
+            if dt > self.max_dt:
+                self.max_dt = dt
+                # The interval is the whole point of measuring it: past 2*tau an
+                # explicit Euler step of this plant diverges, and the slicing in
+                # drivetrain_report is what keeps it honest. Leave a trail of the
+                # worst one so a boardless run that DOES misbehave can be read
+                # against the intervals it actually saw, rather than assumed to
+                # have run at its nominal rate.
+                if dt > 0.1:
+                    self.get_logger().warn(
+                        f"control interval {dt * 1000:.0f} ms "
+                        f"(nominal {self.dt * 1000:.0f}); the model is sliced at "
+                        "a quarter of tau, so this is integrated, not skipped")
         # The firmware's 200 ms command timeout. Without it a node that stops
         # publishing leaves the simulated robot driving for ever, which is a
         # failure mode the board does not have and would send someone hunting a
@@ -348,7 +565,7 @@ class SimBaseNode(Node):
             self.cmd = (0.0, 0.0, 0.0)
 
         vx, vy, wz = self.cmd
-        rpm = self.wheels.step(target_rpm(self.d, vx, vy, wz), self.dt)
+        rpm = self.wheels.step(target_rpm(self.d, vx, vy, wz), dt)
         # Read the wheels BACK through the kinematics, never integrate the
         # command: the same radius on both sides is what made a wrong mecanum
         # turn radius invisible on the bench for months.
@@ -358,10 +575,25 @@ class SimBaseNode(Node):
             r1, r2, r3, r4 = rpm
             meas_y = ((-r1 + r2 + r3 - r4) / float(self.d["wheels"]) / 60.0) * self.d["circ"]
 
-        self.yaw += meas_wz * self.dt
+        self.yaw += meas_wz * dt
         cos_h, sin_h = math.cos(self.yaw), math.sin(self.yaw)
-        self.x += (meas_x * cos_h - meas_y * sin_h) * self.dt
-        self.y += (meas_x * sin_h + meas_y * cos_h) * self.dt
+        self.x += (meas_x * cos_h - meas_y * sin_h) * dt
+        self.y += (meas_x * sin_h + meas_y * cos_h) * dt
+
+        # THE DOSE. An experiment that does not report how much treatment it
+        # applied cannot be read at all: a leg that passes because the stall
+        # never fired is indistinguishable, in the verdict, from one that passed
+        # despite it. Reported on a slow cadence so it costs nothing, and only
+        # when a stall was actually asked for.
+        if self.stall > 0.0:
+            self.dose_n = getattr(self, "dose_n", 0) + 1
+            if self.dose_n % 500 == 0:
+                self.get_logger().info(
+                    f"stall dose: {self.stalls} applied of "
+                    f"{self.stall * 1000:.0f} ms"
+                    + (" (aimed at command changes)" if self.stall_on_change
+                       else f" every {self.stall_every:.1f} s")
+                    + f"; worst interval so far {self.max_dt * 1000:.0f} ms")
 
         stamp = now.to_msg()
         qx, qy, qz, qw = _quat_from_yaw(self.yaw)
@@ -379,19 +611,18 @@ class SimBaseNode(Node):
         odom.twist.twist.linear.x = meas_x
         odom.twist.twist.linear.y = meas_y
         odom.twist.twist.angular.z = meas_wz
-        self.wire.send(mono, lambda m=odom: self.odom_pub.publish(m))
+        self.wire.send(mono, lambda m=odom: self.odom_pub.publish(m), "odom")
 
         imu = Imu()
         imu.header.stamp = stamp
         imu.header.frame_id = "imu_link"
         imu.orientation.x, imu.orientation.y = qx, qy
         imu.orientation.z, imu.orientation.w = qz, qw
-        gyro_z, accel_x = self.imu.read(meas_wz, (meas_x - self.prev_vx) / self.dt,
-                                        self.dt)
+        gyro_z, accel_x = self.imu.read(meas_wz, (meas_x - self.prev_vx) / dt, dt)
         imu.angular_velocity.z = gyro_z
         imu.linear_acceleration.x = accel_x
         imu.linear_acceleration.z = 9.81
-        self.wire.send(mono, lambda m=imu: self.imu_pub.publish(m))
+        self.wire.send(mono, lambda m=imu: self.imu_pub.publish(m), "imu")
         self.prev_vx = meas_x
 
         if self.tf is not None:

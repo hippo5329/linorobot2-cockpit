@@ -13,6 +13,7 @@ read BACK through the kinematics rather than the command being integrated.
 """
 import math
 import os
+import re
 import sys
 
 import pytest
@@ -372,3 +373,197 @@ def test_the_link_can_be_set_from_the_config_as_well_as_a_parameter():
     assert 'declare_parameter("transport_delay_ms"' in src
     assert 'declare_parameter("transport_jitter_ms"' in src
     assert 'sim.get(key, 0.0)' in src, "the config's simulation block is ignored"
+
+
+# ---------------------------------------------------------------------------
+# The interval the model is stepped on.
+#
+# This node stepped the plant, the pose and the IMU on the nominal 1/rate, which
+# is deterministic and therefore ideal for CI -- and is also what made it blind
+# to the defect it was most needed for. The firmware steps on micros() DELTAS,
+# so a late callback on a loaded box is a long interval there and a 20 ms one
+# here, and the divergence that put a simulated robot 30 m outside a 6 m room
+# could not be reproduced boardless at all. Under-integrating has a second cost:
+# the pose then advances slower than wall time while Nav2 plans in wall time, so
+# the robot goes sluggish under load for a reason no board has.
+def _tick_body():
+    code = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
+    start = code.index("def _tick(self)")
+    rest = code[start + 1:]
+    end = rest.find("\n    def ")
+    return rest[:end if end != -1 else len(rest)]
+
+
+def test_the_model_is_stepped_on_measured_time_not_the_nominal_rate():
+    body = _tick_body()
+    assert "self.prev_mono" in body, "the tick keeps no previous reading to subtract"
+    assert "* self.dt" not in body, (
+        "the tick still integrates on the nominal period; the firmware integrates "
+        "on the interval that actually passed")
+    assert "/ self.dt" not in body, "the IMU still differentiates on the nominal period"
+
+
+def test_a_suspended_process_does_not_step_the_model():
+    """SimEncoder::integrate()'s own upper guard, in seconds. A step longer than
+    this is a stopped world, not a robot, and integrating it invents motion."""
+    header = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
+                               "sim_wheel.h"), encoding="utf-8").read()
+    body = header[header.index("void integrate()"):header.index("public:")]
+    m = re.search(r"dt\s*>\s*(\d+)UL", body)
+    assert m, "sim_wheel.h no longer guards a long interval"
+    secs = int(m.group(1)) / 1e6
+    assert f"dt > {secs}" in _tick_body(), (
+        f"the firmware skips an interval past {secs} s and this node does not")
+
+
+def test_the_nominal_rate_is_still_what_the_timer_runs_at():
+    """Measured intervals must not turn into a free-running loop: the callback
+    rate is still the firmware's CONTROL_TIMER."""
+    code = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
+    assert "self.create_timer(self.dt, self._tick)" in code
+
+
+# ---------------------------------------------------------------------------
+# The induced stall. It exists because a fast host will not stutter to order:
+# six 40-goal legs on a20 (load 2.4 of 32 cores) produced not one tick past
+# 100 ms, so the interval that breaks an unbounded Euler step never occurred and
+# the instrument could not have reproduced it however long it ran.
+def test_the_stall_lands_before_the_interval_is_measured():
+    """A stall measured AFTER dt is computed is a stall the model never sees --
+    the whole point is that the plant is handed the long interval."""
+    body = _tick_body()
+    sleep_at = body.index("time.sleep(self.stall)")
+    measure_at = body.index("dt = mono - self.prev_mono")
+    assert sleep_at < measure_at, (
+        "the stall happens after the interval is measured, so the model is still "
+        "told the nominal period")
+    assert body.index("mono = time.monotonic()", sleep_at) < measure_at, (
+        "the clock is not re-read after the stall, so dt misses it entirely")
+
+
+def test_a_stall_without_a_measured_interval_is_refused():
+    """Stalling a node that integrates on the nominal period changes nothing and
+    looks like it changed something -- the worst of both."""
+    code = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
+    assert "control_stall_ms needs measured_dt" in code, \
+        "the combination is silently accepted"
+
+
+def test_the_stall_is_off_by_default():
+    """Every other leg, and CI, must be unaffected. The parameter defaults to -1,
+    which means "read the config", and the config's own default is zero -- so the
+    off state has to be checked at BOTH ends or one of them can drift."""
+    code = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
+    assert "declare_parameter('control_stall_ms', -1.0)" in code, \
+        "the stall no longer defers to the config (_code_only re-emits with single quotes)"
+    assert "_link('control_stall_ms', 'control_stall_ms')" in code, \
+        "the stall is not read through the same -1-means-config helper as the link"
+    # _link's own fallback is 0.0, which is what makes an unset config mean off.
+    link = code[code.index("def _link("):]
+    link = link[:link.index("self.wire = Wire(")]
+    assert "sim.get(key, 0.0)" in link, "the config fallback is no longer zero"
+
+
+def test_a_stall_can_be_aimed_at_the_command_change():
+    """WHERE the stall lands decides whether the sweep is an experiment.
+
+    Measured on the unsliced model: a 920 ms interval taken at cruise duty peaks
+    at 70.7 rpm against a 140 rpm ceiling -- no divergence, because the driving
+    term (no_load - rpm) is nearly zero at equilibrium. The same interval at a
+    full-duty step reaches 324, and from rest 574. A fixed cadence therefore
+    fires mostly where nothing happens, and a green sweep of those would have
+    been read as 'a starved loop is harmless'."""
+    body = _tick_body()
+    assert "self.stall_on_change" in body, \
+        "the stall cannot be aimed at a command change"
+    change_at = body.index("self.stall_on_change")
+    sleep_at = body.index("time.sleep(self.stall)")
+    assert change_at < sleep_at, "the trigger is decided after the stall is taken"
+    assert "self.prev_cmd" in body, "nothing remembers the previous command"
+
+
+def test_the_aimed_stall_is_off_by_default():
+    code = _code_only(os.path.join(REPO_ROOT, "scripts", "sim_base_node.py"))
+    assert "declare_parameter('control_stall_on_command_change', False)" in code
+
+
+# ---------------------------------------------------------------------------
+# The link's BANDWIDTH, and the best-effort drops that follow from running out.
+#
+# Latency alone is not what a serial link does to a robot. micro-ROS over 8N1
+# carries baudrate/10 bytes per second, the 50 Hz triple is about 1170 bytes a
+# cycle, and the firmware publishes best effort -- so what does not fit is not
+# late, it is gone. The bench has already shown what that costs asymmetrically:
+# /odom at 33 Hz beside /imu/data at 10 Hz on the same leg, because madgwick
+# pairs imu/data_raw with imu/mag and an unpaired sample yields nothing.
+def _wire(bytes_per_s):
+    return fb.Wire(0.0, 0.0, bytes_per_s)
+
+
+def test_an_unlimited_link_is_the_default_and_drops_nothing():
+    w = fb.Wire()
+    assert w.bytes_per_s == 0.0
+    assert w.instant is True
+    for i in range(200):
+        assert w.afford(i * 0.02, "odom") is True
+    assert w.dropped == {}
+
+
+def test_a_921600_link_carries_the_fifty_hertz_triple():
+    """92 kB/s against about 58 kB/s of traffic: it fits, with room."""
+    w = _wire(921600 / 10.0)
+    for i in range(500):
+        t = i * 0.02
+        for kind in ("odom", "imu", "mag"):
+            w.afford(t, kind)
+    assert w.dropped == {}, f"a 921600 link should carry the triple, dropped {w.dropped}"
+
+
+def test_a_115200_link_cannot_and_says_which_messages_went():
+    """11.5 kB/s against 58 kB/s. The drops are the point, and they must be
+    counted per topic -- a total would hide the asymmetry entirely."""
+    w = _wire(115200 / 10.0)
+    for i in range(500):
+        t = i * 0.02
+        for kind in ("odom", "imu", "mag"):
+            w.afford(t, kind)
+    assert w.dropped, "a 115200 link carried 58 kB/s of traffic"
+    assert sum(w.dropped.values()) > sum(w.sent.values()), \
+        "most of the traffic should not have fitted"
+    assert set(w.dropped) & {"odom", "imu", "mag"}, w.dropped
+
+
+def test_the_budget_does_not_accumulate_across_a_quiet_second():
+    """A UART has no backlog to spend later. A deep bucket would let a quiet
+    stretch pay for a burst the link could never carry, which turns a hard limit
+    into an average and hides exactly the moment that hurts."""
+    w = _wire(115200 / 10.0)
+    w.afford(0.0, "odom")
+    sent_after_quiet = 0
+    # one second of silence, then as many odom messages as the bucket allows
+    for _ in range(50):
+        if w.afford(1.0, "odom"):
+            sent_after_quiet += 1
+    cap = (115200 / 10.0) * 0.02
+    assert sent_after_quiet <= int(cap / fb.Wire.SIZES["odom"]) + 1, (
+        f"{sent_after_quiet} messages went at one instant on a "
+        f"{cap:.0f} byte bucket -- the quiet second was banked")
+
+
+def test_a_dropped_message_is_not_published_at_all():
+    """Best effort. The alternative -- queueing it -- would model a reliable
+    link, which is the configuration the firmware explicitly does not use at
+    these rates because it costs an agent round trip per message."""
+    w = _wire(1.0)          # one byte a second: nothing fits
+    calls = []
+    w.send(0.0, lambda: calls.append(1), "odom")
+    assert calls == [], "a message that did not fit was published anyway"
+
+
+def test_a_send_with_no_kind_is_never_rate_limited():
+    """The TF and any future publisher must keep working until somebody gives
+    them a size, rather than silently vanishing on a rate-limited leg."""
+    w = _wire(1.0)
+    calls = []
+    w.send(0.0, lambda: calls.append(1))
+    assert calls == [1]
