@@ -1337,6 +1337,26 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
         log(f"(no stamp recorded: {exc})")
         return
 
+    # The banner is printed at the APPLICATION's rate, not the upload rate this
+    # function is handed. The pipeline caps uploads at 921600 (FLASH_BAUD_CEILING),
+    # and on a board whose runtime rate is higher -- the GenDrv runs 1.5 Mbaud --
+    # every listen below was at the wrong rate: the banner was noise, the stamp
+    # said banner_confirmed: false on every GenDrv flash, and the comment further
+    # down ("still nothing at the application's baud") described a listen that
+    # never happened. The bare ESP32 only ever worked because both rates are
+    # 921600 there. The robot config names the runtime rate; mcu_env writes the
+    # env's `baud` from the same key.
+    app_baud = int(baud)
+    try:
+        import yaml
+        if params and os.path.isfile(params):
+            with open(params, encoding="utf-8") as fh:
+                _rate = ((yaml.safe_load(fh) or {}).get("base_controller") or {}).get("baudrate")
+            if _rate:
+                app_baud = int(_rate)
+    except Exception:
+        pass
+
     stamp = dict(mcu_probe.read_stamp(env, port))
     # prebuilt_dir MATTERS. local_build() answers "what would this machine
     # flash", and without the directory it answers for the source tree -- which
@@ -1391,7 +1411,7 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     while time.time() < deadline and not os.path.exists(port):
         time.sleep(0.02)
     if os.path.exists(port):
-        captured = mcu_probe.listen_for_banner(port, baud, 6.0)
+        captured = mcu_probe.listen_for_banner(port, app_baud, 6.0)
         banner = mcu_probe.parse_banner(captured)
     # A missed banner on an ESP32 is not cosmetic. esptool's own reset does not
     # start the application on every board, and a board that never started is
@@ -1400,8 +1420,8 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     # guess and handing bringup a board that is not running.
     if not banner and app_written and is_esp_family(env) and os.path.exists(port):
         log("no banner yet — pulsing EN to start the application...")
-        if esp32_reset_into_app(port, baud):
-            captured = mcu_probe.listen_for_banner(port, baud, 8.0)
+        if esp32_reset_into_app(port, app_baud):
+            captured = mcu_probe.listen_for_banner(port, app_baud, 8.0)
             banner = mcu_probe.parse_banner(captured)
     # Still nothing at the application's baud. An ESP32 that never reaches
     # setup() says why at the ROM's 115200 -- a flash-size mismatch, a panic
@@ -1411,7 +1431,7 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     # exactly what the Yahboom S3 said while the 8 MB-header image rebooted on
     # its 4 MB module: nothing at 921600, the whole story at 115200.
     rom_lines = []
-    if not banner and app_written and is_esp_family(env) and os.path.exists(port) and int(baud) != 115200:
+    if not banner and app_written and is_esp_family(env) and os.path.exists(port) and app_baud != 115200:
         rom = mcu_probe.listen_for_banner(port, 115200, 3.0, reset=True)
         rom_lines = rom_boot_lines(rom)
         if rom_lines:
