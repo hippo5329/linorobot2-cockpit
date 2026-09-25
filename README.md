@@ -315,9 +315,10 @@ than the cable.
 
 The onboard LED is on by default wherever a board has one — GP25 on the Picos, GPIO 2 on the
 ESP32s, GPIO 48 on the S3 — because the blink pattern is the only thing a board tells you
-before micro-ROS is up, and a bench board in simulation mode needs it as much as a wired one. The
-RP2 design assumes non-W hardware and keeps GP25; on an actual W board GP25 belongs to the
-CYW43 bus, so those set `led` in the env. GPIO 2 on an ESP32 is also a strapping pin, so the
+before micro-ROS is up, and a bench board in simulation mode needs it as much as a wired one. A
+Pico W's or Pico 2 W's LED is on the CYW43 radio chip, not a GPIO, so their bare robots set
+`led: 64`, arduino-pico's number for it; a non-W Pico running the same image maps 64 to GP25.
+GPIO 2 on an ESP32 is also a strapping pin, so the
 pin checker warns about it; that is correct and harmless here, since an LED to ground pulls
 the pin the way the bootloader already wants.
 

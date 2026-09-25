@@ -756,7 +756,8 @@ function autoAssignPins() {
   const is4wd = (kine === "4wd" || kine === "mecanum");
 
   if (mcu.includes("pico")) {
-    document.getElementById("pin-led").value = (mcu === "picow" || mcu === "pico2w") ? 32 : 25;
+    // 64 is arduino-pico's PIN_LED on a W board (the CYW43's LED); a non-W Pico maps it to GP25.
+    document.getElementById("pin-led").value = (mcu === "picow" || mcu === "pico2w") ? 64 : 25;
     document.getElementById("pin-i2c-sda").value = 0;
     document.getElementById("pin-i2c-scl").value = 1;
     document.getElementById("pin-battery").value = 26;
@@ -876,6 +877,7 @@ function validateHardwareSafety() {
     if (mcu.includes("pico")) {
       if (val > 29) errors.push(`GP${val} (${label}) is out of range for RP2040/RP2350 (0-29).`);
       if ((mcu === "picow" || mcu === "pico2w") && [23, 24, 25, 29].includes(val)) {
+      if (id === "pin-led" && val === 64 && (mcu === "picow" || mcu === "pico2w")) return;
         warnings.push(`GP${val} (${label}) is connected to CYW43439 Wi-Fi chip.`);
       }
     } else if (mcu === "esp32" || mcu === "gendrv") {

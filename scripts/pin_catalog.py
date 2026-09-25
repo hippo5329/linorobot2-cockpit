@@ -22,6 +22,7 @@ Finding = Tuple[str, str]
 # board (SMPS mode, VBUS sense, the LED, VSYS/3); on the W boards the same
 # four belong to the CYW43 interface.
 _RP2_HEADER_GPIO = set(range(0, 23)) | {26, 27, 28}
+CYW43_LED = 64   # arduino-pico PIN_LED on picow/pico2w; a non-W Pico maps it to GP25
 _RP2_I2C = {
     0: ({0, 4, 8, 12, 16, 20, 28}, {1, 5, 9, 13, 17, 21}),
     1: ({2, 6, 10, 14, 18, 26}, {3, 7, 11, 15, 19, 27}),
@@ -145,6 +146,9 @@ def check_config(params: dict) -> List[Finding]:
     used = _collect(tgt)
 
     for role, gpio, direction in used:
+        # arduino-pico's PIN_LED on a W board: the CYW43's WL_GPIO0, not a header pin.
+        if role == "led" and gpio == CYW43_LED and wireless_rp2:
+            continue
         if gpio not in cat["gpio"]:
             findings.append(("error", f"{role}: GPIO {gpio} does not exist on the {cat['label']}"))
             continue

@@ -1007,7 +1007,10 @@ def bare_mcu_params(mcu: str) -> dict:
                 # A bare module still has its onboard LED, and simulation mode drives
                 # the real one: a board on a bench should blink out of the box.
                 # Everything else stays N/C.
-                "led": {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32,
+                # A W board's LED is on the CYW43, which arduino-pico drives as
+                # pin 64 (PIN_LED); the same image on a non-W Pico maps 64 to
+                # GP25, so the W default lights both. (It was 32: no such GPIO.)
+                "led": {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64,
                         "esp32": 2, "esp32s3": 48}.get(mcu, -1),
             },
         },

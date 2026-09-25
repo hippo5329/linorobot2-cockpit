@@ -180,7 +180,7 @@ def test_the_generated_bare_config_is_the_default_chassis():
     config on every run, so a cell can no longer test a two-day-old file."""
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import gen_bare_config
-    leds = {"pico": 25, "pico2": 25, "picow": 32, "pico2w": 32, "esp32": 2, "esp32s3": 48}
+    leds = {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64, "esp32": 2, "esp32s3": 48}
     for mcu in sorted(gen_bare_config.BOARDS):
         cfg = gen_bare_config.bare_config(mcu)
         for key, want in DEFAULT_KINEMATICS.items():
@@ -500,3 +500,20 @@ def test_the_simulated_magnetometer_ships_calibrated():
         assert macro in block, f"{macro} is not used as the simulated calibration"
     # and it must not override a calibration somebody actually supplied
     assert "!mag_bias[0] && !mag_bias[1] && !mag_bias[2]" in block
+
+
+def test_every_bare_robot_passes_the_pin_check():
+    """bare_picow and bare_pico2w shipped `led: 32` -- no such GPIO on either
+    chip -- and the only trace was "[pins] error: led: GPIO 32 does not exist"
+    in every bench patch log. A W board's LED is the CYW43's, arduino-pico pin
+    64, which a non-W Pico running the same image maps to GP25."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import gen_bare_config
+    import pin_catalog
+    for mcu in sorted(gen_bare_config.KNOWN):
+        errors = [m for lvl, m in pin_catalog.check_config(gen_bare_config.bare_config(mcu)) if lvl == "error"]
+        assert not errors, f"bare_{mcu}: {errors}"
+    # 64 is the LED on a W board only; on a plain Pico config it is still no GPIO.
+    cfg = gen_bare_config.bare_config("pico")
+    cfg["base_controller"]["pins"]["led"] = 64
+    assert any(lvl == "error" for lvl, _ in pin_catalog.check_config(cfg))
