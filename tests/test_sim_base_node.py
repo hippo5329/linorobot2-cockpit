@@ -425,7 +425,7 @@ def test_the_nominal_rate_is_still_what_the_timer_runs_at():
 
 # ---------------------------------------------------------------------------
 # The induced stall. It exists because a fast host will not stutter to order:
-# six 40-goal legs on a20 (load 2.4 of 32 cores) produced not one tick past
+# six 40-goal legs on a 32-core host at load 2.4 produced not one tick past
 # 100 ms, so the interval that breaks an unbounded Euler step never occurred and
 # the instrument could not have reproduced it however long it ran.
 def test_the_stall_lands_before_the_interval_is_measured():

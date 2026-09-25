@@ -327,7 +327,7 @@ class SimBaseNode(Node):
         # A STARVED CONTROL LOOP, on demand.
         #
         # The defect this instrument exists to reproduce needs a long interval,
-        # and a20 at load 2.4 on 32 cores never produces one: across six 40-goal
+        # and a fast host never produces one: at load 2.4 on 32 cores, across six 40-goal
         # legs on 2026-09-25, not a single tick passed 100 ms. Waiting for a fast
         # machine to stutter is not an experiment. So the stall is a parameter --
         # every `control_stall_every_s` seconds the callback blocks for
