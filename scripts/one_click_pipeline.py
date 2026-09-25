@@ -859,6 +859,13 @@ ORIGIN_TOL = 0.10
 # How far from the origin the robot may be when SLAM starts. The goal is 3 m
 # away and the gate needs a 1 m start gap, so a few cm are immaterial.
 POSE_START_TOL = 0.25
+# The firmware puts a simulated pose back at the origin only when its agent was
+# gone at least this long (main.cpp SIM_POSE_RESET_AFTER_MS): a shorter gap is
+# the same run's session rebuilt after a blip, and resetting the pose there once
+# teleported the robot home in the middle of a Nav2 goal. The pose reset below
+# restarts the bringup, and it keeps the agent down for longer than this, or the
+# new session would count as the same run and keep the pose it exists to clear.
+SIM_POSE_RESET_AFTER_S = 3.0
 
 
 def _odom_speed(distro: str):
@@ -1546,8 +1553,8 @@ def main():
             if start_xy is None:
                 print("\n[4.7/6] [POSE] No /odom/unfiltered sample; the start pose is unverified.")
             elif math.hypot(*start_xy) <= POSE_START_TOL:
-                print(f"\n[4.7/6] [POSE] Starting from {fmt(start_xy)}: the flash zeroed the "
-                      f"simulated pose and nothing has moved it.")
+                print(f"\n[4.7/6] [POSE] Starting from {fmt(start_xy)}: a new run starts the "
+                      f"simulated pose at the origin and nothing has moved it.")
             else:
                 print(f"\n[4.7/6] [POSE] The robot is at {fmt(start_xy)}, not the origin — "
                       f"restarting the bringup for a new session that zeroes it...")
@@ -1564,6 +1571,9 @@ def main():
                                                                         require_publisher=True,
                                                                         distro=args.distro):
                         time.sleep(1.0)
+                    # ...and past the firmware's new-run threshold, with a second
+                    # to spare for the ping that notices the agent is back.
+                    time.sleep(max(0.0, SIM_POSE_RESET_AFTER_S + 1.0 - (time.time() - t_gone)))
                     bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup2", distro=args.distro))
                     stack_processes.append(("bringup", bg_processes[-1]))
                     if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,

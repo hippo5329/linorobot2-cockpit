@@ -307,6 +307,25 @@ enum states
   AGENT_DISCONNECTED
 } state;
 
+// How long a serial link may fail its pings before the agent is declared lost.
+// It used to be ONE failed 100 ms ping: 23 of 246 GenDrv serial runs (2026-09-22
+// to 26) tore the session down mid-run and rebuilt it, and on 2026-09-26 one of
+// them landed inside a Nav2 goal (gate 20260926-disp7). A second of silence is
+// still a lost agent; one late reply on a busy 1.5 Mbaud link is not.
+static const uint32_t AGENT_LOSS_MS = 1000;
+// How long the agent must have been gone for a new session to be a new RUN, and
+// the simulated pose to be put back at the origin (createEntities). A blip that
+// the session did not survive is the same run: resetting the pose there
+// teleported the simulated robot home from 3 m out, the EKF coasted on its last
+// velocity through the gap, SLAM jumped 2.3 m and the goal aborted. The
+// pipeline's pose reset keeps the agent down for longer than this
+// (one_click_pipeline.SIM_POSE_RESET_AFTER_S), so a deliberate reset still is one.
+static const uint32_t SIM_POSE_RESET_AFTER_MS = 3000;
+static uint32_t agent_ok_ms = 0;      // the last proof the agent answered: a session made or a ping returned
+static bool ping_failing = false;     // the current run of failed pings started at ping_fail_since_ms
+static uint32_t ping_fail_since_ms = 0;
+static bool had_session = false;      // a session has existed since boot
+
 // Compiled in unconditionally, and that is the point: whether THIS BOARD has
 // wheels is a fact about the board, and a board is a configuration, not a build
 // (AGENTS.md §10). It used to be `#ifdef USE_SIM_WHEEL`, which meant the bare
@@ -1368,8 +1387,22 @@ void loop() {
                 EXECUTE_EVERY_N_MS(200, {
                     const bool ok = (RMW_RET_OK == rmw_uros_ping_agent(100, 1));
                     diagCount(ok ? DIAG_PING_OK : DIAG_PING_FAIL);
-                    state = ok ? AGENT_CONNECTED : AGENT_DISCONNECTED;
+                    if (ok) {
+                        ping_failing = false;
+                        agent_ok_ms = millis();
+                    } else if (!ping_failing) {
+                        ping_failing = true;
+                        ping_fail_since_ms = millis();
+                    } else if (millis() - ping_fail_since_ms >= AGENT_LOSS_MS) {
+                        state = AGENT_DISCONNECTED;
+                    }
                 });
+            }
+            else
+            {
+                // No ping on udp4: nothing declares the agent lost, so the
+                // session being up is the proof.
+                agent_ok_ms = millis();
             }
             if (state == AGENT_CONNECTED) 
             {
@@ -1385,7 +1418,9 @@ void loop() {
             }
             break;
         case AGENT_DISCONNECTED:
-            syslog(LOG_INFO, "%s agent disconnected %lu", __FUNCTION__, millis());
+            syslog(LOG_WARNING, "%s agent disconnected: no ping answered for %lu ms %lu",
+                   __FUNCTION__, (unsigned long)(millis() - agent_ok_ms), millis());
+            ping_failing = false;
             fullStop();
             destroyEntities();
             state = WAITING_AGENT;
@@ -1655,17 +1690,29 @@ bool createEntities()
         // silently begins wherever the first one parked the robot -- and once that
         // is against a simulated wall, the safety stop zeroes forward velocity and
         // navigation fails as "goal outside map" or "failed to make progress",
-        // neither of which points at inherited state. A new agent session means a
-        // new run, so start it from the origin.
+        // neither of which points at inherited state. A new RUN starts from the
+        // origin -- and a new run is the first session since boot, or one after
+        // the agent was gone for SIM_POSE_RESET_AFTER_MS. A shorter gap is the same
+        // run's session rebuilt after a blip, and the robot stays where it is
+        // (see SIM_POSE_RESET_AFTER_MS for what resetting it there did).
         //
         // Real robots deliberately do not do this: odometry must stay continuous
         // across a reconnect, or the transform tree jumps under whatever is
         // localising against it.
-        odometry->reset();
-        if (sim_ld19)
-            sim_ld19->updatePose(0.0f, 0.0f, 0.0f);
-        syslog(LOG_INFO, "%s simulated pose reset to origin %lu", __FUNCTION__, millis());
+        const uint32_t gone_ms = millis() - agent_ok_ms;
+        if (!had_session || gone_ms >= SIM_POSE_RESET_AFTER_MS) {
+            odometry->reset();
+            if (sim_ld19)
+                sim_ld19->updatePose(0.0f, 0.0f, 0.0f);
+            syslog(LOG_INFO, "%s simulated pose reset to origin (new run) %lu", __FUNCTION__, millis());
+        } else {
+            syslog(LOG_WARNING, "%s agent back after %lu ms: the same run, simulated pose kept %lu",
+                   __FUNCTION__, (unsigned long)gone_ms, millis());
+        }
     }
+    had_session = true;
+    agent_ok_ms = millis();
+    ping_failing = false;
 
     return true;
 }
