@@ -112,21 +112,12 @@ jobs:
           done
           test -n "$img" || { echo "::error::no firmware image for ${{ matrix.profile }}"; exit 1; }
           distro=$(python3 -c "import json;print(json.load(open('firmware/prebuilt/${{ matrix.profile }}/manifest.json'))['ros_distro'])")
-          # Both types are linked -- /cmd_vel is chosen at run time by the env
-          # key `stamped_cmd_vel` -- and the default follows the image's distro
-          # stamp, so the stamp must be this profile's distro and nothing else.
-          # (A bare "jazzy" string proves nothing: the firmware compares against
-          # that literal, so every image has it.)
-          words=$(strings -a "$img" | tr -s ' \t' '\n')
-          for t in geometry_msgs/msg/Twist geometry_msgs/msg/TwistStamped; do
-            grep -qxF "$t" <<<"$words" || { echo "::error::${{ matrix.profile }} does not link $t; a board told to use it would never move."; exit 1; }
-          done
-          stamps=$( (grep -x 'FW_ROS_DISTRO=.*' <<<"$words" || true) | sort -u | tr '\n' ' ')
-          echo "profile=${{ matrix.profile }} distro=$distro stamps=$stamps"
-          if [ "$stamps" != "FW_ROS_DISTRO=$distro " ]; then
-            echo "::error::${{ matrix.profile }} is built for $distro but stamped '$stamps'. Its /cmd_vel default follows the stamp, so nav2 on $distro would publish a type the board does not subscribe. Check the pio env's board_microros_distro."
-            exit 1
-          fi
+          # The same function build_prebuilt.py ran, on the bytes this job attaches:
+          # both types linked, and the image's distro stamp (its /cmd_vel default)
+          # is this profile's. It reassembles a .uf2 first -- `strings` on the
+          # file splits any string that crosses one of its 256-byte payloads.
+          python3 -c "import sys; sys.path.insert(0, 'scripts'); import build_prebuilt as b; b.check_cmd_vel_contract(sys.argv[1], sys.argv[2], sys.argv[3])" \
+            "${{ matrix.profile }}" "$img" "$distro"
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.profile }}

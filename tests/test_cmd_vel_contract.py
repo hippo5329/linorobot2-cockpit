@@ -44,12 +44,48 @@ def test_the_firmware_carries_the_stamp_and_defaults_from_it():
 def test_release_yml_check_is_not_the_only_one():
     """CI runs on a tag; a locally cut release must be checked too."""
     ci = open(os.path.join(REPO_ROOT, ".github", "workflows", "release.yml")).read()
-    assert "FW_ROS_DISTRO=$distro" in ci
+    assert "check_cmd_vel_contract" in ci
     src = open(os.path.join(REPO_ROOT, "scripts", "build_prebuilt.py")).read()
-    assert "strings" in src, "the script must check the artifact itself, not rely on CI"
+    assert "check_cmd_vel_contract(profile, img, distro)" in src, \
+        "the script must check the artifact itself, not rely on CI"
 
 
 def test_every_profile_declares_a_distro_the_check_understands():
     for profile, (_mcu, _env, distro, _desc) in build_prebuilt.PROFILES.items():
         assert distro in UNSTAMPED or distro == "lyrical", (
             f"{profile}: distro {distro!r} is not classified by the /cmd_vel check")
+
+
+def _uf2(payload, base=0x10000000):
+    """`payload` as a UF2 file, 256 bytes per block, the way picotool writes it."""
+    import struct
+    chunks = [payload[i:i + 256] for i in range(0, len(payload), 256)]
+    out = b""
+    for n, c in enumerate(chunks):
+        hdr = struct.pack("<8I", 0x0A324655, 0x9E5D5157, 0x2000, base + 256 * n,
+                          len(c), n, len(chunks), 0xE48BFF59)
+        out += hdr + c.ljust(476, b"\0") + struct.pack("<I", 0x0AB16F30)
+    return out
+
+
+def test_a_string_across_a_uf2_block_boundary_is_found(tmp_path):
+    """pico-lyrical, 2026-09-25: `strings` on the .uf2 saw the type name in two
+    pieces and the check called TwistStamped missing from a good image."""
+    body = (b"\0" * 240 + b"geometry_msgs/msg/TwistStamped\0geometry_msgs/msg/Twist\0"
+            + b"FW_ROS_DISTRO=lyrical\0").ljust(1024, b"\0")
+    img = tmp_path / "firmware.uf2"
+    img.write_bytes(_uf2(body))
+    assert b"geometry_msgs/msg/TwistStamped" not in img.read_bytes(), "the fixture must straddle"
+    build_prebuilt.check_cmd_vel_contract("t", str(img), "lyrical")
+
+
+def test_the_wrong_stamp_or_a_missing_type_fails(tmp_path):
+    import pytest
+    img = tmp_path / "firmware.bin"
+    img.write_bytes(b"geometry_msgs/msg/Twist\0geometry_msgs/msg/TwistStamped\0FW_ROS_DISTRO=jazzy\0")
+    build_prebuilt.check_cmd_vel_contract("t", str(img), "jazzy")
+    with pytest.raises(SystemExit):
+        build_prebuilt.check_cmd_vel_contract("t", str(img), "lyrical")
+    img.write_bytes(b"geometry_msgs/msg/Twist\0FW_ROS_DISTRO=jazzy\0jazzy\0")
+    with pytest.raises(SystemExit):
+        build_prebuilt.check_cmd_vel_contract("t", str(img), "jazzy")

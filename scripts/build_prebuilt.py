@@ -47,6 +47,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -231,6 +232,83 @@ def header_cmd(mcu, distro):
             "--mcu", mcu, "--distro", distro, "--no-embed-secrets"]
 
 
+UF2_MAGIC = (0x0A324655, 0x9E5D5157, 0x0AB16F30)
+
+
+def image_bytes(path):
+    """What the board's flash will hold, rather than the file that carries it.
+
+    A UF2 is 512-byte blocks, each a 32-byte header, a 256-byte payload and
+    padding, so any string that crosses a payload boundary is cut in two in the
+    file. `strings` on a .uf2 found pico-lyrical's "geometry_msgs/msg/TwistStamped"
+    as two fragments and called the type missing. Reassemble by target address.
+    """
+    data = open(path, "rb").read()
+    if not path.endswith(".uf2"):
+        return data
+    parts = []
+    for off in range(0, len(data) - 511, 512):
+        blk = data[off:off + 512]
+        m0, m1, _flags, addr, size = (int.from_bytes(blk[i:i + 4], "little") for i in range(0, 20, 4))
+        if (m0, m1) != UF2_MAGIC[:2] or int.from_bytes(blk[508:512], "little") != UF2_MAGIC[2]:
+            continue
+        parts.append((addr, blk[32:32 + size]))
+    parts.sort()
+    out = bytearray()
+    base = parts[0][0] if parts else 0
+    for addr, payload in parts:
+        # Gaps are filled, so bytes on either side of one never join into a string.
+        out.extend(b"\0" * max(0, addr - base - len(out)))
+        out.extend(payload)
+    return bytes(out)
+
+
+def image_words(path):
+    """The printable runs in the image, split on whitespace -- `strings -a`, but
+    over image_bytes() rather than the file."""
+    words = set()
+    for run in re.findall(rb"[\x20-\x7e\t]{4,}", image_bytes(path)):
+        words.update(run.decode("ascii").split())
+    return words
+
+
+def check_cmd_vel_contract(profile, img, distro):
+    """The /cmd_vel contract, checked on the ARTIFACT before it is published.
+
+    A board subscribing the wrong type enumerates, publishes odometry and never
+    moves: nav2 on jazzy publishes plain Twist, from kilted on TwistStamped, and
+    a mismatch delivers nothing, silently on both sides. It happened -- a
+    pico2-jazzy image went onto the bench stamped, and the Nav2 goal test
+    reported "494 cmd_vel msgs, base moved 0.002 m".
+
+    Since 2026-09-25 the type is a run-time choice (env `stamped_cmd_vel`), so
+    every image links BOTH, and its default comes from the distro the image was
+    built for. So the artifact must carry both types, and its distro stamp
+    (main.cpp `fw_distro_tag`) must be this profile's -- that stamp alone decides
+    which of the two a board with no override subscribes. A bare distro name
+    cannot stand in for the stamp: the firmware compares against "jazzy", so
+    every image contains it. release.yml calls this same function.
+    """
+    words = image_words(img)
+    missing = [t for t in ("geometry_msgs/msg/Twist", "geometry_msgs/msg/TwistStamped")
+               if t not in words]
+    if missing:
+        raise SystemExit(
+            f"{profile}: the image does not link {', '.join(missing)}. "
+            f"/cmd_vel is chosen at run time, so every image needs both; "
+            f"a board told to use the missing one would never move.")
+    stamps = sorted(w for w in words if w.startswith("FW_ROS_DISTRO="))
+    if stamps != [f"FW_ROS_DISTRO={distro}"]:
+        raise SystemExit(
+            f"{profile}: built for {distro}, but the image is stamped "
+            f"{stamps or 'with no distro'}. Its /cmd_vel default follows "
+            f"that stamp, so nav2 on {distro} would publish a type the "
+            f"board does not subscribe, and nothing would be delivered.")
+    print(f"  /cmd_vel contract ok ({distro}: both types linked, default "
+          f"{'TwistStamped' if distro not in ('humble', 'iron', 'jazzy') else 'Twist'})",
+          flush=True)
+
+
 def build(profile, keep_going=False):
     mcu, env, distro, description = PROFILES[profile]
     out_dir = os.path.join(PREBUILT_DIR, profile)
@@ -280,47 +358,11 @@ def build(profile, keep_going=False):
         entry["size"] = os.path.getsize(path)
         entry["sha256"] = sha256(path)
 
-    # The /cmd_vel contract, checked on the ARTIFACT before it is published.
-    #
-    # A board subscribing the wrong type enumerates, publishes odometry and
-    # never moves: nav2 on jazzy publishes plain Twist, from kilted on
-    # TwistStamped, and a mismatch delivers nothing, silently on both sides. It
-    # happened -- a pico2-jazzy image went onto the bench stamped, and the Nav2
-    # goal test reported "494 cmd_vel msgs, base moved 0.002 m".
-    #
-    # Since 2026-09-25 the type is a run-time choice (env `stamped_cmd_vel`),
-    # so every image links BOTH, and its default comes from the distro the
-    # image was built for. So the artifact must carry both types, and its
-    # distro stamp (main.cpp `fw_distro_tag`) must be this profile's -- that
-    # stamp alone decides which of the two a board with no override subscribes.
-    # A lyrical profile linked against the jazzy library would default to plain
-    # Twist; this is where that is caught.
+    # The /cmd_vel contract, on the bytes about to be published (see the function).
     img = next((os.path.join(out_dir, n) for n in ("firmware.uf2", "firmware.bin")
                 if os.path.isfile(os.path.join(out_dir, n))), None)
     if img:
-        try:
-            lines = set(subprocess.run(["strings", "-a", img], capture_output=True,
-                                       text=True, timeout=120).stdout.split())
-        except Exception:
-            lines = None
-        if lines is not None:
-            missing = [t for t in ("geometry_msgs/msg/Twist", "geometry_msgs/msg/TwistStamped")
-                       if t not in lines]
-            if missing:
-                raise SystemExit(
-                    f"{profile}: the image does not link {', '.join(missing)}. "
-                    f"/cmd_vel is chosen at run time, so every image needs both; "
-                    f"a board told to use the missing one would never move.")
-            stamps = sorted(l for l in lines if l.startswith("FW_ROS_DISTRO="))
-            if stamps != [f"FW_ROS_DISTRO={distro}"]:
-                raise SystemExit(
-                    f"{profile}: built for {distro}, but the image is stamped "
-                    f"{stamps or 'with no distro'}. Its /cmd_vel default follows "
-                    f"that stamp, so nav2 on {distro} would publish a type the "
-                    f"board does not subscribe, and nothing would be delivered.")
-            print(f"  /cmd_vel contract ok ({distro}: both types linked, default "
-                  f"{'TwistStamped' if distro not in ('humble', 'iron', 'jazzy') else 'Twist'})",
-                  flush=True)
+        check_cmd_vel_contract(profile, img, distro)
 
     manifest = {
         "profile": profile,
