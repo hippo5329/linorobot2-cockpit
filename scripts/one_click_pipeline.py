@@ -179,6 +179,17 @@ def workspace_setup() -> str:
     return ""
 
 
+# Seconds a Nav2 goal leg waits. A leg that must ARRIVE drives 7-8 m around the
+# wall; the gate and soak legs have always passed 180. 25 s only suffices to see
+# the planner route around it.
+GOAL_TIMEOUT_ARRIVE = 180
+GOAL_TIMEOUT_PLAN = 25
+
+
+def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
+    return GOAL_TIMEOUT_ARRIVE if (require_goal or round_trips) else GOAL_TIMEOUT_PLAN
+
+
 def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bool:
     """Is /cmd_vel TwistStamped for this run?
 
@@ -1007,14 +1018,17 @@ def main():
                              "for tighter than Nav2's xy_goal_tolerance asks for something "
                              "Nav2 never promised, and a leg that ends inside its checker but "
                              "outside the gate leaves the next leg starting on top of its goal.")
-    parser.add_argument("--goal-timeout", type=int, default=25,
-                        help="seconds the Nav2 goal test waits. 25 suits the default check, "
-                             "which asks whether the planner routed around the wall. "
-                             "--require-goal needs far more: the goal sits BEHIND the wall "
+    parser.add_argument("--goal-timeout", type=int, default=None,
+                        help="seconds each Nav2 goal leg waits. Default: 180 when the goal "
+                             "must be reached (--require-goal, or --goal-round-trips > 0, "
+                             "which is the default), else 25 -- enough to see the planner "
+                             "route around the wall. The goal sits BEHIND the wall "
                              "(x=2, y=-1.5..1.5), so the path around it is 7-8 m, or ~30 s "
                              "of driving at the 0.26 m/s these configs cap at, before any "
                              "rotation or recovery. Measured at 45 s: 899 commands at a full "
-                             "0.260 m/s, the base tracking at 0.262, and still short. Use 120.")
+                             "0.260 m/s, the base tracking at 0.262, and still short. The "
+                             "Start 1-Click passed no timeout and inherited 25 s for a leg "
+                             "that must arrive: it failed mid-detour, 3.7 m out.")
     parser.add_argument("--flash-timeout", type=int, default=600,
                         help="Seconds allowed for the whole flash, including every recovery stage")
     parser.add_argument("--flash-attempt-timeout", type=int, default=90,
@@ -1022,6 +1036,8 @@ def main():
     args = parser.parse_args()
     if args.distro == "auto":
         args.distro = _default_distro
+    if args.goal_timeout is None:
+        args.goal_timeout = goal_timeout_default(args.require_goal, args.goal_round_trips)
 
 
     # A bare module is a rule, not a file (gen_bare_config.py), so its config is
