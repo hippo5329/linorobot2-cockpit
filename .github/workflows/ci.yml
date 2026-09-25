@@ -370,23 +370,20 @@ jobs:
           python3 scripts/gen_firmware_header.py --params "$cfg" --distro "$distro" --no-embed-secrets
       - name: Build (never `pio run -t upload`)
         run: pio run -d firmware -e ${{ matrix.env }}
-      # A real LiDAR forwarded over UDP is `USE_LIDAR_UDP` WITHOUT
-      # `USE_SIM_LD19`, which is the whole of lidar.cpp -- and no reference
-      # config produces that combination, so nothing here had ever compiled the
-      # file. It is a supported path (the LD19 driver was forked for it), and a
-      # guard added to its UART callback in d398f9a would have gone unbuilt.
-      # One extra link on one env, from a throwaway variant of the same config.
-      - name: Also build the real-LiDAR-over-UDP path (lidar.cpp)
-        if: matrix.env == 'esp32'
+      # lidar.cpp forwards a real LiDAR's bytes over UDP. It used to be gated
+      # `USE_LIDAR_UDP && !USE_SIM_LD19`, which no reference config produced,
+      # so this job linked one extra variant to compile it. Since 7d7c24a the
+      # choice is the env's (`lidar_comm`, `sim_ld19`) and every ESP32 image
+      # carries the file -- the variant grepped for a macro that no longer
+      # exists and failed every run from eb50af0. What is left to hold is that
+      # the forwarding path is LINKED into the image: rx_callback, its UART
+      # callback, exists only inside lidar.cpp's ESP32 branch.
+      - name: The real-LiDAR-over-UDP path is in the image (lidar.cpp)
+        if: startsWith(matrix.env, 'esp32')
         run: |
-          export COCKPIT_CONFIG_DIR="$RUNNER_TEMP/cfg"
-          sed 's/comm_mode: *serial/comm_mode: udp/' \
-            config/reference/gendrv_config.yaml > "$RUNNER_TEMP/udp_real.yaml"
-          python3 scripts/gen_firmware_header.py --params "$RUNNER_TEMP/udp_real.yaml" \
-            --distro jazzy --no-embed-secrets
-          grep -q 'define USE_LIDAR_UDP' firmware/include/custom/lino_base_config.h
-          ! grep -q 'define USE_SIM_LD19' firmware/include/custom/lino_base_config.h
-          pio run -d firmware -e esp32
+          nm=$(ls ~/.platformio/packages/toolchain-xtensa-esp32*/bin/xtensa-esp32*-elf-nm | head -1)
+          "$nm" -C firmware/.pio/build/${{ matrix.env }}/firmware.elf | grep -q ' T rx_callback()' \
+            || { echo "::error::lidar.cpp's forwarding path is not in ${{ matrix.env }}"; exit 1; }
 
   ros2:
     name: ROS 2 package and launch files (jazzy)
