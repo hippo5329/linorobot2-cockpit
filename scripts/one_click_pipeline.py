@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
 import gen_bare_config  # noqa: E402
+import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
 import mcu_identity  # noqa: E402
 import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
@@ -1167,6 +1168,11 @@ def main():
               f"on the simulated MCU instead of '{controller}'. Plug a board in to flash it; "
               f"--require-board makes this an error.")
         controller, sim_mcu = SIM_MCU, True
+    # The Sim MCU is the firmware compiled for this computer when the host build
+    # is here (bringup.launch.py makes the same decision): a micro-ROS client
+    # of the agent, its scan through the LiDAR driver's udp_server. Otherwise
+    # the rclpy sim_base_node, with no micro-ROS in the loop.
+    sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
     is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
     has_lidar = lidar_fitted(controller_cfg)
 
@@ -1417,7 +1423,10 @@ def main():
             else:
                 print("  ✅ env block written.")
         elif sim_mcu:
-            print("\n[3/6] [FLASH] Simulated MCU: no board to flash; sim_base_node is the base.")
+            print("\n[3/6] [FLASH] Simulated MCU: no board to flash; "
+                  + ("the firmware runs on this computer and boots from an env block "
+                     "written from this config at bringup." if sim_mcu_fw
+                     else "sim_base_node is the base (no host firmware build here)."))
         elif not args.skip_flash:
             print("\n[3/6] [FLASH] The application is current; the env block was rewritten anyway.")
         else:
@@ -1431,8 +1440,7 @@ def main():
         # Step 4: bringup and the topic gate
         print(f"\n[4/6] [BRINGUP] Launching the bringup stack (controller={controller}, distro={args.distro})...")
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
-                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
-                       + (" sim_base:=true" if sim_mcu else ""))
+                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}")
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is
@@ -1445,15 +1453,18 @@ def main():
         # and the scan arrived seconds after everything was torn down. Nothing
         # was wrong with the robot; the gate was tuned for a cable.
         transport = str(controller_cfg.get("transport", "serial") or "serial").lower()
+        if sim_mcu_fw:
+            transport = "udp4"          # bringup.launch.py: the host firmware's only transport
         handshake_wait = 30 if (sim_mcu or transport.startswith("serial")) else 120
-        print(f"  Waiting for " + ("sim_base_node" if sim_mcu else "the micro-ROS agent handshake")
-              + f" and /odom/unfiltered (transport={'none' if sim_mcu else transport}, "
+        print(f"  Waiting for " + ("sim_base_node" if (sim_mcu and not sim_mcu_fw)
+                                   else "the micro-ROS agent handshake")
+              + f" and /odom/unfiltered (transport={'none' if (sim_mcu and not sim_mcu_fw) else transport}, "
               f"up to {handshake_wait} s)...")
         if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
                               require_publisher=True, distro=args.distro):
             print(f"  ⚠️ /odom/unfiltered publisher not detected within {handshake_wait} s, auditing topics...")
         else:
-            print("  ✅ " + ("sim_base_node is up" if sim_mcu else "micro-ROS connected")
+            print("  ✅ " + ("sim_base_node is up" if (sim_mcu and not sim_mcu_fw) else "micro-ROS connected")
                   + " (/odom/unfiltered has a publisher).")
         time.sleep(2.0)
 
@@ -1488,7 +1499,7 @@ def main():
             # Same order as bringup.launch.py: udp/udp_server is the real driver in
             # server mode, whoever produces the frames, and is decided FIRST; only
             # then can the host room stand in for an absent serial port.
-            host_room = sim_mcu or (lidar_mode not in ("udp", "udp_server")
+            host_room = (sim_mcu and not sim_mcu_fw) or (not sim_mcu_fw and lidar_mode not in ("udp", "udp_server")
                          and controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
                          and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
             scan_wait = 15 if host_room else 90

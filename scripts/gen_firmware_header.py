@@ -961,7 +961,10 @@ def bare_mcu_params(mcu: str) -> dict:
     release image is "nothing in particular".
     """
     mcu = str(mcu).strip().lower()
-    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w")
+    # `host`: the robot computer itself as the MCU (firmware/host/app) -- the Sim
+    # MCU. Its only transport is udp4 to a local micro_ros_agent, and it has no
+    # GPIO, so everything it has is simulated.
+    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w", "host")
     if mcu not in known:
         print(f"Error: unknown --mcu '{mcu}'. Known: {', '.join(known)}", file=sys.stderr)
         sys.exit(2)
@@ -975,8 +978,9 @@ def bare_mcu_params(mcu: str) -> dict:
             "description": f"{mcu}, one image per silicon; every robot fact is an env key",
             "driver_type": "GENERIC_2_IN",
             # Serial is the transport a board can always fall back to; udp4 is
-            # selected by the env like everything else.
-            "transport": "serial",
+            # selected by the env like everything else. The host has no USB
+            # device port to be a serial client on: udp4 is all it has.
+            "transport": "udp4" if mcu == "host" else "serial",
             "baudrate": 921600,
             # A bare module is the ABSENCE of a robot, and the honest default
             # for a board with nothing wired is to simulate rather than to read

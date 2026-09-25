@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <ctime>
 #include <string>
 
@@ -82,7 +83,11 @@ inline long map(long x, long in_min, long in_max, long out_min, long out_max)
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-template <typename T> inline T constrain(T v, T lo, T hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// Mixed argument types, as the core's macro allows: constrain(float, int, float)
+// in kinematics.cpp, constrain(double, float, float) in pid.cpp. The result is
+// the value's own type.
+template <class T, class L, class H>
+inline T constrain(T v, L lo, H hi) { return v < (T)lo ? (T)lo : (v > (T)hi ? (T)hi : v); }
 
 // random(max) and random(min,max), matching Arduino's half-open ranges. The
 // simulated encoder and gyro noise come through here, so a host run and a board
@@ -95,12 +100,14 @@ inline long random(long howsmall, long howbig)
 }
 inline void randomSeed(unsigned long seed) { ::srand((unsigned)seed); }
 
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
+// min/max as FUNCTIONS, the way ArduinoCore-API (and so arduino-pico) defines
+// them for C++: mixed argument types allowed, result the common type. As macros
+// they break every standard header that says numeric_limits<T>::max() -- which
+// the whole firmware reaches through <cmath> and <limits> once main.cpp is here.
+template <class T, class L>
+inline auto min(const T &a, const L &b) -> decltype((b < a) ? b : a) { return (b < a) ? b : a; }
+template <class T, class L>
+inline auto max(const T &a, const L &b) -> decltype((b < a) ? b : a) { return (a < b) ? b : a; }
 
 // ---------------------------------------------------------------- Print/Stream
 // The firmware passes `Stream *` around -- diag.cpp keeps its output as one, and
@@ -135,11 +142,17 @@ public:
     size_t print(unsigned v) { return printf("%u", v); }
     size_t print(long v) { return printf("%ld", v); }
     size_t print(unsigned long v) { return printf("%lu", v); }
-    size_t print(double v) { return printf("%f", v); }
+    size_t print(double v, int digits = 2) { return printf("%.*f", digits, v); }
+    size_t print(long v, int base) { return base == 16 ? printf("%lx", v) : printf("%ld", v); }
+    size_t print(unsigned long v, int base) { return base == 16 ? printf("%lx", v) : printf("%lu", v); }
+    size_t print(int v, int base) { return print((long)v, base); }
+    size_t print(unsigned v, int base) { return print((unsigned long)v, base); }
+    size_t print(uint8_t v, int base) { return print((unsigned long)v, base); }
     size_t print(const IPAddress &ip);          // defined below, once IPAddress is
 
     size_t println() { return print("\r\n"); }
     template <typename T> size_t println(T v) { return print(v) + println(); }
+    template <typename T> size_t println(T v, int fmt) { return print(v, fmt) + println(); }
 
     // ESP32 Print has printf; the RP2040 core has it too, and the firmware uses
     // it heavily, so it belongs on Print rather than on the concrete port.
@@ -255,5 +268,73 @@ inline size_t Print::print(const IPAddress &ip) { return print(ip.c_str()); }
 // ---------------------------------------------------------------- misc types
 typedef uint8_t byte;
 typedef bool boolean;
+inline uint16_t word(uint8_t h, uint8_t l) { return (uint16_t)((h << 8) | l); }
+
+// ---------------------------------------------------------------- constants
+#ifndef PI
+#define PI         3.1415926535897932384626433832795
+#endif
+#define HALF_PI    1.5707963267948966192313216916398
+#define TWO_PI     6.283185307179586476925286766559
+#define DEG_TO_RAD 0.017453292519943295769236907684886
+#define RAD_TO_DEG 57.295779513082320876798154814105
+// F() keeps a string in flash on AVR; on every 32-bit core it is the string,
+// and so is PROGMEM data.
+#define F(s) (s)
+#define PROGMEM
+#define pgm_read_byte(addr) (*(const uint8_t *)(addr))
+#define pgm_read_word(addr) (*(const uint16_t *)(addr))
+#define DEC 10
+#define HEX 16
+#define OCT 8
+#define BIN 2
+
+// ---------------------------------------------------------------- GPIO
+// A host has no pins. What the firmware must see is what a board with NOTHING
+// WIRED sees: every write lands and reads back, an input reads its pull, and no
+// edge ever arrives. The Sim MCU is exactly that board -- every pin -1 and every
+// device simulated -- so none of this is on its hot path; it exists so the same
+// sources compile and a stray call behaves like silicon rather than crashing.
+#define LOW 0
+#define HIGH 1
+#define INPUT 0x0
+#define OUTPUT 0x1
+#define INPUT_PULLUP 0x2
+#define INPUT_PULLDOWN 0x3
+#define CHANGE 1
+#define FALLING 2
+#define RISING 3
+
+struct _LinoHostPins
+{
+    static uint8_t &level(int pin)
+    {
+        static uint8_t lv[256] = {0};
+        return lv[(unsigned)pin & 0xFF];
+    }
+};
+inline void pinMode(int pin, int mode)
+{
+    if (pin < 0) return;
+    if (mode == INPUT_PULLUP) _LinoHostPins::level(pin) = HIGH;
+    else if (mode == INPUT_PULLDOWN) _LinoHostPins::level(pin) = LOW;
+}
+inline void digitalWrite(int pin, int v) { if (pin >= 0) _LinoHostPins::level(pin) = v ? HIGH : LOW; }
+inline int digitalRead(int pin) { return pin >= 0 ? _LinoHostPins::level(pin) : LOW; }
+inline void analogWrite(int, int) {}
+inline void analogWriteResolution(int) {}
+inline void analogWriteFrequency(int, uint32_t) {}
+inline void analogWriteFrequency(uint32_t) {}
+inline void analogWriteFreq(uint32_t) {}
+inline void analogWriteRange(uint32_t) {}
+inline int analogRead(int) { return 0; }
+inline void analogReadResolution(int) {}
+inline int digitalPinToInterrupt(int pin) { return pin; }
+inline void attachInterrupt(int, void (*)(void), int) {}
+inline void attachInterrupt(int, void (*)(void *), int, void *) {}
+inline void detachInterrupt(int) {}
+inline void noInterrupts() {}
+inline void interrupts() {}
+inline void yield() {}
 
 #endif // LINO_HOST_ARDUINO_H

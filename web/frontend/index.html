@@ -388,7 +388,7 @@
               <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
               <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
               <option value="esp32s3">ESP32-S3 DevKitC-1</option>
-              <option value="sim">Sim MCU — no board (sim_base_node on this computer, nothing to flash)</option>
+              <option value="sim">Sim MCU — no board (the firmware runs on this computer, nothing to flash)</option>
             </select>
           </div>
           <div class="form-group">
@@ -1188,7 +1188,7 @@
         <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">🔄 Refresh Ports</button>
       </div>
       <p class="hint">Directly compile, flash, and verify microcontroller hardware sub-systems without starting the ROS 2 autonomy stack. Stop <code>micro_ros_agent</code> automatically, flash diagnostic binaries, and inspect serial output streams in real-time.</p>
-      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (<code>sim_base_node</code> on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the Base &amp; MCU tab to use these.</p>
+      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (the firmware, running on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the Base &amp; MCU tab to use these.</p>
 
       <!-- Diagnostic firmware selection & serial port bar -->
       <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
@@ -2160,7 +2160,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <option value="esp32">ESP32 DevKit (serial or Wi-Fi UDP - the env partition picks)</option>
             <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>
             <option value="pico">Raspberry Pi Pico (RP2040)</option>
-            <option value="sim">Sim MCU — no board (sim_base_node, nothing to flash)</option>
+            <option value="sim">Sim MCU — no board (the firmware on this computer, nothing to flash)</option>
           </select>
         </label>
 

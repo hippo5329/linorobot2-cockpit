@@ -105,8 +105,9 @@ If the robot and the board disagree, the run stops before writing anything and s
 robot, or edit `base_controller.name` in the config, and press Start again.
 
 **No board yet?** Pick **Sim MCU** as the base controller and the same run works with nothing
-plugged in: `sim_base_node` stands in for the board on the robot computer, and nothing is built
-or flashed. When no board is detected at all, the cockpit warns (*No MCU board detected*) and
+plugged in: the firmware itself runs on the robot computer, as a micro-ROS client of the agent
+over UDP, with its simulated LiDAR going through the LD19 driver, and nothing is built or
+flashed. When no board is detected at all, the cockpit warns (*No MCU board detected*) and
 switches to the Sim MCU itself; a choice you make yourself is never overridden. Boards such as
 the Waveshare GenDrv and the Yahboom YB-EET01 are Reference Designs listed under their MCU.
 
@@ -446,11 +447,17 @@ The Nav2 velocity limits and `max_rpm_ratio` are derived from it on save
 yaw ceiling took a drivetrain from ten green legs to seven, twice, because the shipped
 tuning had no margin.
 
-And `scripts/sim_base_node.py` puts the same model on the robot computer, so `ros2 launch
-linorobot2_cockpit bringup.launch.py sim_base:=true` brings up EKF, SLAM, Nav2 and the goal
-test **with no microcontroller at all** — for config questions, sweeps and CI. It is not a
-substitute for hardware: it removes micro-ROS, both transports, the board's timing and the
-flash, which is most of what a hardware run tests.
+The **Sim MCU** is the firmware compiled for the robot computer (`firmware/host/`, built into
+the robot image): the same `main.cpp`, wheel model and LD19 emulator, booting from the env block
+a flash would write, talking micro-ROS over UDP to `micro_ros_agent` and streaming its scan to
+the LD19 driver's UDP server. So a run with no board still exercises micro-ROS, the agent and
+the LiDAR driver. It does not cover the board's loop timing, the real flash or the serial link,
+so it is not a substitute for hardware.
+
+`scripts/sim_base_node.py` is a lighter instrument: the same wheel model as an rclpy node,
+publishing straight into DDS. `ros2 launch linorobot2_cockpit bringup.launch.py sim_base:=true`
+brings up EKF, SLAM, Nav2 and the goal test with it -- for config questions, sweeps and CI --
+and it is what the Sim MCU falls back to on a checkout without the host build.
 
 ---
 
@@ -464,7 +471,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/data` always, orientation included -- the board fuses gyro, accel and field itself. `imu/mag` only with a magnetometer (`PUBLISH_MAG`), for calibration; nothing pairs against it |
 | `raw_scan` | `std_msgs/UInt8MultiArray` | simulated LD19 on the MCU |
-| `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
+| `battery` (1 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
 above moves under `/lino1/` — on the board, which builds both its topic names *and* the

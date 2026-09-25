@@ -265,6 +265,10 @@ agent_runner = ProcessRunner("agent")
 bringup_runner = ProcessRunner("bringup")
 laser_runner = ProcessRunner("laser")
 tool_runner = ProcessRunner("tool")
+# The RViz web viewer (Tab 9, rviz_novnc) runs BESIDE SLAM and Navigation: it
+# shared "main" with them, so it could only be started when there was nothing
+# to look at ("that slot is already busy", browser walk 2026-09-26).
+viewer_runner = ProcessRunner("viewer")
 gamepad_runner = GamepadRunner(REPO_ROOT)
 
 RUNNERS = {
@@ -273,6 +277,7 @@ RUNNERS = {
     "bringup": bringup_runner,
     "laser": laser_runner,
     "tool": tool_runner,
+    "viewer": viewer_runner,
 }
 
 
@@ -629,7 +634,7 @@ def update_robot_name_and_controller(name: str, controller: Optional[str] = None
         save_params(params, path=cfg_path)
 
 
-# The simulated MCU: sim_base_node on this computer stands in for the board.
+# The simulated MCU: the firmware compiled for this computer stands in for the board.
 SIM_MCU = "sim"
 
 
@@ -637,8 +642,8 @@ def refuse_sim_flash(name: str) -> None:
     """Nothing to flash when the base controller is the simulated MCU."""
     if (name or "").strip().lower() == SIM_MCU:
         raise HTTPException(status_code=400, detail=(
-            "The base controller is the simulated MCU (sim_base_node): there is no board "
-            "to build for, flash or monitor. Pick the board you plugged in on the Base & MCU "
+            "The base controller is the simulated MCU (the firmware running on this computer): "
+            "there is no board to build for, flash or monitor. Pick the board you plugged in on the Base & MCU "
             "tab to use it."))
 
 

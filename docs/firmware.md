@@ -789,7 +789,7 @@ on in every bare robot. Open-circuit voltage falls from `max_v` to `min_v` as th
 (a 3S 9.9-12.6 V, 5 Ah pack when the config names none). The wheel model's developed pack sag
 divides it under load, so it dips when the simulated robot accelerates. A 0.3 A idle draw stands
 for the electronics, and an empty pack is swapped for a full one, so a soak runs forever.
-`sim_base_node` publishes the same model for the Sim MCU.
+The Sim MCU runs this same firmware on the robot computer (`firmware/host/`), so it publishes the same model.
 
 ### No robot feature is a build macro; only silicon is
 A released image is built per MCU and describes no robot, so every choice a robot makes is an env

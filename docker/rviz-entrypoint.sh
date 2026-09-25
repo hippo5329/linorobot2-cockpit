@@ -31,11 +31,15 @@ if [ "${1:-}" = "--config" ]; then
   shift 2
   case "$name" in
     */*|*.rviz) cfg="$name" ;;
-    *)          cfg="$CONFIG_DIR/$name.rviz" ;;
+    *)          cfg="$CONFIG_DIR/$name.rviz"
+                # A volume created before the image carried /rviz (or by an
+                # older one) is empty and root-owned, so nothing was seeded into
+                # it: open the shipped layout instead of refusing.
+                [ -f "$cfg" ] || [ ! -f "/opt/cockpit-rviz/$name.rviz" ] || cfg="/opt/cockpit-rviz/$name.rviz" ;;
   esac
   if [ ! -f "$cfg" ]; then
     echo "rviz config not found: $cfg" >&2
-    echo "available: $(ls "$CONFIG_DIR"/*.rviz 2>/dev/null | xargs -r -n1 basename | tr '\n' ' ')" >&2
+    echo "available: $(ls "$CONFIG_DIR"/*.rviz /opt/cockpit-rviz/*.rviz 2>/dev/null | xargs -r -n1 basename | sort -u | tr '\n' ' ')" >&2
     exit 1
   fi
   set -- -d "$cfg" "$@"

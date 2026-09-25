@@ -277,6 +277,7 @@ jobs:
           outputs: type=image,name=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             ROS_DISTRO=${{ matrix.distro || 'jazzy' }}
+            LINO_GIT_REV=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
       - name: Record the digest

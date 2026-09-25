@@ -257,11 +257,21 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
     }
     if key == SIM_MCU:
         # Nothing to build, probe or flash: only what the simulated base reads.
+        # The firmware itself, compiled for the robot computer (firmware/host):
+        # a micro-ROS client over udp4 to the agent on the same machine, its
+        # LD19 emulator streaming to the udp_server driver. bringup.launch.py
+        # enforces these whatever a config says (scripts/host_firmware.py);
+        # they are written here so the file says what runs.
         params["base_controller"] = {
             "name": SIM_MCU,
-            "description": "Sim MCU: sim_base_node on the robot computer, no board",
+            "description": "Sim MCU: the firmware on the robot computer, micro-ROS over udp4, no board",
+            "mcu": "host",
             "driver_type": "BTS7960",
-            "lidar": {"model": "ld19", "comm_mode": "topic", "raw_scan_topic": "raw_scan"},
+            "transport": "udp4",
+            "agent_ip": "127.0.0.1",
+            "udp_port": 8888,
+            "lidar": {"model": "ld19", "comm_mode": "udp", "server_ip": "127.0.0.1", "udp_port": 8889,
+                      "raw_scan_topic": "raw_scan"},
             "sensors": bare_sensors(),
             "simulation": bare_simulation(),
             "pins": bare_pins(SIM_MCU),

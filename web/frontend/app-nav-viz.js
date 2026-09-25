@@ -17,11 +17,10 @@ wireStartStop({
   // also meant every parameter tuned in Console was quietly ignored, which is
   // the opposite of what this tab claims. Go through Console's own launcher
   // with slam:=true, exactly as the Navigation button does.
+  // launchers/slam.launch.py with the robot's own slam block, as 1-Click runs it.
   buildCommand: async () => ({ action: "slam", args: {
-    launcher: `${state.status?.web_dir || "."}/../launch_nav2.py`,
     distro: getDistro(),
-    params_file: document.getElementById("nav-params-file")?.value.trim() || "",
-    depth: !!document.getElementById("bringup-depth-sensor")?.value,
+    config_path: state.status?.robot_config_path || "",
   } }),
 });
 
@@ -67,13 +66,11 @@ wireStartStop({
   needsBringup: true,
   buildCommand: async () => {
     const distro = getDistro();
+    // launchers/nav2.launch.py with the robot's own nav2 block, as 1-Click runs it.
     return { action: "nav2", args: {
-      launcher: `${state.status?.web_dir || "."}/../launch_nav2.py`,
       distro,
+      config_path: state.status?.robot_config_path || "",
       map: document.getElementById("nav-map-select").value || "",
-      params_file: document.getElementById("nav-params-file").value.trim(),
-      default_params: `${state.status?.web_dir || "."}/console_nav2_${distro}.yaml`,
-      depth: !!document.getElementById("bringup-depth-sensor")?.value,
     } };
   },
 });
@@ -117,6 +114,7 @@ btnVncStart.addEventListener("click", () => {
     distro: getDistro(), display, novnc_port: novncPort,
     rviz_config: rel ? `${root}${rel}` : "",
   } }, {
+    slot: "viewer",
     title: "RViz via noVNC",
     onDone: () => {
       btnVncStart.disabled = false;
@@ -125,7 +123,7 @@ btnVncStart.addEventListener("click", () => {
     },
   });
 });
-btnVncStop.addEventListener("click", () => killSlot("main"));
+btnVncStop.addEventListener("click", () => killSlot("viewer"));
 
 // ---------- magnetometer calibration ----------
 // Needs Bringup already running elsewhere (cmd_vel to spin the base, IMU/mag

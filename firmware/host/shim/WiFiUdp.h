@@ -63,9 +63,13 @@ public:
         _rx_len = _rx_pos = 0;
     }
 
+    // A send-only user need not call begin(): arduino-esp32's beginPacket()
+    // opens the socket itself when there is none, and sim_ld19.h's UDP sink
+    // relies on exactly that -- it never calls begin(). Refusing here made the
+    // host's scan sink silently send nothing while the board's worked.
     bool beginPacket(const IPAddress &ip, uint16_t port)
     {
-        if (_fd < 0) return false;
+        if (_fd < 0 && !begin(0)) return false;
         _dst = {};
         _dst.sin_family = AF_INET;
         _dst.sin_addr.s_addr = ip.asNetworkOrder();

@@ -1239,7 +1239,7 @@ initGitVersionBadge();
 
 
 // No MCU board on the bus: warn, and switch the controller selects to the
-// simulated MCU (sim_base_node) so Start 1-Click and Bringup give a running
+// simulated MCU (the host firmware) so Start 1-Click and Bringup give a running
 // robot instead of a flash error -- the same fallback the pipeline makes. Only
 // on `board_on_bus === false`, which counts a board in BOOTSEL (no tty) as
 // present, so a flash in progress is never switched away. A board that appears
@@ -1320,11 +1320,11 @@ async function noBoardSwitch(s) {
     // The user kept a board robot with nothing plugged in: say what will
     // happen rather than overriding them.
     el.innerHTML = "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +
-      "(<code>sim_base_node</code>) until a board is plugged in.";
+      "(the firmware, running on this computer) until a board is plugged in.";
     el.hidden = false;
   } else if (absent) {
     el.innerHTML = "⚠️ <b>No MCU board detected</b> — switched to the <b>Sim MCU</b> robot " +
-      "(<code>bare_sim</code>: <code>sim_base_node</code> on this computer, every simulated device, " +
+      "(<code>bare_sim</code>: the firmware running on this computer over micro-ROS, every simulated device, " +
       "no pins), so 1-Click and Bringup work with nothing plugged in. Plug a board in to flash and run it" +
       (noBoardSwitchedFrom ? ` (the robot goes back to <code>${escapeHtml(noBoardSwitchedFrom)}</code>)` : "") + ".";
     el.hidden = false;

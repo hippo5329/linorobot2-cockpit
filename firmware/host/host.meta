@@ -1,0 +1,35 @@
+# The host platform's own settings (micro_ros_setup config/host/generic/
+# client-host-colcon.meta): shared libraries, and the multithread profile the
+# client needs when more than one thread may touch a session. The rmw entry is
+# not here on purpose -- client_meta.py takes the pools, history and MTU from
+# the BOARD's meta (firmware/esp32.meta) and forces the custom transport.
+{
+    "names": {
+        "microxrcedds_client": {
+            "cmake-args": [
+                "-DBUILD_SHARED_LIBS=ON",
+                "-DUCLIENT_PROFILE_MULTITHREAD=ON"
+            ]
+        },
+        "microcdr": {
+            "cmake-args": [
+                "-DBUILD_SHARED_LIBS=ON"
+            ]
+        },
+        "rosidl_typesupport_microxrcedds_c": {
+            "cmake-args": [
+                "-DBUILD_SHARED_LIBS=ON"
+            ]
+        },
+        "rosidl_typesupport_microxrcedds_cpp": {
+            "cmake-args": [
+                "-DBUILD_SHARED_LIBS=ON"
+            ]
+        },
+        "rclc_parameter": {
+            "cmake-args": [
+                "-DBUILD_SHARED_LIBS=ON"
+            ]
+        }
+    }
+}

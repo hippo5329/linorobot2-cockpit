@@ -39,7 +39,17 @@ target_include_directories(lino_host_probe PRIVATE
   ${FIRMWARE_ROOT}/common/lib/diag
 )
 
-ament_target_dependencies(lino_host_probe rcl rclc rmw_microxrcedds microxrcedds_client std_msgs)
+# Not ament_target_dependencies(): Lyrical removed it. Same rule as ../app.
+foreach(pkg rcl rclc rmw_microxrcedds std_msgs)
+  if(TARGET ${pkg}::${pkg})
+    target_link_libraries(lino_host_probe ${pkg}::${pkg})
+  elseif(DEFINED ${pkg}_TARGETS)
+    target_link_libraries(lino_host_probe ${${pkg}_TARGETS})
+  else()
+    target_include_directories(lino_host_probe PRIVATE ${${pkg}_INCLUDE_DIRS})
+    target_link_libraries(lino_host_probe ${${pkg}_LIBRARIES})
+  endif()
+endforeach()
 
 # uros_transport.cpp calls uxr_millis() directly. microxrcedds_client is a plain
 # CMake package rather than an ament one, so ament_target_dependencies above finds

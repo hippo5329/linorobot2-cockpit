@@ -129,3 +129,15 @@ def test_the_release_workflow_publishes_no_extra_viewer_image():
     names = [m["name"] for m in wf["jobs"]["images"]["strategy"]["matrix"]["include"]]
     assert not [n for n in names if "rviz" in n], names
     assert not os.path.exists(os.path.join(ROOT, "docker", "Dockerfile.rviz"))
+
+
+def test_the_layouts_are_in_the_image_and_found_from_an_empty_volume():
+    """From a second machine on the robot's subnet, `--config slam` ended
+    "rviz config not found: /rviz/slam.rviz; available:" -- the entrypoint
+    seeded from /opt/cockpit-rviz, which nothing created, and the volume it
+    seeds is root-owned while the viewer runs as the user (2026-09-26)."""
+    df = _read(DOCKERFILE)
+    assert "cp /ws/rviz/*.rviz /opt/cockpit-rviz/" in df
+    assert "chmod 1777 /rviz" in df, "the viewer runs as the user and must be able to save a layout"
+    entry = _read(ENTRY)
+    assert '[ -f "$cfg" ] || [ ! -f "/opt/cockpit-rviz/$name.rviz" ] || cfg="/opt/cockpit-rviz/$name.rviz"' in entry

@@ -122,6 +122,26 @@ public:
         pioencoder_.reset();
     }
 };
+#elif defined(LINO_HOST)
+// The robot computer as the MCU (firmware/host): no quadrature hardware, so an
+// encoder input with nothing wired -- the count never moves. Like the two
+// wrappers above, this is the architecture's counter and nothing else; the Sim
+// MCU's wheels are sim_wheel.h, which the factory picks when sim_wheel is set.
+class Encoder
+{
+private:
+    int counts_per_rev_ = -1;
+    int32_t count_ = 0;
+public:
+    Encoder(int pin1, int pin2, int counts_per_rev, bool invert = false) {
+        (void)invert;
+        if (pin1 < 0 || pin2 < 0) return; // unused encoder
+        counts_per_rev_ = counts_per_rev;
+    }
+    float getRPM() { return 0.0f; }
+    inline int32_t read() { return counts_per_rev_ < 0 ? 0 : count_; }
+    inline void write(int32_t p) { if (counts_per_rev_ >= 0) count_ = p; }
+};
 #else
 
 #if defined(ARDUINO) && ARDUINO >= 100

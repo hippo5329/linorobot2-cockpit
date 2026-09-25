@@ -232,16 +232,21 @@ def _agent_prepare(a: Dict) -> str:
 # Bringup / SLAM / Nav2 / teleop -- the ROS launches.
 # --------------------------------------------------------------------------
 def _bringup(a: Dict) -> str:
+    """The robot's bringup, the same launch 1-Click runs (one_click_pipeline.py).
+
+    It pointed at `launch_bringup.py` beside the web directory, a launcher from
+    the console this project grew out of that was never shipped here: every
+    browser Bringup / SLAM / Navigation ran `ros2 launch <missing file>`, which
+    ros2 reads as a PACKAGE name and refuses (browser walk, 2026-09-26). The
+    launch reads the transport, ports, LiDAR and the Sim MCU decision from the
+    robot's config itself, so the browser passes only which config, which
+    distro, and whether bringup should start its own agent.
+    """
     distro = _ident(a.get("distro"), "distro", "jazzy")
-    launcher = _path(a.get("launcher"), "launcher")
     cfg = _path(a.get("config_path"), "config_path")
-    base = _enum(a.get("base"), "base", {"2wd", "4wd", "mecanum", "ackermann"}, "2wd")
-    dev = _device(a.get("device"), "device", "/dev/ttyACM0")
-    baud = _int(a.get("baud"), "baud", 1200, 6000000, 1500000)
-    micro_ros = "true" if _bool(a.get("micro_ros")) else "false"
-    return (f"{ros_setup_shell(distro)}; ros2 launch {shlex.quote(launcher)} "
-            f"config_file:={shlex.quote(cfg)} base:={base} base_serial_port:={shlex.quote(dev)} "
-            f"micro_ros_baudrate:={baud} micro_ros:={micro_ros}")
+    micro_ros = "true" if _bool(a.get("micro_ros", True)) else "false"
+    return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit bringup.launch.py "
+            f"config_file:={shlex.quote(cfg)} distro:={distro} micro_ros:={micro_ros}")
 
 
 # The compose file is docker-compose.YML and has been since the first commit.
@@ -257,37 +262,21 @@ def _bringup_docker(a: Dict) -> str:
 
 
 def _slam(a: Dict) -> str:
+    """slam_toolbox with the robot's own slam block (launchers/slam.launch.py)."""
     distro = _ident(a.get("distro"), "distro", "jazzy")
-    launcher = _path(a.get("launcher"), "launcher")
-    params = a.get("params_file")
-    params_arg = f" params_file:={shlex.quote(_path(params, 'params_file'))}" if params else ""
-    depth = "true" if _bool(a.get("depth")) else "false"
-    return (f"{ros_setup_shell(distro)}; if [ -f {shlex.quote(launcher)} ]; then "
-            f"ros2 launch {shlex.quote(launcher)} slam:=true{params_arg} depth_costmap:={depth} distro:={distro} sim:=false; "
-            f"else ros2 launch linorobot2_navigation slam.launch.py; fi")
+    cfg = _path(a.get("config_path"), "config_path")
+    return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit slam.launch.py "
+            f"config_file:={shlex.quote(cfg)}")
 
 
 def _nav2(a: Dict) -> str:
+    """Nav2 with the robot's own nav2 block (launchers/nav2.launch.py), as 1-Click
+    launches it; with a saved map it localises on that map instead of SLAM's."""
     distro = _ident(a.get("distro"), "distro", "jazzy")
-    launcher = _path(a.get("launcher"), "launcher")
-    custom = a.get("params_file")
-    default_params = a.get("default_params")
-    params = custom or default_params
-    depth = "true" if _bool(a.get("depth")) else "false"
+    cfg = _path(a.get("config_path"), "config_path")
     map_arg = f" map:={shlex.quote(_path(a.get('map'), 'map'))}" if a.get("map") else ""
-    custom_arg = f" params_file:={shlex.quote(_path(custom, 'params_file'))}" if custom else ""
-    q_launcher = shlex.quote(launcher)
-    # Three ways, in order: the console launcher (auto-resolves its own params);
-    # plain nav2_bringup with an explicit params file, when one exists; and the
-    # linorobot2_navigation fallback. Matches the frontend's original branches.
-    branches = (f"if [ -f {q_launcher} ]; then "
-                f"ros2 launch {q_launcher}{map_arg}{custom_arg} depth_costmap:={depth} distro:={distro} sim:=false; ")
-    if params:
-        qp = shlex.quote(_path(params, "params_file"))
-        branches += (f"elif [ -f {qp} ]; then "
-                     f"ros2 launch nav2_bringup bringup_launch.py{map_arg} params_file:={qp} use_sim_time:=false; ")
-    branches += (f"else ros2 launch linorobot2_navigation navigation.launch.py{map_arg}; fi")
-    return f"{ros_setup_shell(distro)}; {branches}"
+    return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
+            f"distro:={distro} config_file:={shlex.quote(cfg)}{map_arg}")
 
 
 def _distro_stamps_cmd_vel(distro: str) -> bool:
@@ -531,8 +520,17 @@ def _rviz_novnc(a: Dict) -> str:
         (f"if [ -e /tmp/.X{display_num}-lock ]; then XPID=$(cat /tmp/.X{display_num}-lock 2>/dev/null | tr -d ' '); "
          f"if [ -n \"$XPID\" ] && [ -r /proc/$XPID/cmdline ] && tr '\\0' ' ' < /proc/$XPID/cmdline | grep -q Xvfb; "
          f"then kill \"$XPID\" 2>/dev/null; fi; fi; sleep 0.3"),
-        f"(Xvfb {display} -screen 0 1280x800x24 &) && sleep 1",
-        f"(DISPLAY={display} {rviz} &) && sleep 1",
+        f"(Xvfb {display} -screen 0 1280x800x24 &)",
+        # Wait for the display to exist rather than sleeping and hoping.
+        (f"for i in $(seq 50); do [ -S /tmp/.X11-unix/X{display_num} ] && break; sleep 0.1; done; "
+         f"[ -S /tmp/.X11-unix/X{display_num} ]"),
+        # EXPORTED, around the whole command: `DISPLAY=:99 [ -f cfg ] && rviz2 ...`
+        # gave DISPLAY to the `[` test alone, so both rviz2 attempts ran with no
+        # display and aborted ("qt.qpa.xcb: could not connect to display"), and
+        # the noVNC page showed a black screen (browser walk, 2026-09-26). xcb
+        # and software GL for the same reasons as docker-compose.yml's viewer.
+        (f"(export DISPLAY={display} QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1; "
+         f"{rviz} &) && sleep 1"),
         f"(x11vnc -display {display} -forever -shared -nopw -quiet -rfbport 5900 &) && sleep 1",
         f"websockify --web=/usr/share/novnc {novnc_port} localhost:5900",
     ])

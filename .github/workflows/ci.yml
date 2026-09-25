@@ -214,6 +214,7 @@ jobs:
           push: false
           build-args: |
             ROS_DISTRO=jazzy
+            LINO_GIT_REV=${{ github.sha }}
           cache-from: type=gha,scope=robot-jazzy
           cache-to: type=gha,mode=max,scope=robot-ci-jazzy
 

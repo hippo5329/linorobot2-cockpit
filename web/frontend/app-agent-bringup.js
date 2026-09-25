@@ -416,28 +416,35 @@ function isBringupAlive() {
   return Boolean(state.status && (state.status.bringup_alive_external || state.status.bringup_busy_console));
 }
 
+// The Sim MCU's firmware runs on this computer and bringup starts the udp4
+// agent it talks to. A browser-started agent is the wrong one -- it opened the
+// Settings serial device (/dev/ttyUSB0, absent) and, being alive, made bringup
+// skip its own, so the firmware had no agent and SLAM no odometry (2026-09-26).
+function robotIsSimMcu() {
+  const r = (state.status?.robots || []).find((x) => x.name === state.robot_name);
+  return state.robot_name === "bare_sim" || String(r?.controller || "").toLowerCase() === "sim";
+}
+
 // Returns an action SPEC (built server-side, actions.py), not a command string.
 function bringupLaunchCommand() {
   if (isDockerMode()) {
     return { action: "bringup_docker", args: { engine: getAgentEngine() === "podman" ? "podman" : "docker",
                                                docker_dir: dockerDir() } };
   }
-  const launcher = `${state.status?.web_dir || "."}/../launch_bringup.py`;
-  const cfgPath = (state.robot_config && state.robot_config.path) || "~/.config/linorobot2/robot_config.yaml";
-  const base = document.getElementById("bringup-base-type")?.value || (state.config && state.config.base_type) || "2wd";
-  const dev = document.getElementById("bringup-agent-device")?.value || (state.config && state.config.agent_device) || "/dev/ttyACM0";
-  const baud = document.getElementById("bringup-agent-baud")?.value || (state.config && state.config.agent_baud) || "1500000";
+  // The same launch 1-Click runs: it reads transport, ports, LiDAR and the Sim
+  // MCU decision from the robot's config, so only the config goes over.
+  const cfgPath = (state.status && state.status.robot_config_path) ||
+                  (state.robot_config && state.robot_config.path) || "";
 
   // Bringup would otherwise start its own native micro_ros_agent. Skip that
   // when an agent is already up, or when the agent engine is a container --
   // in container mode the package is usually not installed natively at all, so
   // including it fails the whole launch while the real agent runs happily.
   const nativeAgent = getAgentEngine() === "native";
-  const microRos = (nativeAgent && !isAgentAlive()) ? "true" : "false";
+  const microRos = (robotIsSimMcu() || (nativeAgent && !isAgentAlive())) ? "true" : "false";
 
   return { action: "bringup", args: {
-    launcher, config_path: cfgPath, base, device: dev, baud,
-    micro_ros: microRos, distro: getDistro(),
+    config_path: cfgPath, micro_ros: microRos, distro: getDistro(),
   } };
 }
 
@@ -456,7 +463,7 @@ async function ensureBringupRunning(targetTitle = "requested action") {
   }
 
   // 1-Click Intermediate Step 1: Ensure micro-ROS agent is active
-  if (!isAgentAlive()) {
+  if (!robotIsSimMcu() && !isAgentAlive()) {
     logLine("[console] [1-Click] Step 1: micro-ROS Agent is down -- auto-starting agent...");
     await ensureAgentRunning();
   }
@@ -486,14 +493,10 @@ async function ensureBringupRunning(targetTitle = "requested action") {
     await ensureRosPackages(BRINGUP_PACKAGES, "Bringup");
   }
 
-  // 1-Click Intermediate Step 3c: the LiDAR driver itself.
-  // bringup does not start it -- it is a separate node in its own slot -- so
-  // after a 1-Click SLAM the whole stack came up healthy with no /scan at all,
-  // and slam_toolbox sat there producing nothing with no error to explain it.
-  if (laser && !isDockerMode() && !isLaserRunning()) {
-    logLine("[console] [1-Click] Step 3c: starting the LiDAR driver...");
-    await startLaserDriver();
-  }
+  // No separate LiDAR driver: bringup.launch.py starts the one the config
+  // describes (serial, UDP server, or none on a Sim MCU without a scan). The
+  // step that started one here also started it on a Sim MCU, against a
+  // /dev/ttyUSB1 no computer without a board has (browser walk, 2026-09-26).
 
   // 1-Click Intermediate Step 4: Check Nav2 / SLAM packages if launching Nav2/SLAM
   const lowerTitle = (targetTitle || "").toLowerCase();

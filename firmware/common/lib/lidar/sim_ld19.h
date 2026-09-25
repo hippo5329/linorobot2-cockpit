@@ -31,7 +31,10 @@
 // `udp`, physically could not drive a serial LD19 bridge however its env was
 // keyed. The UDP sink needs a UDP stack: every ESP32 core has one, and on RP2
 // only the W boards do, where it arrives with USE_WIFI.
-#if defined(HAS_WIFI)
+// The host target (firmware/host, the Sim MCU) has one too: a POSIX socket on
+// an interface that is already up, the same reason uros_transport.cpp gives it
+// udp4 without a radio.
+#if defined(HAS_WIFI) || defined(LINO_HOST)
 #define SIM_LD19_UDP_SINK 1
 #endif
 

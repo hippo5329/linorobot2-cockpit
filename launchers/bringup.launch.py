@@ -27,6 +27,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402  (the user's config dir, never the repo's)
 import gen_robot_description  # noqa: E402  (the URDF, from the config)
+import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
 
 # The LD driver family the LiDAR block's `model` names, in the driver's own
 # vocabulary. `bins` is the ray count the fork's node resamples a revolution
@@ -125,8 +126,20 @@ def launch_setup(context, *args, **kwargs):
     # so the room is raycast on this computer whatever the config says. Before
     # this, sim_base with a real-LD19 config (pico2_mecanum) started the real
     # driver on an absent /dev/ttyUSB0 and /scan never came.
-    no_board = (str(context.launch_configurations.get("sim_base", "false")).strip().lower()
-                in ("true", "1", "yes") or controller_name == "sim")
+    #
+    # The Sim MCU is the FIRMWARE when this machine has the host build
+    # (firmware/host/app, scripts/host_firmware.py): src/main.cpp compiled for
+    # this computer, a micro-ROS UDP4 client of the agent below, whose own LD19
+    # emulator streams to the udp_server driver -- the path a Wi-Fi board takes,
+    # so micro-ROS, the agent and the LiDAR driver are all in the loop. Then
+    # there IS a board, as far as the rest of this launch is concerned: it just
+    # runs here. The rclpy sim_base_node remains for `sim_base:=true` (the CI
+    # instrument that deliberately skips micro-ROS) and for a checkout without
+    # the host build.
+    sim_base_arg = (str(context.launch_configurations.get("sim_base", "false")).strip().lower()
+                    in ("true", "1", "yes"))
+    host_fw_bin = host_firmware.binary() if (controller_name == "sim" and not sim_base_arg) else None
+    no_board = sim_base_arg or (controller_name == "sim" and host_fw_bin is None)
 
     serial_port = (
         context.launch_configurations.get("serial_port")
@@ -196,6 +209,21 @@ def launch_setup(context, *args, **kwargs):
             or not os.path.exists(lidar_port)
         )
     )
+
+    host_fw_env = None
+    if host_fw_bin:
+        # Whatever the config says: the host has no serial port to be a client
+        # on and no UART to send an LD19 stream out of, and the pipeline runs a
+        # board's own config on the Sim MCU when no board is plugged in.
+        transport = "udp4"
+        effective_lidar_comm_mode = "udp_server"
+        use_host_sim_laser = False      # the firmware's own emulator is the source
+        robot_label = (params.get("robot") or {}).get("name") or \
+            os.path.basename(config_file).replace("_config.yaml", "")
+        host_fw_env = host_firmware.write_env(
+            config_file,
+            os.path.join(os.path.dirname(config_file), "generated", f"{robot_label}_host_env.bin"),
+            agent_port=int(udp_port), lidar_port=int(lidar_udp_port))
 
     if transport in ("udp4", "udp", "wifi"):
         micro_ros_args = ["udp4", "--port", str(udp_port)]
@@ -443,6 +471,29 @@ def launch_setup(context, *args, **kwargs):
             respawn=True,
             respawn_delay=1.0,
         ),
+        # 3b. The Sim MCU's firmware, on this computer (see host_fw_bin above):
+        # the agent's client, booting from the env block a flash would write.
+        # Sourcing the host client workspace for THIS process only: it carries
+        # micro-ROS builds of the message packages and rmw_microxrcedds, which
+        # the rest of the stack must not see. RMW_IMPLEMENTATION too: the stack
+        # runs Fast DDS (the image sets it container-wide) and rcl checks the
+        # rmw it is bound to against it -- "Expected RMW implementation
+        # identifier of 'rmw_fastrtps_cpp' but instead found 'rmw_microxrcedds',
+        # exiting with 102" on every respawn, the first time this ran in the
+        # image. Said here, the same check now PROVES the firmware is on
+        # micro-ROS. Respawned like a board that the watchdog reboots.
+        (
+            None if not host_fw_bin else ExecuteProcess(
+                cmd=["bash", "-c",
+                     f"source {host_firmware.setup_script()} && "
+                     f"RMW_IMPLEMENTATION=rmw_microxrcedds LINO_ENV_BIN={host_fw_env} "
+                     f"exec {host_fw_bin}"],
+                name="sim_mcu_firmware",
+                output="screen",
+                respawn=True,
+                respawn_delay=1.0,
+            )
+        ),
         # 4. Robot State Publisher & Description (URDF / TF tree), from the
         # generated file above. joint_state_publisher gives the continuous
         # wheel joints a zero state so every wheel frame exists.
@@ -510,6 +561,13 @@ def launch_setup(context, *args, **kwargs):
                 executable="ldlidar_stl_ros2_node",
                 name="ld19",
                 output="screen",
+                # Respawn, as the serial driver below does: a UDP server that
+                # fails its bind once -- the previous stack's driver still
+                # holding the port for a moment -- exits 1 and stays dead, and
+                # the robot has no scan for the whole session (Sim MCU,
+                # 2026-09-26: "UDP,fail to bind. Address already in use").
+                respawn=True,
+                respawn_delay=2.0,
                 parameters=[{
                     "product_name": lidar_product,
                     "topic_name": "scan",

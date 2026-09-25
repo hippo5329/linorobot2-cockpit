@@ -28,12 +28,14 @@ def test_agent_start_udp_has_no_device():
     assert "--dev" not in cmd
 
 
-def test_bringup_passes_through_launch_args():
-    cmd = actions.build("bringup", {"launcher": "/w/launch_bringup.py", "config_path": "/c/robot.yaml",
-                                    "base": "mecanum", "device": "/dev/ttyACM0", "baud": 1500000,
-                                    "micro_ros": False, "distro": "jazzy"})
-    assert "ros2 launch /w/launch_bringup.py" in cmd
-    assert "base:=mecanum" in cmd and "micro_ros:=false" in cmd
+def test_bringup_is_the_launch_one_click_runs():
+    """The browser pointed at launch_bringup.py beside web/, a file never shipped
+    here, so every browser Bringup failed (ros2 read the path as a package)."""
+    cmd = actions.build("bringup", {"config_path": "/c/robot.yaml", "micro_ros": False,
+                                    "distro": "jazzy"})
+    assert "ros2 launch linorobot2_cockpit bringup.launch.py" in cmd
+    assert "config_file:=/c/robot.yaml" in cmd and "micro_ros:=false" in cmd
+    assert "launch_bringup.py" not in cmd
     # The board fuses its own orientation; there is no filter node to switch on.
     assert "madgwick" not in cmd
 
@@ -88,14 +90,15 @@ def test_prepared_handles_are_one_shot():
     assert actions.claim("bogus") is None
 
 
-def test_nav2_has_three_branches_when_params_given():
-    cmd = actions.build("nav2", {"launcher": "/w/launch_nav2.py", "distro": "jazzy",
-                                 "map": "/m/kitchen.yaml", "params_file": "",
-                                 "default_params": "/w/console_nav2_jazzy.yaml", "depth": False})
-    assert "ros2 launch /w/launch_nav2.py" in cmd
-    assert "nav2_bringup bringup_launch.py" in cmd     # middle branch present
-    assert "linorobot2_navigation navigation.launch.py" in cmd
-    assert "map:=/m/kitchen.yaml" in cmd
+def test_slam_and_nav2_are_the_launches_one_click_runs():
+    slam = actions.build("slam", {"distro": "jazzy", "config_path": "/c/robot.yaml"})
+    assert "ros2 launch linorobot2_cockpit slam.launch.py config_file:=/c/robot.yaml" in slam
+    nav = actions.build("nav2", {"distro": "jazzy", "config_path": "/c/robot.yaml",
+                                 "map": "/m/kitchen.yaml"})
+    assert "ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true" in nav
+    assert "config_file:=/c/robot.yaml" in nav and "map:=/m/kitchen.yaml" in nav
+    for cmd in (slam, nav):
+        assert "launch_nav2.py" not in cmd and "linorobot2_navigation" not in cmd
 
 
 def test_laser_driver_serial():
@@ -160,3 +163,25 @@ def test_docker_build_rejects_a_bad_robot_name():
     with pytest.raises(ValueError):
         actions.build("docker_build", {"base_image": "img", "robot_name": "a; rm -rf /",
                                        "workspace": "/w", "docker_dir": "/w/d"})
+
+
+def test_rviz_novnc_gives_rviz_the_display():
+    """`DISPLAY=:99 [ -f cfg ] && rviz2 -d cfg || rviz2` set DISPLAY for the `[`
+    test only: rviz2 aborted with no display and noVNC showed black."""
+    cmd = actions.build("rviz_novnc", {"display": ":99", "novnc_port": 6080,
+                                       "rviz_config": "/ws/rviz/slam.rviz"})
+    assert "export DISPLAY=:99" in cmd
+    assert cmd.index("export DISPLAY=:99") < cmd.index("rviz2 -d")
+    assert "[ -S /tmp/.X11-unix/X99 ]" in cmd, "wait for the display to exist"
+
+
+def test_the_rviz_web_viewer_runs_beside_slam_and_navigation():
+    """It shared the "main" slot with SLAM and Navigation, so it could only be
+    started when there was nothing to look at."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    core = open(os.path.join(root, "web", "backend", "core.py")).read()
+    assert '"viewer": viewer_runner' in core
+    js = open(os.path.join(root, "web", "frontend", "app-nav-viz.js")).read()
+    block = js[js.index('action: "rviz_novnc"'):]
+    assert 'slot: "viewer"' in block[:600] and 'killSlot("viewer")' in js

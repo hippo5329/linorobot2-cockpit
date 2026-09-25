@@ -155,10 +155,28 @@ the transport (the firmware's four functions, under `RMW_UXRCE_TRANSPORT=custom`
 `tests/test_host_target_is_not_a_second_copy.py` guarding both from the desk — no container, no
 board.
 
-**Still to do** before this is a simulated base rather than a transport instrument: the probe
-publishes an `Int32`, not `/odom` and `/imu/data`. The model headers compile against the shim
-(`kinematics.h` needs nothing from Arduino at all; `sim_wheel.h` needs `micros`, `random`,
-`map`, all present), so what remains is to build the base application itself on this target and
-register it as a leg — the point at which "like a mcu" becomes literally true. It still will
+**The application landed 2026-09-26, and it is the Sim MCU.** `app/` compiles `src/main.cpp`,
+every `common/lib` source and the tools, unmodified, plus the boards' own third-party
+libraries (`fetch_libdeps.py` reads `lib_deps` from `platformio_base.ini`), against a shim that
+grew the Arduino surface a whole firmware needs: GPIO that keeps its level, an I2C and SPI bus
+with nothing on it (a NACK, so the sensor factory falls back to the simulated drivers exactly as
+a bare board's does), `Servo`, and a `WiFi.h` whose link is up. Two firmware lines name the
+host, both architecture branches beside the ESP32 and RP2 ones that were already there: the
+encoder wrapper (no quadrature hardware) and `sim_ld19.h`'s UDP sink (a POSIX socket, the same
+reason `uros_transport.cpp` gives it udp4). `scripts/host_firmware.py` writes its env with the
+flasher's own functions and `bringup.launch.py` runs it for the base controller `sim`, beside
+`micro_ros_agent udp4` and `ldlidar_stl_ros2` in `udp_server` mode.
+
+The client workspace is now built by `build_client_ws.sh`, from `client.repos.txt` with the
+boards' branch rule (the distro's branch, else `rolling`) and the **board's own meta**
+(`client_meta.py` merges `host.meta` with `../esp32.meta`). That was not optional: the first
+whole-firmware run lost every `/odom/unfiltered`, because the workspace kept the client's
+512-byte custom-transport MTU and a best-effort stream cannot fragment a ~720-byte Odometry -- the
+exact fault `esp32.meta` fixed on the boards. The same run measured `/battery` at 0.495 Hz: it
+had been published every 2 s on every board since the first commit.
+
+First run, on a bench host in an isolated network: agent session with 7 publishers and 1 subscriber,
+`/odom/unfiltered` and `/imu/data` 50.0 Hz, `/scan` 10.0 Hz through the driver, `/sonar` 8.3 Hz,
+`/battery` 0.98 Hz, and `/cmd_vel` 0.2 m/s + 0.5 rad/s read back as 0.204 / 0.493. It still does
 not cover the board's loop timing, the real flash, or the serial link, so **the gate stays on
 hardware**.

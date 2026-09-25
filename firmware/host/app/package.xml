@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>lino_host_fw</name>
+  <version>0.0.1</version>
+  <description>The firmware, compiled unmodified for the robot computer: the Sim MCU as a real micro-ROS UDP4 client.</description>
+  <maintainer email="hippo5329@gmail.com">Thomas Chou</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rcl</depend>
+  <depend>rclc</depend>
+  <depend>rmw_microxrcedds</depend>
+  <depend>microxrcedds_client</depend>
+  <depend>micro_ros_utilities</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

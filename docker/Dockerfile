@@ -79,6 +79,63 @@ RUN mkdir -p /uros_ws/src \
  && rm -rf /uros_ws/build /uros_ws/log /uros_ws/src
 
 # ---------------------------------------------------------------------------
+# Stage 1b — the Sim MCU: the firmware compiled for the robot computer.
+#
+# firmware/host/app builds src/main.cpp and every firmware library, unmodified,
+# against a shim of the Arduino surface, and links a micro-ROS CLIENT (not the
+# host's Fast DDS): a UDP4 client of micro_ros_agent, exactly as an ESP32 on
+# Wi-Fi is. scripts/host_firmware.py and bringup.launch.py run it as the Sim
+# MCU. See firmware/host/README.md.
+#
+# The client workspace is built at /opt/hosturos_ws, the path it is used from
+# (colcon bakes the prefix), and never at /uros_ws, which is the agent's. Two
+# layers so the slow one caches: the client first, from only its inputs; then
+# the firmware, from the whole tree.
+# ---------------------------------------------------------------------------
+FROM ros:${ROS_DISTRO}-ros-base AS hostfw
+ARG ROS_DISTRO
+ARG APT_PROXY=""
+ARG LINO_GIT_REV=unknown
+RUN if [ -n "$APT_PROXY" ]; then echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy; fi; \
+    apt-get update \
+ # The same snapshot the runtime stage upgrades to: the firmware links the
+ # system rcl, and on a rolling-snapshot distro a stale base disagrees with the
+ # runtime about the rosidl ABI (see the upgrade in the runtime stage).
+ && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends \
+        git build-essential cmake python3-colcon-common-extensions python3-venv python3-yaml \
+ && rm -rf /var/lib/apt/lists/*
+COPY firmware/host/build_client_ws.sh firmware/host/client.repos.txt firmware/host/host.meta \
+     firmware/host/client_meta.py /src/firmware/host/
+COPY firmware/esp32.meta /src/firmware/
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && bash /src/firmware/host/build_client_ws.sh /opt/hosturos_ws ${ROS_DISTRO} > /tmp/client.log 2>&1 \
+    || { tail -40 /tmp/client.log; exit 1; }; \
+    tail -3 /tmp/client.log \
+ && rm -rf /opt/hosturos_ws/build /opt/hosturos_ws/log /opt/hosturos_ws/src /tmp/client.log
+# The third-party Arduino libraries, from the boards' own lib_deps list, through
+# platformio's registry (build stage only; nothing of pio reaches the runtime).
+COPY firmware /src/firmware
+COPY scripts /src/scripts
+COPY config /src/config
+RUN python3 -m venv /opt/pio && /opt/pio/bin/pip install -q platformio \
+ && PATH=/opt/pio/bin:$PATH python3 /src/firmware/host/fetch_libdeps.py /tmp/libdeps > /tmp/libdeps.log 2>&1 \
+    || { tail -20 /tmp/libdeps.log; exit 1; }
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/hosturos_ws/install/local_setup.sh \
+ && mkdir -p /tmp/app_ws/src /opt/hosturos_ws/gen \
+ && cp -r /src/firmware/host/app /tmp/app_ws/src/lino_host_fw \
+ && python3 /src/scripts/gen_firmware_header.py --mcu host --no-embed-secrets --distro ${ROS_DISTRO} \
+        --out /opt/hosturos_ws/gen/lino_host_config.h \
+ && cd /tmp/app_ws \
+ && colcon build --merge-install --install-base /opt/hosturos_ws/app \
+        --cmake-args -DFIRMWARE_ROOT=/src/firmware -DLINO_LIBDEPS=/tmp/libdeps \
+                     -DLINO_HOST_HEADER=/opt/hosturos_ws/gen/lino_host_config.h \
+                     -DFW_GIT_REV=$(echo "$LINO_GIT_REV" | cut -c1-7) > /tmp/app.log 2>&1 \
+    || { grep -E "error|Error" /tmp/app.log | head -40; exit 1; }; \
+    test -x /opt/hosturos_ws/app/lib/lino_host_fw/lino_host_fw \
+ && rm -rf /tmp/app_ws /tmp/libdeps /tmp/app.log
+
+# ---------------------------------------------------------------------------
 # Stage 2 — the robot runtime.
 # ---------------------------------------------------------------------------
 FROM ros:${ROS_DISTRO}-ros-base
@@ -235,7 +292,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends libusb-1.0-0 \
 # rviz2 on the robot. docker-compose.yml's `rviz` profile runs THIS image with
 # the host's display mounted; docker/rviz-entrypoint.sh is its entrypoint and
 # arrives with the rest of the repo at /ws.
-RUN apt-get update && apt-get install -y --no-install-recommends         ros-${ROS_DISTRO}-rviz2     && rm -f /etc/apt/apt.conf.d/01proxy && rm -rf /var/lib/apt/lists/*
+#
+# And the web viewer for a robot with no screen (Tab 9, the rviz_novnc action):
+# RViz on a virtual display (Xvfb), served by x11vnc and turned into a browser
+# page by noVNC + websockify. The action used to `sudo apt-get install` them on
+# first use, which in this image -- the cockpit runs as the user, with no
+# passwordless sudo -- could only fail; the browser check of 2026-09-26 found
+# every one of them missing. Packaged here, the way upstream linorobot2's
+# docker-compose ships a VNC service for the same purpose.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-rviz2 xvfb x11vnc novnc websockify \
+ && rm -f /etc/apt/apt.conf.d/01proxy && rm -rf /var/lib/apt/lists/*
 
 COPY --from=picotool-build /tmp/picotool/build/picotool /usr/local/bin/picotool
 
@@ -245,9 +312,24 @@ COPY --from=picotool-build /tmp/picotool/build/picotool /usr/local/bin/picotool
 # setting COLCON_CURRENT_PREFIX at every source site, which is a trap waiting for
 # the next person; keeping the path is free.
 COPY --from=uros /uros_ws/install /uros_ws/install
+# The Sim MCU (stage hostfw): the micro-ROS client libraries and the firmware.
+COPY --from=hostfw /opt/hosturos_ws /opt/hosturos_ws
 
 WORKDIR /ws
 COPY . /ws
+
+# The RViz layouts the host viewer opens (docker-compose.yml `rviz`, and
+# docker/rviz-entrypoint.sh). The entrypoint seeded its volume from
+# /opt/cockpit-rviz, which nothing ever created, so `--config slam` on a laptop
+# ended "rviz config not found: /rviz/slam.rviz; available:" (checked
+# 2026-09-26 from a second machine on the robot's subnet). /rviz is in the
+# image too, world-writable: Docker fills a NEW named volume from the image's
+# directory at its mount point, so the viewer -- which runs as the user, not
+# root -- can save a layout into it.
+RUN mkdir -p /opt/cockpit-rviz /rviz \
+ && cp /ws/rviz/*.rviz /opt/cockpit-rviz/ \
+ && cp /ws/rviz/*.rviz /rviz/ \
+ && chmod 1777 /rviz && chmod 0666 /rviz/*.rviz
 
 # The ROS workspace. bringup needs two packages beyond this repo:
 # ldlidar_stl_ros2 for a real LD19, and micro_ros_agent above. The driver is
