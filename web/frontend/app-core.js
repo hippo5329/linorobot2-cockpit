@@ -1304,11 +1304,16 @@ async function noBoardSwitch(s) {
       if (absent && !userChoseController && state.robot_name && state.robot_name !== "bare_sim") {
         noBoardSwitchedFrom = state.robot_name;
         await useSimRobot();
-      } else if (!absent && noBoardSwitchedFrom && state.robot_name === "bare_sim") {
-        const back = noBoardSwitchedFrom;
+      } else if (!absent && noBoardSwitchedFrom && state.robot_name === "bare_sim" && s.mcu_detected) {
+        // Follow the board that was PLUGGED, not the robot we left: back to that
+        // robot only if it is the same silicon, else the plugged silicon's bare
+        // robot (leaveSimRobot). Going straight back sent an ESP32 plugged into a
+        // fresh install to pico2_mecanum, the default robot -- a Pico 2 design.
+        // Only once the bus NAMES the silicon: a board in BOOTSEL, or a bridge
+        // with no tty yet, is on the bus before it can be classified, and the
+        // next poll will know.
         noBoardSwitchedFrom = null;
-        robotBeforeSim = null;
-        await selectRobot(back, false);
+        await leaveSimRobot(siliconOf(s.detected_mcu));
       }
     } finally {
       noBoardBusy = false;
@@ -1326,7 +1331,8 @@ async function noBoardSwitch(s) {
     el.innerHTML = "⚠️ <b>No MCU board detected</b> — switched to the <b>Sim MCU</b> robot " +
       "(<code>bare_sim</code>: the firmware running on this computer over micro-ROS, every simulated device, " +
       "no pins), so 1-Click and Bringup work with nothing plugged in. Plug a board in to flash and run it" +
-      (noBoardSwitchedFrom ? ` (the robot goes back to <code>${escapeHtml(noBoardSwitchedFrom)}</code>)` : "") + ".";
+      (noBoardSwitchedFrom ? ` (the robot then follows that board: <code>${escapeHtml(noBoardSwitchedFrom)}</code> ` +
+        `if it is the same MCU, otherwise that MCU's bare robot)` : "") + ".";
     el.hidden = false;
   } else {
     el.hidden = true;
