@@ -304,6 +304,50 @@ static inline float simDrvLimitA()
     return a;
 }
 
+// HOW THE PART IS MOUNTED, in degrees, and why a simulated IMU needs it.
+//
+// The accelerometer reports specific force, so gravity sits in the reading and
+// the EKF fuses ax and ay (imu0_config 12, 13). Tilt the part and a constant
+// appears in those horizontal axes that the filter integrates into velocity --
+// which is what robot_localization's imu0_remove_gravitational_acceleration
+// exists to prevent, and what madgwick's remove_gravity_vector does when
+// madgwick is running.
+//
+// Until 2026-09-25 this model put the whole 9.81 on Z, always, so that entire
+// path was unreachable in simulation: the bench could not fail on it and the
+// first robot to meet it would have been a real one in October, with a
+// multimeter. A default of zero keeps every existing leg bit-identical.
+#ifndef SIM_IMU_MOUNT_ROLL_DEG
+#define SIM_IMU_MOUNT_ROLL_DEG 0.0
+#endif
+#ifndef SIM_IMU_MOUNT_PITCH_DEG
+#define SIM_IMU_MOUNT_PITCH_DEG 0.0
+#endif
+
+// Sentinel below the physical range rather than 0: a level mount IS the default
+// and must not be mistaken for "unset", and a negative tilt is a real answer.
+static inline float simImuMountRollDeg()
+{
+    static float v = -1000.0f;
+    if (v < -900.0f) {
+        v = envFloat("sim_imu_mount_roll", (float)SIM_IMU_MOUNT_ROLL_DEG);
+        if (v < -45.0f) v = -45.0f;
+        if (v > 45.0f) v = 45.0f;
+    }
+    return v;
+}
+
+static inline float simImuMountPitchDeg()
+{
+    static float v = -1000.0f;
+    if (v < -900.0f) {
+        v = envFloat("sim_imu_mount_pitch", (float)SIM_IMU_MOUNT_PITCH_DEG);
+        if (v < -45.0f) v = -45.0f;
+        if (v > 45.0f) v = 45.0f;
+    }
+    return v;
+}
+
 #ifndef SIM_WHEEL_NOISE_RPM
 #define SIM_WHEEL_NOISE_RPM 1.0    // +/- peak white noise on the reported RPM
 #endif
@@ -870,12 +914,30 @@ public:
         const float ax = accel_x_ - angular_z_ * linear_y_;
         const float ay = accel_y_ + angular_z_ * linear_x_;
 
+        // The scale error multiplies the WHOLE specific force, gravity included:
+        // it is a property of the part, and a sensor miscalibrated for
+        // acceleration but perfect for gravity does not exist. The bias stays
+        // additive and after the scale, which is what a bias is.
+        //
+        // Gravity, in the frame the PART sits in rather than the one it was
+        // meant to sit in. A pitch about Y leans g into +/-X, a roll about X
+        // leans it into Y, and what is left stays on Z -- small angles, so the
+        // cross term between the two is negligible and left out deliberately
+        // rather than forgotten. At the default 0 these are 0, 0 and
+        // SIM_IMU_GRAVITY exactly, so a level robot is unchanged.
+        const float roll = simImuMountRollDeg() * 0.017453293f;
+        const float pitch = simImuMountPitchDeg() * 0.017453293f;
+        const float g = (float)SIM_IMU_GRAVITY;
+        const float g_x = -g * sinf(pitch);
+        const float g_y = g * sinf(roll);
+        const float g_z = g * cosf(pitch) * cosf(roll);
+
         imu_msg.linear_acceleration.x =
-            ax * k + accel_bias_x_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
+            (ax + g_x) * k + accel_bias_x_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
         imu_msg.linear_acceleration.y =
-            ay * k + accel_bias_y_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
+            (ay + g_y) * k + accel_bias_y_ + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
         imu_msg.linear_acceleration.z =
-            (float)SIM_IMU_GRAVITY + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
+            g_z * k + simWheelNoise((float)SIM_IMU_ACCEL_NOISE);
 
         imu_msg.angular_velocity.x = simWheelNoise((float)SIM_IMU_GYRO_NOISE);
         imu_msg.angular_velocity.y = simWheelNoise((float)SIM_IMU_GYRO_NOISE);

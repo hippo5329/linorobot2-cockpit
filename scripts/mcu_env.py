@@ -784,7 +784,9 @@ def hardware_env(params: dict) -> dict:
                           ("sim_coulomb", float), ("sim_sag", float),
                           ("sim_sag_tau", float), ("sim_drv_drop", float),
                           ("sim_drv_r", float), ("sim_stall_a", float),
-                          ("sim_ilimit_a", float)):
+                          ("sim_ilimit_a", float),
+                          ("sim_imu_mount_roll", float),
+                          ("sim_imu_mount_pitch", float)):
             src = {"sim_map_w": "map_width", "sim_map_h": "map_height",
                    "sim_wall": "wall_obstacle", "sim_wall_x1": "wall_x1",
                    "sim_wall_y1": "wall_y1", "sim_wall_x2": "wall_x2",
@@ -806,7 +808,15 @@ def hardware_env(params: dict) -> dict:
                    # TORQUE rather than speed -- the one limit that bites hardest
                    # from rest, where a robot is judged. 0 means none fitted.
                    "sim_stall_a": "motor_stall_amps",
-                   "sim_ilimit_a": "driver_current_limit"}[key]
+                   "sim_ilimit_a": "driver_current_limit",
+                   # How the IMU is actually mounted, in degrees. An
+                   # accelerometer reports specific force, so a tilt leans
+                   # gravity into ax and ay -- the two the EKF fuses. Zero here
+                   # is a perfectly level part, which is what this model assumed
+                   # unconditionally until 2026-09-25, and no simulated robot
+                   # could reach the code that exists to correct for it.
+                   "sim_imu_mount_roll": "imu_mount_roll_deg",
+                   "sim_imu_mount_pitch": "imu_mount_pitch_deg"}[key]
             if sim.get(src) is None:
                 continue
             try:

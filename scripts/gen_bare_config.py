@@ -121,6 +121,13 @@ SIM_DEFAULTS = (
     ("driver_resistance",  "encoder/sim_wheel.h", "SIM_DRV_R",               float),
     ("motor_stall_amps",   "encoder/sim_wheel.h", "SIM_MOTOR_STALL_A",       float),
     ("driver_current_limit", "encoder/sim_wheel.h", "SIM_DRV_ILIMIT_A",      float),
+    # How the IMU is mounted, in degrees. Zero is a level part -- which is what
+    # the model assumed unconditionally until 2026-09-25, so no simulated robot
+    # could reach the gravity-in-ax/ay path the EKF has to cope with. Present in
+    # every config, defaulting to the firmware's own zero, so the sweep that
+    # tilts it does not need a firmware build.
+    ("imu_mount_roll_deg",  "encoder/sim_wheel.h"     , "SIM_IMU_MOUNT_ROLL_DEG",  float),
+    ("imu_mount_pitch_deg", "encoder/sim_wheel.h"     , "SIM_IMU_MOUNT_PITCH_DEG", float),
 )
 
 

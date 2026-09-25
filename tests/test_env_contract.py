@@ -67,7 +67,13 @@ MAXIMAL_CONFIG = {
                        "gear_efficiency": 0.75, "gear_drag_rpm": 12.0,
                        "battery_sag": 0.25, "battery_sag_tau_ms": 400.0,
                        "driver_drop": 0.03, "driver_resistance": 0.10,
-                       "motor_stall_amps": 2.5, "driver_current_limit": 2.0},
+                       "motor_stall_amps": 2.5, "driver_current_limit": 2.0,
+                       # How the IMU is mounted. Zero is a level part and belongs
+                       # in every reference config by omission, so -- like
+                       # fr_wheels_distance and angular_scale above -- this is the
+                       # only place the contract can see these two written.
+                       "imu_mount_roll_deg": 2.0,
+                       "imu_mount_pitch_deg": -1.5},
     },
 }
 

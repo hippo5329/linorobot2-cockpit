@@ -61,6 +61,10 @@ base_controller:
     driver_resistance: 0.1            # bridge's current-proportional loss, instant
     motor_stall_amps: 2.5             # datasheet stall current at the motor's rated voltage
     driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
+    # How the IMU is mounted, in degrees. Zero is a level part; a real one
+    # sits a degree or two off and leans gravity into the ax/ay the EKF fuses.
+    imu_mount_roll_deg: 0.0
+    imu_mount_pitch_deg: 0.0
   pins:
     # Two-PWM (bts7960) drivers: in_a / in_b carry the complementary PWM, pwm
     # is the driver's enable. One GPIO (GP22) enables all four bridges -- the
