@@ -449,7 +449,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | topic | type | when |
 |---|---|---|
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
-| `imu/data` or `imu/data_raw` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/mag` only with a magnetometer (`PUBLISH_MAG`) |
+| `imu/data` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/data` always, orientation included -- the board fuses gyro, accel and field itself. `imu/mag` only with a magnetometer (`PUBLISH_MAG`), for calibration; nothing pairs against it |
 | `raw_scan` | `std_msgs/UInt8MultiArray` | simulated LD19 on the MCU |
 | `battery` (0.5 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 

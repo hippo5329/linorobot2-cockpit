@@ -293,6 +293,26 @@ def launch_setup(context, *args, **kwargs):
               "would risk starving /imu/data entirely. Name the part (mag: AK09918) "
               "to fuse it.")
 
+    # MADGWICK IS GONE. The board fuses its own orientation now.
+    #
+    # It was launched to pair imu/data_raw with imu/mag, and that pairing -- a
+    # message_filters ApproximateTime synchroniser five deep -- made imu/data the
+    # rate of MATCHED PAIRS across a best-effort micro-ROS session. Two slowed
+    # bench legs measured the cost: /odom, which needs no partner, held 33 Hz
+    # while imu/data fell to 10. The board has both readings in one cycle from
+    # one trigger, so firmware/common/lib/imu/ahrs.h -- a port of this node's own
+    # ImuFilter, held to it numerically by tests -- does the job with nothing to
+    # synchronise, and removes gravity at the source as the node did.
+    #
+    # `madgwick:=true` is still accepted, for bisecting against an older image:
+    # a board built before 2026-09-25 publishes imu/data_raw and needs the node.
+    madgwick_arg = context.launch_configurations.get("madgwick", "")
+    # `and has_imu` because a filter with no input is worse than no filter: it
+    # joins the graph, publishes nothing, and anything waiting on /imu/data waits
+    # for ever. It also keeps has_imu meaningful -- dropping the hardware rule left
+    # it assigned and unread.
+    enable_madgwick = (madgwick_arg.lower() in ("true", "1", "yes")) and has_imu
+
     # THE EKF HALF OF THE SAME RULE, and it cannot ship without the other two.
     #
     #   magnetometer    madgwick publishes imu/data with a field-anchored yaw,
@@ -320,6 +340,29 @@ def launch_setup(context, *args, **kwargs):
                   "The board's imu/data carries an identity quaternion, so fusing yaw "
                   "would pin the heading to zero; vyaw carries rotation instead.")
 
+    # GRAVITY IS REMOVED ONCE, AND NOT HERE.
+    #
+    # The EKF fuses ax and ay (imu0_config 12, 13). An accelerometer measures
+    # SPECIFIC FORCE, so gravity is in that reading, and a part mounted a couple
+    # of degrees off leans a constant into the horizontal axes -- 0.85 m/s2 at
+    # five degrees of pitch -- which the filter reads as real acceleration and
+    # integrates into velocity.
+    #
+    # Whoever runs the fusion owns the subtraction, because only they have the
+    # orientation estimate it needs. Since 2026-09-25 that is the BOARD: ahrs.h
+    # subtracts its own gravity estimate before publishing, exactly as the
+    # madgwick node's remove_gravity_vector did. Doing it a second time here would
+    # fabricate 9.81 m/s2 upward, which is worse than the fault it was meant to
+    # fix -- so this states an invariant rather than a branch, and it holds
+    # whether the board has a magnetometer or not.
+    #
+    # Written only when the key is ABSENT: a value already here is somebody's
+    # deliberate choice about their own hardware, and the yaw rule above overrides
+    # a template value only because the template always says `true`.
+    rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
+    if rp.get("imu0_remove_gravitational_acceleration") is None:
+        rp["imu0_remove_gravitational_acceleration"] = False
+
     # rcl matches a params section against the node's FULLY-QUALIFIED name, so
     # under a namespace `ekf_filter_node:` matches nothing and the EKF starts on
     # its own defaults -- no odom0, no imu0, nothing published, no complaint.
@@ -327,17 +370,6 @@ def launch_setup(context, *args, **kwargs):
     yaml.dump(cockpit_paths.namespace_params(ekf_data, ns), ekf_temp)
     ekf_temp.flush()
     ekf_params_path = ekf_temp.name
-
-    madgwick_arg = context.launch_configurations.get("madgwick", "")
-    if madgwick_arg != "":
-        enable_madgwick = (madgwick_arg.lower() in ("true", "1", "yes"))
-    else:
-        # No magnetometer, no madgwick. With use_mag false the node would fuse
-        # accel and gyro alone and publish an orientation whose yaw drifts with
-        # nothing to anchor it -- and the EKF would fuse that as absolute. The
-        # board publishes imu/data itself in that configuration (main.cpp keys
-        # the topic name on the same fact), so the filter has no job.
-        enable_madgwick = has_imu and use_mag
 
     nodes = [
         LogInfo(

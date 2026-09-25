@@ -80,6 +80,7 @@ class IMUInterface
         // the same as "the sample is new": see sampleAgeUs().
         virtual uint32_t chipSampleAgeUs() { return 0; }
 
+
     protected:
         // Value-initialised: these objects are heap-allocated (createIMU does
         // `new`), and the constructor hands frame_id to
@@ -176,6 +177,19 @@ class IMUInterface
         }
 
     public:
+        // Whether this part computes its own orientation.
+        //
+        // A BNO085 runs a full AHRS on the chip and returns a quaternion, so it
+        // does its best and the firmware's filter stands aside. Everything else
+        // returns accel and gyro (and a field, if a magnetometer answered) and
+        // the board fuses them -- since 2026-09-25, in ahrs.h, instead of
+        // shipping imu/data_raw to imu_filter_madgwick and depending on the pair
+        // surviving a best-effort link.
+        //
+        // Default false, so a new driver is fused rather than silently trusted
+        // to have filled in a quaternion it never touched. That failure would be
+        // an identity orientation published as a heading.
+        virtual bool hasFusedOrientation() { return false; }
         IMUInterface()
         {
             imu_msg_.header.frame_id = micro_ros_string_utilities_set(imu_msg_.header.frame_id, "imu_link");

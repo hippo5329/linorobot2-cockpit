@@ -313,7 +313,7 @@ body box, tyre width, axle height, casters, LiDAR and IMU poses from `geometry:`
 no `geometry:` gets one derived from its kinematics by `migrate_config_schema.py`, written into
 the file. Frames are fixed by the rest of the stack and are not config keys: `base_footprint`
 (the firmware's odometry child), `base_link` (the EKF's), `imu_link` (what the firmware stamps
-on `/imu/data_raw`); only the laser frame is a key (`geometry.laser.frame`), because the LiDAR
+on `/imu/data`); only the laser frame is a key (`geometry.laser.frame`), because the LiDAR
 driver is told it too. The LD driver's `product_name` and `bins` follow `lidar.model`.
 `linorobot2_description` is no longer vendored into the image and `xacro` is no longer installed;
 the fresh image was proven on the GenDrv bench first (generated description published, the
@@ -321,8 +321,16 @@ the fresh image was proven on the GenDrv bench first (generated description publ
 
 
 ### The heading needs an anchor, and the EKF has to be told to use it
-The chain is: magnetometer -> `imu_filter_madgwick` -> `/imu/data` orientation -> the EKF's
+The chain is: magnetometer -> the board's own AHRS -> `/imu/data` orientation -> the EKF's
 **absolute yaw**. Every link has to be on, and each one is set in a different file.
+
+Until 2026-09-25 the middle link was `imu_filter_madgwick`, running on the robot computer and
+pairing `imu/data_raw` with `imu/mag`. It is now `firmware/common/lib/imu/ahrs.h`, the same filter
+ported onto the board, because the pairing made `/imu/data` the rate of *matched pairs* across a
+best-effort link -- see `docs/firmware.md`. Nothing else in this section changes: the frame
+convention, the anchoring, and the EKF's `imu0_config[5]` rule are what they were, and the
+covariance the board publishes (1e-4 with a field) is the variance the node's
+`orientation_stddev: 0.01` implied.
 
 * `bringup.launch.py` runs Madgwick with `use_mag` true whenever a magnetometer is fitted *or*
   simulated, and pins `world_frame: enu` — x east, **y north**, z up, which is the frame the
@@ -369,6 +377,12 @@ agent-synced epoch (`getTime()` after `syncTime()`, the same stamp `/odom` carri
 already trusts), so `constant_dt: 0.0` — the package default, "use the header stamps" — is the
 right setting on every board and at every baud rate. Do not put the constant back to make a
 bench number look steadier.
+
+**The same rule now applies one level down, inside the firmware.** The board's AHRS integrates over
+the interval `micros()` actually measured, not over `CONTROL_TIMER`, and skips an interval longer
+than a second as a stalled loop rather than integrating it as rotation. That is the identical
+mistake this section warns about -- a nominal period standing in for a measured one -- and it is the
+mistake that let a simulated wheel model report 4x its motor's speed when a loop stalled.
 
 ### One `topic_prefix`, consumed on both sides, so two robots share a DDS domain
 `base_controller.topic_prefix` is a single key with two readers. The board prefixes every

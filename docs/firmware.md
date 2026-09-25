@@ -209,6 +209,27 @@ Madgwick with a magnetometer waits for `imu/data_raw` and `imu/mag` as a synchro
 nothing on `/imu/mag` it published nothing and `/imu/data` went to 0 Hz — which is why the two ship
 together and why the fix was measured before it was cut.
 
+**That pairing is gone as of 2026-09-25: the board fuses its own orientation.** Everything above
+describes a real fault and a real fix, and the fix was right — but it left `/imu/data` depending on
+two best-effort messages both surviving the link. `imu_filter_madgwick` matches `imu/data_raw` with
+`imu/mag` through a `message_filters` `ApproximateTime` synchroniser five deep, so `/imu/data` was
+the rate of *matched pairs*, and a dropped magnetometer message cost an IMU sample. Measured on two
+bench legs where the board slowed down: `/odom`, which needs no partner, held 33 Hz while
+`/imu/data` fell to 10 — a 1.5x loss in what was sent becoming a 5x loss in what the EKF received.
+
+The board holds gyro, accel and field in the same 50 Hz cycle, from the same trigger, with nothing
+to synchronise. So `firmware/common/lib/imu/ahrs.h` — a port of that node's own `ImuFilter`, held to
+it numerically by `tests/test_ahrs_is_the_filter_it_replaces.py` — does the fusion on the board,
+publishes `imu/data` directly with an orientation and an honest covariance, and removes gravity at
+the source as the node's `remove_gravity_vector` did. `imu/mag` is still published, because
+`magnetometer_calibration` needs it. A part with on-chip fusion (BNO085) does its own AHRS and the
+filter stands aside: `hasFusedOrientation()` is the seam.
+
+Cost, measured by compiling one update for each target: **988 instructions and 422 hardware FPU ops
+on an ESP32** (~5 us, 0.025% of a 20 ms cycle), and on the RP2040 — the only target with no FPU —
+922 instructions and 188 soft-float helper calls, about 0.7% of the cycle. `madgwick:=true` still
+launches the node, for bisecting against an image built before this.
+
 ### `base` reads the I2C bus before it believes the config
 The scan and the WHO_AM_I table live in **`firmware/common/lib/i2c_probe`**, not inside the
 `i2c_detect` tool, because both need them. On a real robot (`app=base`, wheels not simulated — override

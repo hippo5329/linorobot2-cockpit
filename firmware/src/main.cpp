@@ -45,6 +45,7 @@
 #include "pid.h"
 #include "odometry.h"
 #include "imu.h"
+#include "ahrs.h"
 #include "mag.h"
 #include "sensor_factory.h"
 #include "uros_transport.h"
@@ -227,6 +228,24 @@ static bool publish_battery = false;
 
 nav_msgs__msg__Odometry *odom_msg = nullptr;
 sensor_msgs__msg__Imu *imu_msg = nullptr;
+// THE ORIENTATION, computed here instead of by imu_filter_madgwick.
+//
+// imu/data used to be produced off-board: the node paired imu/data_raw with
+// imu/mag through an ApproximateTime synchroniser five deep, so imu/data was the
+// rate of MATCHED PAIRS, not the rate of the IMU. Both topics cross a
+// best-effort micro-ROS session and either can be dropped, so every lost
+// magnetometer message cost an IMU sample -- measured on two slowed bench legs
+// as /odom holding 33 Hz while imu/data fell to 10.
+//
+// Here there is nothing to pair: both readings come from the same 50 Hz cycle
+// and the same trigger. See firmware/common/lib/imu/ahrs.h -- it is a port of
+// the node's own ImuFilter, held to it numerically by
+// tests/test_ahrs_is_the_filter_it_replaces.py, so this moves WHERE the filter
+// runs without changing WHAT it computes.
+//
+// A part with on-chip fusion (BNO085) does its best and this stands aside:
+// hasFusedOrientation() is the seam.
+AHRS ahrs;
 sensor_msgs__msg__MagneticField *mag_msg = nullptr;
 geometry_msgs__msg__Twist twist_msg;
 sensor_msgs__msg__BatteryState *battery_msg = nullptr;
@@ -1388,27 +1407,26 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
         topicName("odom/unfiltered")
     ));
-    // The IMU topic NAME depends on whether this robot has a magnetometer,
-    // because that decides whether anything filters the message.
+    // ONE IMU TOPIC, always: imu/data, orientation included.
     //
-    //   magnetometer  -> imu/data_raw + imu/mag, madgwick fuses them and
-    //                    publishes imu/data. Absolute yaw is anchored to the
-    //                    field and the EKF fuses it.
-    //   no magnetometer -> no madgwick is launched at all, so there is no raw
-    //                    stage and this IS the consumer topic: imu/data. The
-    //                    EKF then fuses ANGULAR SPEED only -- it must not fuse
-    //                    yaw, which would be the identity quaternion this
-    //                    message carries, i.e. a constant zero heading.
+    // This used to fork. With a magnetometer the board published imu/data_raw
+    // and imu/mag and imu_filter_madgwick paired them into imu/data; without
+    // one, the board published imu/data itself carrying an identity quaternion.
+    // Two topologies, two launch-time rules to keep in step with them, and the
+    // 9-axis half depended on a pair of best-effort messages both surviving a
+    // serial link -- imu/data was the rate of MATCHED PAIRS through an
+    // ApproximateTime synchroniser five deep. Measured on two slowed bench legs:
+    // /odom (no partner needed) at 33 Hz beside imu/data at 10.
     //
-    // `publish_mag` is the right discriminator and not a new flag: it is
-    // already (a real magnetometer answered) OR (simulated wheels are synthesising a
-    // field). A magless real robot gets imu/data; a bench board in simulation mode
-    // keeps imu/data_raw and madgwick exactly as before, which is why the
-    // 30-leg simulation-mode matrix does not move under this change.
-    const char *imu_topic = publish_mag ? "imu/data_raw" : "imu/data";
+    // The board holds both readings in the same cycle, from the same trigger,
+    // with nothing to synchronise. So it fuses them itself (ahrs.h, a port of
+    // that node's own filter) and publishes the consumer topic directly.
+    // imu/mag is still published -- magnetometer_calibration needs it -- but
+    // nothing pairs against it any more.
+    const char *imu_topic = "imu/data";
     Serial.printf("[imu] publishing %s (%s)\n", imu_topic,
-                  publish_mag ? "magnetometer fitted: madgwick fuses this into imu/data"
-                              : "no magnetometer: no madgwick, this is the consumer topic");
+                  publish_mag ? "9-axis: gyro, accel and field fused on the board"
+                              : "6-axis: gyro and accel fused on the board, yaw unanchored");
     RCCHECK(init_fast(
         &imu_publisher, 
         &node,
@@ -1938,6 +1956,92 @@ void publishData()
             mag_msg->magnetic_field.y -= mag_bias[1];
             mag_msg->magnetic_field.z -= mag_bias[2];
         }
+    }
+
+    // ---- fuse, now that gyro, accel and a hard-iron-corrected field are all in
+    //
+    // dt comes from micros() rather than the nominal period: this runs in the
+    // publish path, and the interval that actually passed is the one the
+    // integration needs.
+    //
+    // The first call is handled by a FLAG, not by the rollover guard. sim_wheel.h
+    // leans on `dt > 1 s` to catch it, which only works while micros() is still
+    // below a second -- true there because the wheels are fed from boot, and not
+    // true here, because publishing starts only after the agent handshake. An
+    // unseeded first interval would be micros() itself, integrated as real
+    // rotation.
+    //
+    // `imu` is never null -- createIMU falls back to `new SimIMU()` -- but it is a
+    // raw pointer initialised to nullptr and line ~1108 already guards it, so this
+    // guards it the same way rather than leaving the reader to go and check.
+    if (!imu || !imu->hasFusedOrientation())
+    {
+        static bool ahrs_seeded = false;
+        static uint32_t ahrs_prev_us = 0;
+        const uint32_t ahrs_now_us = micros();
+        if (!ahrs_seeded)
+        {
+            ahrs_seeded = true;
+            ahrs_prev_us = ahrs_now_us;
+        }
+        else
+        {
+            const uint32_t ahrs_dt_us = ahrs_now_us - ahrs_prev_us;
+            ahrs_prev_us = ahrs_now_us;
+            // A stalled loop is not motion. Same bound as the wheel model's.
+            if (ahrs_dt_us != 0 && ahrs_dt_us <= 1000000UL)
+            {
+                const float dt = (float)ahrs_dt_us / 1000000.0f;
+                const float gx = (float)imu_msg->angular_velocity.x;
+                const float gy = (float)imu_msg->angular_velocity.y;
+                const float gz = (float)imu_msg->angular_velocity.z;
+                const float ax = (float)imu_msg->linear_acceleration.x;
+                const float ay = (float)imu_msg->linear_acceleration.y;
+                const float az = (float)imu_msg->linear_acceleration.z;
+                if (publish_mag)
+                    ahrs.update(gx, gy, gz, ax, ay, az,
+                                (float)mag_msg->magnetic_field.x,
+                                (float)mag_msg->magnetic_field.y,
+                                (float)mag_msg->magnetic_field.z, dt);
+                else
+                    ahrs.updateIMU(gx, gy, gz, ax, ay, az, dt);
+
+                ahrs.quaternion(imu_msg->orientation.x, imu_msg->orientation.y,
+                                imu_msg->orientation.z, imu_msg->orientation.w);
+
+                // What the EKF is told about that heading. The madgwick node was
+                // passed orientation_stddev 0.01, i.e. a variance of 1e-4. With no
+                // field there is no absolute heading at all: bringup.launch.py
+                // clears imu0_config[5] so it is not fused, and the covariance
+                // must not claim otherwise either.
+                const double ori_var = publish_mag ? 1.0e-4 : 1.0e6;
+                imu_msg->orientation_covariance[0] = ori_var;
+                imu_msg->orientation_covariance[4] = ori_var;
+                imu_msg->orientation_covariance[8] = ori_var;
+            }
+        }
+    }
+
+    // ---- gravity out, ONCE, whoever computed the orientation
+    //
+    // Not inside the branch above. A BNO085 fuses on-chip, so the filter stands
+    // aside for it -- and it reports raw specific force, so gravity would have
+    // stayed in ax and ay on exactly that part, while bringup.launch.py tells the
+    // EKF not to remove it because the board normally has. One part, silently
+    // feeding a constant 9.8 into a fused acceleration.
+    //
+    // So this reads whatever quaternion the message now carries, ours or the
+    // chip's, and subtracts the gravity it implies. Before the estimate has
+    // converged the quaternion is identity and this subtracts [0,0,g], which is
+    // right for a level robot and self-correcting for any other.
+    {
+        float ggx, ggy, ggz;
+        AHRS::gravityFrom(imu_msg->orientation.x, imu_msg->orientation.y,
+                          imu_msg->orientation.z, imu_msg->orientation.w,
+                          (float)AHRS_GRAVITY, ggx, ggy, ggz);
+        imu_msg->linear_acceleration.x -= ggx;
+        imu_msg->linear_acceleration.y -= ggy;
+        imu_msg->linear_acceleration.z -= ggz;
     }
 
     diagTime(DIAGT_SENSORS, micros() - sens_t0);

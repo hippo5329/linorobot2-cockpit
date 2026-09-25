@@ -1051,6 +1051,11 @@ class BNO085IMU: public IMUInterface
         int configAttempts = 0;
 
     public:
+        // This part runs its own AHRS: sensor fusion in the chip, with its own
+        // calibration, so ahrs.h stands aside and the quaternion below is the
+        // chip's rather than the firmware's.
+        bool hasFusedOrientation() override { return true; }
+
         BNO085IMU()
         {
         }
