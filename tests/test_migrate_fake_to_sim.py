@@ -50,7 +50,7 @@ def test_dry_run_writes_nothing(tmp_path):
 
 def test_the_pipeline_refuses_a_stale_config_before_touching_the_board():
     src = open(os.path.join(HERE, "scripts", "one_click_pipeline.py"), encoding="utf-8").read()
-    i = src.index('k.startswith("use_fake_")')
+    i = src.index("stale = migrate_config_schema.stale_faults(params)")
     assert i < src.index("has_lidar = lidar_fitted(controller_cfg)"), \
         "the stale-config check must come before any hardware step"
     assert "migrate_config_schema.py" in src[i:i + 400]

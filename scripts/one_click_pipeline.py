@@ -33,7 +33,8 @@ import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
 import gen_bare_config  # noqa: E402
 import mcu_identity  # noqa: E402
-import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
+import robot_stack  # noqa: E402
+import migrate_config_schema  # noqa: E402  (stale_faults, the pre-flight refusal)  (what a kept-running stack leaves behind)
 
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
@@ -267,17 +268,6 @@ NOT_FITTED = {"", "none", "null", "off", "false", "no"}
 # GenDrv's runtime rate is 1.5 M and there is no reason to put a proven upload
 # path at risk to match it.
 FLASH_BAUD_CEILING = 921600
-
-
-def _walk_keys(node):
-    """Every mapping key anywhere in a loaded YAML document."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            yield str(k)
-            yield from _walk_keys(v)
-    elif isinstance(node, list):
-        for item in node:
-            yield from _walk_keys(item)
 
 
 def lidar_fitted(controller_cfg: dict) -> bool:
@@ -1096,11 +1086,14 @@ def main():
     # is refused later by mcu_env, deep inside the flash step, and the UI then
     # reports only "Flashing or verification failed". Say it here, plainly, with
     # the fix -- the migrator does the rename.
-    stale = sorted({k for k in _walk_keys(params) if k.startswith("use_fake_")})
+    # The same for every value that has since changed meaning and fails a run
+    # silently -- an EKF parenting base_footprint, gravity removed twice, FAKE.
+    stale = migrate_config_schema.stale_faults(params)
     if stale:
-        raise SystemExit(f"{os.path.basename(params_path)} predates the sim_ rename "
-                         f"({', '.join(stale)}). Run scripts/migrate_config_schema.py "
-                         "to rename use_fake_* to use_sim_*.")
+        raise SystemExit(f"{os.path.basename(params_path)} predates conventions this "
+                         f"release depends on:\n  - " + "\n  - ".join(stale) +
+                         "\nRun scripts/migrate_config_schema.py -- it rewrites every one of "
+                         "these in place and keeps your comments.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
     is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")

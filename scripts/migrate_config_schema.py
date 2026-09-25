@@ -178,8 +178,82 @@ def rename_fake_keys(path: str, dry_run: bool) -> bool:
     return True
 
 
+# Values that were right once and now break a run without saying so. Each is
+# rewritten as TEXT (comments survive) and refused by the pipeline until it is.
+# Measured 2026-09-25 on the UI's Start 1-Click, against configs from before
+# these conventions:
+#   * ekf base_link_frame: base_footprint -- the EKF parents a frame the URDF
+#     already parents, the tree splits, Nav2's controller never configures.
+#   * imu0_remove_gravitational_acceleration: true -- the board removes gravity
+#     since the AHRS moved on board; a second subtraction fabricates 9.81 m/s2.
+#   * sensors.imu/mag: FAKE -- the pre-rename name of SIM. Outside --mode sim it
+#     reaches the firmware as an unknown driver.
+STALE_VALUE_RULES = [
+    (re.compile(r"^(\s*base_link_frame:\s*)(['\"]?)(?!base_link\b)[A-Za-z0-9_/]+\2(\s*(#.*)?)$", re.M),
+     r"\1base_link\3", "ekf base_link_frame -> base_link"),
+    (re.compile(r"^(\s*imu0_remove_gravitational_acceleration:\s*)(true|True|TRUE|yes)(\s*(#.*)?)$", re.M),
+     r"\1false\3", "imu0_remove_gravitational_acceleration -> false"),
+    (re.compile(r"^(\s*(?:imu|mag):\s*)(['\"]?)FAKE\2(\s*(#.*)?)$", re.M | re.I),
+     r"\1SIM\3", "sensors FAKE -> SIM"),
+]
+
+
+def _ekf_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    ekf = params.get("ekf") or {}
+    return ((ekf.get("ekf_filter_node") or {}).get("ros__parameters")) or ekf
+
+
+def _all_keys(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            yield from _all_keys(v)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _all_keys(item)
+
+
+def stale_faults(params: Dict[str, Any]) -> List[str]:
+    """What in this config breaks a run today, one line each; [] when nothing."""
+    faults = []
+    fake = sorted({k for k in _all_keys(params) if k.startswith("use_fake_")})
+    if fake:
+        faults.append(f"{', '.join(fake)}: renamed use_sim_* on 2026-09-24")
+    ekf = _ekf_params(params)
+    frame = ekf.get("base_link_frame")
+    if frame is not None and str(frame) != "base_link":
+        faults.append(f"ekf base_link_frame is {frame!r}: the EKF must publish odom -> base_link, "
+                      f"or the TF tree splits and Nav2 never configures")
+    if ekf.get("imu0_remove_gravitational_acceleration") is True:
+        faults.append("ekf imu0_remove_gravitational_acceleration is true: the board already "
+                      "removes gravity, a second subtraction fabricates 9.81 m/s2")
+    sensors = ((params.get("base_controller") or {}).get("sensors")) or {}
+    for field in ("imu", "mag"):
+        if str(sensors.get(field, "")).strip().upper() == "FAKE":
+            faults.append(f"sensors.{field} is FAKE: renamed SIM")
+    return faults
+
+
+def fix_stale_values(path: str, dry_run: bool) -> bool:
+    with open(path) as fh:
+        text = fh.read()
+    new, done = text, []
+    for rx, repl, what in STALE_VALUE_RULES:
+        new, n = rx.subn(repl, new)
+        if n:
+            done.append(f"{what} ({n}x)" if n > 1 else what)
+    if not done:
+        return False
+    print(f"  {os.path.basename(path)}: " + "; ".join(done))
+    if not dry_run:
+        with open(path, "w") as fh:
+            fh.write(new)
+    return True
+
+
 def migrate_file(path: str, dry_run: bool) -> List[str]:
     renamed = rename_fake_keys(path, dry_run)
+    renamed = fix_stale_values(path, dry_run) or renamed
     with open(path) as fh:
         params = yaml.safe_load(fh) or {}
     if renamed and dry_run:
