@@ -234,6 +234,17 @@ NOT_FITTED = {"", "none", "null", "off", "false", "no"}
 FLASH_BAUD_CEILING = 921600
 
 
+def _walk_keys(node):
+    """Every mapping key anywhere in a loaded YAML document."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield str(k)
+            yield from _walk_keys(v)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_keys(item)
+
+
 def lidar_fitted(controller_cfg: dict) -> bool:
     """Does this robot have a LiDAR -- a real one named in the config, or the
     simulated sim_ld19?
@@ -1041,6 +1052,15 @@ def main():
     if not controller_cfg:
         raise SystemExit(f"{os.path.basename(params_path)} has no base_controller: block. "
                          "Run scripts/migrate_config_schema.py to convert it.")
+    # Before anything touches the board: a config from before the fake->sim rename
+    # is refused later by mcu_env, deep inside the flash step, and the UI then
+    # reports only "Flashing or verification failed". Say it here, plainly, with
+    # the fix -- the migrator does the rename.
+    stale = sorted({k for k in _walk_keys(params) if k.startswith("use_fake_")})
+    if stale:
+        raise SystemExit(f"{os.path.basename(params_path)} predates the sim_ rename "
+                         f"({', '.join(stale)}). Run scripts/migrate_config_schema.py "
+                         "to rename use_fake_* to use_sim_*.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
     is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")

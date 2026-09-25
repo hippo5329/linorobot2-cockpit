@@ -153,12 +153,41 @@ def add_geometry(path: str, dry_run: bool) -> bool:
     return hit
 
 
+FAKE_KEY_RE = re.compile(r"\buse_fake_([A-Za-z0-9_]+)(\s*):")
+
+
+def rename_fake_keys(path: str, dry_run: bool) -> bool:
+    """use_fake_* -> use_sim_*, the 2026-09-24 rename, in place and as TEXT.
+
+    mcu_env.py refuses a config that still says use_fake_* -- an absent use_sim_*
+    flag is a compiled-in default, so reading it would flash a bare module to
+    expect hardware it does not have -- and said "rename them". This migrator is
+    the tool for renames, and did not know this one: on 2026-09-25 a stale
+    pico_config.yaml stopped the UI's 1-Click at "Flashing or verification
+    failed". Only KEYS are rewritten; comments and layout survive.
+    """
+    with open(path) as fh:
+        text = fh.read()
+    new, n = FAKE_KEY_RE.subn(r"use_sim_\1\2:", text)
+    if not n:
+        return False
+    print(f"  {os.path.basename(path)}: {n} use_fake_* key(s) -> use_sim_*")
+    if not dry_run:
+        with open(path, "w") as fh:
+            fh.write(new)
+    return True
+
+
 def migrate_file(path: str, dry_run: bool) -> List[str]:
+    renamed = rename_fake_keys(path, dry_run)
     with open(path) as fh:
         params = yaml.safe_load(fh) or {}
+    if renamed and dry_run:
+        # a dry run did not write the rename, so read the keys as they will be
+        params = yaml.safe_load(FAKE_KEY_RE.sub(r"use_sim_\1\2:", open(path).read())) or {}
 
     if not is_legacy(params):
-        if add_geometry(path, dry_run):
+        if add_geometry(path, dry_run) or renamed:
             return [path]
         print(f"  {os.path.basename(path)}: already migrated, skipped")
         return []
