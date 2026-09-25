@@ -36,6 +36,7 @@ MAXIMAL_CONFIG = {
                    "pid": {"kp": 1, "ki": 0, "kd": 0}},
     "base_controller": {
         "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial", "console": "uart0",
+        "domain_id": 7,
         "qos": "reliable", "use_dual_core": True, "boot_delay": 2,
         "telemetry": {"ota_port": 3232, "wifi_monitor_min": 2}, "stamped_cmd_vel": True,
         "sensors": {"imu": "auto", "mag": "auto", "current": "INA219", "env": "BMP280",

@@ -71,3 +71,11 @@ def test_battery_has_one_publish_site_and_no_ifdef():
         "a second /battery publish (the old per-dip message) makes the rate follow the load"
     assert not re.search(r"^\s*#\s*if(def)?\b.*BATTERY_DIP", src, re.M), \
         "the sag detector must be compiled into every image"
+
+
+def test_battery_is_published_at_one_hz():
+    """BATTERY_TIMER was 2000 from the first commit while everything around it
+    said 1 Hz; the host target measured /battery at 0.495 Hz on its first run."""
+    src = open(os.path.join(REPO_ROOT, "firmware", "src", "main.cpp")).read()
+    m = re.search(r"#define BATTERY_TIMER (\d+)", src)
+    assert m and int(m.group(1)) == 1000

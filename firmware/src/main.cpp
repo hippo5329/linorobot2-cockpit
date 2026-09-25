@@ -120,7 +120,10 @@ static inline const char *topicName(const char *suffix)
 #define CONTROL_TIMER 20 // 50Hz
 #endif
 #ifndef BATTERY_TIMER
-#define BATTERY_TIMER 2000 // 2 sec
+// 1 Hz, carrying the lowest voltage of the second (the sag). It was 2000 from
+// the first commit while the docs, the request and sim_base_node all said 1 Hz;
+// the host target measured 0.495 Hz on its first run (2026-09-26).
+#define BATTERY_TIMER 1000 // 1 sec
 #endif
 #ifndef RANGE_TIMER
 #define RANGE_TIMER 100 // 10Hz
@@ -1462,8 +1465,19 @@ bool createEntities()
 {
     syslog(LOG_INFO, "%s %lu", __FUNCTION__, millis());
     allocator = rcl_get_default_allocator();
-    //create init_options
-    RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
+    // The DDS domain the agent creates this client's participant in: the env's
+    // `domain_id`, 0 when unset, as every board has always been. It has to be
+    // said rather than left to rcl: on the host target (the Sim MCU) Jazzy's
+    // rcl took ROS_DOMAIN_ID from the process and Lyrical's does not, so the
+    // same firmware landed on the stack's domain on one distro and on 0 on the
+    // other. The pattern is rclc_support_init()'s own: rcl_init copies the
+    // options, which are finalised straight after.
+    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+    RCCHECK(rcl_init_options_init(&init_options, allocator));
+    RCCHECK(rcl_init_options_set_domain_id(&init_options, (size_t)envInt("domain_id", 0)));
+    const rcl_ret_t support_rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
+    (void)rcl_init_options_fini(&init_options);
+    RCCHECK(support_rc);
     // create node
     RCCHECK(rclc_node_init_default(&node, envGet("node", NODE_NAME), "", &support));
     // The 50 Hz topics take the env's QoS (see best_effort above).

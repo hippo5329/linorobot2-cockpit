@@ -624,6 +624,11 @@ def hardware_env(params: dict) -> dict:
 
     # --- transport and radio
     env["transport"] = tgt.get("transport", "serial")
+    # The DDS domain the agent puts this board's participant in (main.cpp,
+    # createEntities). Absent means 0, which is what every board has always
+    # used; only written when the config names one.
+    if tgt.get("domain_id") is not None:
+        env["domain_id"] = int(tgt["domain_id"])
     # Which port is the console on an ESP32-S3: its native USB (the DevKit) or
     # UART0 through a bridge (the Yahboom YB-EET01, whose only USB is a CP2102
     # on GPIO 43/44). Same MCU, same image; the env decides. Absent means usb.
