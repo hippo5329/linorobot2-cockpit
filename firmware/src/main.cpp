@@ -436,6 +436,13 @@ static bool mag_from_wheels = false;
 #define BOOT_SERIAL_WAIT_MS 2000
 #endif
 
+// How long setup() holds the micro-ROS transport back, repeating the banner, so
+// a listener that opens the port after boot still hears which build this is
+// (see setup(), just before initUrosTransport()). 0 disables the hold.
+#ifndef BANNER_HOLD_MS
+#define BANNER_HOLD_MS 4000
+#endif
+
 // micro-ROS runs over this port, and at 921600 (1500000 on the GenDrv rig) the
 // old 1 KB buffers hold 11 ms and 6.8 ms of wire respectively -- less than half
 // a control period. An overrun does not slow the link down, it corrupts an XRCE
@@ -1188,6 +1195,38 @@ void setup()
 
     if (battery_msg) *battery_msg = getBattery();   // null for a tool app
     prev_voltage = battery_msg->voltage;
+
+    // HOLD THE TRANSPORT, REPEATING THE BANNER, so the board's own word on which
+    // build it runs is actually heard (user, 2026-09-25).
+    //
+    // The banner is printed once, in the first milliseconds, and nobody was
+    // listening: on an RP2 the port IS the MCU and re-enumerates on every boot,
+    // and in a bench cell the node only reappears after the tty watcher re-attaches
+    // it, 2-3 s later -- past boot_serial_wait's 2 s, so the line went to nobody on
+    // every flash. The GenDrv missed it too. The flasher then logged "flashed and
+    // verified" with `banner_confirmed: false`, which verified the bytes it wrote
+    // and not what the board is running.
+    //
+    // So: before the transport owns the port, repeat the banner every 500 ms for
+    // `banner_hold` ms (env; 0 disables). Any listener that opens inside the
+    // window catches a whole line. It MUST end before initUrosTransport(): once
+    // XRCE frames are on this port, text would be noise in the agent's stream.
+    // Base application only -- the tools start no transport. Before wdtBegin(),
+    // so no watchdog is armed yet; the robot is not driving during setup().
+    if (micro_ros)
+    {
+        const uint32_t hold_ms = envU16("banner_hold", BANNER_HOLD_MS);
+        if (hold_ms)
+        {
+            Serial.printf("[boot] holding the micro-ROS transport %lu ms so the banner can be read\n",
+                          (unsigned long)hold_ms);
+            for (uint32_t t0 = millis(); (millis() - t0) < hold_ms; )
+            {
+                printBanner();
+                delay(500);
+            }
+        }
+    }
 
     // One call for both transports. Which one is installed comes from the env
     // partition (`transport=serial|udp4`), not from how this was compiled --

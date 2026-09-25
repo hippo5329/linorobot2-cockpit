@@ -19,7 +19,8 @@ SECRETS_EXAMPLE = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 # Keys the firmware reads that no config produces: bench tools set them with
 # `mcu_env.py set`, the flasher writes them, or a tool application
 # (adc_calibrate: dac_pin) takes them from the operator.
-BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait"}
+BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait",
+              "banner_hold"}
 
 # A config exercising every optional key the writer knows, so the reference
 # set need not carry each one for it to count as written.

@@ -50,6 +50,14 @@ tree had uncommitted edits, so a dirty build never reads as a clean revision. Th
 `-DFW_ROS_DISTRO` / `-DFW_GIT_REV` / `-DFW_BUILD_DATE` from **`firmware/common/build_stamp.py`**, a
 `pre:` extra_script in `common/platformio_base.ini`.
 
+**The base application repeats the banner before it starts micro-ROS.** Printed once, in the first
+milliseconds, it was heard by nobody: an RP2's port re-enumerates on every boot and a bench cell only
+gets the node back 2–3 s later, past `boot_serial_wait`, so every flash logged
+`banner_confirmed: false` — the flasher had verified the bytes it wrote, not what the board runs. So
+`setup()` holds the transport for `banner_hold` ms (env, default 4000, 0 disables), printing the banner
+every 500 ms, and only then calls `initUrosTransport()`: once XRCE frames own the port, text would be
+noise in the agent's stream. It runs before the watchdog is armed and only for `app=base`.
+
 ### The last field names the BOARD, and the key says what it identified
 
 `git=` answers "which build is this?". It cannot answer "which board is this?" — and two identical
@@ -770,7 +778,7 @@ afternoon's audit (2026-09-19) found, in this repo:
 `tests/test_env_contract.py` closes the loop: every key `mcu_env.py` can write must appear as
 an `env*("key")` read in the firmware sources (the generated header's macro reads count), and
 every key the firmware reads must have a writer or be on the short bench-only list
-(`diag_tx`, `diag_baud`, `app`, `dac_pin`, `boot_serial_wait`). Add a key on one side only
+(`diag_tx`, `diag_baud`, `app`, `dac_pin`, `boot_serial_wait`, `banner_hold`). Add a key on one side only
 and CI fails with its name.
 
 
