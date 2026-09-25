@@ -54,7 +54,8 @@ class GY85IMU: public IMUInterface
         {
             // here you can override startSensor() function and use the sensor's driver API
             // to initialize and test the sensor's connection during boot time
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             accelerometer_.initialize();
             ret = accelerometer_.testConnection();
@@ -119,7 +120,8 @@ class MPU6050IMU: public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             accelgyro_.initialize();
             ret = accelgyro_.testConnection();
@@ -181,7 +183,8 @@ class MPU9250IMU: public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             accelgyro_.initialize();
             ret = accelgyro_.testConnection();
@@ -388,7 +391,8 @@ class QMI8658IMU : public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
 
             bool found = false;
             const uint8_t cand[2] = { 0x6B, 0x6A };
@@ -757,7 +761,8 @@ class LSM6DSOXIMU : public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             Wire.setClock(1000000);   // LSM6DSOX I2C Fast-Mode-Plus (1 MHz)
 
             bool found = false;
@@ -964,7 +969,8 @@ class ICM20948IMU: public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             const uint8_t cand[2] = { 0x68, 0x69 };
             for (int i = 0; i < 2; i++)
             {
@@ -1030,7 +1036,6 @@ class BNO085IMU: public IMUInterface
         const float ori_xy_cov_ = 0.01;
         const float ori_z_cov_ = 0.05;
 
-        unsigned long nextUpdateTime = 0;
 
         geometry_msgs__msg__Vector3 accel_;
         geometry_msgs__msg__Vector3 gyro_;
@@ -1062,7 +1067,8 @@ class BNO085IMU: public IMUInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             if (bno085_.begin() == 0){
                 // Serial.println("bno085_init fail");
                 syslog(LOG_ERR, "%s BNO085 IMU init fail %lu", __FUNCTION__, millis());
@@ -1203,18 +1209,6 @@ class BNO085IMU: public IMUInterface
             if (bno085_.dataAvailable() == true) {
                 // Enforce the layout check in real-time execution to prevent background packets from causing spikes
                 if (bno085_.getReadings() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-// Uncomment the following line to log the IMU data to syslog for debugging purposes
-// #define DEBUG_BNO085
-#ifdef DEBUG_BNO085
-                    float roll = bno085_.getRoll() * RAD_TO_DEG;
-                    float pitch = bno085_.getPitch() * RAD_TO_DEG;
-                    float yaw = bno085_.getYaw() * RAD_TO_DEG;
-
-                    if (millis() >= nextUpdateTime) {
-                        syslog(LOG_INFO, "%s BNO085 IMU data read complete %lu, roll: %0.2f, pitch: %0.2f, yaw: %0.2f", __FUNCTION__, millis(), roll, pitch, yaw);
-                        nextUpdateTime = millis() + 500;
-                    }
-#endif
                 }
                 return true;  // IMU is fully initialized and running and we can use its data
             } else {

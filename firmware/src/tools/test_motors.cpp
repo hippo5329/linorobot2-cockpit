@@ -16,7 +16,7 @@
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
 #include <stdio.h>
-#include <i2cdetect.h>
+#include "i2c_probe.h"
 
 #include <nav_msgs/msg/odometry.h>
 #include <sensor_msgs/msg/imu.h>
@@ -135,7 +135,7 @@ void setup_()
 
     initWifis();
     initOta();
-    i2cdetect();  // default range from 0x03 to 0x77
+    i2cScanTable();  // default range from 0x03 to 0x77
     initMcuEnv();
     imu = createIMU(envGet("imu", defaultIMUName()));
     mag = createMAG(envGet("mag", defaultMAGName()));

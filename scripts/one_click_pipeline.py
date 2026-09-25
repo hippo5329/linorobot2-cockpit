@@ -190,6 +190,17 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
     return GOAL_TIMEOUT_ARRIVE if (require_goal or round_trips) else GOAL_TIMEOUT_PLAN
 
 
+SIM_MCU = "sim"
+
+
+def no_board_attached(controller_cfg: dict) -> bool:
+    """Nothing to flash: the configured port is absent AND no RP2/Espressif
+    device is on the USB bus (a board in BOOTSEL has no tty, so the port alone
+    would call a flashable board missing)."""
+    port = mcu_identity.resolve_port(controller_cfg.get("serial_port", "/dev/ttyACM0"))
+    return not os.path.exists(port) and not mcu_identity.identify_bus()
+
+
 def stop_previous_stack(state_dir: str = None) -> list:
     """Stop what an earlier 1-Click run left running before this one starts.
 
@@ -1037,6 +1048,10 @@ def main():
                         help="Never write the application on account of a stale verdict; --flash still overrides.")
     parser.add_argument("--skip-build", action="store_true", help="Flash what is already built; do not run pio")
     parser.add_argument("--skip-flash", action="store_true", help="Do not touch the board at all")
+    parser.add_argument("--require-board", action="store_true",
+                        help="Fail when no board is on the USB bus, instead of falling back to the "
+                             "simulated MCU (sim_base_node). A bench leg wants this: a board that "
+                             "dropped off the bus must not pass as a simulation.")
     parser.add_argument("--skip-mcu-check", action="store_true",
                         help="Flash even when the USB bus says the board is different silicon "
                              "than the config builds for")
@@ -1105,7 +1120,7 @@ def main():
     # even-numbered motors, LED -1 and a different Nav2 template than the one
     # every other default carries -- while the repo said otherwise.
     bare_mcu = re.fullmatch(r"bare_([a-z0-9]+)", args.robot or "")
-    if bare_mcu and bare_mcu.group(1) in gen_bare_config.BOARDS:
+    if bare_mcu and bare_mcu.group(1) in gen_bare_config.KNOWN:
         bare_path = os.path.join(CONFIG_DIR, f"{args.robot}_config.yaml")
         with open(bare_path, "w") as fh:
             yaml.safe_dump(gen_bare_config.bare_config(bare_mcu.group(1)), fh, sort_keys=False)
@@ -1141,7 +1156,18 @@ def main():
                          f"own pins and kinematics.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
-    is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")
+    # The simulated MCU: base controller `sim`, or no board on the bus at all.
+    # sim_base_node stands in for the board on this computer (same wheel model,
+    # same topics), so a person with nothing plugged in gets a running robot
+    # instead of a flash error. Nothing is built, probed or flashed.
+    sim_mcu = controller == SIM_MCU
+    if not sim_mcu and not args.skip_flash and not args.require_board and no_board_attached(controller_cfg):
+        print(f"⚠️  No board on the USB bus (and nothing at "
+              f"{controller_cfg.get('serial_port', '/dev/ttyACM0')}): running '{robot_name}' "
+              f"on the simulated MCU instead of '{controller}'. Plug a board in to flash it; "
+              f"--require-board makes this an error.")
+        controller, sim_mcu = SIM_MCU, True
+    is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
     has_lidar = lidar_fitted(controller_cfg)
 
     # On a real base the sensors are soldered to the board and named in the
@@ -1183,14 +1209,16 @@ def main():
     # Step 1: the firmware header (the compile-time fallback for the env block).
     # --distro resolves `stamped_cmd_vel: auto`; the launcher and the goal test
     # get the same --distro so build and run agree on one /cmd_vel type.
-    print(f"\n[1/6] [CONFIG] Generating firmware header for base controller '{controller}'...")
-    res = subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
+    if sim_mcu:
+        print("\n[1/6] [CONFIG] Simulated MCU: no firmware, so no header to generate.")
+    res = subprocess.CompletedProcess([], 0, "", "") if sim_mcu else subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
                           "--params", params_path, "--controller", controller, "--distro", args.distro],
                          capture_output=True, text=True)
     if res.returncode != 0:
         print(f"❌ Failed to generate firmware header: {res.stderr}")
         return 1
-    print(f"  ✅ Firmware header generated for '{controller}'.")
+    if not sim_mcu:
+        print(f"  ✅ Firmware header generated for '{controller}'.")
 
     # The PlatformIO env comes from the base_controller block ONLY while that
     # block still describes the controller being run. `pio_env:`/`mcu:` are
@@ -1213,9 +1241,10 @@ def main():
         pio_env = controller_cfg.get("pio_env") or controller_cfg.get("mcu") or controller
     else:
         pio_env = controller
-    if controller == "gendrv":
-        pio_env = "esp32"
-    pio_env = resolve_pio_env(pio_env, args.distro)
+    # A BOARD name (gendrv, yb_eet01) is not a PlatformIO env; its silicon is.
+    pio_env = mcu_identity.pio_env_for(pio_env, pio_env)
+    pio_env = SIM_MCU if sim_mcu else resolve_pio_env(pio_env, args.distro)
+    no_flash = args.skip_flash or sim_mcu
     # The config may name the board by its udev by-id path, which is the only
     # name that follows it across reboots and plug order -- two Picos on one
     # bench swapped ttyACM numbers overnight and the flash went at the other
@@ -1238,7 +1267,7 @@ def main():
     # env block; different build -> the image (auto-update) or a warning.
     source, prebuilt_dir = "build", None
     board = None
-    if not args.skip_flash:
+    if not no_flash:
         source, prebuilt_dir = firmware_source(args.firmware, pio_env, args.distro)
         print(f"\n[2/6] [FIRMWARE] Image source for {pio_env}: "
               + ("local build (PlatformIO)" if source == "build" else f"prebuilt release image {prebuilt_dir}"))
@@ -1301,7 +1330,7 @@ def main():
     blank_board = bool(board and board.get("verdict") in ("no_firmware", "absent"))
     stale_board = bool(board and board.get("verdict") in ("stale", "unknown") and not board.get("probe_failed"))
     auto_updating = bool(args.auto_update and stale_board)
-    want_firmware = (args.flash or blank_board or auto_updating) and not args.skip_flash
+    want_firmware = (args.flash or blank_board or auto_updating) and not no_flash
     # Every run writes the env. It used to go only when the probe called it stale,
     # which compares against what THIS host recorded -- so a board carrying an env
     # from an older config, another host, or a --skip-flash run kept it, and the
@@ -1309,7 +1338,7 @@ def main():
     # GenDrv leg "passed" with sim_ld19 off: it inherited an older env with the
     # emulator on. The block is 4 KB and the application image is untouched, so
     # the write is cheaper than the doubt.
-    want_env = bool(board) and not args.skip_flash
+    want_env = bool(board) and not no_flash
 
     if blank_board and not args.flash:
         print("  → No application is running on the board (BOOTSEL / nothing installed), "
@@ -1347,6 +1376,8 @@ def main():
         print("\n[2/6] [BUILD] Skipped per --skip-build; flashing what is already built.")
     elif want_firmware:
         print(f"\n[2/6] [BUILD] Not needed: flashing the prebuilt release image.")
+    elif sim_mcu:
+        print("\n[2/6] [BUILD] Simulated MCU: nothing to build.")
     else:
         print("\n[2/6] [BUILD] Not building: the board's firmware is not being updated.")
 
@@ -1385,6 +1416,8 @@ def main():
                 failures.append("env block write")
             else:
                 print("  ✅ env block written.")
+        elif sim_mcu:
+            print("\n[3/6] [FLASH] Simulated MCU: no board to flash; sim_base_node is the base.")
         elif not args.skip_flash:
             print("\n[3/6] [FLASH] The application is current; the env block was rewritten anyway.")
         else:
@@ -1398,7 +1431,8 @@ def main():
         # Step 4: bringup and the topic gate
         print(f"\n[4/6] [BRINGUP] Launching the bringup stack (controller={controller}, distro={args.distro})...")
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
-                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}")
+                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
+                       + (" sim_base:=true" if sim_mcu else ""))
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is
@@ -1411,14 +1445,16 @@ def main():
         # and the scan arrived seconds after everything was torn down. Nothing
         # was wrong with the robot; the gate was tuned for a cable.
         transport = str(controller_cfg.get("transport", "serial") or "serial").lower()
-        handshake_wait = 30 if transport.startswith("serial") else 120
-        print(f"  Waiting for the micro-ROS agent handshake and /odom/unfiltered"
-              f" (transport={transport}, up to {handshake_wait} s)...")
+        handshake_wait = 30 if (sim_mcu or transport.startswith("serial")) else 120
+        print(f"  Waiting for " + ("sim_base_node" if sim_mcu else "the micro-ROS agent handshake")
+              + f" and /odom/unfiltered (transport={'none' if sim_mcu else transport}, "
+              f"up to {handshake_wait} s)...")
         if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
                               require_publisher=True, distro=args.distro):
             print(f"  ⚠️ /odom/unfiltered publisher not detected within {handshake_wait} s, auditing topics...")
         else:
-            print("  ✅ micro-ROS connected (/odom/unfiltered has a publisher).")
+            print("  ✅ " + ("sim_base_node is up" if sim_mcu else "micro-ROS connected")
+                  + " (/odom/unfiltered has a publisher).")
         time.sleep(2.0)
 
         # The scan is the LAST thing to arrive, and on udp4 it is not close.
@@ -1452,7 +1488,7 @@ def main():
             # Same order as bringup.launch.py: udp/udp_server is the real driver in
             # server mode, whoever produces the frames, and is decided FIRST; only
             # then can the host room stand in for an absent serial port.
-            host_room = (lidar_mode not in ("udp", "udp_server")
+            host_room = sim_mcu or (lidar_mode not in ("udp", "udp_server")
                          and controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
                          and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
             scan_wait = 15 if host_room else 90

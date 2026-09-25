@@ -50,6 +50,13 @@ BOARDS = {
     "esp32s3": ("esp32-s3-devkitc-1", "ESP32-S3"),
 }
 
+# The Sim MCU: no silicon at all. sim_base_node stands in for the board on the
+# robot computer, so this bare robot has no board string, no port and no baud --
+# it stands on its own rather than borrowing pico2's (user, 2026-09-25): every
+# simulated device on, every pin -1, the LED included.
+SIM_MCU = "sim"
+KNOWN = sorted(list(BOARDS) + [SIM_MCU])
+
 # A bare board has no wheels to measure, so the kinematics are the ONE default
 # chassis every bare preset, reference config and release image share -- taken
 # from gen_firmware_header.bare_mcu_params so this file cannot drift from it
@@ -200,7 +207,8 @@ def bare_pins(mcu: str = "esp32") -> dict:
         pins[f"motor{n}"] = {"pwm": -1, "in_a": -1, "in_b": -1, "invert": False}
         pins[f"encoder{n}"] = {"pin_a": -1, "pin_b": -1, "invert": False}
     pins["i2c"] = {"sda": -1, "scl": -1}
-    pins["led"] = gen_firmware_header.bare_mcu_params(mcu)["base_controller"]["pins"]["led"]
+    pins["led"] = -1 if mcu == SIM_MCU else \
+        gen_firmware_header.bare_mcu_params(mcu)["base_controller"]["pins"]["led"]
     pins["battery"] = {"pin": -1, "r1": 30000, "r2": 7500}
     pins["sonar"] = {"trigger": -1, "echo": -1}
     return pins
@@ -221,6 +229,8 @@ def bare_sensors() -> dict:
         "use_sim_wheel": True,
         "use_sim_ld19": True,
         "use_sim_env": True,
+        "use_sim_sonar": True,
+        "use_sim_battery": True,
         "current": "NONE",
         "env": "NONE",
     }
@@ -229,9 +239,9 @@ def bare_sensors() -> dict:
 def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
     """The bare-module config for `mcu`, complete and ready to save."""
     key = (mcu or "").strip().lower()
-    if key not in BOARDS:
-        raise ValueError(f"unknown mcu {mcu!r}; known: {', '.join(sorted(BOARDS))}")
-    board, label = BOARDS[key]
+    if key not in KNOWN:
+        raise ValueError(f"unknown mcu {mcu!r}; known: {', '.join(KNOWN)}")
+    board, label = BOARDS.get(key, ("", "Sim MCU (sim_base_node on this computer)"))
     robot_name = name or f"bare_{key}"
 
     with open(donor_path or DONOR) as fh:
@@ -245,21 +255,33 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
         "name": robot_name,
         "description": f"{label} bare module -- all pins N/C, simulated sensors",
     }
-    params["base_controller"] = {
-        "name": key,
-        "description": f"{label}, bare module, zero-wiring default",
-        "mcu": key,
-        "board": board,
-        "driver_type": "BTS7960",
-        "transport": "serial",
-        "serial_port": "/dev/ttyACM0" if key.startswith("pico") else "/dev/ttyUSB0",
-        "baudrate": 921600,
-        "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
-                  "raw_scan_topic": "raw_scan"},
-        "sensors": bare_sensors(),
-        "simulation": bare_simulation(),
-        "pins": bare_pins(key),
-    }
+    if key == SIM_MCU:
+        # Nothing to build, probe or flash: only what the simulated base reads.
+        params["base_controller"] = {
+            "name": SIM_MCU,
+            "description": "Sim MCU: sim_base_node on the robot computer, no board",
+            "driver_type": "BTS7960",
+            "lidar": {"model": "ld19", "comm_mode": "topic", "raw_scan_topic": "raw_scan"},
+            "sensors": bare_sensors(),
+            "simulation": bare_simulation(),
+            "pins": bare_pins(SIM_MCU),
+        }
+    else:
+        params["base_controller"] = {
+            "name": key,
+            "description": f"{label}, bare module, zero-wiring default",
+            "mcu": key,
+            "board": board,
+            "driver_type": "BTS7960",
+            "transport": "serial",
+            "serial_port": "/dev/ttyACM0" if key.startswith("pico") else "/dev/ttyUSB0",
+            "baudrate": 921600,
+            "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
+                      "raw_scan_topic": "raw_scan"},
+            "sensors": bare_sensors(),
+            "simulation": bare_simulation(),
+            "pins": bare_pins(key),
+        }
     params["kinematics"] = bare_kinematics()
     # Put the blocks back in the order every shipped config uses, so a generated
     # file and a hand-written one diff cleanly against each other.
@@ -286,13 +308,14 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mcu", choices=sorted(BOARDS), help="which silicon")
+    ap.add_argument("mcu", choices=KNOWN, help="which silicon, or `sim` for the Sim MCU")
     ap.add_argument("--name", help="robot name (default bare_<mcu>)")
     ap.add_argument("-o", "--out", help="write here instead of stdout")
     a = ap.parse_args()
 
     params = bare_config(a.mcu, a.name)
-    findings = pin_catalog.check_config(params)
+    # The Sim MCU has no pins to check.
+    findings = [] if a.mcu == SIM_MCU else pin_catalog.check_config(params)
     for level, msg in findings:
         print(f"[pins] {level}: {msg}", file=sys.stderr)
     if any(level == "error" for level, _ in findings):

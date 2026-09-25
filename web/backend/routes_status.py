@@ -216,6 +216,11 @@ def get_status(controller: Optional[str] = None):
         "detected_mcu": detected_mcu,
         "detected_chip": detected_chip,
         "mcu_detected": mcu_detected,
+        # Anything flashable on the bus at all, tty or not: a board in BOOTSEL has
+        # no tty, so mcu_detected alone would call it missing mid-flash. The UI
+        # switches to the simulated MCU only when this is false -- the same rule
+        # the 1-Click pipeline falls back on (no_board_attached).
+        "board_on_bus": bool(mcu_detected or _bus_devices()),
         "mcu_mismatch": mcu_mismatch,
         "board_id": board_id,
         "host_ip": ports_info.get("host_ip", ""),
@@ -332,6 +337,13 @@ async def api_gitinfo_branch(request: Request):
         yield f"data: {json.dumps({'exit_code': proc.returncode, 'branch': branch})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _bus_devices() -> list:
+    try:
+        return mcu_identity.identify_bus()
+    except Exception:
+        return []
 
 
 @app.get("/api/serial_ports")

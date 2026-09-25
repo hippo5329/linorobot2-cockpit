@@ -26,7 +26,7 @@ _ENV_FAMILY = {
     "pico": "pico", "picow": "pico",
     "pico2": "pico2", "pico2w": "pico2",
     "esp32": "esp32", "gendrv": "esp32",
-    "esp32s3": "esp32s3",
+    "esp32s3": "esp32s3", "yb_eet01": "esp32s3",   # Yahboom YB-EET01: an ESP32-S3 board
 }
 
 # Families that cannot be told apart from the bus alone, so a mismatch between
@@ -237,6 +237,23 @@ def identify_port(port_path: str) -> tuple:
     return classify_usb(vid, pid, product)
 
 
+def _reachable(sys_dev: str) -> bool:
+    """Is this USB device ours to open -- is its node in THIS /dev?
+
+    sysfs is not namespaced: in a container it lists the HOST's whole bus. An
+    container test box with no USB passed through saw the Picos handed to the other
+    cells on its host, called a board present, and so never fell back to the
+    simulated MCU; a flash would have gone at a device it cannot reach. A board
+    is present when its /dev/bus/usb node is, which is also what picotool needs.
+    """
+    try:
+        bus = int(open(os.path.join(sys_dev, "busnum")).read().strip())
+        num = int(open(os.path.join(sys_dev, "devnum")).read().strip())
+    except (OSError, ValueError):
+        return True     # no numbers to check against: do not hide it
+    return os.path.exists(f"/dev/bus/usb/{bus:03d}/{num:03d}")
+
+
 def identify_bus() -> list:
     """Every RP2 / Espressif device on the USB bus, tty or not.
 
@@ -257,6 +274,8 @@ def identify_bus() -> list:
             continue
         vid, pid, product = read_usb_ids(dev)
         if vid not in ("2e8a", "303a"):
+            continue
+        if not _reachable(dev):
             continue
         family, chip, decisive = classify_usb(vid, pid, product)
         if family:

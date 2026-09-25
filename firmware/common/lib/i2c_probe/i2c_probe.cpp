@@ -23,10 +23,10 @@ struct Sink {
     int        count;
 
     void add(uint8_t addr, const char *category, const char *model,
-             const char *driver, const char *macro, const char *desc)
+             const char *driver, const char *desc)
     {
         if (count < max)
-            out[count++] = { addr, category, model, driver, macro, desc };
+            out[count++] = { addr, category, model, driver, desc };
     }
 };
 
@@ -39,12 +39,12 @@ void identify(Sink &sink, uint8_t addr)
     // answers with which signature, not by the address.
     if (addr == 0x6B || addr == 0x6A) {
         if (readRegister8(addr, 0x00) == 0x05) {
-            sink.add(addr, "imu", "QMI8658", "qmi8658", "USE_QMI8658_IMU",
+            sink.add(addr, "imu", "QMI8658", "qmi8658",
                      "QMI8658 6-Axis IMU (Acc+Gyr)");
             return;
         }
         if (readRegister8(addr, 0x0F) == 0x6C) {
-            sink.add(addr, "imu", "LSM6DSOX", "lsm6dsox", "USE_LSM6DSOX_IMU",
+            sink.add(addr, "imu", "LSM6DSOX", "lsm6dsox",
                      "LSM6DSOX 6-Axis IMU (Acc+Gyr)");
             return;
         }
@@ -55,31 +55,31 @@ void identify(Sink &sink, uint8_t addr)
     if (addr == 0x68 || addr == 0x69) {
         const uint8_t who = readRegister8(addr, 0x75);
         if (who == 0x68) {
-            sink.add(addr, "imu", "MPU6050", "mpu6050", "USE_MPU6050_IMU",
+            sink.add(addr, "imu", "MPU6050", "mpu6050",
                      "MPU6050 6-Axis IMU");
             return;
         }
         if (who == 0x71 || who == 0x73) {
-            sink.add(addr, "imu", "MPU9250", "mpu9250", "USE_MPU9250_IMU",
+            sink.add(addr, "imu", "MPU9250", "mpu9250",
                      "MPU9250 9-Axis IMU (Acc+Gyr+Mag)");
             return;
         }
         if (who == 0x70) {
             // Same driver as the 6050: the difference is not one this image acts on.
-            sink.add(addr, "imu", "MPU6500", "mpu6050", "USE_MPU6050_IMU",
+            sink.add(addr, "imu", "MPU6500", "mpu6050",
                      "MPU6500 6-Axis IMU");
             return;
         }
         if (who == 0x67) {
             // TDK's newer 6-axis part; the Yahboom YB-EET01 V2.0 carries one
             // where its documentation says QMI8658.
-            sink.add(addr, "imu", "ICM42670", "icm42670", "USE_ICM42670_IMU",
+            sink.add(addr, "imu", "ICM42670", "icm42670",
                      "ICM-42670-P 6-Axis IMU (Acc+Gyr)");
             return;
         }
         const uint8_t who0 = readRegister8(addr, 0x00);
         if (who0 == 0xEA) {
-            sink.add(addr, "imu", "ICM20948", "icm20948", "USE_ICM20948_IMU",
+            sink.add(addr, "imu", "ICM20948", "icm20948",
                      "ICM-20948 9-Axis IMU (Acc+Gyr+Mag)");
             // One chip, two roles. The ICM-20948's AK09916 magnetometer hangs off
             // the IMU's INTERNAL auxiliary bus, so it never ACKs a scan of the
@@ -88,19 +88,19 @@ void identify(Sink &sink, uint8_t addr)
             // usually "sim". /imu/mag would then never publish and nothing would
             // say why. Register the magnetometer here, against the same address:
             // ICM20948MAG reaches it through the IMU exactly as this implies.
-            sink.add(addr, "mag", "AK09916", "icm20948", "USE_ICM20948_MAG",
+            sink.add(addr, "mag", "AK09916", "icm20948",
                      "AK09916 magnetometer (inside the ICM-20948)");
             return;
         }
         if (who0 == 0x68) {
-            sink.add(addr, "imu", "GY85", "gy85", "USE_GY85_IMU",
+            sink.add(addr, "imu", "GY85", "gy85",
                      "ITG3200 Gyroscope (GY85 component)");
             return;
         }
     }
 
     if (addr == 0x4A || addr == 0x4B) {
-        sink.add(addr, "imu", "BNO085", "bno085", "USE_BNO085_IMU",
+        sink.add(addr, "imu", "BNO085", "bno085",
                  "BNO085/BNO080 9-DOF Robotic IMU");
         return;
     }
@@ -110,7 +110,7 @@ void identify(Sink &sink, uint8_t addr)
             // Recognised, but a BNO055 is not a BNO085 and this image carries no
             // driver for it. Empty driver, so the caller keeps its configured
             // sensor instead of being handed one that cannot work.
-            sink.add(addr, "imu", "BNO055", "", "",
+            sink.add(addr, "imu", "BNO055", "",
                      "BNO055 9-DOF IMU (no driver in this image)");
             return;
         }
@@ -118,7 +118,7 @@ void identify(Sink &sink, uint8_t addr)
 
     if (addr == 0x53) {
         if (readRegister8(addr, 0x00) == 0xE5) {
-            sink.add(addr, "imu", "GY85", "gy85", "USE_GY85_IMU",
+            sink.add(addr, "imu", "GY85", "gy85",
                      "ADXL345 Accelerometer (GY85)");
             return;
         }
@@ -130,17 +130,17 @@ void identify(Sink &sink, uint8_t addr)
         const uint8_t wia2 = readRegister8(addr, 0x01);
         const uint8_t wia  = readRegister8(addr, 0x00);
         if (wia2 == 0x09 || addr == 0x0C) {
-            sink.add(addr, "mag", "AK09918", "ak09918", "USE_AK09918_MAG",
+            sink.add(addr, "mag", "AK09918", "ak09918",
                      "AK09918 3-Axis Precision Magnetometer");
             return;
         }
         if (wia == 0x48) {
-            sink.add(addr, "mag", "AK8963", "ak8963", "USE_AK8963_MAG",
+            sink.add(addr, "mag", "AK8963", "ak8963",
                      "AK8963/AK8975 3-Axis Magnetometer");
             return;
         }
         if (addr == 0x0D) {
-            sink.add(addr, "mag", "QMC5883L", "qmc5883l", "USE_QMC5883L_MAG",
+            sink.add(addr, "mag", "QMC5883L", "qmc5883l",
                      "QMC5883L 3-Axis Compass");
             return;
         }
@@ -148,14 +148,14 @@ void identify(Sink &sink, uint8_t addr)
 
     if (addr == 0x1E) {
         if (readRegister8(addr, 10) == 'H' && readRegister8(addr, 11) == '4') {
-            sink.add(addr, "mag", "HMC5883L", "hmc5883l", "USE_HMC5883L_MAG",
+            sink.add(addr, "mag", "HMC5883L", "hmc5883l",
                      "HMC5883L 3-Axis Digital Compass");
             return;
         }
     }
 
     if (addr >= 0x40 && addr <= 0x45) {
-        sink.add(addr, "current", "INA219", "ina219", "USE_INA219",
+        sink.add(addr, "current", "INA219", "ina219",
                  "INA219 High-Side DC Current & Power Sensor");
         return;
     }
@@ -163,7 +163,7 @@ void identify(Sink &sink, uint8_t addr)
     if (addr == 0x76 || addr == 0x77) {
         const uint8_t id = readRegister8(addr, 0xD0);
         if (id == 0x58 || id == 0x60) {
-            sink.add(addr, "env", "BMP280", "bmp280", "USE_BMP280",
+            sink.add(addr, "env", "BMP280", "bmp280",
                      "BMP280/BME280 Environmental Barometer");
             return;
         }
@@ -185,7 +185,7 @@ void identify(Sink &sink, uint8_t addr)
                  readRegister8(addr, 0x00), readRegister8(addr, 0x0F), readRegister8(addr, 0x75));
         desc = unknown_desc[unknown_n++];
     }
-    sink.add(addr, "unknown", "?", "", "", desc);
+    sink.add(addr, "unknown", "?", "", desc);
 }
 
 }  // namespace
@@ -248,7 +248,6 @@ void i2cProbeFoldComposites(I2CDevice *devs, int count)
             continue;                       // already the composite's entry
         devs[i].model  = "AK09918";
         devs[i].driver = "icm20948";
-        devs[i].macro  = "USE_ICM20948_MAG";
         devs[i].desc   = "AK09918 magnetometer (inside the ICM-20948, via bypass at 0x0C)";
     }
 }
@@ -317,4 +316,24 @@ void i2cProbeSelect(const char **imu_name, const char **mag_name)
     if (cur)
         syslog(LOG_INFO, "%s %s current monitor at 0x%02X %lu",
                __FUNCTION__, cur->model, cur->addr, millis());
+}
+
+
+// The classic i2cdetect grid, 0x03..0x77, for the diagnostic tools. Our own:
+// it is one beginTransmission per address, and the library it replaced was a
+// dependency for exactly this.
+void i2cScanTable(void)
+{
+    Serial.println("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f");
+    for (int row = 0; row < 0x80; row += 16) {
+        Serial.printf("%02x:", row);
+        for (int col = 0; col < 16; col++) {
+            const int addr = row + col;
+            if (addr < 0x03 || addr > 0x77) { Serial.print("   "); continue; }
+            Wire.beginTransmission((uint8_t)addr);
+            const bool ack = Wire.endTransmission() == 0;
+            if (ack) Serial.printf(" %02x", addr); else Serial.print(" --");
+        }
+        Serial.println();
+    }
 }

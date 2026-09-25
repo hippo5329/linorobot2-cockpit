@@ -235,7 +235,9 @@ def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_abse
     path = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
     text = open(path).read()
     assert "use_host_sim_laser" in text, "the host-sim-laser guard is gone"
-    m = re.search(r"use_host_sim_laser\s*=\s*\((.*?)\n    \)", text, re.S)
+    # `no_board or (...)`: with sim_base / the Sim MCU there is no board and so no
+    # sensor; the room is raycast on the host whatever the config says.
+    m = re.search(r"use_host_sim_laser\s*=\s*no_board or \((.*?)\n    \)", text, re.S)
     assert m, "use_host_sim_laser is no longer a single assignment block"
     guard = m.group(1)
     assert "use_sim_ld19" in guard, "the fallback no longer requires a simd scan"

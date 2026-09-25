@@ -119,6 +119,14 @@ def launch_setup(context, *args, **kwargs):
     controller = params.get("base_controller") or {}
     controller_arg = context.launch_configurations.get("controller", "").strip()
     controller_name = controller_arg or controller.get("name") or "pico2"
+    # No board at all: `sim_base:=true`, or the base controller named `sim` (the
+    # cockpit's "Simulated MCU" choice). ONE decision, used below for the base
+    # node, the agent and the LiDAR -- with no board there is no sensor either,
+    # so the room is raycast on this computer whatever the config says. Before
+    # this, sim_base with a real-LD19 config (pico2_mecanum) started the real
+    # driver on an absent /dev/ttyUSB0 and /scan never came.
+    no_board = (str(context.launch_configurations.get("sim_base", "false")).strip().lower()
+                in ("true", "1", "yes") or controller_name == "sim")
 
     serial_port = (
         context.launch_configurations.get("serial_port")
@@ -181,7 +189,7 @@ def launch_setup(context, *args, **kwargs):
     # bench. Falling back to the virtual room only when the port is absent keeps
     # the bench-with-a-bridge case byte-identical while letting a bare module
     # preview SLAM/Nav2 in pure simulation.
-    use_host_sim_laser = (
+    use_host_sim_laser = no_board or (
         controller.get("sensors", {}).get("use_sim_ld19", False)
         and (
             effective_lidar_comm_mode != "serial"
@@ -383,7 +391,7 @@ def launch_setup(context, *args, **kwargs):
         # board's timing, which is a large part of what those legs test. The gate
         # stays on hardware.
         Node(
-            condition=IfCondition(LaunchConfiguration("sim_base")),
+            condition=IfCondition("true" if no_board else "false"),
             executable=sys.executable,
             arguments=[os.path.join(REPO_ROOT, "scripts", "sim_base_node.py")],
             name="sim_base_node",
@@ -410,7 +418,7 @@ def launch_setup(context, *args, **kwargs):
             # port that nothing answers is a 30 s wait and a confusing log.
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration("micro_ros"), "'.lower() in ('true','1','yes') and ",
-                "'", LaunchConfiguration("sim_base"), "'.lower() not in ('true','1','yes')"])),
+                "True" if not no_board else "False"])),
             cmd=["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
@@ -504,7 +512,7 @@ def launch_setup(context, *args, **kwargs):
                     "enable_angle_crop_func": False,
                 }],
             )
-            if effective_lidar_comm_mode == "udp_server"
+            if effective_lidar_comm_mode == "udp_server" and not no_board
             else (
                 Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),

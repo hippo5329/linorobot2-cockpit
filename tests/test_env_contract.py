@@ -37,13 +37,13 @@ MAXIMAL_CONFIG = {
     "base_controller": {
         "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial", "console": "uart0",
         "qos": "reliable", "use_dual_core": True, "boot_delay": 2,
-        "telemetry": {"ota_port": 3232},
+        "telemetry": {"ota_port": 3232, "wifi_monitor_min": 2}, "stamped_cmd_vel": True,
         "sensors": {"imu": "auto", "mag": "auto", "current": "INA219", "env": "BMP280",
                     "use_sim_ld19": True},
         "lidar": {"model": "ld19", "comm_mode": "serial", "rx_pin": 4, "baudrate": 230400},
         "pins": {"i2c": {"sda": 1, "scl": 2}, "led": 3,
                  "gpio_out": [{"pin": 5, "level": 1}], "gpio_out_late": "6=1",
-                 "battery": {"pin": 7, "r1": 1000, "r2": 100, "min_v": 9, "max_v": 12.6, "capacity_ah": 2},
+                 "battery": {"pin": 7, "r1": 1000, "r2": 100, "min_v": 9, "max_v": 12.6, "capacity_ah": 2, "dip_pct": 2.0},
                  "motor1": {"pwm": 8, "in_a": 9, "in_b": 10, "invert": False},
                  "encoder1": {"pin_a": 11, "pin_b": 12, "invert": True},
                  "dac": 25,
@@ -147,6 +147,8 @@ def test_every_run_writes_the_env_block():
     with sim_ld19 off, inheriting an older env that had the emulator on.
     """
     src = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
-    assert "want_env = bool(board) and not args.skip_flash" in src, \
+    assert "want_env = bool(board) and not no_flash" in src, \
         "the env write must not be conditional on the probe's staleness verdict"
+    # no_flash is --skip-flash, or the simulated MCU (no board to write to).
+    assert "no_flash = args.skip_flash or sim_mcu" in src
     assert 'needs_env_write")) and not args.skip_flash' not in src

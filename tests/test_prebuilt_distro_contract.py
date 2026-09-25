@@ -52,38 +52,20 @@ def test_the_builder_uses_that_command_rather_than_its_own():
         "build() invokes gen_firmware_header.py directly again, bypassing header_cmd().")
 
 
-def test_each_profile_header_matches_its_distro_cmd_vel_contract(tmp_path):
-    import build_prebuilt
-    from gen_firmware_header import distro_stamps_cmd_vel
-    import cockpit_paths
+def test_each_profile_image_defaults_to_its_distro_cmd_vel_contract():
+    """Each release image must answer /cmd_vel with its distro's type.
 
-    header = os.path.join(REPO_ROOT, "firmware", "include", "custom", "lino_base_config.h")
-    saved = open(header).read() if os.path.exists(header) else None
-    env = dict(os.environ)
-    env.pop("ROS_DISTRO", None)                       # as on the release runner
-    env["COCKPIT_CONFIG_DIR"] = str(tmp_path / "cfg")
-    try:
-        # The release images are built from the GENERATED bare module, not from
-        # a reference config -- a released image describes no robot, because the
-        # env partition is what turns it into one. Generate the same file
-        # build_prebuilt does, so this checks what actually ships.
-        import gen_bare_config
-        import yaml as _yaml
-        for profile, (mcu, _pio_env, distro, _desc) in build_prebuilt.PROFILES.items():
-            cfg = str(tmp_path / f"bare_{mcu}_config.yaml")
-            with open(cfg, "w") as fh:
-                _yaml.safe_dump(gen_bare_config.bare_config(mcu), fh, sort_keys=False)
-            subprocess.run(
-                [sys.executable, os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py"),
-                 "--params", cfg, "--distro", distro, "--no-embed-secrets"],
-                check=True, capture_output=True, env=env)
-            got = "#define USE_STAMPED_CMD_VEL" in open(header).read()
-            want = distro_stamps_cmd_vel(distro)
-            assert got == want, (
-                f"profile {profile} is built for {distro}, which "
-                f"{'stamps' if want else 'does not stamp'} /cmd_vel, but its header "
-                f"{'defines' if got else 'does not define'} USE_STAMPED_CMD_VEL. A board "
-                f"flashed with this image would not respond to nav2.")
-    finally:
-        if saved is not None:
-            open(header, "w").write(saved)
+    It was USE_STAMPED_CMD_VEL in the generated header. Now the firmware picks
+    the type at boot from FW_ROS_DISTRO (the distro its image was linked for)
+    and the env overrides it -- so what must hold is that the firmware's list of
+    unstamped distros IS the host's, for every profile that ships.
+    """
+    import build_prebuilt
+    from gen_firmware_header import distro_stamps_cmd_vel, UNSTAMPED_CMD_VEL_DISTROS
+    main = open(os.path.join(REPO_ROOT, "firmware", "src", "main.cpp")).read()
+    m = re.search(r"const bool unstamped = ([^;]+);", main)
+    assert m, "main.cpp no longer derives the /cmd_vel type from its distro"
+    fw_unstamped = set(re.findall(r'!strcmp\(d, "([a-z]+)"\)', m.group(1)))
+    assert fw_unstamped == set(UNSTAMPED_CMD_VEL_DISTROS), (fw_unstamped, UNSTAMPED_CMD_VEL_DISTROS)
+    for profile, (_mcu, _pio_env, distro, _desc) in build_prebuilt.PROFILES.items():
+        assert (distro not in fw_unstamped) == distro_stamps_cmd_vel(distro), profile

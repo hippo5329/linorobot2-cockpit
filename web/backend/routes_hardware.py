@@ -38,6 +38,7 @@ from core import (
     patcher,
     pio_present,
     regenerate_firmware_headers,
+    refuse_sim_flash,
     release_agent_port,
     require_header,
     ros_setup_shell,
@@ -57,6 +58,8 @@ async def api_hardware_test(request: Request):
     # asking for "gendrv" sent fetch_prebuilt after a release artifact that
     # does not exist -- firmware upload 404ed on the one ESP32 board this
     # project ships a reference design for.
+    if action == "upload":
+        refuse_sim_flash(data.get("mcu_env"))
     mcu_env = mcu_identity.pio_env_for(data.get("mcu_env"), "pico2")
 
     if action in ("upload", "monitor"):
@@ -379,6 +382,7 @@ async def api_firmware_flash(request: Request):
     params = load_params()
     ctrl = get_controller(params)
     firmware_dir = data.get("firmware_dir") or "firmware"
+    refuse_sim_flash(text_field(data, "env") or get_controller_name(params, "pico2"))
     env = mcu_identity.pio_env_for(text_field(data, "env") or get_controller_name(params, "pico2"), "pico2")
     port = text_field(data, "port") or ctrl.get("serial_port", "/dev/ttyUSB0")
     baud = int(data.get("baud") or ctrl.get("upload_baudrate") or 921600)

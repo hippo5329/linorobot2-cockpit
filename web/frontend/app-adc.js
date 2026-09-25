@@ -479,21 +479,10 @@ function initBaseControllerConfigModule() {
     });
   }
 
-  // "Run Magnetometer Calibration" was pure markup: no handler, and no backend
-  // endpoint either. The firmware carries the application (bno085_cal), so the
-  // button now does what every other tool button does -- flash it and stream
-  // its output, which is where the hard-iron offsets are printed.
-  const btnMagCalHw = document.getElementById("btn-mag-cal-hw");
-  if (btnMagCalHw) {
-    btnMagCalHw.addEventListener("click", () => {
-      const result = document.getElementById("mag-cal-hw-result");
-      if (result) {
-        result.textContent = "Flashing bno085_cal and streaming its output — "
-          + "spin the robot slowly in place; the offsets appear in the terminal below.";
-      }
-      executeHardwareAction("upload", "bno085_cal");
-    });
-  }
+  // The magnetometer calibration is the Sensors tab's "Run Calibration"
+  // (robot_calibration's magnetometer_calibration, on the host). A second card
+  // here flashed bno085_cal, which only tares a BNO085 and computes no offsets;
+  // both the card and that tool are gone (2026-09-25).
 
   // Re-scan MCU button in Base & MCU tab
   const btnRedetectMcu = document.getElementById("btn-redetect-mcu");

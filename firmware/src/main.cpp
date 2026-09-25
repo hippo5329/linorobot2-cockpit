@@ -185,11 +185,15 @@ static bool best_effort = true;
 rcl_publisher_t odom_publisher;
 rcl_publisher_t imu_publisher;
 rcl_publisher_t mag_publisher;
-#ifdef USE_STAMPED_CMD_VEL
+// /cmd_vel is geometry_msgs/Twist or TwistStamped, chosen at BOOT from the env
+// (`stamped_cmd_vel`), not by the build: nav2 1.4 (kilted) publishes
+// TwistStamped, so a lyrical stack stamps and a jazzy one does not, and a base
+// subscribed to the other type never moves ("Failed to make progress"). The
+// default follows this image's own distro; the env overrides it.
+static bool stamped_cmd_vel = false;
 rcl_subscription_t twist_stamped_subscriber;
 geometry_msgs__msg__TwistStamped twist_stamped_msg;
 static char twist_stamped_frame_id[64];
-#endif
 rcl_subscription_t twist_subscriber;
 rcl_publisher_t battery_publisher;
 // The forward hazard stop. `USE_SAFETY_STOP` guarded all of this and was
@@ -261,8 +265,18 @@ unsigned long long time_offset = 0;
 unsigned long prev_cmd_time = 0;
 unsigned long prev_odom_update = 0;
 float prev_voltage;
+// The dip detector: a sample more than `bat_dip` percent below the running
+// average is logged as a dip. An env key, so a noisy divider can be ruled out
+// by raising it -- no rebuild. BATTERY_DIP_PCT is only the fallback.
+#ifndef BATTERY_DIP_PCT
+#define BATTERY_DIP_PCT 2.0f
+#endif
+static float battery_dip = 1.0f - BATTERY_DIP_PCT / 100.0f;
+#ifndef BATTERY_SAMPLE_MS
+#define BATTERY_SAMPLE_MS 100
+#endif
 
-// USE_ESP32_DUAL_CORE is a CAPABILITY, not a choice: it says this silicon has a
+// HAS_DUAL_CORE is a CAPABILITY, not a choice: it says this silicon has a
 // second core to pin a control loop to. Whether to actually use it is the env
 // key `dual_core`, read at boot into the flag below.
 //
@@ -273,15 +287,12 @@ float prev_voltage;
 // MCU rather than for a robot, baking that in means every robot on that image
 // pays for it whether or not its control loop needs the isolation.
 #if defined(ESP32) && !defined(CONFIG_FREERTOS_UNICORE)
-#define USE_ESP32_DUAL_CORE 1
+#define HAS_DUAL_CORE 1
 TaskHandle_t controlTaskHandle = NULL;
 portMUX_TYPE controlMux = portMUX_INITIALIZER_UNLOCKED;
 void controlTask(void *pvParameters);
-#ifdef USE_DUAL_CORE
-static const bool DUAL_CORE_DEFAULT = true;
-#else
+// Off unless the env's `dual_core` asks for it (config `use_dual_core`).
 static const bool DUAL_CORE_DEFAULT = false;
-#endif
 static bool dual_core = false;
 #endif
 
@@ -305,6 +316,18 @@ SimIMUFromWheels sim_imu;
 // wheelsAreSim() reads the env; it is read once in setup() and used from the
 // control loop, which runs on the other core on ESP32.
 static bool sim_wheels = false;
+
+// Every battery read: the simulated pack (env `sim_battery`) first takes the
+// wheel model's load, so /battery sags when the simulated robot accelerates and
+// drains while it drives. Without simulated wheels the pack sees only its idle draw.
+static sensor_msgs__msg__BatteryState readBattery()
+{
+    if (batteryIsSim()) {
+        const bool w = sim_wheels;
+        setSimPackLoad(w ? SimEncoder::packSagDivisor() : 1.0f, w ? SimEncoder::packLoadAmps() : 0.0f);
+    }
+    return getBattery();
+}
 SimLD19 *sim_ld19 = nullptr;
 // Whether the emulator runs at all is a robot fact, not an image fact: a
 // prebuilt image is built from a simulation-mode reference, and every real robot
@@ -521,9 +544,7 @@ void publishData();
 static void reportSampleAge();
 void controlCallback(rcl_timer_t * timer, int64_t last_call_time);
 void twistCallback(const void * msgin);
-#ifdef USE_STAMPED_CMD_VEL
 void twistStampedCallback(const void * msgin);
-#endif
 
 static AppMode app_mode = APP_BASE;
 
@@ -906,7 +927,7 @@ void setup()
     // loop -- asks this rather than the compiler, so one image serves a bare
     // bench module and the same board with an IMU on it.
     sim_wheels = wheelsAreSim();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     dual_core = envFlag("dual_core", DUAL_CORE_DEFAULT);
     // Dual core is the SERIAL robot's tool: it takes moveBase() off the core
     // that services micro-ROS, and on the GenDrv over 1.5 Mbaud with four real
@@ -1072,7 +1093,20 @@ void setup()
     //                          topic that was never configured.
     publish_env = envFlag("pub_env", env_present);
     publish_battery = envFlag("pub_battery", batteryPresent());
+    {
+        float pct = envFloat("bat_dip", BATTERY_DIP_PCT);
+        if (pct < 0.1f) pct = 0.1f;          // a 0 % threshold logs every sample
+        if (pct > 50.0f) pct = 50.0f;
+        battery_dip = 1.0f - pct / 100.0f;
+    }
     best_effort = envFlag("best_effort", true);
+    {
+        // Twist through jazzy, TwistStamped from kilted on -- the host's rule
+        // (gen_firmware_header.distro_stamps_cmd_vel), from this image's distro.
+        const char *d = FW_ROS_DISTRO;
+        const bool unstamped = !strcmp(d, "humble") || !strcmp(d, "iron") || !strcmp(d, "jazzy");
+        stamped_cmd_vel = envFlag("stamped_cmd_vel", !unstamped);
+    }
     if (env_present)
     {
         pressure_msg.header.frame_id = micro_ros_string_utilities_set(pressure_msg.header.frame_id, envPrefixed("base_link"));
@@ -1083,14 +1117,7 @@ void setup()
         {
             float env_cov[3] = {0.0f, 0.0f, 0.0f};
             bool have_cov = false;
-#ifdef ENV_COV
-            const float compiled[3] = ENV_COV;
-            env_cov[0] = compiled[0];
-            env_cov[1] = compiled[1];
-            env_cov[2] = compiled[2];
-            have_cov = true;
-#endif
-            have_cov = envFloatVec("env_cov", env_cov, 3) || have_cov;
+            have_cov = envFloatVec("env_cov", env_cov, 3);
             if (have_cov)
             {
                 pressure_msg.variance = env_cov[0];
@@ -1193,7 +1220,7 @@ void setup()
                   : range_sim ? "simulated (raycast from the sim LiDAR room)"
                                : "from the HC-SR04");
 
-    if (battery_msg) *battery_msg = getBattery();   // null for a tool app
+    if (battery_msg) *battery_msg = readBattery();   // null for a tool app
     prev_voltage = battery_msg->voltage;
 
     // HOLD THE TRANSPORT, REPEATING THE BANNER, so the board's own word on which
@@ -1237,7 +1264,7 @@ void setup()
     // Output pins that had to wait for the stack -- a motor-driver enable line
     // that should stay low while the PWM pins were still being decided.
     initBoardLate();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core)
       xTaskCreatePinnedToCore(
         controlTask,
@@ -1392,7 +1419,7 @@ void controlCallback(rcl_timer_t * timer, int64_t last_call_time)
     {
        diagCount(DIAG_TIMER);
        const uint32_t mv_t0 = micros();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
        if (!dual_core)
 #endif
        moveBase();
@@ -1402,22 +1429,20 @@ void controlCallback(rcl_timer_t * timer, int64_t last_call_time)
     }
 }
 
-#ifdef USE_STAMPED_CMD_VEL
 void twistStampedCallback(const void * msgin) 
 {
     (void)msgin;
     ledWrite(!ledRead());
 
     prev_cmd_time = millis();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portENTER_CRITICAL_ISR(&controlMux);
 #endif
     twist_msg = twist_stamped_msg.twist;
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portEXIT_CRITICAL_ISR(&controlMux);
 #endif
 }
-#endif
 
 void twistCallback(const void * msgin) 
 {
@@ -1540,7 +1565,8 @@ bool createEntities()
         std_msgs__msg__UInt8MultiArray__init(&raw_scan_msg);
         raw_scan_pub_ready = true;
     }
-#ifdef USE_STAMPED_CMD_VEL
+    size_t executor_handles = 2;
+    if (stamped_cmd_vel) {
     // create stamped twist subscriber for Nav2 on /cmd_vel
     RCCHECK(rclc_subscription_init_default( 
         &twist_stamped_subscriber, 
@@ -1560,8 +1586,8 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         topicName("cmd_vel_unstamped")
     ));
-    const size_t executor_handles = 3;
-#else
+    executor_handles = 3;
+    } else {
     // create standard unstamped twist command subscriber on /cmd_vel
     RCCHECK(rclc_subscription_init_default( 
         &twist_subscriber, 
@@ -1569,8 +1595,7 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         topicName("cmd_vel")
     ));
-    const size_t executor_handles = 2;
-#endif
+    }
     // create timer for actuating the motors at 50 Hz (1000/20)
     const unsigned int control_timeout = 20;
     RCCHECK(rclc_timer_init_default2( 
@@ -1582,7 +1607,7 @@ bool createEntities()
     ));
     *executor = rclc_executor_get_zero_initialized_executor();
     RCCHECK(rclc_executor_init(executor, &support.context, executor_handles, & allocator));
-#ifdef USE_STAMPED_CMD_VEL
+    if (stamped_cmd_vel)
     RCCHECK(rclc_executor_add_subscription(
         executor, 
         &twist_stamped_subscriber, 
@@ -1590,7 +1615,6 @@ bool createEntities()
         &twistStampedCallback, 
         ON_NEW_DATA
     ));
-#endif
     RCCHECK(rclc_executor_add_subscription(
         executor, 
         &twist_subscriber, 
@@ -1655,9 +1679,8 @@ bool destroyEntities()
         std_msgs__msg__UInt8MultiArray__fini(&raw_scan_msg);
         RCSOFTCHECK(rcl_publisher_fini(&raw_scan_publisher, &node));
     }
-#ifdef USE_STAMPED_CMD_VEL
-    RCSOFTCHECK(rcl_subscription_fini(&twist_stamped_subscriber, &node));
-#endif
+    if (stamped_cmd_vel)
+        RCSOFTCHECK(rcl_subscription_fini(&twist_stamped_subscriber, &node));
     RCSOFTCHECK(rcl_subscription_fini(&twist_subscriber, &node));
     RCSOFTCHECK(rcl_timer_fini(&control_timer));
     RCSOFTCHECK(rclc_executor_fini(executor));
@@ -1671,7 +1694,7 @@ bool destroyEntities()
 
 void fullStop()
 {
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
 #endif
     twist_msg.linear.x = 0.0;
@@ -1682,12 +1705,12 @@ void fullStop()
     motor2_controller.brake();
     motor3_controller.brake();
     motor4_controller.brake();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
 }
 
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
 void controlTask(void *pvParameters)
 {
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -1772,7 +1795,9 @@ void moveBase()
     // the publish path already maintains in battery_msg->
     if (rpm_track_voltage && publish_battery) {
         EXECUTE_EVERY_N_MS(500, {
-            if (battery_msg->voltage > 1.0f) kinematics->setMeasuredVoltage(battery_msg->voltage);
+            // The running average, not the published sag: the wheels should
+            // track the pack's level, not the bottom of each acceleration.
+            if (prev_voltage > 1.0f) kinematics->setMeasuredVoltage(prev_voltage);
         });
     }
 
@@ -1922,11 +1947,11 @@ static void reportSampleAge()
 void publishData()
 {
     static unsigned skip_dip = 0;
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portENTER_CRITICAL(&controlMux);
 #endif
     *odom_msg = odometry->getData();
-#ifdef USE_ESP32_DUAL_CORE
+#ifdef HAS_DUAL_CORE
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
     const uint32_t sens_t0 = micros();
@@ -2124,32 +2149,43 @@ void publishData()
         RCSOFTCHECK(rcl_publish(&mag_publisher, mag_msg, NULL));
     RCSOFTCHECK(rcl_publish(&odom_publisher, odom_msg, NULL));
     if (publish_battery) {
-#ifdef BATTERY_DIP
-    *battery_msg = getBattery();
-    battery_msg->header.stamp.sec = time_stamp.tv_sec;
-    battery_msg->header.stamp.nanosec = time_stamp.tv_nsec;
-    if (!skip_dip && battery_msg->voltage > 1.0 && battery_msg->voltage < prev_voltage * BATTERY_DIP) {
-        RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
-        syslog(LOG_WARNING, "%s voltage dip %.2f", __FUNCTION__, battery_msg->voltage);
-        skip_dip = 5;
-    }
-    if (skip_dip) skip_dip--;
-    battery_msg->voltage = prev_voltage = battery_msg->voltage * 0.01 + prev_voltage * 0.99;
+    // Sampled at 10 Hz, published at 1 Hz ONLY. The dip detector used to send an
+    // extra message on the spot, so /battery's rate followed the load -- and it
+    // sat behind #ifdef BATTERY_DIP, which nothing ever defined, so no image had
+    // it at all. Now it is always on: the 1 Hz message carries the SAG, the
+    // lowest voltage the pack reached during that second, instead of an average
+    // that hides it; a dip is logged, never published. 10 Hz catches a sag (the
+    // pack's own time constant is ~400 ms) without an I2C read every cycle. The
+    // running average stays: the percentage is read from it (a percentage that
+    // jumped with every acceleration would mean nothing), and so is the voltage
+    // the kinematics track (rpm_track_voltage).
+    static float sag_v = 0.0f;
+    static sensor_msgs__msg__BatteryState sample;
+    EXECUTE_EVERY_N_MS(BATTERY_SAMPLE_MS, {
+        sample = readBattery();
+        if (sample.voltage > 1.0f) {
+            if (sag_v <= 0.0f || sample.voltage < sag_v) sag_v = sample.voltage;
+            if (prev_voltage <= 1.0f) prev_voltage = sample.voltage;
+            if (!skip_dip && sample.voltage < prev_voltage * battery_dip) {
+                syslog(LOG_WARNING, "%s voltage dip %.2f (average %.2f)", __FUNCTION__,
+                       sample.voltage, prev_voltage);
+                skip_dip = 1000 / BATTERY_SAMPLE_MS;     // at most one line a second
+            }
+            prev_voltage = sample.voltage * 0.1f + prev_voltage * 0.9f;
+        }
+        if (skip_dip) skip_dip--;
+    });
     // PHASE 40 ms — keep /battery off the cycle /sonar and /pressure ride on.
     EXECUTE_EVERY_N_MS_PHASED(BATTERY_TIMER, 40, {
-        getBatteryPercentage(battery_msg);
-        RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
-    });
-#else
-    // Low sampling rate fallback: poll battery strictly within phased timer when BATTERY_DIP is disabled
-    EXECUTE_EVERY_N_MS_PHASED(BATTERY_TIMER, 40, {
-        *battery_msg = getBattery();
+        *battery_msg = sample;
         battery_msg->header.stamp.sec = time_stamp.tv_sec;
         battery_msg->header.stamp.nanosec = time_stamp.tv_nsec;
-        getBatteryPercentage(battery_msg);
+        battery_msg->voltage = prev_voltage;
+        getBatteryPercentage(battery_msg);           // from the average
+        if (sag_v > 0.0f) battery_msg->voltage = sag_v;
+        sag_v = 0.0f;
         RCSOFTCHECK(rcl_publish(&battery_publisher, battery_msg, NULL));
     });
-#endif
     }
     if (safety_stop_on)
     {

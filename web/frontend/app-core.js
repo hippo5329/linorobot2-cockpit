@@ -1,3 +1,25 @@
+// Base controller selects list SILICON (pico, pico2, picow, pico2w, esp32,
+// esp32s3) plus the Sim MCU. A board is a reference design, not a controller:
+// the GenDrv is an ESP32, the Yahboom YB-EET01 an ESP32-S3. A config that names
+// its board is shown as its silicon, and Save / Start 1-Click send the board's
+// name back while that silicon is still the one selected -- so loading the
+// GenDrv design and pressing Save does not rename it to "esp32".
+const BOARD_SILICON = { gendrv: "esp32", yb_eet01: "esp32s3" };
+let loadedControllerName = null;
+function siliconOf(name) {
+  const n = String(name || "").toLowerCase();
+  return BOARD_SILICON[n] || n;
+}
+function controllerForRun(selected) {
+  return loadedControllerName && siliconOf(loadedControllerName) === selected ? loadedControllerName : selected;
+}
+// What Save writes into the robot's config. The Sim MCU is its own robot
+// (bare_sim), so a Save while on it writes bare_sim -- never `sim` into the
+// robot you had (that leak renamed pico2_mecanum's controller once).
+function controllerForSave(selected) {
+  return controllerForRun(selected);
+}
+
 // Linorobot2 Cockpit frontend. Vanilla JS, no build step, no framework.
 //
 // The UI names a server-side ACTION plus structured args (see runCommand below
@@ -643,6 +665,7 @@ async function refreshStatus() {
           mmEl.hidden = true;
         }
       }
+      noBoardSwitch(s);
       const baseMcuPill = document.getElementById("base-mcu-status-pill");
       if (baseMcuPill) {
         const lp = busPorts.find(p => p.mcu_hint === detectedMcu) || busPorts[0];
@@ -940,14 +963,17 @@ async function selectRobot(name) {
     // source of truth inverted: the config file is the selection, so the select
     // must reflect it. Only adopt a value the select actually offers; assigning
     // an unknown one blanks the element and is worse than leaving it alone.
-    const bcName = (c.base_controller || {}).name;
+    // The selects list silicon; a config may name its board (gendrv -> esp32).
+    const bcBoard = (c.base_controller || {}).name;
+    const bcName = bcBoard ? siliconOf(bcBoard) : bcBoard;
+    if (bcBoard) loadedControllerName = bcBoard;
     const tsel = document.getElementById("cockpit-target-select");
     if (tsel && bcName) {
       if ([...tsel.options].some((o) => o.value === bcName)) {
         if (tsel.value !== bcName) {
           tsel.value = bcName;
           tsel.dispatchEvent(new Event("change"));
-          logLine(`[console] base controller -> ${bcName}`);
+          logLine(`[console] base controller -> ${bcBoard}`);
         }
         if (window.__syncControllerSelects) window.__syncControllerSelects(bcName, "cockpit-target-select");
       } else {
@@ -956,6 +982,9 @@ async function selectRobot(name) {
     }
 
     logLine(`[console] active robot -> ${state.robot_name}  (${res.robot_config_path || "<robot>_config.yaml"})`);
+    // Tabs 1-4 show the robot that is now active. They kept the previous one's
+    // fields, so a Save after switching robots wrote them into the new robot.
+    if (typeof loadHardwareConfig === "function") await loadHardwareConfig();
     refreshStatus();
   } catch (e) {
     logLine(`[console] robot select failed: ${e}`);
@@ -1190,3 +1219,91 @@ function initGitVersionBadge() {
 }
 initGitVersionBadge();
 
+
+
+// No MCU board on the bus: warn, and switch the controller selects to the
+// simulated MCU (sim_base_node) so Start 1-Click and Bringup give a running
+// robot instead of a flash error -- the same fallback the pipeline makes. Only
+// on `board_on_bus === false`, which counts a board in BOOTSEL (no tty) as
+// present, so a flash in progress is never switched away. A board that appears
+// later switches the selects back to what was chosen before -- but only when
+// the switch was ours; a Sim MCU the user picked stays picked.
+let noBoardSwitchedFrom = null;
+let userChoseController = false;
+// Any choice the user makes is final: someone who picks the Sim MCU (or picks
+// it again after we switched) may want to try it before the board, so a board
+// appearing later must not take it away. Programmatic sets fire no "change".
+document.addEventListener("change", (e) => {
+  // isTrusted: a real user action. Switching robots dispatches a synthetic
+  // "change" on the select, which is not a choice.
+  if (e.isTrusted && ["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) {
+    noBoardSwitchedFrom = null;
+    userChoseController = true;
+  }
+});
+// The Sim MCU is a robot of its own, bare_sim (every simulated device on,
+// every pin -1), not the current robot relabelled -- so choosing it switches
+// the active robot, and leaving it switches back to the robot you had.
+let robotBeforeSim = null;
+async function useSimRobot() {
+  if (state.robot_name === "bare_sim") return;
+  robotBeforeSim = state.robot_name;
+  await selectRobot("bare_sim");
+}
+async function leaveSimRobot(silicon) {
+  if (state.robot_name !== "bare_sim") return;
+  const back = robotBeforeSim && robotBeforeSim !== "bare_sim" ? robotBeforeSim : `bare_${silicon}`;
+  robotBeforeSim = null;
+  await selectRobot(back);
+  // The robot you return to may be other silicon than the one just picked; the pick wins.
+  const sel = document.getElementById("cfg-mcu");
+  if (sel && silicon && sel.value !== silicon) {
+    sel.value = silicon;
+    if (window.__syncControllerSelects) window.__syncControllerSelects(silicon, "cfg-mcu");
+  }
+}
+// A user's pick in any controller select.
+document.addEventListener("change", (e) => {
+  if (!e.isTrusted || !["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) return;
+  if (e.target.value === "sim") useSimRobot();
+  else leaveSimRobot(e.target.value);
+});
+
+let noBoardBusy = false;
+async function noBoardSwitch(s) {
+  const el = document.getElementById("hdr-no-board");
+  const absent = s.board_on_bus === false;
+  if (!noBoardBusy) {
+    noBoardBusy = true;
+    try {
+      if (absent && !userChoseController && state.robot_name && state.robot_name !== "bare_sim") {
+        noBoardSwitchedFrom = state.robot_name;
+        await useSimRobot();
+      } else if (!absent && noBoardSwitchedFrom && state.robot_name === "bare_sim") {
+        const back = noBoardSwitchedFrom;
+        noBoardSwitchedFrom = null;
+        robotBeforeSim = null;
+        await selectRobot(back);
+      }
+    } finally {
+      noBoardBusy = false;
+    }
+  }
+  if (!el) return;
+  const onSim = state.robot_name === "bare_sim";
+  if (absent && !onSim) {
+    // The user kept a board robot with nothing plugged in: say what will
+    // happen rather than overriding them.
+    el.innerHTML = "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +
+      "(<code>sim_base_node</code>) until a board is plugged in.";
+    el.hidden = false;
+  } else if (absent) {
+    el.innerHTML = "⚠️ <b>No MCU board detected</b> — switched to the <b>Sim MCU</b> robot " +
+      "(<code>bare_sim</code>: <code>sim_base_node</code> on this computer, every simulated device, " +
+      "no pins), so 1-Click and Bringup work with nothing plugged in. Plug a board in to flash and run it" +
+      (noBoardSwitchedFrom ? ` (the robot goes back to <code>${escapeHtml(noBoardSwitchedFrom)}</code>)` : "") + ".";
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+}

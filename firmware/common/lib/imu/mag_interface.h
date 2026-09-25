@@ -62,9 +62,6 @@ class MAGInterface
             mag_msg_.magnetic_field_covariance[4] = mag_cov[1];
             mag_msg_.magnetic_field_covariance[8] = mag_cov[2];
 
-#ifdef MAG_TWEAK
-            MAG_TWEAK
-#endif
             return mag_msg_;
         }
 };

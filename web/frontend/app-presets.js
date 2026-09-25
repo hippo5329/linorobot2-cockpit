@@ -5,41 +5,12 @@
 // Reference Build Presets & Hardware Design Engine
 // ==============================================================================
 
+// Reference designs are CONFIGURED ROBOTS -- a board wired to motors and
+// sensors. A bare module is not one: it is the absence of a design, generated
+// per board (scripts/gen_bare_config.py) and chosen as a `bare_<board>` robot in
+// the Robot selector, not here (user, 2026-09-25).
 const REFERENCE_DESIGNS = {
   pico2: [
-    {
-      id: "bare_pico2",
-      name: "🧩 Bare Module (RP2350) — all pins N/C (Safe Default / Sim Mode)",
-      mcu: "pico2",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: true,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: -1, in_b: -1, pwm: -1 },
-        motor2: { in_a: -1, in_b: -1, pwm: -1 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: -1, b: -1 },
-        encoder2: { a: -1, b: -1 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: -1, scl: -1 },
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
     {
       id: "pico2_diff",
       name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Simulated IMU Default)",
@@ -175,39 +146,6 @@ const REFERENCE_DESIGNS = {
   ],
   pico: [
     {
-      id: "bare_pico",
-      name: "🧩 Bare Module (RP2040) — all pins N/C (Safe Default / Sim Mode)",
-      mcu: "pico",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: true,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: -1, in_b: -1, pwm: -1 },
-        motor2: { in_a: -1, in_b: -1, pwm: -1 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: -1, b: -1 },
-        encoder2: { a: -1, b: -1 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: -1, scl: -1 },
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
-    {
       id: "scout_pico",
       name: "Raspberry Pi Pico (2WD Diff + TB6612 / L298N)",
       mcu: "pico",
@@ -242,39 +180,6 @@ const REFERENCE_DESIGNS = {
     }
   ],
   esp32: [
-    {
-      id: "bare_esp32",
-      name: "🧩 Bare Module (ESP32) — all pins N/C (Safe Default / Sim Mode)",
-      mcu: "esp32",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: true,
-      use_sim_ld19: true,
-      pins: {
-        led: 2,
-        motor1: { in_a: -1, in_b: -1, pwm: -1 },
-        motor2: { in_a: -1, in_b: -1, pwm: -1 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: -1, b: -1 },
-        encoder2: { a: -1, b: -1 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: -1, scl: -1 },
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
     {
       id: "waveshare_gendrv",
       name: "Waveshare General Driver Board (ESP32 + BTS7960 + QMI8658)",
@@ -343,39 +248,6 @@ const REFERENCE_DESIGNS = {
     }
   ],
   esp32s3: [
-    {
-      id: "bare_esp32s3",
-      name: "🧩 Bare Module (ESP32-S3) — all pins N/C (Safe Default / Sim Mode)",
-      mcu: "esp32s3",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: true,
-      use_sim_ld19: true,
-      pins: {
-        led: 48,
-        motor1: { in_a: -1, in_b: -1, pwm: -1 },
-        motor2: { in_a: -1, in_b: -1, pwm: -1 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: -1, b: -1 },
-        encoder2: { a: -1, b: -1 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: -1, scl: -1 },
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
     {
       id: "yb_eet01",
       name: "Yahboom microROS Control Board (ESP32-S3, YB-EET01-V2.0)",
@@ -447,7 +319,7 @@ function normalizeMcuFamily(mcu) {
   const s = String(mcu).toLowerCase();
   if (s.includes("pico2") || s.includes("rp2350")) return "pico2";
   if (s.includes("pico") || s.includes("rp2040")) return "pico";
-  if (s.includes("s3") || s.includes("esp32s3")) return "esp32s3";
+  if (s.includes("s3") || s.includes("esp32s3") || s.includes("yb_eet01")) return "esp32s3";
   if (s.includes("esp32") || s.includes("gendrv")) return "esp32";
   return "pico2";
 }
@@ -461,26 +333,25 @@ function updateReferenceDesigns(mcuHint) {
   const mcuLabels = {
     pico2: "Raspberry Pi Pico 2 (RP2350)",
     pico: "Raspberry Pi Pico (RP2040)",
-    esp32: "ESP32 / GenDrv",
+    esp32: "ESP32",
     esp32s3: "ESP32-S3",
   };
 
+  // The reference design and the MCU must match (user, 2026-09-25): a design
+  // is a board wired around ONE silicon, so only that silicon's designs are
+  // offered. The Sim MCU has no silicon; any design can be simulated, so it
+  // offers them all, grouped by the board each one is written for.
   let html = "";
-  const primaryDesigns = REFERENCE_DESIGNS[family] || [];
-  html += `<optgroup label="⚡ Detected MCU: ${mcuLabels[family] || family.toUpperCase()}">`;
-  for (const d of primaryDesigns) {
-    html += `<option value="${d.id}">${d.name}</option>`;
-  }
-  html += `</optgroup>`;
-
-  html += `<optgroup label="🌐 Other MCU Architectures">`;
-  for (const [fKey, list] of Object.entries(REFERENCE_DESIGNS)) {
-    if (fKey === family) continue;
-    for (const d of list) {
+  const isSim = String(mcuHint || "").toLowerCase() === "sim";
+  const families = isSim ? Object.keys(REFERENCE_DESIGNS) : [family];
+  const primaryDesigns = REFERENCE_DESIGNS[families[0]] || [];
+  for (const fKey of families) {
+    html += `<optgroup label="${isSim ? "Sim MCU — any design, " : "MCU: "}${mcuLabels[fKey] || fKey.toUpperCase()}">`;
+    for (const d of REFERENCE_DESIGNS[fKey] || []) {
       html += `<option value="${d.id}">${d.name}</option>`;
     }
+    html += `</optgroup>`;
   }
-  html += `</optgroup>`;
 
   select.innerHTML = html;
   const hasCurrent = select.querySelector(`option[value="${currentVal}"]`);
@@ -504,8 +375,16 @@ async function applyReferenceDesign(designId) {
   // syncControllerSelects.
   const mcuSel = document.getElementById("cfg-mcu");
   if (mcuSel && found.mcu) {
-    mcuSel.value = found.mcu;
-    if (window.__syncControllerSelects) window.__syncControllerSelects(found.mcu, "cfg-mcu");
+    // A reference design names its BOARD (gendrv, yb_eet01); the select names
+    // silicon. Keep what the user picked when it is already that silicon's
+    // family (a Pico W stays a Pico W on a Pico design) or the Sim MCU (any
+    // design can be simulated); otherwise move to the design's silicon.
+    const cur = mcuSel.value;
+    const keep = cur === "sim" || normalizeMcuFamily(cur) === normalizeMcuFamily(siliconOf(found.mcu));
+    const silicon = keep ? cur : siliconOf(found.mcu);
+    loadedControllerName = BOARD_SILICON[String(found.mcu).toLowerCase()] === silicon ? found.mcu : silicon;
+    mcuSel.value = silicon;
+    if (window.__syncControllerSelects) window.__syncControllerSelects(silicon, "cfg-mcu");
   }
 
   const baseSel = document.getElementById("cfg-kinematics");
@@ -542,6 +421,9 @@ async function applyReferenceDesign(designId) {
   setChk("chk-sim-mag", found.use_sim_mag);
   setChk("chk-sim-wheel", found.use_sim_wheel);
   setChk("chk-sim-ld19", found.use_sim_ld19);
+  setChk("chk-sim-env", found.use_sim_env);
+  setChk("chk-sim-sonar", found.use_sim_sonar);
+  setChk("chk-sim-battery", found.use_sim_battery);
 
   // Pins
   if (found.pins) {

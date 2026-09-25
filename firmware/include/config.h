@@ -8,6 +8,17 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// What the SILICON can do. Never a choice about a robot: a released image is
+// built per MCU, and everything a robot chooses is an env key read at boot.
+//
+// HAS_WIFI: a radio to talk over. Every ESP32 has one; on RP2 only the W
+// boards, whose PlatformIO envs pass -D HAS_WIFI (a plain pico/pico2 build has
+// no WiFi.h to compile against).
+#if defined(ESP32) && !defined(HAS_WIFI)
+#define HAS_WIFI 1
+#endif
+
+// ---------------------------------------------------------------------------
 // Defaults the generated header is NOT allowed to supply.
 //
 // A released image is built for a silicon and describes no robot, so its

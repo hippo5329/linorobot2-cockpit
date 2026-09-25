@@ -629,6 +629,18 @@ def update_robot_name_and_controller(name: str, controller: Optional[str] = None
         save_params(params, path=cfg_path)
 
 
+# The simulated MCU: sim_base_node on this computer stands in for the board.
+SIM_MCU = "sim"
+
+
+def refuse_sim_flash(name: str) -> None:
+    """Nothing to flash when the base controller is the simulated MCU."""
+    if (name or "").strip().lower() == SIM_MCU:
+        raise HTTPException(status_code=400, detail=(
+            "The base controller is the simulated MCU (sim_base_node): there is no board "
+            "to flash. Pick the board you plugged in on the Base & MCU tab to flash it."))
+
+
 def get_controller(params: Dict[str, Any]) -> Dict[str, Any]:
     """The robot's base controller block (linorobot2_hardware firmware)."""
     bc = params.get("base_controller")
@@ -643,6 +655,10 @@ def get_controller_name(params: Dict[str, Any], default: str = "pico2") -> str:
 def regenerate_firmware_headers(controller: Optional[str] = None, params_path: Optional[str] = None):
     gen_script = os.path.join(REPO_ROOT, "scripts", "gen_firmware_header.py")
     active_path = params_path or get_active_params_path()
+    # The simulated MCU has no firmware, so there is no header to generate.
+    name = controller or get_controller_name(load_params(active_path) if os.path.isfile(active_path) else {})
+    if name == SIM_MCU:
+        return subprocess.CompletedProcess([], 0, "simulated MCU: no firmware header\n", "")
     cmd = [sys.executable, gen_script, "--params", active_path]
     if controller:
         cmd.extend(["--controller", controller])

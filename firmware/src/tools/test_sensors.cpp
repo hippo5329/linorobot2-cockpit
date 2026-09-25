@@ -18,7 +18,7 @@
 #include <micro_ros_utilities/string_utilities.h>
 #include <stdio.h>
 #include <math.h>
-#include <i2cdetect.h>
+#include "i2c_probe.h"
 
 #include <sensor_msgs/msg/imu.h>
 #include <sensor_msgs/msg/magnetic_field.h>
@@ -86,7 +86,7 @@ void setup_()
     Serial.println("   Linorobot2 Hardware Sensor Diagnostics ");
     Serial.println("==========================================");
     Serial.println("Scanning I2C bus...");
-    i2cdetect();  // default range from 0x03 to 0x77
+    i2cScanTable();  // default range from 0x03 to 0x77
 
     // The same probe and the same adoption rule the robot firmware uses, so this
     // tool and `base` can never disagree about what is fitted.

@@ -361,10 +361,12 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
         env["sim_wheel"] = "1"
         env["sim_ld19"] = "1"
         env["sim_env"] = "1"
+        env["sim_battery"] = "1"
     else:
         env["sim_wheel"] = "0"
         env["sim_ld19"] = "0"
         env["sim_env"] = "0"
+        env["sim_battery"] = "0"
         # A driver can only be un-simd if the config names one.
         sensors = {}
         if params_path:
@@ -425,6 +427,16 @@ def hardware_env(params: dict) -> dict:
     # the Wi-Fi driver runs on, so the wrong answer is expensive.
     if tgt.get("use_dual_core") is not None:
         env["dual_core"] = _bool(tgt["use_dual_core"])
+    # /cmd_vel's type. Written only when the config says true or false: `auto`
+    # (the default) is the firmware's own default, from the distro its image
+    # was built for -- the rule gen_firmware_header.distro_stamps_cmd_vel keeps.
+    stamped = tgt.get("stamped_cmd_vel", (params.get("kinematics") or {}).get("stamped_cmd_vel", "auto"))
+    if isinstance(stamped, bool) or str(stamped).strip().lower() in ("true", "false", "1", "0", "yes", "no"):
+        env["stamped_cmd_vel"] = _bool(str(stamped).strip().lower() in ("true", "1", "yes"))
+    # Minutes between Wi-Fi RSSI lines to syslog (0 = off); firmware default 2.
+    tel = tgt.get("telemetry") or {}
+    if tel.get("wifi_monitor_min") is not None:
+        env["wifi_monitor"] = int(tel["wifi_monitor_min"])
     # QoS of the 50 Hz topics. Best effort is the firmware's default (the
     # launch tree's EKF subscribes best-effort; measured 50 Hz at
     # 921600 where reliable managed 25); `qos: reliable` is for a consumer
@@ -474,6 +486,14 @@ def hardware_env(params: dict) -> dict:
     # "no chip"; it must not also mean "silence the simulation of one".
     if sensors.get("use_sim_mag"):
         env["pub_mag"] = 1
+    # The same rule for the barometer: every bare config says `env: NONE` (no
+    # chip) with `use_sim_env: true`, and that NONE set pub_env=0 -- the
+    # synthetic barometer was built, read, and never sent.
+    if sensors.get("use_sim_env"):
+        env["pub_env"] = 1
+    # And the battery: `current: NONE` (no INA219, no divider) set pub_battery=0.
+    if sensors.get("use_sim_battery"):
+        env["pub_battery"] = 1
 
     # `imu: auto` / `mag: auto` mean the same thing one level down: take whatever
     # answered the bus. The probe is what decides, so ask for it explicitly --
@@ -538,7 +558,9 @@ def hardware_env(params: dict) -> dict:
     bat = pins.get("battery")
     if isinstance(bat, dict):
         for key, src in (("battery_pin", "pin"), ("bat_r1", "r1"), ("bat_r2", "r2"),
-                         ("bat_min", "min_v"), ("bat_max", "max_v"), ("bat_cap", "capacity_ah")):
+                         ("bat_min", "min_v"), ("bat_max", "max_v"), ("bat_cap", "capacity_ah"),
+                         # the sag detector's threshold, percent below the average
+                         ("bat_dip", "dip_pct")):
             if bat.get(src) is not None:
                 env[key] = bat[src]
     elif bat is not None:
@@ -850,6 +872,9 @@ def hardware_env(params: dict) -> dict:
         pass
 
     env["sim_env"] = _bool(sensors.get("use_sim_env", False))
+    # A simulated battery voltage sensor (battery.cpp): a pack that sags with the
+    # simulated wheels' load and drains as the robot drives.
+    env["sim_battery"] = _bool(sensors.get("use_sim_battery", False))
     # The simulated ultrasonic cone. Only ever used when the LiDAR emulator is
     # running (it raycasts from the same room) and no real sonar is wired, so
     # the firmware gates it anyway; this says whether the bench wants it.

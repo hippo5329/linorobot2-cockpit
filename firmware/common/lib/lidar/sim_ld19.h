@@ -17,6 +17,7 @@
 
 #ifdef ARDUINO
 #include <Arduino.h>
+#include "config.h"
 #include "mcu_env.h"
 #endif
 #include <math.h>
@@ -30,7 +31,7 @@
 // `udp`, physically could not drive a serial LD19 bridge however its env was
 // keyed. The UDP sink needs a UDP stack: every ESP32 core has one, and on RP2
 // only the W boards do, where it arrives with USE_WIFI.
-#if defined(ESP32) || defined(USE_WIFI)
+#if defined(HAS_WIFI)
 #define SIM_LD19_UDP_SINK 1
 #endif
 

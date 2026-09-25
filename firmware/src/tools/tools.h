@@ -38,7 +38,6 @@ enum AppMode {
     APP_TEST_MOTORS,
     APP_TEST_ACC,
     APP_I2C_DETECT,
-    APP_BNO085_CAL,
     APP_ADC_CALIBRATE,
 };
 

@@ -137,7 +137,10 @@ def test_bare_config_has_no_real_pins(tmp_path):
         # chip", not "silence the simulation of one". The old expectation of
         # pub_mag == 0 was the bug: /imu/mag had no publisher, madgwick with a
         # mag waited forever, /imu/data went to 0 Hz and the EKF lost its IMU.
-        assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 0, 0), mcu
+        # The same holds for the barometer (`env: NONE` + use_sim_env) and the
+        # battery (`current: NONE` + use_sim_battery): each is the simulated one,
+        # and pub_* == 0 kept it off the air (2026-09-25).
+        assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 1, 1), mcu
 
 
 def test_mecanum_reference_has_four_motors():

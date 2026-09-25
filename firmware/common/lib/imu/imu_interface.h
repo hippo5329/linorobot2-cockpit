@@ -359,9 +359,6 @@ class IMUInterface
             imu_msg_.orientation_covariance[4] = ori_cov[1];
             imu_msg_.orientation_covariance[8] = ori_cov[2];
 
-#ifdef IMU_TWEAK
-            IMU_TWEAK
-#endif
             return imu_msg_;
         }
 };

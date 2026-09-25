@@ -88,7 +88,7 @@ def test_warn_fires_only_for_adc_calibrate_on_a_dacless_board(capsys):
     flash_mcu.warn_if_app_unsupported("adc_calibrate", "esp32")
     assert capsys.readouterr().out == "", "the classic ESP32 has a DAC; do not warn"
 
-    for app in ("base", "test_sensors", "i2c_detect", "bno085_cal"):
+    for app in ("base", "test_sensors", "i2c_detect", "test_motors"):
         flash_mcu.warn_if_app_unsupported(app, "pico2")
         assert capsys.readouterr().out == "", f"{app} runs on every board"
 

@@ -4,7 +4,7 @@ Design notes and hard-won rules for `firmware/`.
 
 **There is exactly one firmware project: `firmware/`.** The diagnostics are not separate builds any
 more — they are applications inside that image, selected at boot by the `app` key of the env
-partition (`base`, `test_sensors`, `test_motors`, `test_acc`, `i2c_detect`, `bno085_cal`,
+partition (`base`, `test_sensors`, `test_motors`, `test_acc`, `i2c_detect`,
 `adc_calibrate`). Switching between them rewrites 4 KB of flash; it does not rebuild and, on ESP32,
 does not reflash the application at all. Do **not** recreate a per-tool PlatformIO project.
 
@@ -590,14 +590,16 @@ all (`device descriptor read/64, error -110`) and needing a physical BOOTSEL rep
 generates it per run and now pushes it to **every** box of the pair, the build box included; a
 manual `pio run` must do the same by hand.
 
-### The `/cmd_vel` wire contract is decided at BUILD time, so build and launch must be told the same thing
+### The `/cmd_vel` wire contract follows the image's distro, and the env can override it
 nav2 1.4 (kilted) flipped `nav2_util::TwistPublisher` to `TwistStamped`, so **lyrical drives
-`/cmd_vel` stamped and jazzy drives it plain**. The firmware's subscriber type is compiled in behind
-`USE_STAMPED_CMD_VEL`, so this cannot be decided at run time the way pins and transport are (see *The ROS 2 distro is a BUILD property* below).
-
-`stamped_cmd_vel: auto` in a robot config resolves from the distro, and
-`scripts/gen_firmware_header.py --distro <d>` is what resolves it — before this, `auto` fell through
-every truth test and silently meant *off*, so a lyrical image always listened for plain `Twist`.
+`/cmd_vel` stamped and jazzy drives it plain**. Both subscriptions are compiled into every image.
+At boot `main.cpp` picks one from `FW_ROS_DISTRO`, the distro the image was linked for: plain
+through humble, iron and jazzy, stamped after that, the same rule as
+`gen_firmware_header.distro_stamps_cmd_vel`, which a test holds equal. The env key
+`stamped_cmd_vel` overrides it, and `mcu_env.py` writes it only when the config says `true` or
+`false`; `auto` leaves the image's default. Until 2026-09-25 this was the `USE_STAMPED_CMD_VEL`
+macro, and before that `auto` fell through every truth test and silently meant *off*, so a lyrical
+image always listened for plain `Twist`.
 `one_click_pipeline.py` passes the same `--distro` to the header generator, the launcher and the goal
 test. Getting it wrong is invisible: the type hashes differ, nav2 publishes into a topic nothing is
 subscribed to with that type, the robot never moves, and nav2 reports "Failed to make progress" while
@@ -690,8 +692,9 @@ Before `pio run` after a meta change: `rm -rf firmware/.pio/libdeps/<env>/micro_
 then check `grep CUSTOM_TRANSPORT_MTU firmware/.pio/libdeps/<env>/micro_ros_platformio/build/mcu/install/include/uxr/client/config.h`.
 CI and the release build start from a clean tree, so they pick the metas up on their own.
 
-**Default: on for ESP32 / ESP32-S3** (`gen_firmware_header.py` defines `USE_DUAL_CORE` unless the
-config says `use_dual_core: false`; `mcu_env.py` writes `dual_core` only when the config sets it).
+**Default: off; the env key `dual_core` turns it on** (`mcu_env.py` writes it from `use_dual_core`).
+Only ESP32 silicon has the second core (`HAS_DUAL_CORE` in `main.cpp`); an RP2 ignores the key.
+It was the `USE_DUAL_CORE` macro until 2026-09-25.
 It had been switched off by default because of the Wi-Fi hazard above, "for a benefit nobody
 measured"; the benefit is measured now and the hazard is handled at boot, so the serial robot
 gets its best setting without asking for it. Open: in ~2.5 min of dual-core, radio-off
@@ -750,7 +753,8 @@ so on the one operation that can brick an assembled robot. The host builds; the 
 whether the bytes arrive over USB or over the air.
 
 This is **not implemented yet** — nothing in `scripts/` or `web/backend/` invokes `espota`, and the
-firmware side is only `USE_ARDUINO_OTA` plus `telemetry.ota_port` (3232). When it is built, it takes
+firmware side is the OTA responder, compiled in wherever there is a radio (`HAS_WIFI`), plus
+`telemetry.ota_port` (3232). When it is built, it takes
 the same shape as the USB path: the robot computer fetches or builds the image, verifies its
 SHA-256, and runs the uploader against the board itself. Do not add an OTA target to
 the host role, and do not drive it from PlatformIO's `upload` (invariant 6 forbids that for the same
@@ -768,7 +772,47 @@ afternoon's audit (2026-09-19) found, in this repo:
   told 1023 on a 255-wide channel. The limits are now derived from `pwm_bits` on the board.
 - `pins.battery.r1` / `r2` saved by Config Studio for years and read by nothing; the firmware
   used a `BATTERY_ADJUST` macro no file defined, so a config with a battery pin did not build.
-  `battery_pin bat_r1 bat_r2 bat_min bat_max bat_cap` are env keys now, read by `battery.cpp`.
+  `battery_pin bat_r1 bat_r2 bat_min bat_max bat_cap` are env keys now, read by `battery.cpp`;
+  so are `sim_battery` (the simulated pack) and `bat_dip` (the sag detector's threshold).
+
+### /battery is 1 Hz and carries the sag
+The pack is sampled at 10 Hz and published at exactly 1 Hz. The message's voltage is the **lowest**
+reading of that second, which is the sag under load; the percentage, and the voltage
+`rpm_track_voltage` feeds the kinematics, come from a running average. A sample more than `bat_dip`
+percent (default 2, config `pins.battery.dip_pct`) below the average is logged to syslog as a dip,
+at most once a second. Two faults this replaced: the detector sat behind `#ifdef BATTERY_DIP`,
+which nothing defined, so no image had it; and it published an extra message per dip, so the
+topic's rate followed the load.
+
+`sensors.use_sim_battery` is a simulated battery voltage sensor (`battery.cpp`, env `sim_battery`),
+on in every bare robot. Open-circuit voltage falls from `max_v` to `min_v` as the charge drains
+(a 3S 9.9-12.6 V, 5 Ah pack when the config names none). The wheel model's developed pack sag
+divides it under load, so it dips when the simulated robot accelerates. A 0.3 A idle draw stands
+for the electronics, and an empty pack is swapped for a full one, so a soak runs forever.
+`sim_base_node` publishes the same model for the Sim MCU.
+
+### No robot feature is a build macro; only silicon is
+A released image is built per MCU and describes no robot, so every choice a robot makes is an env
+key read at boot. The conditionals left in the firmware name the silicon: `ESP32`,
+`ARDUINO_ARCH_RP2040`, `HAS_WIFI` (a radio: every ESP32, and the W boards via `-D HAS_WIFI`),
+`HAS_DUAL_CORE`, `CONFIG_IDF_TARGET_*` and `ADC_LUT_SUPPORTED`. The rest are the `#ifndef X`
+fallbacks a blank env boots with. Removed on 2026-09-25: `USE_STAMPED_CMD_VEL` (env
+`stamped_cmd_vel`), `USE_DUAL_CORE` (env `dual_core`), `USE_SYSLOG` / `USE_ARDUINO_OTA` /
+`WIFI_AP_LIST` as gates (a radio compiles them in; `syslog_ip`, `ota_port` and `wifi` decide),
+`WIFI_MONITOR` (env `wifi_monitor`, minutes, default 2), `USE_WIFI_TRANSPORT`, `USE_LIDAR_UDP`,
+`USE_<driver>_MOTOR_DRIVER`, `ENV_COV` (env `env_cov`), the `IMU_TWEAK` / `MAG_TWEAK` hooks, the
+legacy `MAG` fallback, and `BATTERY_DIP`.
+
+Where an external library did something trivial, the firmware does it itself now: syslog (one UDP
+datagram in the same RFC 5424 form), the INA219 (config `0x1807`, shunt/bus reads, current = shunt
+voltage / 0.01 ohm), the QMC5883L (two register writes and a 6-byte read), and the i2cdetect grid
+(`i2cScanTable()` in `i2c_probe`). The QMC5883L library spun forever on its data-ready bit, so a
+silent chip hung the control loop. It, and ten other sensor drivers, also called `Wire.begin()` in
+`startSensor()`, which on an RP2 reset the bus clock `initBoard()` had set from the env. Adafruit
+BusIO, the Adafruit PWM Servo Driver and I2Cdevlib-HMC5843 were listed and never used. The
+I2Cdevlib core and its drivers stay: the vendored MPU9250/AK8963 code is built on it. The
+`bno085_cal` tool is gone: it only tared a BNO085 (a mower's level reference), and the orientation
+this stack fuses needs no tare.
 - The LiDAR emulator was a build macro only (`USE_SIM_LD19`). A prebuilt image is built from
   a simulation-mode reference, so every real robot that flashed it raycast a room and streamed it.
   `sim_ld19=0` in the env (from `sensors.use_sim_ld19`) switches it off; `lidar_x` tells it
@@ -1160,7 +1204,7 @@ cannot fragment anything. What moved:
 | `topicName()` arena | 640 B of `.bss` | `malloc` on the first *prefixed* name; nothing when `topic_prefix` is unset |
 | `SimLD19 sim_ld19` | a static instance | `new` only when `sim_lidar_on` |
 | the micro-ROS messages, executor and `Odometry` | static objects | allocated in `setup()` under `if (micro_ros)`, `rclErrorLoop()` if the allocation fails |
-| `test_sensors`, `test_acc`, `bno085_cal` working sets | file-scope buffers and driver objects | `calloc` / `new` in each tool's `setup_()`, with a null guard in `loop_()` |
+| `test_sensors`, `test_acc` working sets | file-scope buffers and driver objects | `calloc` / `new` in each tool's `setup_()`, with a null guard in `loop_()` |
 
 That took `esp32_lyrical` from **96 bytes over** to **4,148 bytes of margin**
 (120,432 of 124,580 used, as the `rc-20260922` release build reports it), and

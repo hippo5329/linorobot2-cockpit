@@ -25,7 +25,6 @@
 #include "AK8963.h"
 #include "AK8975.h"
 #include "AK09918.h"
-#include "QMC5883L.h"
 
 class HMC5883LMAG: public MAGInterface
 {
@@ -47,7 +46,8 @@ class HMC5883LMAG: public MAGInterface
         {
             // here you can override startSensor() function and use the sensor's driver API
             // to initialize and test the sensor's connection during boot time
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             magnetometer_.initialize();
             ret = magnetometer_.testConnection();
@@ -93,7 +93,8 @@ class AK8963MAG: public MAGInterface
         {
             // here you can override startSensor() function and use the sensor's driver API
             // to initialize and test the sensor's connection during boot time
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             magnetometer_.initialize();
             ret = magnetometer_.testConnection();
@@ -139,7 +140,8 @@ class AK8975MAG: public MAGInterface
         {
             // here you can override startSensor() function and use the sensor's driver API
             // to initialize and test the sensor's connection during boot time
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             magnetometer_.initialize();
             ret = magnetometer_.testConnection();
@@ -185,7 +187,8 @@ class AK09918MAG: public MAGInterface
         {
             // here you can override startSensor() function and use the sensor's driver API
             // to initialize and test the sensor's connection during boot time
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             bool ret;
             ret = magnetometer_.initialize();
             if (ret)
@@ -210,46 +213,62 @@ class AK09918MAG: public MAGInterface
         }
 };
 
+// QMC5883L at 0x0D, register by register -- our own, replacing dthain/QMC5883L,
+// which was two register writes and a 6-byte read. Programmed as before: 512x
+// oversampling, +/-2 G, 200 Hz, continuous (config 0x0D), set/reset period 1.
+// Two things the library did that a robot must not: its readRaw() spun on the
+// data-ready bit with no timeout, so a chip that stopped answering hung the
+// 50 Hz control loop for good; and startSensor() called Wire.begin(), which
+// re-opened I2C on the core's default pins over the ones initBoard() took from
+// the env.
 class QMC5883LMAG: public MAGInterface
 {
     private:
-        //constants specific to the sensor
-
-        // driver objects to be used
-        QMC5883L compass;
-
-        // returned vector for sensor reading
+        static const uint8_t ADDR = 0x0D;
         geometry_msgs__msg__Vector3 mag_;
+
+        static bool writeReg(uint8_t reg, uint8_t v)
+        {
+            Wire.beginTransmission(ADDR);
+            Wire.write(reg);
+            Wire.write(v);
+            return Wire.endTransmission() == 0;
+        }
 
     public:
         QMC5883LMAG()
         {
+            mag_.x = mag_.y = mag_.z = 0.0;
         }
 
         bool startSensor() override
         {
-            // here you can override startSensor() function and use the sensor's driver API
-            // to initialize and test the sensor's connection during boot time
-            Wire.begin();
-            compass.init();
-            compass.setSamplingRate(200);
-            compass.setRange(2);
-            compass.setOversampling(512);
-
-            return true;
+            // The bus is already up (initBoard(), env pins).
+            return writeReg(0x0B, 0x01) && writeReg(0x09, 0x0D);
         }
 
         geometry_msgs__msg__Vector3 readMagnetometer() override
         {
-            // here you can override readMagnetometer function and use the sensor's driver API
-            // to grab the data from magnetometer and return as a Vector3 object
-            int16_t ax, ay, az, tt;
-
-            compass.readRaw(&ax, &ay, &az, &tt); 
-            mag_.x = ax * 0.0001 / 12000;
-            mag_.y = ay * 0.0001 / 12000;
-            mag_.z = az * 0.0001 / 12000;
-
+            // Data ready? Asked once: not ready means the last reading stands.
+            Wire.beginTransmission(ADDR);
+            Wire.write(0x06);
+            if (Wire.endTransmission(false) != 0 || Wire.requestFrom((int)ADDR, 1) != 1)
+                return mag_;
+            if (!(Wire.read() & 0x01))
+                return mag_;
+            Wire.beginTransmission(ADDR);
+            Wire.write(0x00);
+            if (Wire.endTransmission(false) != 0 || Wire.requestFrom((int)ADDR, 6) != 6)
+                return mag_;
+            int16_t v[3];
+            for (int i = 0; i < 3; i++) {
+                const uint8_t lo = Wire.read();
+                v[i] = (int16_t)((uint16_t)Wire.read() << 8 | lo);
+            }
+            // 12000 LSB per gauss at +/-2 G; 1 G = 1e-4 T.
+            mag_.x = v[0] * 0.0001 / 12000;
+            mag_.y = v[1] * 0.0001 / 12000;
+            mag_.z = v[2] * 0.0001 / 12000;
             return mag_;
         }
 };
@@ -283,7 +302,8 @@ class ICM20948MAG: public MAGInterface
 
         bool startSensor() override
         {
-            Wire.begin();
+            // The bus is initBoard()'s (env pins and clock); a second
+            // Wire.begin() here reset an RP2's clock to the core default.
             if (r8(0x01) != 0x09)   // WIA2 (AK09916 device id)
                 return false;
             w8(0x31, 0x08);         // CNTL2: continuous measurement mode 100 Hz

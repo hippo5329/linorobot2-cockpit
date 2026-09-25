@@ -595,6 +595,19 @@ private:
     }
 
 public:
+    // The shared pack, read by the simulated battery (battery.cpp, env
+    // `sim_battery`) so /battery sags under the same load that slows the
+    // wheels: the divisor the developed sag puts on the open-circuit voltage,
+    // and the current the four wheels draw.
+    static float packSagDivisor() { return 1.0f + simBattSag() * sagState(); }
+    static float packLoadAmps()
+    {
+        float frac = 0.0f;
+        for (int i = 0; i < 4; i++)
+            if (demand()[i] > 0.0f) frac += demand()[i];
+        return frac * simMotorStallA();
+    }
+
     SimEncoder(int pin1, int pin2, int counts_per_rev, bool invert = false)
     {
         // Which wheel this is, in construction order, so the shared pack can be

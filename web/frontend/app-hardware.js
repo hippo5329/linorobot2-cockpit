@@ -45,11 +45,13 @@ async function loadHardwareConfig() {
     const pins = tgt.pins || {};
 
     // 1. Base & MCU
+    // The selects list silicon; a config may name its board (gendrv, yb_eet01).
+    loadedControllerName = data.controller || "pico2";
     const elMcu = document.getElementById("cfg-mcu");
-    if (elMcu) elMcu.value = data.controller || "pico2";
+    if (elMcu) elMcu.value = siliconOf(loadedControllerName);
 
     const elHwEnv = document.getElementById("hw-flash-env");
-    if (elHwEnv) elHwEnv.value = data.controller || "pico2";
+    if (elHwEnv) elHwEnv.value = siliconOf(loadedControllerName);
 
     initAdcChart();
   initWiringTable();
@@ -174,6 +176,8 @@ async function loadHardwareConfig() {
     if (elBatMax && bat.max_v !== undefined) elBatMax.value = bat.max_v;
     const elBatCap = document.getElementById("cfg-bat-cap");
     if (elBatCap && bat.capacity_ah !== undefined) elBatCap.value = bat.capacity_ah;
+    const elBatDip = document.getElementById("cfg-bat-dip");
+    if (elBatDip) elBatDip.value = bat.dip_pct !== undefined ? bat.dip_pct : 2;
     // Nominal pack voltage and the ADC filter capacitor: shown for years,
     // saved by nothing, so they reverted on every reload.
     const elBatNom = document.getElementById("cfg-bat-nom");
@@ -191,7 +195,9 @@ async function loadHardwareConfig() {
     });
 
     const elEnv = document.getElementById("cfg-env");
-    if (elEnv) elEnv.value = sensors.env || "NONE";
+    // AUTO when the config says nothing: the barometer is in every image and
+    // found on the bus at boot. NONE is an explicit "never publish".
+    if (elEnv) elEnv.value = sensors.env ? String(sensors.env).toUpperCase() : "AUTO";
 
     const chkSimImu = document.getElementById("chk-sim-imu");
     if (chkSimImu) chkSimImu.checked = !!sensors.use_sim_imu;
@@ -203,6 +209,12 @@ async function loadHardwareConfig() {
     if (chkSimLd19) chkSimLd19.checked = !!sensors.use_sim_ld19;
     const chkSimEnv = document.getElementById("chk-sim-env");
     if (chkSimEnv) chkSimEnv.checked = !!sensors.use_sim_env;
+    // Absent means on, as mcu_env reads it: the cone exists whenever the
+    // simulated LiDAR does, unless the config turns it off.
+    const chkSimSonar = document.getElementById("chk-sim-sonar");
+    if (chkSimSonar) chkSimSonar.checked = sensors.use_sim_sonar !== false;
+    const chkSimBattery = document.getElementById("chk-sim-battery");
+    if (chkSimBattery) chkSimBattery.checked = !!sensors.use_sim_battery;
 
     // 4. Pin Matrix
     const elLed = document.getElementById("pin-led");
@@ -737,7 +749,9 @@ function updateMotorPinVisibility() {
 }
 
 function autoAssignPins() {
-  const mcu = (document.getElementById("cfg-mcu")?.value || "pico2").toLowerCase();
+  // A board name checks as its silicon: the Yahboom YB-EET01 is an ESP32-S3.
+  const mcuSel = (document.getElementById("cfg-mcu")?.value || "pico2").toLowerCase();
+  const mcu = mcuSel === "yb_eet01" ? "esp32s3" : mcuSel;
   const kine = document.getElementById("cfg-kinematics")?.value || "2wd";
   const is4wd = (kine === "4wd" || kine === "mecanum");
 
@@ -839,7 +853,9 @@ function autoAssignPins() {
 }
 
 function validateHardwareSafety() {
-  const mcu = (document.getElementById("cfg-mcu")?.value || "pico2").toLowerCase();
+  // A board name checks as its silicon: the Yahboom YB-EET01 is an ESP32-S3.
+  const mcuSel = (document.getElementById("cfg-mcu")?.value || "pico2").toLowerCase();
+  const mcu = mcuSel === "yb_eet01" ? "esp32s3" : mcuSel;
   const kine = document.getElementById("cfg-kinematics")?.value || "2wd";
   const is4wd = (kine === "4wd" || kine === "mecanum");
 
@@ -916,11 +932,16 @@ function validateHardwareSafety() {
   checkPin("pin-sonar-trig", "Sonar Trig", true);
   checkPin("pin-sonar-echo", "Sonar Echo", false);
 
-  // Duplicate pin check
+  // Duplicate pin check. One pin, one job -- except a shared enable line on a
+  // two-PWM driver (BTS7960 type), which is the same job on several motors:
+  // the firmware holds it HIGH once per motor, which is idempotent. The same
+  // rule as scripts/pin_catalog.py, so the page and the flash agree:
+  // pico2_mecanum enables all four bridges from GP22 and was flagged here.
+  const drvType = document.getElementById("cfg-driver-type")?.value || "";
   for (const [pin, names] of Object.entries(assigned)) {
-    if (names.length > 1) {
-      errors.push(`GPIO Pin ${pin} is assigned to multiple devices: ${names.join(", ")}`);
-    }
+    if (names.length < 2) continue;
+    if (drvType === "BTS7960" && names.every((n) => /^Motor \d PWM$/.test(n))) continue;
+    errors.push(`GPIO Pin ${pin} is assigned to multiple devices: ${names.join(", ")}`);
   }
 
   // Update UI card
@@ -976,7 +997,7 @@ function syncSonarFields() {
 }
 
 async function saveCurrentHardwareConfig() {
-  const activeController = document.getElementById("cfg-mcu")?.value || "pico2";
+  const activeController = controllerForSave(document.getElementById("cfg-mcu")?.value || "pico2");
   const kineType = document.getElementById("cfg-kinematics")?.value || "2wd";
   const driverType = document.getElementById("cfg-driver-type")?.value || "GENERIC_2_IN";
   const baudrate = parseInt(document.getElementById("cfg-baudrate")?.value || 921600, 10);
@@ -993,23 +1014,25 @@ async function saveCurrentHardwareConfig() {
 
   const is4wd = (kineType === "4wd" || kineType === "mecanum");
 
-  // Motor 1
-  const m1_pwm = driverType === "BTS7960" ? -1 : parsePin("pin-m1-p1", -1);
+  // Motor 1. On a two-PWM driver (BTS7960 type) `pwm` is the ENABLE line,
+  // shown as "EN" -- it used to be saved as -1 here, so pressing Save on
+  // pico2_mecanum (GP22) or the GenDrv (GPIO 25/26) disabled every motor.
+  const m1_pwm = parsePin("pin-m1-p1", -1);
   const m1_ina = driverType === "ESC" ? -1 : parsePin("pin-m1-p2", -1);
   const m1_inb = (driverType === "GENERIC_1_IN" || driverType === "ESC") ? -1 : parsePin("pin-m1-p3", -1);
 
   // Motor 2
-  const m2_pwm = driverType === "BTS7960" ? -1 : parsePin("pin-m2-p1", -1);
+  const m2_pwm = parsePin("pin-m2-p1", -1);
   const m2_ina = driverType === "ESC" ? -1 : parsePin("pin-m2-p2", -1);
   const m2_inb = (driverType === "GENERIC_1_IN" || driverType === "ESC") ? -1 : parsePin("pin-m2-p3", -1);
 
   // Motor 3 (unused if !is4wd)
-  const m3_pwm = (!is4wd || driverType === "BTS7960") ? -1 : parsePin("pin-m3-p1", -1);
+  const m3_pwm = !is4wd ? -1 : parsePin("pin-m3-p1", -1);
   const m3_ina = (!is4wd || driverType === "ESC") ? -1 : parsePin("pin-m3-p2", -1);
   const m3_inb = (!is4wd || driverType === "GENERIC_1_IN" || driverType === "ESC") ? -1 : parsePin("pin-m3-p3", -1);
 
   // Motor 4 (unused if !is4wd)
-  const m4_pwm = (!is4wd || driverType === "BTS7960") ? -1 : parsePin("pin-m4-p1", -1);
+  const m4_pwm = !is4wd ? -1 : parsePin("pin-m4-p1", -1);
   const m4_ina = (!is4wd || driverType === "ESC") ? -1 : parsePin("pin-m4-p2", -1);
   const m4_inb = (!is4wd || driverType === "GENERIC_1_IN" || driverType === "ESC") ? -1 : parsePin("pin-m4-p3", -1);
 
@@ -1057,12 +1080,14 @@ async function saveCurrentHardwareConfig() {
       imu: document.getElementById("cfg-imu")?.value || "NONE",
       mag: document.getElementById("cfg-mag")?.value || "NONE",
       current: document.getElementById("cfg-battery")?.value || "NONE",
-      env: document.getElementById("cfg-env")?.value || "NONE",
+      env: document.getElementById("cfg-env")?.value || "AUTO",
       use_sim_imu: !!document.getElementById("chk-sim-imu")?.checked,
       use_sim_mag: !!document.getElementById("chk-sim-mag")?.checked,
       use_sim_wheel: !!document.getElementById("chk-sim-wheel")?.checked,
       use_sim_ld19: !!document.getElementById("chk-sim-ld19")?.checked,
       use_sim_env: !!document.getElementById("chk-sim-env")?.checked,
+      use_sim_sonar: !!document.getElementById("chk-sim-sonar")?.checked,
+      use_sim_battery: !!document.getElementById("chk-sim-battery")?.checked,
     },
     pins: {
       led: parsePin("pin-led", -1),
@@ -1121,6 +1146,7 @@ async function saveCurrentHardwareConfig() {
         min_v: parseFloat(document.getElementById("cfg-bat-min")?.value || 0),
         max_v: parseFloat(document.getElementById("cfg-bat-max")?.value || 0),
         capacity_ah: parseFloat(document.getElementById("cfg-bat-cap")?.value || 0),
+        dip_pct: parseFloat(document.getElementById("cfg-bat-dip")?.value || 2),
         nominal_v: parseFloat(document.getElementById("cfg-bat-nom")?.value || 0),
         filter_cap_pf: parseFloat(document.getElementById("cfg-bat-cap-val")?.value || 0),
       },

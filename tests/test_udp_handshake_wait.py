@@ -35,7 +35,7 @@ def test_the_handshake_wait_is_not_a_constant():
 
 def test_udp_gets_materially_longer_than_serial():
     block = _handshake_block()
-    m = re.search(r"handshake_wait = (\d+) if transport\.startswith\(\"serial\"\) else (\d+)", block)
+    m = re.search(r"handshake_wait = (\d+) if \(sim_mcu or transport\.startswith\(\"serial\"\)\) else (\d+)", block)
     assert m, "the serial/udp split is gone"
     serial_s, udp_s = int(m.group(1)), int(m.group(2))
     # The measured first-contact was 31.8 s; anything at or under that is a gate

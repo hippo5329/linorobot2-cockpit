@@ -379,10 +379,8 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         "",
         f"// --- Robot Base Kinematics ---",
         f"#define LINO_BASE {base_macro}",
-        f"#define USE_{driver}_MOTOR_DRIVER",
-        "// The same two facts as strings, for the env. The macros above still",
-        "// drive the compile-time paths; these are what createKinematics() and",
-        "// createMotor() fall back to when the env partition says nothing, so a",
+        "// The motor driver and base as strings, for the env: what createKinematics()",
+        "// and createMotor() fall back to when the env partition says nothing, so a",
         "// board with a blank env is wired exactly as this config describes.",
         f'#define KINEMATICS_BASE_DEFAULT "{base_macro.lower()}"',
         f'#define MOTOR_DRIVER_DEFAULT "{_driver_env_name(driver)}"',
@@ -643,6 +641,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         f"#define SIM_MAG_DEFAULT {'true' if sensors.get('use_sim_mag', False) else 'false'}",
         f"#define SIM_WHEEL_DEFAULT {'true' if sensors.get('use_sim_wheel', False) else 'false'}",
         f"#define SIM_ENV_DEFAULT {'true' if sensors.get('use_sim_env', False) else 'false'}",
+        f"#define SIM_BATTERY_DEFAULT {'true' if sensors.get('use_sim_battery', False) else 'false'}",
     ])
 
     # The MCU-side simulated scan and the host-side one are separate things. Bringup
@@ -792,21 +791,12 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             "// and it is empty when the header was generated with",
             "// --no-embed-secrets (which is how firmware/prebuilt is built).",
             '#include "mcu_env.h"',
-            "// No USE_MCU_ENV gate: an image that cannot read its env partition",
-            "// cannot be configured, and configuration is what the partition is.",
-            "#ifndef USE_STAY_CONNECTED",
-            "#define USE_STAY_CONNECTED",
-            "#endif",
-            # On ESP32 the header is the only thing that can say "this board has
-            # a radio"; on RP2 the W envs say it with a build flag, and emitting
-            # it here would switch the Wi-Fi code on for a plain pico/pico2
-            # build that has no WiFi.h to compile against.
-            *(["#ifndef USE_WIFI", "#define USE_WIFI", "#endif"]
-              if mcu.startswith("esp32") else []),
+            # Whether the image has a radio is the silicon's (HAS_WIFI,
+            # firmware/include/config.h); whether a robot uses it is the env.
+            # Only the fallback credentials live here.
             ("#define WIFI_AP_LIST {{NULL, NULL}}"
              if no_embed_secrets else
              f'#define WIFI_AP_LIST {{{{"{ssid}", "{password}"}}, {{NULL, NULL}}}}'),
-            "#define WIFI_MONITOR 2  // Send RSSI to syslog every 2 min",
             "",
         ])
 
@@ -823,11 +813,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             octets = [192, 168, 1, 10]
 
         lines.extend([
-            "// --- micro-ROS Wi-Fi UDP Transport ---",
-            "#ifndef MICRO_ROS_TRANSPORT_ARDUINO_WIFI",
-            "#define MICRO_ROS_TRANSPORT_ARDUINO_WIFI",
-            "#endif",
-            "#define USE_WIFI_TRANSPORT",
+            "// --- micro-ROS Wi-Fi UDP Transport (fallback address; env `transport` decides) ---",
             '#define AGENT_IP   envIP("agent_ip", AGENT_IP_DEFAULT)',
             '#define AGENT_PORT envU16("agent_port", AGENT_PORT_DEFAULT)',
             "",
@@ -863,8 +849,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             sys_octets = [192, 168, 1, 10]
 
         lines.extend([
-            "// --- Syslog Remote UDP Telemetry ---",
-            "#define USE_SYSLOG",
+            "// --- Syslog Remote UDP Telemetry (fallback sink; env `syslog_ip` decides) ---",
             f"#define SYSLOG_SERVER IPAddress({sys_octets[0]}, {sys_octets[1]}, {sys_octets[2]}, {sys_octets[3]})",
             f"#define SYSLOG_PORT {syslog_port}",
             "// initSyslog() overrides both from the env partition at run time.",
@@ -876,17 +861,8 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
             "",
         ])
 
-    # ArduinoOTA Wireless Firmware Flashing
-    # Same rule: a radio-capable MCU gets the OTA responder compiled in, and the
-    # `ota_port` env key is what turns it on for a given robot.
-    use_ota = wifi_capable or has_wifi
-    if use_ota:
-        lines.extend([
-            "// --- ArduinoOTA Wireless Firmware Flashing ---",
-            "#define USE_ARDUINO_OTA",
-            "",
-        ])
-
+    # ArduinoOTA: compiled in wherever there is a radio (HAS_WIFI); the
+    # `ota_port` env key and the radio being wanted decide whether it runs.
 
     # LiDAR UDP Streaming.
     #
@@ -910,8 +886,6 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         # which is lidar.cpp's path and is already gated `&& !USE_SIM_LD19`.
         # The emulator's UDP sink must not depend on it, or the transport goes
         # back to being a property of the build.
-        if lidar.get("comm_mode") in ("udp", "udp_server") and not mcu_sim_ld19:
-            lines.append("#define USE_LIDAR_UDP")
         lines.extend([
             f"#define LIDAR_SERVER_DEFAULT IPAddress({srv_octets[0]}, {srv_octets[1]}, {srv_octets[2]}, {srv_octets[3]})",
             f"#define LIDAR_PORT_DEFAULT {lidar_port}",
@@ -942,12 +916,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     # still wants it says `use_dual_core: true`. Only esp32/esp32s3 can: the
     # implementation is FreeRTOS `xTaskCreatePinnedToCore` under
     # `#if defined(ESP32)`, so RP2040/RP2350 have no port and never did.
-    if tgt.get("mcu", "").lower() in ("esp32", "esp32s3") and tgt.get("use_dual_core", False):
-        lines.extend([
-            "// --- FreeRTOS Dual-Core Architecture ---",
-            "#define USE_DUAL_CORE  // moveBase() on core 0; ignored at boot when the radio is on",
-            "",
-        ])
+    # Now the env key `dual_core` (mcu_env, from use_dual_core); no macro.
 
     # Stamped cmd_vel Support (geometry_msgs/msg/TwistStamped)
     #
@@ -969,15 +938,9 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     #
     # Before this, `auto` fell through every truth test and meant "off", so a
     # lyrical image always listened for plain Twist.
-    stamped_cmd = tgt.get("stamped_cmd_vel", kine.get("stamped_cmd_vel", "auto"))
-    if str(stamped_cmd).lower() in ("auto", ""):
-        stamped_cmd = distro_stamps_cmd_vel(distro)
-    if stamped_cmd is True or str(stamped_cmd).lower() in ("true", "1", "yes"):
-        lines.extend([
-            "// --- Stamped cmd_vel Support (geometry_msgs/msg/TwistStamped) ---",
-            "#define USE_STAMPED_CMD_VEL  // Enable geometry_msgs/msg/TwistStamped subscription",
-            "",
-        ])
+    # Now the env key `stamped_cmd_vel` (mcu_env, when the config says true or
+    # false); `auto` is the firmware's own default, from the distro it was
+    # built for (main.cpp) -- the same rule as distro_stamps_cmd_vel().
 
     lines.extend([
         "#endif // LINO_BASE_CONFIG_H",
@@ -1032,6 +995,7 @@ def bare_mcu_params(mcu: str) -> dict:
                 "use_sim_mag": True,
                 "use_sim_wheel": True,
                 "use_sim_env": True,
+                "use_sim_battery": True,
                 "use_sim_ld19": True,
             },
             "pins": {

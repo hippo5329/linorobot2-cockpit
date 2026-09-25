@@ -31,7 +31,6 @@ struct I2CDevice {
     const char *category;  // "imu", "mag", "current", "env", "unknown"
     const char *model;     // "QMI8658", "AK09918", ... "?" when unidentified
     const char *driver;    // sensor_factory name ("qmi8658"), "" if none
-    const char *macro;     // legacy USE_* macro, for the Web UI's config studio
     const char *desc;
 };
 
@@ -67,5 +66,7 @@ void i2cProbePrint(const I2CDevice *devs, int count);
 // so a tool cannot disagree with the firmware it is diagnosing about what is
 // fitted. The pointers may be NULL.
 void i2cProbeSelect(const char **imu_name, const char **mag_name);
+// The i2cdetect-style address grid, for the diagnostic tools.
+void i2cScanTable(void);
 
 #endif // I2C_PROBE_H

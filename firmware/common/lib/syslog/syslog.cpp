@@ -1,58 +1,62 @@
 #include <Arduino.h>
 #include "config.h"
+#include "syslog.h"
 
-// Needs the radio: syslog is UDP. USE_SYSLOG says the config wants
-// remote logging; USE_WIFI says this image has something to send it over.
-#if defined(USE_SYSLOG) && defined(USE_WIFI)
+#if defined(HAS_WIFI)
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <Syslog.h>
+#include <stdarg.h>
 #include "mcu_env.h"
 
-// Declared, not #included. syslog.h is included BY wifis.cpp, so including
-// wifis.h here makes the `wifi` and `syslog` libraries mutually dependent, and
-// PlatformIO's LDF (chain mode on the ESP32 bases) then fails to put the
-// third-party Syslog library on the wifi library's include path:
-//
-//   common/lib/wifi/ota.cpp:16 -> common/lib/syslog/syslog.h:4
-//   fatal error: Syslog.h: No such file or directory
-//
-// One declaration costs nothing and keeps the two libraries a DAG.
+// Declared, not #included: syslog.h is included BY wifis.cpp, and a cycle
+// between the two libraries confuses PlatformIO's LDF.
 bool wifiWanted(void);
+
+#ifndef SYSLOG_SERVER
+#define SYSLOG_SERVER IPAddress(0, 0, 0, 0)
+#endif
+#ifndef SYSLOG_PORT
+#define SYSLOG_PORT 5140
+#endif
 #ifndef DEVICE_HOSTNAME
 #define DEVICE_HOSTNAME "linorobot2"
 #endif
 #ifndef APP_NAME
 #define APP_NAME "hardware"
 #endif
-WiFiUDP udpClient;
-Syslog syslogv(udpClient, SYSLOG_SERVER, SYSLOG_PORT, DEVICE_HOSTNAME, APP_NAME, LOG_KERN);
-void initSyslog(void) {
+
+static WiFiUDP s_udp;
+static IPAddress s_ip;
+static uint16_t s_port = 0;
+
+void initSyslog(void)
+{
   initMcuEnv();
-  syslogv.server(envIP("syslog_ip", SYSLOG_SERVER), envU16("syslog_port", SYSLOG_PORT));
+  s_ip = envIP("syslog_ip", SYSLOG_SERVER);
+  s_port = envU16("syslog_port", SYSLOG_PORT);
 }
 
-void syslog(uint16_t priority, const char *fmt, ...) {
-  // No radio, no log. syslogv.vlogf() ends in WiFiUDP::beginPacket(), which
-  // calls into lwIP -- and lwIP has no tcpip thread until the Wi-Fi stack
-  // starts one. On a serial robot with the radio off that is not a dropped log
-  // line, it is `assert failed: tcpip_send_msg_wait_sem ... (Invalid mbox)`,
-  // an abort, and a boot loop.
-  //
-  // Measured on the GenDrv bench: the board dies in i2cProbeSelect's "INA219
-  // detected" log, three lines after the I2C table it just printed, and the
-  // only symptom upstream of the serial console is a micro-ROS session that
-  // never appears.
+void syslog(uint16_t priority, const char *fmt, ...)
+{
+  // No radio, no log. A UDP send ends in lwIP, which has no tcpip thread until
+  // the Wi-Fi stack starts one: on a serial robot with the radio off that is an
+  // abort and a boot loop, not a dropped line (measured on the GenDrv bench).
   // wifiWanted() first: WiFi.status() is itself a call into the CYW43 driver,
-  // and syslog() runs throughout setup(). On a W image running on a non-W
-  // board with no AP list, asking the radio its status is exactly the thing
-  // that must not happen. wifiWanted() is false there and this returns without
-  // touching it. (It is cheap: one env lookup, and the env is cached.)
+  // which must not happen on a W image running on a non-W board.
   if (!wifiWanted() || WiFi.status() != WL_CONNECTED)
     return;
+  if (s_port == 0 || s_ip == IPAddress(0, 0, 0, 0))
+    return;
+  if ((priority & 0x03f8) == 0)
+    priority |= LOG_KERN;
+  char msg[192];
   va_list args;
   va_start(args, fmt);
-  syslogv.vlogf(priority, fmt, args);
+  vsnprintf(msg, sizeof(msg), fmt, args);
   va_end(args);
-};
+  if (!s_udp.beginPacket(s_ip, s_port))
+    return;
+  s_udp.printf("<%u>1 - %s %s - - - \xEF\xBB\xBF%s", (unsigned)priority, DEVICE_HOSTNAME, APP_NAME, msg);
+  s_udp.endPacket();
+}
 #endif

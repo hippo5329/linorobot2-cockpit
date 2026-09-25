@@ -18,7 +18,11 @@
 #include "mcu_env.h"
 #include <string.h>
 
-#if defined(WIFI_AP_LIST) && defined(USE_WIFI)
+#ifndef WIFI_DEFAULT_ENABLED
+#define WIFI_DEFAULT_ENABLED 0   // the env key `wifi` decides; this is a blank board's answer
+#endif
+
+#if defined(HAS_WIFI)
 #include <WiFi.h>
 #include <WiFiMulti.h>
 // How long setup() waits for the AP before carrying on without it, and how
@@ -36,6 +40,11 @@
   if (millis() - init > MS) { X; init = millis();} \
 } while (0)
 
+// A compiled AP list is only the fallback for a board whose env was never
+// written; released images carry none (the credentials are in the env).
+#ifndef WIFI_AP_LIST
+#define WIFI_AP_LIST {{NULL, NULL}}
+#endif
 const char *wifi_ap_list[][2] = WIFI_AP_LIST;
 WiFiMulti wifiMulti;
 
@@ -71,11 +80,7 @@ bool wifiWanted(void)
     if (!haveApList())
         return false;
 
-#ifdef WIFI_DEFAULT_ENABLED
     return envU16("wifi", WIFI_DEFAULT_ENABLED) != 0;
-#else
-    return envU16("wifi", 0) != 0;
-#endif
 }
 
 void initWifis(void)
@@ -173,10 +178,11 @@ void runWifis(void)
     if (!wanted)
         return;
 
-#ifdef WIFI_MONITOR
-    EXECUTE_EVERY_N_MS(WIFI_MONITOR * 60 * 1000, syslog(LOG_INFO, "%s ssid %s rssi %d", \
+    // The link's health to syslog every `wifi_monitor` minutes (env; 0 = off).
+    static const uint16_t monitor_min = envU16("wifi_monitor", 2);
+    if (monitor_min)
+    EXECUTE_EVERY_N_MS(monitor_min * 60UL * 1000UL, syslog(LOG_INFO, "%s ssid %s rssi %d", \
 							__FUNCTION__, WiFi.SSID(), WiFi.RSSI()));
-#endif
 #ifdef PICO // WiFi.BSSID api is different
     // when wifi signal is too weak, disconnect current ap and scan for strongest signal
     EXECUTE_EVERY_N_MS(2000, (WiFi.RSSI() < LOW_RSSI && (bssid = WiFi.BSSID(bssidv), memcmp(dis_bssid, bssid, 6))) ? \
@@ -198,4 +204,4 @@ void runWifis(void)
         EXECUTE_EVERY_N_MS(WIFI_RETRY_INTERVAL_MS, wifiMulti.run());
     }
 }
-#endif // WIFI_AP_LIST
+#endif // HAS_WIFI

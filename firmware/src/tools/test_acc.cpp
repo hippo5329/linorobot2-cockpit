@@ -16,7 +16,7 @@
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
 #include <stdio.h>
-#include <i2cdetect.h>
+#include "i2c_probe.h"
 
 #include <nav_msgs/msg/odometry.h>
 #include <sensor_msgs/msg/imu.h>
@@ -148,7 +148,7 @@ void setup_()
     initWifis();
     initOta();
 
-    i2cdetect();
+    i2cScanTable();
 
     // The same probe and the same adoption rule the robot firmware uses, so this
     // tool and `base` can never disagree about what is fitted.

@@ -104,6 +104,12 @@ If the robot and the board disagree, the run stops before writing anything and s
 (`MCU MISMATCH`) — it will not flash an RP2350 image onto an RP2040. Pick the matching
 robot, or edit `base_controller.name` in the config, and press Start again.
 
+**No board yet?** Pick **Sim MCU** as the base controller and the same run works with nothing
+plugged in: `sim_base_node` stands in for the board on the robot computer, and nothing is built
+or flashed. When no board is detected at all, the cockpit warns (*No MCU board detected*) and
+switches to the Sim MCU itself; a choice you make yourself is never overridden. Boards such as
+the Waveshare GenDrv and the Yahboom YB-EET01 are Reference Designs listed under their MCU.
+
 A few minutes later (about five on a bare board) the map appears in the **Map Viewer** tab
 and is saved under `maps/`. What happened: the cockpit stopped anything a previous run left
 running, fetched the release firmware for your board, asked the board what it was running,
@@ -168,7 +174,7 @@ python3 scripts/one_click_pipeline.py --controller gendrv --firmware prebuilt --
 subscribes to `/cmd_vel`, drives the wheels with PID, and publishes `/odom/unfiltered`,
 `/imu/data` and, in simulation mode, a LiDAR scan. One image per board carries the robot firmware
 *and* every diagnostic application (`test_sensors`, `test_motors`, `test_acc`, `i2c_detect`,
-`bno085_cal`, `adc_calibrate`); which one boots is a key in a 4 KB `env` flash block, not a
+`adc_calibrate`); which one boots is a key in a 4 KB `env` flash block, not a
 build.
 
 **The robot computer** runs the ROS 2 side: `robot_localization` fuses odometry and IMU into

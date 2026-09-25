@@ -5,9 +5,9 @@
 // The INA219 is compiled in unconditionally and detected at boot, exactly like
 // the IMU and the magnetometer. A released image is built for an MCU, not for a
 // robot, so "does this robot meter its own power" cannot be a macro -- it is
-// whether the chip answered 0x42 on the bus. ina219.init() returns false when
+// whether the chip answered 0x42 on the bus. The config write fails when
 // it did not, and batteryPresent() is then the only gate.
-#include <INA219_WE.h>
+#include <Wire.h>
 #include <stdlib.h>
 #include "mcu_env.h"
 // ESP32/S2 only in substance: adc_lut.h compiles to stubs everywhere else, so
@@ -31,8 +31,31 @@ static int   bat_pin = -1;
 static float bat_r1 = 0.0f, bat_r2 = 1.0f;
 static float bat_min = 0.0f, bat_max = 0.0f, bat_cap = 0.0f;
 
+// The INA219, register by register -- our own, replacing INA219_WE: a config
+// write and three reads is all this ever asked of that library. Programmed as
+// before: 16 V bus range, +/-320 mV shunt gain, 9-bit conversions, continuous
+// shunt + bus (config 0x1807), and a 0.01 ohm shunt. Current is the shunt
+// voltage over the shunt resistance, so the calibration register is not used.
 #define INA219_ADDRESS 0x42
-INA219_WE ina219 = INA219_WE(INA219_ADDRESS);
+#define INA219_CONFIG  0x1807
+#define INA219_SHUNT_OHMS 0.01f
+static bool ina219Write(uint8_t reg, uint16_t v)
+{
+  Wire.beginTransmission(INA219_ADDRESS);
+  Wire.write(reg);
+  Wire.write((uint8_t)(v >> 8));
+  Wire.write((uint8_t)(v & 0xFF));
+  return Wire.endTransmission() == 0;
+}
+static bool ina219Read(uint8_t reg, uint16_t *v)
+{
+  Wire.beginTransmission(INA219_ADDRESS);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)INA219_ADDRESS, 2) != 2) return false;
+  *v = ((uint16_t)Wire.read() << 8) | Wire.read();
+  return true;
+}
 
 float shuntVoltage_mV = 0.0;
 float loadVoltage_V = 0.0;
@@ -42,14 +65,32 @@ float power_mW = 0.0;
 bool ina219_overflow = false;
 static bool ina219_present = false;
 
+// --- the simulated pack ------------------------------------------------------
+// A voltage sensor for a board with none wired (env `sim_battery`, default off;
+// every bare config turns it on). Open-circuit voltage falls linearly from
+// bat_max to bat_min as the charge drains; the wheel model's sag divides it
+// under load, as it divides the voltage the simulated motors see; a fixed idle
+// draw stands for the robot computer and the electronics. An empty pack is
+// swapped for a full one rather than left at 0 %, so a soak runs forever.
+#ifndef SIM_BATTERY_DEFAULT
+#define SIM_BATTERY_DEFAULT false
+#endif
+#define SIM_BATT_IDLE_A 0.3f
+static bool  s_sim = false;
+static float s_sim_div = 1.0f, s_sim_amps = 0.0f;
+static float s_charge_ah = 0.0f;
+static unsigned long s_sim_ms = 0;
+
+bool batteryIsSim() { return s_sim; }
+void setSimPackLoad(float sag_divisor, float amps)
+{
+  s_sim_div = sag_divisor >= 1.0f ? sag_divisor : 1.0f;
+  s_sim_amps = amps > 0.0f ? amps : 0.0f;
+}
+
 void initBattery(){
-  ina219_present = ina219.init();
-  if (ina219_present) {
-    ina219.setADCMode(INA219_BIT_MODE_9);
-    ina219.setPGain(INA219_PG_320);
-    ina219.setBusRange(INA219_BRNG_16);
-    ina219.setShuntSizeInOhms(0.01); // used in INA219.
-  }
+  // Present when it acknowledges the config write, as INA219_WE's init() was.
+  ina219_present = ina219Write(0x00, INA219_CONFIG);
   initMcuEnv();
   const char *pin_env = envGet("battery_pin", NULL);
   bat_pin = (pin_env && *pin_env) ? (int)strtol(pin_env, NULL, 10) : (int)BATTERY_PIN;
@@ -67,6 +108,15 @@ void initBattery(){
 #else
   bat_cap = envFloat("bat_cap", 0.0f);
 #endif
+  s_sim = envFlag("sim_battery", SIM_BATTERY_DEFAULT);
+  if (s_sim) {
+    // A config with no pack described gets a typical 3S Li-ion one.
+    if (bat_max <= bat_min || bat_max <= 0.0f) { bat_min = 9.9f; bat_max = 12.6f; }
+    if (bat_cap <= 0.0f) bat_cap = 5.0f;
+    s_charge_ah = bat_cap;
+    Serial.printf("[battery] sim_battery=1: simulated %.1f-%.1f V, %.1f Ah pack\n",
+                  bat_min, bat_max, bat_cap);
+  }
   if (bat_pin >= 0) {
     pinMode(bat_pin, INPUT);
     analogReadResolution(12);
@@ -84,16 +134,19 @@ void initBattery(){
 // board reads the pack through a divider on an ADC pin.
 bool batteryPresent(void)
 {
-  return bat_pin >= 0 || ina219_present;
+  return s_sim || bat_pin >= 0 || ina219_present;
 }
 
 void InaDataUpdate(){
-  shuntVoltage_mV = ina219.getShuntVoltage_mV();
-  busVoltage_V = ina219.getBusVoltage_V();
-  current_mA = ina219.getCurrent_mA();
-  power_mW = ina219.getBusPower();
+  uint16_t shunt = 0, bus = 0;
+  if (!ina219Read(0x01, &shunt) || !ina219Read(0x02, &bus))
+    return;                                     // keep the last reading
+  shuntVoltage_mV = (int16_t)shunt * 0.01f;     // LSB 10 uV
+  busVoltage_V = (bus >> 3) * 0.004f;           // bits 15:3, LSB 4 mV
+  ina219_overflow = bus & 0x0001;               // OVF
+  current_mA = shuntVoltage_mV / INA219_SHUNT_OHMS;
+  power_mW = busVoltage_V * current_mA;
   loadVoltage_V  = busVoltage_V + (shuntVoltage_mV/1000);
-  ina219_overflow = ina219.getOverflow();
 }
 
 // Pack voltage through the divider. The ESP32 core converts to millivolts
@@ -141,6 +194,27 @@ sensor_msgs__msg__BatteryState battery_msg_ = { .current = NAN, .charge = NAN,
     .capacity = NAN, .design_capacity = NAN, .percentage = NAN, .present =  true };
 sensor_msgs__msg__BatteryState getBattery()
 {
+    if (s_sim) {
+        const unsigned long now = millis();
+        const float dt_h = s_sim_ms ? (now - s_sim_ms) / 3600000.0f : 0.0f;
+        s_sim_ms = now;
+        const float amps = s_sim_amps + SIM_BATT_IDLE_A;
+        s_charge_ah -= amps * dt_h;
+        if (s_charge_ah <= 0.0f) {
+            s_charge_ah = bat_cap;
+            Serial.println("[battery] simulated pack empty: swapped for a full one");
+        }
+        const float soc = s_charge_ah / bat_cap;
+        const float v_oc = bat_min + (bat_max - bat_min) * soc;
+        // +/-10 mV of reading noise, the order of a 12-bit divider's
+        battery_msg_.voltage = v_oc / s_sim_div + ((float)random(-100, 101)) * 0.0001f;
+        battery_msg_.current = -amps;           // negative: discharging
+        battery_msg_.charge = s_charge_ah;
+        battery_msg_.capacity = bat_cap;
+        battery_msg_.design_capacity = bat_cap;
+        battery_msg_.present = true;
+        return battery_msg_;
+    }
     if (bat_pin >= 0)
         battery_msg_.voltage = readVoltage(bat_pin);
     if (ina219_present) {

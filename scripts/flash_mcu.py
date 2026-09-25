@@ -1492,7 +1492,7 @@ def main() -> int:
                              "(default) lets the YAML stand. The status LED is never touched.")
     parser.add_argument("--app", default=None,
                         help="application the unified image should boot: base, test_sensors, "
-                             "test_motors, test_acc, i2c_detect, bno085_cal or adc_calibrate. "
+                             "test_motors, test_acc, i2c_detect or adc_calibrate. "
                              "Written as the `app` key of the env block, so switching tools "
                              "rewrites 4 KB of flash instead of rebuilding.")
     # No default board name here. It used to be "pico2", so a hand-run flash of any

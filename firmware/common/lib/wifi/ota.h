@@ -14,7 +14,11 @@
 #ifndef OTA_H
 #define OTA_H
 
-#if defined(USE_ARDUINO_OTA) && defined(USE_WIFI)
+#include "config.h"
+
+// The OTA responder is compiled in wherever there is a radio; `ota_port` in
+// the env, and the radio being wanted at all, decide whether it runs.
+#if defined(HAS_WIFI)
 void initOta(void);
 void runOta(void);
 #else

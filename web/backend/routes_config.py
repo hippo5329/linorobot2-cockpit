@@ -36,6 +36,32 @@ from core import (
     yaml_merge,
 )
 
+import gen_bare_config  # scripts/ is on sys.path via core
+
+
+def write_bare_robot(name: str):
+    """(Re)generate `bare_<mcu>` from the bare rule and return its path, or None.
+
+    A bare module is a rule, not a file: selecting one writes it fresh, so it
+    never carries an older release's pins or template (the pipeline does the same
+    on every run). `bare_sim` is the Sim MCU robot: no board, every simulated
+    device on, every pin -1."""
+    m = re.fullmatch(r"bare_([a-z0-9]+)", name or "")
+    if not m or m.group(1) not in gen_bare_config.KNOWN:
+        return None
+    path = os.path.join(CONFIG_DIR, f"{name}_config.yaml")
+    with open(path, "w") as fh:
+        yaml.safe_dump(gen_bare_config.bare_config(m.group(1)), fh, sort_keys=False)
+    return path
+
+
+# The Sim MCU robot is always offered in the Robot selector.
+try:
+    if os.path.isdir(CONFIG_DIR) and not os.path.isfile(os.path.join(CONFIG_DIR, "bare_sim_config.yaml")):
+        write_bare_robot("bare_sim")
+except Exception as exc:  # a read-only config dir must not stop the cockpit
+    print(f"[routes_config] bare_sim not written: {exc}")
+
 
 @app.get("/api/config")
 def api_config():
@@ -199,6 +225,9 @@ async def api_toggle_sim_mode(request: Request):
     sensors["use_sim_mag"] = enabled
     if "use_sim_env" in sensors or not enabled:
         sensors["use_sim_env"] = enabled
+    if "use_sim_sonar" in sensors or not enabled:
+        sensors["use_sim_sonar"] = enabled
+    sensors["use_sim_battery"] = enabled
 
     save_params(params)
     res = regenerate_firmware_headers(controller_name)
@@ -366,10 +395,10 @@ async def select_robot(request: Request):
         )
 
     config_dir = CONFIG_DIR
-    target_yaml = None
+    target_yaml = write_bare_robot(name)
 
     # 1. Match by exact config filename e.g. pico2_mecanum_config.yaml or rover_pico2.yaml
-    for candidate in [f"{name}_config.yaml", f"{name}.yaml", f"{name}_config.yml", f"{name}.yml"]:
+    for candidate in ([] if target_yaml else [f"{name}_config.yaml", f"{name}.yaml", f"{name}_config.yml", f"{name}.yml"]):
         p = os.path.join(config_dir, candidate)
         if os.path.isfile(p):
             target_yaml = p

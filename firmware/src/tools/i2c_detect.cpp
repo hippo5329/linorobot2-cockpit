@@ -80,9 +80,9 @@ void scanAndIdentify() {
         if (strcmp(found[i].category, "unknown") == 0)
             continue;
         identified++;
-        Serial.printf(" [%d] ADDR: 0x%02X | CATEGORY: %-8s | MODEL: %-10s | MACRO: %-18s | %s\n",
+        Serial.printf(" [%d] ADDR: 0x%02X | CATEGORY: %-8s | MODEL: %-10s | %s\n",
             identified, found[i].addr, found[i].category, found[i].model,
-            found[i].macro, found[i].desc);
+            found[i].desc);
         if (strcmp(found[i].category, "imu") == 0 && strcmp(detected_imu, "NONE") == 0)
             detected_imu = found[i].model;
         if (strcmp(found[i].category, "mag") == 0 && strcmp(detected_mag, "NONE") == 0)
@@ -105,9 +105,9 @@ void scanAndIdentify() {
     for (int i = 0; i < num_found; i++) {
         if (i > 0) Serial.print(",");
         Serial.printf("{\"addr\":\"0x%02x\",\"category\":\"%s\",\"model\":\"%s\","
-                      "\"driver\":\"%s\",\"macro\":\"%s\",\"desc\":\"%s\"}",
+                      "\"driver\":\"%s\",\"desc\":\"%s\"}",
             found[i].addr, found[i].category, found[i].model,
-            found[i].driver, found[i].macro, found[i].desc);
+            found[i].driver, found[i].desc);
     }
     Serial.println("]}");
     Serial.println("=======================================================\n");

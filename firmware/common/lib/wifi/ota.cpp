@@ -16,7 +16,7 @@
 #include "syslog.h"
 #include "mcu_env.h"
 
-#if defined(USE_ARDUINO_OTA) && defined(USE_WIFI)
+#if defined(HAS_WIFI)
 #include <ArduinoOTA.h>
 
 // Only after initOta(): main.cpp calls that behind wifiWanted(), and handle()
@@ -84,4 +84,4 @@ void runOta(void)
         ArduinoOTA.handle();
 }
 
-#endif // USE_ARDUINO_OTA
+#endif // HAS_WIFI

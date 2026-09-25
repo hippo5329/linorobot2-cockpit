@@ -165,6 +165,12 @@
    style="margin:0; padding:9px 24px; font-size:0.84rem; line-height:1.45;
           background:rgba(220,38,38,0.15); border-bottom:1px solid rgba(220,38,38,0.6);
           border-left:4px solid #dc2626; color:#fca5a5;"></p>
+<!-- No board on the bus: the cockpit runs the simulated MCU instead. A warning,
+     not an error -- amber, like the pipeline's own line. -->
+<p id="hdr-no-board" hidden
+   style="margin:0; padding:9px 24px; font-size:0.84rem; line-height:1.45;
+          background:rgba(245,158,11,0.13); border-bottom:1px solid rgba(245,158,11,0.55);
+          border-left:4px solid #f59e0b; color:#fcd34d;"></p>
 
 
 <nav class="tabs" aria-label="Workflow">
@@ -381,8 +387,8 @@
               <option value="pico">Raspberry Pi Pico (RP2040)</option>
               <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
               <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
-              <option value="gendrv">Waveshare General Driver Board ESP32 (921.6k Baud)</option>
               <option value="esp32s3">ESP32-S3 DevKitC-1</option>
+              <option value="sim">Sim MCU — no board (sim_base_node on this computer, nothing to flash)</option>
             </select>
           </div>
           <div class="form-group">
@@ -742,19 +748,18 @@
         <h2 style="margin:0;">🧭 3. Sensors, IMU, Compass &amp; Battery Peripherals</h2>
         <button type="button" id="btn-save-sensors-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
-      <p class="hint">The <strong>IMU and magnetometer are detected by the firmware at boot</strong> and their
-      drivers chosen at run time (<code>i2cProbeSelect</code>), so swapping either one needs no change here —
-      plug it in and reboot the board. Everything else on this page the firmware cannot discover for itself:
-      the barometer is a compile-time choice (its publishers exist only if it was built in <em>and</em> the
-      chip answered at boot), the battery monitor likewise, and the ADC divider resistors and sonar pins are
-      properties of your wiring — read them wrong and you read the battery wrong.</p>
+      <p class="hint">The <strong>IMU, magnetometer and barometer are detected by the firmware at boot</strong>:
+      every driver is in every image, and the board adopts whatever answers on the I2C bus, so swapping one
+      needs no change here — plug it in and reboot the board. What the firmware cannot discover for itself is
+      your wiring: the battery monitor, the ADC divider resistors and the sonar pins. Read those wrong and you
+      read the battery wrong.</p>
 
       <!-- AI I2C Sensor Auto-Detection Card -->
       <div class="card p-3 mb-3 border-accent-glow" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.7)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; margin: 1rem 0;">
         <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
           <div>
             <h4 style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0; font-weight: 600;">🤖 I2C Bus Probe</h4>
-            <p class="hint" style="margin:0;">Runs the same scan the firmware runs at every boot (WHO_AM_I identification, <code>firmware/common/lib/i2c_probe</code>) and shows what answered. This is a read-out, not a setting: whatever is on the bus is what the robot firmware will drive.</p>
+            <p class="hint" style="margin:0;">Runs the same scan the firmware runs at every boot (WHO_AM_I identification) and shows what answered. This is a read-out, not a setting: whatever is on the bus is what the robot firmware will drive.</p>
           </div>
           <button type="button" id="btn-auto-detect-i2c" class="btn btn-primary" style="white-space:nowrap; padding:0.6rem 1.2rem;">
             <span>⚡ Auto-Detect Sensors</span>
@@ -900,6 +905,11 @@
             <label for="cfg-bat-max" class="form-label">Max Full Voltage (100% V)</label>
             <input type="number" id="cfg-bat-max" class="form-input" value="12.6" step="0.1">
           </div>
+          <div class="form-group">
+            <label for="cfg-bat-dip" class="form-label">Sag Dip Threshold (%)</label>
+            <input type="number" id="cfg-bat-dip" class="form-input" value="2" step="0.5" min="0.1" max="50">
+            <span class="input-hint">/battery is published at 1 Hz and carries the lowest voltage of each second (the sag). A sample this far below the running average is logged as a dip; raise it if a noisy divider logs dips at rest.</span>
+          </div>
         </div>
 
         <div id="box-adc-resistors" class="sub-panel mt-2">
@@ -939,12 +949,14 @@
         <h3 class="section-title">Environmental &amp; Range Sensors</h3>
         <div class="form-grid">
           <div class="form-group">
-            <label for="cfg-env" class="form-label">Environmental Barometer</label>
+            <label for="cfg-env" class="form-label">Environmental Barometer <span class="input-hint" style="font-weight:normal;">(detected at boot)</span></label>
             <select id="cfg-env" class="form-select">
-              <option value="NONE" selected>None</option>
-              <option value="BMP280">BMP280 (I2C Pressure + Temperature)</option>
-              <option value="BME280">BME280 (I2C Pressure + Temperature + Humidity)</option>
+              <option value="AUTO" selected>Auto — publish a BMP280/BME280 if one answers (0x76/0x77)</option>
+              <option value="BMP280">BMP280 — always publish (a missing chip shows as a dead topic)</option>
+              <option value="BME280">BME280 — always publish, with humidity</option>
+              <option value="NONE">Off — never publish, even if a chip answers</option>
             </select>
+            <span class="input-hint">Built into every image; nothing to compile. Off saves serial bandwidth on a 921,600-baud link.</span>
           </div>
           <div class="form-group">
             <label for="cfg-sonar" class="form-label">Ultrasonic Sonar Range Sensor</label>
@@ -966,11 +978,11 @@
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-mag" checked>
-            <span>Sim Mag</span>
+            <span>Simulated Magnetometer</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-wheel" checked>
-            <span>Sim Wheels</span>
+            <span>Simulated Wheels</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-ld19" checked>
@@ -978,7 +990,15 @@
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-env">
-            <span>Sim Env</span>
+            <span>Simulated Barometer</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A forward range cone raycast from the simulated LiDAR's room, published on /sonar. It runs only with the Simulated LD19; a fully real robot reads the wired HC-SR04 instead.">
+            <input type="checkbox" id="chk-sim-sonar" checked>
+            <span>Simulated Sonar</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A battery voltage sensor for a board with none wired, published on /battery: the pack sags when the simulated wheels draw current and drains as the robot drives. Its range and capacity are the Battery section's min/max voltage and capacity (a 3S Li-ion pack if those are blank).">
+            <input type="checkbox" id="chk-sim-battery">
+            <span>Simulated Battery</span>
           </label>
         </div>
       </div>
@@ -1178,7 +1198,6 @@
             <option value="i2c_detect">🔍 i2c_detect — I2C Bus Probe &amp; WHO_AM_I Identifier</option>
             <option value="test_acc">📈 test_acc — Dynamic Acceleration Profiler</option>
             <option value="adc_calibrate">🔋 adc_calibrate — ESP32 SAR ADC DAC Sweep &amp; LUT Linearizer</option>
-            <option value="bno085_cal">🧲 bno085_cal — BNO085 Dynamic Tare &amp; Calibration</option>
             <option value="base">🏎️ base — Main Robot micro-ROS Base Controller</option>
           </select>
         </div>
@@ -1192,6 +1211,7 @@
             <option value="picow">picow</option>
             <option value="esp32">esp32</option>
             <option value="esp32s3">esp32s3</option>
+            <option value="sim">sim</option>
           </select>
         </div>
 
@@ -1407,13 +1427,6 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </div>
       </div>
 
-      <!-- Magnetometer Calibration Card -->
-      <div class="card mt-4">
-        <h2>🧭 Magnetometer In-Place Spin Calibration</h2>
-        <p class="hint">Spins the robot in place to determine hard-iron bias offsets. Clear surrounding obstacles before starting.</p>
-        <button id="btn-mag-cal-hw" class="btn btn-primary">Run Magnetometer Calibration</button>
-        <div id="mag-cal-hw-result" class="hint mt-2"></div>
-      </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="pin-matrix">⬅ Step 4: Pin Matrix</button>
@@ -2143,10 +2156,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
             <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
             <option value="esp32">ESP32 DevKit (serial or Wi-Fi UDP - the env partition picks)</option>
-
-            <option value="gendrv">Waveshare ESP32 GenDrv (Extensive test controller - Pin 4 LiDAR @ 1.5M)</option>
             <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>
             <option value="pico">Raspberry Pi Pico (RP2040)</option>
+            <option value="sim">Sim MCU — no board (sim_base_node, nothing to flash)</option>
           </select>
         </label>
 

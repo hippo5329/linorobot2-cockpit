@@ -179,15 +179,20 @@
       // the README tells everyone to open http://<robot-computer>:8000. Blaming
       // the browser there is simply wrong, and sends a Chrome user off to
       // install Chrome.
+      // Over plain HTTP -- the normal way to open the cockpit -- this is not a
+      // fault, so it is not shown as one (a red "security" warning on every
+      // visit read as something being wrong). The robot's own board is watched
+      // from the robot computer by the Monitor button above; this panel is only
+      // for a board plugged into the machine the browser runs on.
       const insecure = !window.isSecureContext;
       supportEl.innerHTML = insecure
-        ? "\u26a0\ufe0f The Web Serial API is only available on a <b>secure origin</b>, and this page " +
-          "is served over plain HTTP from <code>" + location.host + "</code>. Your browser is " +
-          "not the problem. Open the cockpit as <code>http://localhost:8000</code> on the robot " +
-          "computer itself, or put it behind HTTPS, to use this monitor. Everything else in the " +
-          "cockpit works over plain HTTP \u2014 only this panel needs the secure origin."
-        : "\u26a0\ufe0f This browser does not implement the Web Serial API. Use Chrome or Edge " +
-          "(Firefox and Safari do not support it).";
+        ? "\u2139\ufe0f To watch the robot's board, use <b>\ud83d\udce1 Monitor</b> above: it reads " +
+          "the serial port on the robot computer. This panel opens a port on <i>this</i> " +
+          "computer instead, which browsers allow only on <code>https://</code> or " +
+          "<code>http://localhost</code>."
+        : "\u2139\ufe0f This browser has no Web Serial. Use <b>\ud83d\udce1 Monitor</b> above, " +
+          "or open the cockpit in Chrome or Edge to watch a board plugged into this computer.";
+      supportEl.style.color = "var(--text-muted, #94a3b8)";
       supportEl.hidden = false;
       if (connectBtn) connectBtn.disabled = true;
     }

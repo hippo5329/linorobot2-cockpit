@@ -54,7 +54,7 @@ try:
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
     from geometry_msgs.msg import Twist, TwistStamped, TransformStamped
     from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import Imu
+    from sensor_msgs.msg import BatteryState, Imu
     from tf2_ros import TransformBroadcaster
 except ImportError as exc:                                  # pragma: no cover
     # Name the module that actually failed (AGENTS.md 12): rclpy is the import
@@ -399,6 +399,24 @@ class SimBaseNode(Node):
                                 durability=DurabilityPolicy.VOLATILE)
         self.odom_pub = self.create_publisher(Odometry, "odom/unfiltered", sensor_qos)
         self.imu_pub = self.create_publisher(Imu, "imu/data", sensor_qos)
+        # The simulated battery voltage sensor, the board's battery.cpp model
+        # (env `sim_battery`): open-circuit voltage falls from max_v to min_v as
+        # the charge drains, the shared pack's developed sag divides it under
+        # load, and an idle draw stands for the electronics. 1 Hz, like the board.
+        sensors = (params.get("base_controller") or {}).get("sensors") or {}
+        self.sim_battery = bool(sensors.get("use_sim_battery", False))
+        if self.sim_battery:
+            bat = ((params.get("base_controller") or {}).get("pins") or {}).get("battery")
+            bat = bat if isinstance(bat, dict) else {}
+            self.bat_min = float(bat.get("min_v") or 0.0)
+            self.bat_max = float(bat.get("max_v") or 0.0)
+            if self.bat_max <= self.bat_min or self.bat_max <= 0.0:
+                self.bat_min, self.bat_max = 9.9, 12.6
+            self.bat_cap = float(bat.get("capacity_ah") or 0.0) or 5.0
+            self.bat_charge = self.bat_cap
+            self.bat_prev = time.monotonic()
+            self.battery_pub = self.create_publisher(BatteryState, "battery", 10)
+            self.create_timer(1.0, self._battery)
         self.tf = TransformBroadcaster(self) if \
             bool(self.get_parameter("publish_tf").value) else None
 
@@ -481,6 +499,27 @@ class SimBaseNode(Node):
     def _cmd_stamped(self, msg):
         self.cmd = (msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z)
         self.cmd_time = self.get_clock().now()
+
+    def _battery(self):
+        now = time.monotonic()
+        dt_h = (now - self.bat_prev) / 3600.0
+        self.bat_prev = now
+        pack = self.wheels.pack
+        amps = sum(max(x, 0.0) for x in pack.demand) * self.wheels.d["stall_a"] + 0.3
+        self.bat_charge -= amps * dt_h
+        if self.bat_charge <= 0.0:
+            self.bat_charge = self.bat_cap      # an empty pack is swapped, as on the board
+        soc = self.bat_charge / self.bat_cap
+        v_oc = self.bat_min + (self.bat_max - self.bat_min) * soc
+        msg = BatteryState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.voltage = float(v_oc / (1.0 + self.wheels.d["sag"] * pack.state) + random.uniform(-0.01, 0.01))
+        msg.current = float(-amps)
+        msg.charge = float(self.bat_charge)
+        msg.capacity = msg.design_capacity = float(self.bat_cap)
+        msg.percentage = float(min(max(soc, 0.0), 1.0))
+        msg.present = True
+        self.battery_pub.publish(msg)
 
     def _tick(self):
         now = self.get_clock().now()

@@ -11,7 +11,6 @@ void test_sensors_setup(void);   void test_sensors_loop(void);
 void test_motors_setup(void);    void test_motors_loop(void);
 void test_acc_setup(void);       void test_acc_loop(void);
 void i2c_detect_setup(void);     void i2c_detect_loop(void);
-void bno085_cal_setup(void);     void bno085_cal_loop(void);
 #if ADC_LUT_SUPPORTED
 void adc_calibrate_setup(void);  void adc_calibrate_loop(void);
 #endif
@@ -30,7 +29,6 @@ static const ToolEntry TOOLS[] = {
     { APP_TEST_MOTORS,   "test_motors",   test_motors_setup,   test_motors_loop   },
     { APP_TEST_ACC,      "test_acc",      test_acc_setup,      test_acc_loop      },
     { APP_I2C_DETECT,    "i2c_detect",    i2c_detect_setup,    i2c_detect_loop    },
-    { APP_BNO085_CAL,    "bno085_cal",    bno085_cal_setup,    bno085_cal_loop    },
 #if ADC_LUT_SUPPORTED
     // Only on the parts with a hardware DAC. Elsewhere the name is not in the
     // table at all, so `app=adc_calibrate` falls through to base with a message
