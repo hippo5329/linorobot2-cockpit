@@ -688,7 +688,7 @@ def _nav2_complaints(log_path: str, keep: int = 6) -> str:
     return "\n".join(out)
 
 
-def _slam_complaints(log_path: str, keep: int = 6) -> str:
+def _slam_complaints(log_path: str, keep: int = 6, lifecycle: str = None) -> str:
     """How far slam_toolbox got, and what it complained about.
 
     "no map was published" is the least informative sentence the pipeline can
@@ -720,7 +720,13 @@ def _slam_complaints(log_path: str, keep: int = 6) -> str:
     out = []
     if seen:
         out.append(f"     --- slam_toolbox reached: {' -> '.join(seen)}")
-        if "Activating" not in seen:
+        if "Activating" not in seen and lifecycle is not None and "active" not in lifecycle:
+            # The log alone reads the same for both; the node's own answer does
+            # not. A node inside on_configure cannot serve get_state.
+            out.append(f"     it never finished configuring: asked for its lifecycle state it answered"
+                       f" '{lifecycle or 'nothing'}', so it is stuck inside its configure step,"
+                       f" not waiting in `inactive`")
+        elif "Activating" not in seen:
             out.append("     it never activated: the lifecycle node is stuck in `inactive`, so"
                        " no map is published and the map frame never exists")
     else:
@@ -924,6 +930,109 @@ def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bo
         time.sleep(1.0)
     return False
 
+
+
+def slam_lifecycle_state(distro: str) -> str:
+    """slam_toolbox's lifecycle state in its own words ("inactive [2]"), or "" when it does not answer.
+
+    --no-daemon: the ros2 CLI daemon caches the graph, and it was measured
+    answering "Node not found" for 36 s straight about a slam_toolbox that was
+    active at the time, in the same container where --no-daemon answered
+    "active [3]" at once. A question put to the cache can be told the node is
+    not there.
+    """
+    res = run_ros("ros2 lifecycle get --no-daemon /slam_toolbox", timeout=15, distro=distro)
+    return (res.stdout or "").strip() if res.returncode == 0 else ""
+
+
+def _stop_group_and_wait(proc, grace_s: float = 10.0):
+    """stop_bg, then wait for the whole process GROUP to be gone.
+
+    stop_bg returns once `ros2 launch` exits. A restart must also know that the
+    node it launched is gone: two /slam_toolbox nodes on one graph share one
+    name, and a lifecycle call or a map->odom lookup may reach either.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except Exception:
+        pgid = None
+    stop_bg(proc)
+    if pgid is None:
+        return
+    t0 = time.time()
+    while time.time() - t0 < grace_s:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.5)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def start_slam(cmd: str, distro: str, bg_processes: list, stack_processes: list) -> list:
+    """Launch SLAM and see a map, repairing the two ways slam_toolbox fails to start. Returns failures.
+
+    slam_toolbox is a lifecycle node and its own launch file drives the
+    transitions, so it can stop short in two places, and the lifecycle state it
+    answers with is what tells them apart:
+
+    `inactive` -- configured, activation never asked for. The launch file
+    activates from an event handler fed by one volatile ~/transition_event
+    message; when that message is missed the node sits in `inactive` forever.
+    The transition is idempotent and cheap, so ask for it directly.
+
+    no answer (or a state that is neither) -- still INSIDE its configure. The
+    Yahboom skid_steer jazzy leg of gate 20260926-disp8: "Configuring", the
+    Ceres solver lines, then nothing, and not one of twelve `lifecycle get`s
+    over 36 s was answered: the node spins one thread, and it was inside
+    on_configure, so nothing served get_state. A manual activate cannot rescue
+    that node; it was asked, and a Nav2 with no map frame failed behind it.
+    The same log signature is in 11 of 1668 SLAM starts kept on the bench
+    cells since 2026-09-22, on every board kind. A new process configures, so
+    restart it -- once. A node that answers `active` and still
+    publishes no map is a different fault that a restart would only hide, so
+    it is reported, not retried.
+
+    Either way the map is published by a node that logged how it got there,
+    and each attempt keeps its own log (slam.log, slam2.log): one run, one path.
+    """
+    for attempt, tag in enumerate(("slam", "slam2")):
+        proc = launch_bg(cmd, log_tag=tag, distro=distro)
+        bg_processes.append(proc)
+        stack_processes.append(("slam", proc))
+        log_path = os.path.join(LOG_DIR, f"{tag}.log")
+        print("  Waiting for /map...")
+        if wait_for_topic("/map", timeout_sec=40, distro=distro, require_message="info.width"):
+            print("  ✅ /map is publishing." + (" (slam_toolbox needed a restart)" if attempt else ""))
+            return []
+        state = slam_lifecycle_state(distro)
+        if "inactive" in state:
+            print("  ⚠️ no map in 40 s and slam_toolbox is `inactive` — asking it to activate directly...")
+            run_ros("ros2 lifecycle set --no-daemon /slam_toolbox activate", timeout=20, distro=distro)
+            if wait_for_topic("/map", timeout_sec=30, distro=distro, require_message="info.width"):
+                print("  ✅ /map is publishing (slam_toolbox needed a manual activate).")
+                return []
+            state = slam_lifecycle_state(distro)
+            print(f"  ⚠️ still no map after a manual activate (slam_toolbox answers '{state or 'nothing'}').")
+        elif "active" in state:
+            print(f"  ⚠️ no map in 40 s from a slam_toolbox that answers '{state}'.")
+        else:
+            print(f"  ⚠️ no map in 40 s and slam_toolbox answers '{state or 'nothing'}': "
+                  f"it has not finished configuring.")
+        # Not "check logs/slam.log" -- that file dies with this leg's
+        # container. Read it here, while it exists.
+        print(_slam_complaints(log_path, lifecycle=state))
+        if attempt == 0 and "active" not in state:
+            print("  ↻ restarting SLAM once: a new process configures.")
+            _stop_group_and_wait(proc)
+            stack_processes[:] = [(t, q) for t, q in stack_processes if q is not proc]
+            bg_processes[:] = [q for q in bg_processes if q is not proc]
+            continue
+        return ["SLAM: no map was published"]
+    return ["SLAM: no map was published"]
 
 # ------------------------------------------------------------------- firmware
 def pio_available(distro: str) -> bool:
@@ -1599,42 +1708,8 @@ def main():
             print("\n[5/6] [SLAM] Skipped per --topics-only: this run verifies the topics.")
         elif has_lidar:
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
-            bg_processes.append(launch_bg(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
-                                          log_tag="slam", distro=args.distro))
-            stack_processes.append(("slam", bg_processes[-1]))
-            print("  Waiting for /map...")
-            if not wait_for_topic("/map", timeout_sec=40, distro=args.distro,
-                                  require_message="info.width"):
-                # slam_toolbox is a lifecycle node and its own launch file drives
-                # the transitions from a launch event handler. When the configure
-                # result event is missed the node sits in `inactive` forever: it
-                # logs "Configuring", picks its solver, and then nothing. No map
-                # is published, the map frame never exists, and Nav2 fails half a
-                # minute later with planner_server unable to transform base_link
-                # to map -- which reads as a Nav2 fault.
-                #
-                # The transition is idempotent and cheap, so ask for it directly
-                # rather than give up on a race in somebody's event handler.
-                #
-                # --no-daemon: the ros2 CLI daemon caches the graph, and it was
-                # measured answering "Node not found" for 36 s straight about a
-                # slam_toolbox that was active at the time, in the same
-                # container where --no-daemon answered "active [3]" at once. A
-                # recovery that asks the cache can be told the node is not there.
-                print("  ⚠️ no map in 40 s — asking slam_toolbox to activate directly...")
-                run_ros("ros2 lifecycle set --no-daemon /slam_toolbox activate", timeout=20,
-                        distro=args.distro)
-                if wait_for_topic("/map", timeout_sec=30, distro=args.distro,
-                                  require_message="info.width"):
-                    print("  ✅ /map is publishing (slam_toolbox needed a manual activate).")
-                else:
-                    # Not "check logs/slam.log" -- that file dies with this
-                    # leg's container. Read it here, while it exists.
-                    print("  ⚠️ still no map after a manual activate.")
-                    print(_slam_complaints(os.path.join(LOG_DIR, "slam.log")))
-                    failures.append("SLAM: no map was published")
-            else:
-                print("  ✅ /map is publishing.")
+            failures += start_slam(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
+                                   args.distro, bg_processes, stack_processes)
         else:
             print(f"\n[5/6] [SLAM] Skipped — {controller} has no scan source (teleop-only robot).")
 

@@ -208,7 +208,11 @@ for i in $(seq 1 12); do
   esac
   sleep 3
 done
-echo "[Linorobot2 Cockpit] slam_toolbox never reported a lifecycle state (last answer: '${s:-nothing}'). It did not configure -- check the params file."
+if [ -z "$s" ]; then
+  echo "[Linorobot2 Cockpit] slam_toolbox answered no lifecycle query: it is still inside its configure step, which serves nothing while it runs."
+else
+  echo "[Linorobot2 Cockpit] slam_toolbox is '$s', not inactive or active: it did not configure -- check the params file."
+fi
 """ % node
     return TimerAction(period=15.0, actions=[
         ExecuteProcess(cmd=["bash", "-c", script], output="screen"),
