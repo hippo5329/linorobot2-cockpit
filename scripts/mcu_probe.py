@@ -63,6 +63,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -137,13 +138,33 @@ def read_stamp(env: str, port: str) -> dict:
         return {}
 
 
-def write_stamp(env: str, port: str, data: dict):
-    os.makedirs(STAMP_DIR, exist_ok=True)
+def write_stamp(env: str, port: str, data: dict) -> bool:
+    """Record what was flashed. A RECORD -- failing to write it must not fail a flash.
+
+    On 2026-09-25 the UI's Start 1-Click died on PermissionError here: a run as
+    container root had left the stamp directory and file root-owned, and the
+    cockpit user could not rewrite them -- an unhandled exception that aborted
+    the whole pipeline over a bookkeeping file. Written to a temp file and renamed
+    into place when possible (a reader never sees half a file); when the
+    directory is not writable at all, say so and carry on: the next probe then
+    finds no stamp and reflashes, which is the safe answer.
+    """
     data = dict(data)
     data["flashed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    with open(stamp_path(env, port), "w") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    target = stamp_path(env, port)
+    try:
+        os.makedirs(STAMP_DIR, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=STAMP_DIR, prefix=".stamp-", suffix=".json")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, target)
+        return True
+    except OSError as exc:
+        print(f"[mcu_probe] WARNING: flash stamp not recorded ({exc}); the next run will "
+              f"reflash rather than trust an unrecorded board. Check the ownership of {STAMP_DIR}.",
+              file=sys.stderr)
+        return False
 
 
 def parse_banner(text: str) -> dict:
