@@ -234,6 +234,22 @@ NOT_FITTED = {"", "none", "null", "off", "false", "no"}
 FLASH_BAUD_CEILING = 921600
 
 
+def lidar_fitted(controller_cfg: dict) -> bool:
+    """Does this robot have a LiDAR -- a real one named in the config, or the
+    simulated sim_ld19?
+
+    `bool(model)` read the string "NONE" as a LiDAR, so a robot configured with
+    `lidar.model: NONE` was made to wait for /scan and then failed topic
+    verification -- aborted before SLAM even in a topics-only run. Found
+    2026-09-25 on a Pico 2 with a real IMU and no LiDAR; the gate cannot see it,
+    because every gate config has one. NOT_FITTED is how every config here spells
+    "not fitted", the same set sensor_topics() already honours.
+    """
+    model = (controller_cfg.get("lidar") or {}).get("model")
+    real = bool(model) and str(model).strip().lower() not in NOT_FITTED
+    return real or bool((controller_cfg.get("sensors") or {}).get("use_sim_ld19", False))
+
+
 def sensor_topics(controller_cfg: dict) -> list:
     """Auxiliary topics the fitted sensors must publish, in a stable order.
 
@@ -1028,8 +1044,7 @@ def main():
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
     is_real = (args.mode == "real") or (args.mode == "auto" and controller == "gendrv")
-    has_lidar = bool(controller_cfg.get("lidar", {}).get("model")) or \
-        controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
+    has_lidar = lidar_fitted(controller_cfg)
 
     # On a real base the sensors are soldered to the board and named in the
     # config, so their topics are evidence, not options. The firmware probes the
