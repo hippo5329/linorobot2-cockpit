@@ -637,7 +637,6 @@ async function saveRobotConfigFromBringup() {
     depth_sensor: keep("bringup-depth-sensor", saved.depth_sensor, ""),
     micro_ros_port: keep("bringup-agent-device", saved.agent_device, "/dev/ttyACM0"),
     micro_ros_baudrate: keep("bringup-agent-baud", saved.agent_baud, "1500000"),
-    madgwick: document.getElementById("bringup-madgwick-toggle")?.checked ?? true,
   };
   try {
     const res = await fetch("/api/robot_config", {

@@ -705,7 +705,7 @@ function updateSimModeUI(enabled) {
   }
   if (imuStatus) {
     imuStatus.innerHTML = enabled
-      ? `<span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data_raw)</b>`
+      ? `<span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data)</b>`
       : `<span style="color:#94a3b8;">Physical IMU:</span> <b style="color:#38bdf8;">Real I2C Bus Driver</b>`;
   }
   if (lidarStatus) {

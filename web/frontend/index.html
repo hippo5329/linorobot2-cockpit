@@ -226,7 +226,7 @@
           <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (50 Hz /odom)</b>
         </div>
         <div id="simulated-imu-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
-          <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data_raw)</b>
+          <span style="color:#94a3b8;">Simulated IMU:</span> <b style="color:#34d399;">Active (50 Hz /imu/data)</b>
         </div>
         <div id="simulated-lidar-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated LiDAR:</span> <b style="color:#34d399;">Active (10 Hz /scan)</b>
@@ -1544,12 +1544,6 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <button id="btn-bringup-start" class="btn btn-primary">Start bringup</button>
         <button id="btn-bringup-stop" class="btn btn-danger" disabled>Stop</button>
         <button id="btn-bringup-logs" class="btn">Stream logs</button>
-      </div>
-      <div class="row" style="margin-top: 8px;">
-        <label class="checkbox-label">
-          <input type="checkbox" id="bringup-madgwick-toggle" checked>
-          <span>Enable Magnetometer fusion (Madgwick filter: /imu/data_raw + /imu/mag -&gt; /imu/data)</span>
-        </label>
       </div>
       <div class="row" style="margin-top: 8px;">
         <label class="checkbox-label">

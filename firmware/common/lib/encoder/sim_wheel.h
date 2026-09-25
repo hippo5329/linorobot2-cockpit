@@ -310,8 +310,8 @@ static inline float simDrvLimitA()
 // the EKF fuses ax and ay (imu0_config 12, 13). Tilt the part and a constant
 // appears in those horizontal axes that the filter integrates into velocity --
 // which is what robot_localization's imu0_remove_gravitational_acceleration
-// exists to prevent, and what madgwick's remove_gravity_vector does when
-// madgwick is running.
+// exists to prevent, and what the board's AHRS removes before publishing
+// (main.cpp, AHRS::gravityFrom).
 //
 // Until 2026-09-25 this model put the whole 9.81 on Z, always, so that entire
 // path was unreachable in simulation: the bench could not fail on it and the
@@ -698,7 +698,7 @@ public:
 
 // A real MEMS IMU is not a clean derivative of the truth: it has a fixed bias,
 // a bias that wanders slowly with temperature, a scale-factor error, and white
-// noise on top. Fusion (madgwick, the EKF) exists to fight exactly that, so a
+// noise on top. Fusion (the board's AHRS, the EKF) exists to fight exactly that, so a
 // perfect simulated IMU would make the whole estimation stack look better than
 // it is on hardware.
 #ifndef SIM_IMU_GYRO_BIAS
@@ -873,7 +873,7 @@ public:
 
     // The simulated robot turns, so a magnetometer stuck at a constant vector
     // would disagree with the yaw the wheels report and drag any heading fusion
-    // (madgwick, EKF) away from the truth. Rotate a fixed world field into the
+    // (AHRS, EKF) away from the truth. Rotate a fixed world field into the
     // body frame instead, so the mag agrees with the simulated room: the field
     // points along the room's +X axis, offset by SIM_MAG_ROOM_HEADING.
     void setHeading(float heading) { heading_ = heading; }
@@ -883,8 +883,8 @@ public:
         const float theta = heading_ - (float)SIM_MAG_ROOM_HEADING;
         const float b = (float)SIM_MAG_FIELD_T;
         // The world field points along +Y, i.e. North in the ENU frame ROS uses,
-        // because that is the direction imu_filter_madgwick assumes when it
-        // derives heading from the magnetometer. Pointing it along +X instead
+        // because that is the direction the AHRS (ahrs.h, ported from
+        // imu_filter_madgwick) assumes when it derives heading from the field. Pointing it along +X instead
         // is physically just as valid but leaves the fused yaw a fixed ~90 deg
         // from the wheel odometry's, and the EKF then has two heading sources
         // that disagree by a quarter turn: it splits the difference, drags the

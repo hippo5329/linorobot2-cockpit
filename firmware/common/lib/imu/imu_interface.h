@@ -230,9 +230,9 @@ class IMUInterface
             // normalises divides by zero and RViz rejects the message outright.
             //
             // It mattered little while this message was only imu/data_raw,
-            // because madgwick ignores the orientation of its input. It matters
-            // now: on a robot with no magnetometer the base publishes imu/data
-            // itself, and that is the topic consumers read. Measured on the bench's
+            // because madgwick ignored the orientation of its input. It matters
+            // now: the base publishes imu/data itself, and that is the topic
+            // consumers read. Measured on the bench's
             // Pico 2 with an LSM6DSOX, 2026-09-23: /imu/data at 48.9 Hz with a
             // quaternion norm of 0.0000.
             //
@@ -264,9 +264,8 @@ class IMUInterface
         // The publisher stamps every message with one getTime() taken AFTER
         // every sensor has been read, so an IMU sample carried the time the
         // MCU got round to publishing it. That is the jitter this removes:
-        // unknown, load-dependent, and invisible -- and madgwick integrates
-        // the gyro over the interval between stamps (constant_dt: 0.0), so it
-        // lands directly in the heading.
+        // unknown, load-dependent, and invisible -- and the EKF fuses each
+        // message at its stamp, so it lands directly in the estimate.
         //
         // ONE source: the chip's own counter, when the driver can read it.
         //
@@ -297,7 +296,7 @@ class IMUInterface
         // this feature exists to remove rather than take it on trust. The
         // SPREAD is the number that matters: a constant age is a constant
         // offset and harms nothing, while a varying one is the jitter that
-        // lands in madgwick's gyro integration.
+        // lands in the EKF's fusion.
         void noteSampleAge(uint32_t age_us)
         {
             if (!age_us)

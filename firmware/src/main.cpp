@@ -168,13 +168,13 @@ extern void rcSoftFail(int line, int code);
 // simulated heading -- hard-iron bias and all -- and is exactly what a
 // calibration run needs even though no chip is present.
 static bool publish_mag = false;
-// QoS of the 50 Hz sensor topics (odom/unfiltered, imu/data_raw, imu/mag):
+// QoS of the 50 Hz sensor topics (odom/unfiltered, imu/data, imu/mag):
 // best effort, the ROS convention for sensor data, and measured to matter.
 // A reliable rmw_publish on a serial link waits in
 // uxr_run_session_until_confirm_delivery for an agent round trip per
 // message; on the GenDrv, one core, that was 42 Hz at 1.5 Mbaud and 25/33 Hz
-// at 921600 -- best effort holds 50/50 at both, and imu_filter_madgwick
-// and robot_localization subscribe best-effort already, so the launch tree
+// at 921600 -- best effort holds 50/50 at both, and robot_localization
+// subscribes best-effort already, so the launch tree
 // receives (measured: /imu/data 49.97 Hz, /odom 49.0 Hz). A best-effort
 // writer does NOT match a reliable subscriber: `qos: reliable` in the
 // config (env best_effort=0) is for a consumer that insists on it. Needs
@@ -1854,7 +1854,7 @@ void moveBase()
 // feature that cannot be observed cannot be verified.
 //
 // The SPREAD is the number that matters. A constant age is a constant offset
-// and harms nothing; a varying one is the jitter madgwick integrates the gyro
+// and harms nothing; a varying one is the jitter the AHRS integrates the gyro
 // through, and it lands in the heading the EKF takes as absolute.
 //
 // Reported from loop() rather than publishData() so it does not wait for an
@@ -1931,8 +1931,8 @@ void publishData()
             // routine has a real offset to find -- this only means the default
             // robot is one that has already found it.
             //
-            // It is not cosmetic. The EKF fuses absolute yaw from madgwick, and
-            // madgwick's heading comes off this field: uncorrected, the
+            // It is not cosmetic. The EKF fuses absolute yaw from the board's
+            // AHRS, and its heading comes off this field: uncorrected, the
             // simulated (6, -4, 2.5) uT drags the heading 7.4 deg at rest and
             // 8.3 deg worst-case round a turn. Measured on the bench before
             // this: madgwick -137.3 deg against wheels -129.1, and SLAM quietly
@@ -2057,9 +2057,8 @@ void publishData()
     // so using it for the IMU dates the sample to when the MCU got round to
     // publishing it. The error is not constant -- it moves with bus traffic,
     // with how many optional sensors are fitted, and with whatever else the
-    // loop did that cycle -- and madgwick integrates the gyro over the
-    // interval between stamps (constant_dt: 0.0 in bringup.launch.py), so it
-    // goes straight into the heading the EKF then takes as absolute.
+    // loop did that cycle -- and the EKF fuses each message at its stamp, so
+    // it goes straight into the state it then predicts forward from.
     //
     // sampleAgeUs() answers from the chip's own timestamp counter, where the
     // driver can read one. It returns 0 when the driver has none, and 0 here

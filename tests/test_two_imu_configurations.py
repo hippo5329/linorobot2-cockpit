@@ -21,7 +21,8 @@ trigger, with nothing to synchronise. So it fuses them itself
 (firmware/common/lib/imu/ahrs.h, a port of that node's own filter, held to it
 numerically by tests/test_ahrs_is_the_filter_it_replaces.py) and publishes the
 consumer topic directly. imu/mag is still published, because
-magnetometer_calibration needs it; nothing pairs against it.
+magnetometer_calibration needs it; nothing pairs against it. There is no
+imu/data_raw, and no filter node in the launch to read one.
 
 What survives unchanged is the EKF rule, and it is still the dangerous one: the
 shipped configs fuse ABSOLUTE yaw (imu0_config[5] = True), and a heading is only
@@ -110,13 +111,7 @@ def test_gravity_is_removed_by_the_board_and_not_again_by_the_ekf():
     assert "AHRS::gravityFrom(" in src, "the board no longer removes gravity"
     assert "linear_acceleration.x -= " in src, \
         "gravity is computed and not subtracted"
-    # The legacy node keeps its own removal, and must: a board built BEFORE
-    # 2026-09-25 publishes imu/data_raw with gravity in it, and `madgwick:=true`
-    # exists precisely to drive one. So the invariant is that the EKF never
-    # removes it, not that the string is absent.
     launch = _read(LAUNCH)
-    assert '{"remove_gravity_vector": True}' in launch, \
-        "the legacy bisect path would fuse a board's gravity as acceleration"
     assert 'rp["imu0_remove_gravitational_acceleration"] = False' in launch, \
         "the EKF would subtract a gravity that has already been taken out"
 
@@ -130,48 +125,50 @@ def test_the_board_says_which_fusion_it_is_doing():
 
 # --- launcher: madgwick is gone, the EKF rule is not ------------------------
 
-def _madgwick(override, has_imu=True, use_mag=True):
-    """Run the launcher's own decision rather than matching its spelling."""
+def test_no_filter_node_and_no_raw_topic_in_the_launch():
+    """The board fuses; nothing in the launch may wait for imu/data_raw. A
+    filter node with no input joins the graph, publishes nothing, and anything
+    waiting on /imu/data waits for ever -- and the web UI used to switch one on
+    by default."""
     src = _read(LAUNCH)
-    start = src.index('    madgwick_arg = context.launch_configurations.get("madgwick", "")')
-    end = src.index("\n", src.index("enable_madgwick = ", start)) + 1
-    ns = {"context": type("C", (), {"launch_configurations": {"madgwick": override}})(),
-          "has_imu": has_imu, "use_mag": use_mag}
-    exec(compile(textwrap.dedent(src[start:end]), "<madgwick>", "exec"), {}, ns)
-    return ns["enable_madgwick"]
+    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert "imu_filter_madgwick" not in code, "a filter node is launched again"
+    assert "imu/data_raw" not in code, "the launch refers to a topic nothing publishes"
+    assert '"madgwick"' not in code, "the madgwick launch argument is back"
 
 
-def test_madgwick_is_not_launched_by_the_hardware_any_more():
-    """The whole point: no combination of hardware starts the node. It used to be
-    `has_imu and use_mag`, and that is the rule being retired."""
-    for has_imu in (True, False):
-        for use_mag in (True, False):
-            assert _madgwick("", has_imu=has_imu, use_mag=use_mag) is False, \
-                f"madgwick started itself with has_imu={has_imu} use_mag={use_mag}"
-
-
-def test_an_explicit_request_starts_it_only_where_there_is_an_imu():
-    """A filter with no input joins the graph and publishes nothing, so anything
-    waiting on /imu/data waits for ever."""
-    assert _madgwick("true", has_imu=True) is True
-    assert _madgwick("true", has_imu=False) is False, \
-        "madgwick was started on a board with no IMU at all"
-    assert _madgwick("false", has_imu=True) is False
-
-
-def test_the_override_survives_for_bisecting_against_an_older_image():
-    """A board built before 2026-09-25 publishes imu/data_raw and needs the node,
-    so `madgwick:=true` has to keep working."""
+def _use_mag(arg, sensors):
+    """Run the launcher's own use_mag resolution, AUTO notice included."""
     src = _read(LAUNCH)
-    assert 'context.launch_configurations.get("madgwick", "")' in src
-    assert "imu_filter_madgwick" in src, "the node cannot be launched at all now"
+    start = src.index('    mag_sensor = controller.get("sensors", {}).get("mag", "NONE")')
+    end = src.index("    # NO IMU FILTER NODE.", start)
+    ns = {"context": type("C", (), {"launch_configurations": {"use_mag": arg}})(),
+          "controller": {"sensors": sensors}, "print": lambda *a, **k: None}
+    exec(compile(textwrap.dedent(src[start:end]), "<use_mag>", "exec"), {}, ns)
+    return ns["use_mag"]
+
+
+def test_an_explicit_use_mag_launches():
+    """`auto_mag` was assigned only when use_mag was left to the config, and read
+    unconditionally after -- so `use_mag:=true`, a declared argument, raised
+    NameError instead of launching."""
+    assert _use_mag("true", {"mag": "AUTO"}) is True
+    assert _use_mag("false", {"mag": "AK09918"}) is False
+
+
+def test_use_mag_follows_the_config_when_not_given():
+    assert _use_mag("", {"mag": "AK09918"}) is True
+    assert _use_mag("", {"mag": "NONE"}) is False, "a robot with no magnetometer fuses yaw"
+    assert _use_mag("", {"mag": "AUTO"}) is False
+    assert _use_mag("", {"mag": "NONE", "use_sim_mag": True}) is True
 
 
 def test_the_ekf_stops_fusing_absolute_yaw_without_a_magnetometer():
     src = _read(LAUNCH)
     assert "if not use_mag:" in src
     assert "cfg[5] = False" in src, "imu0_config[5] is left fusing an unanchored yaw"
-    assert "pin the heading to zero" in src, "the log does not say what it prevented"
+    assert "nothing to" in src and "anchor it" in src, \
+        "the log does not say what it prevented"
 
 
 def test_the_ekf_does_not_remove_gravity_because_the_board_did():

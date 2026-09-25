@@ -426,7 +426,7 @@ def hardware_env(params: dict) -> dict:
     if tgt.get("use_dual_core") is not None:
         env["dual_core"] = _bool(tgt["use_dual_core"])
     # QoS of the 50 Hz topics. Best effort is the firmware's default (the
-    # launch tree's madgwick and EKF subscribe best-effort; measured 50 Hz at
+    # launch tree's EKF subscribes best-effort; measured 50 Hz at
     # 921600 where reliable managed 25); `qos: reliable` is for a consumer
     # that insists on it -- a reliable subscriber never matches a best-effort
     # writer.
@@ -465,11 +465,12 @@ def hardware_env(params: dict) -> dict:
     # `mag: NONE` -- there is no chip -- and `use_sim_mag: true`, and the rule
     # above read the first and set pub_mag=0, so the sim field the firmware
     # rotates to the room heading (SimIMUFromWheels::applyMag, built for one
-    # purpose: to anchor madgwick) was computed and never sent. /imu/mag had no
-    # publisher at all. bringup.launch.py now fuses the simulated mag, and madgwick
-    # with a magnetometer waits for imu/data_raw AND imu/mag as a synchronised
-    # pair -- so with nothing on /imu/mag it published nothing, /imu/data went
-    # to 0 Hz and the EKF was left blind. Measured 2026-09-22. `NONE` means
+    # purpose: to anchor the heading) was computed and never sent. /imu/mag had
+    # no publisher at all, and the madgwick node of the day, waiting for
+    # imu/data_raw AND imu/mag as a synchronised pair, published nothing --
+    # /imu/data went to 0 Hz and the EKF was left blind. Measured 2026-09-22.
+    # The board fuses the field itself now, but magnetometer_calibration still
+    # reads /imu/mag. `NONE` means
     # "no chip"; it must not also mean "silence the simulation of one".
     if sensors.get("use_sim_mag"):
         env["pub_mag"] = 1

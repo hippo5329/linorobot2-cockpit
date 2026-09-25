@@ -17,6 +17,11 @@ The two failure modes are not symmetric, and that is what decides the default:
 a wrong `true` yields NO /imu/data; a wrong `false` yields /imu/data without
 heading anchoring -- degraded, and it says so in the launch log. Fail toward
 the mode that still produces data.
+
+Since 2026-09-25 the board fuses its own orientation and there is no
+synchroniser to starve, but the rule stands for the EKF's sake: `use_mag` is
+what makes it fuse the board's yaw as ABSOLUTE, and under AUTO the launch cannot
+tell a field-anchored yaw from a 6-axis part's drifting gyro integral.
 """
 import os
 import re
@@ -70,5 +75,5 @@ def test_the_operator_is_told_that_fusion_is_off():
     """A silent downgrade is how a heading problem becomes a mystery a month
     later. The log names the key and the fix."""
     src = _src()
-    assert "heading fusion is OFF" in src
+    assert "will not fuse absolute yaw" in src
     assert re.search(r"mag:\s*AK09918", src), "the message does not say how to turn it on"

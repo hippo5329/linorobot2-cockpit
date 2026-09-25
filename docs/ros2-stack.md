@@ -332,11 +332,11 @@ convention, the anchoring, and the EKF's `imu0_config[5]` rule are what they wer
 covariance the board publishes (1e-4 with a field) is the variance the node's
 `orientation_stddev: 0.01` implied.
 
-* `bringup.launch.py` runs Madgwick with `use_mag` true whenever a magnetometer is fitted *or*
-  simulated, and pins `world_frame: enu` — x east, **y north**, z up, which is the frame the
-  firmware's simulated field points along. The package's default is `enu` today and used to be
-  `nwu`; a silent change of convention would turn every fused heading a quarter turn with nothing
-  in the log to say so, so it is set rather than inherited.
+* The board fuses the field whenever a magnetometer is fitted *or* simulated, in ENU — x east,
+  **y north**, z up, which is the frame the firmware's simulated field points along. It is fixed
+  in `ahrs.h`, not a parameter. Without a field the board fuses gyro and accel alone, its yaw is
+  the gyro's own integral, and `bringup.launch.py` clears `imu0_config[5]` so the EKF does not
+  take that drift as absolute. A real robot may have no magnetometer; that is the path it takes.
 * The robot config's `ekf.imu0_config` must fuse index **5**, absolute yaw — the 15-element vector
   is `[x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]`. Every shipped
   config now fuses `yaw, vyaw, ax, ay` from the IMU and `vx, vy, vyaw` from the wheels, which is
@@ -353,11 +353,13 @@ yaw — two headings that disagree make the filter split the difference.
 exact zero with a real covariance, which is the non-holonomic constraint stated as a measurement,
 not missing data; on a mecanum base it is a velocity in its own right.
 
-Madgwick also runs with `remove_gravity_vector: true`, because the EKF fuses `ax` and `ay` and
+The board also removes gravity before publishing, because the EKF fuses `ax` and `ay` and
 `two_d_mode` forces the filter level: on any real slope gravity would otherwise leak into the
-horizontal axes and be read as acceleration. It is removed once, at the filter that already holds
-the orientation — `robot_localization`'s own `imu0_remove_gravitational_acceleration` stays at its
-default of false, so nothing subtracts it twice.
+horizontal axes and be read as acceleration. It is removed once, from whatever quaternion the
+message carries — the AHRS's, or a BNO085's own — and `bringup.launch.py` sets
+`robot_localization`'s `imu0_remove_gravitational_acceleration` to false, so nothing subtracts it
+twice. The topic gate (`verify_topics.py`) adds the same gravity back to prove a real
+accelerometer is reading: a dead one leaves a specific force of zero.
 
 Both the IMU and the magnetometer must be **calibrated** or the pose rotates. The simulated
 magnetometer carries a hard-iron offset on purpose, so `robot_calibration`'s
@@ -366,23 +368,13 @@ simulated robot starts where a real one does after the routine has been run. Unc
 offset is worth about 7.4 deg of heading at rest.
 
 
-### The IMU filter's `dt` comes from the stamps, not from a constant copied out of the firmware
-Running `imu_filter_madgwick` with `constant_dt: 0.02` to mirror the firmware's `CONTROL_TIMER`
-(20 ms) is wrong. The firmware does publish `/imu/data_raw` once per control period,
-but what *arrives* is not always 50 Hz: an RP2040 at 921600 delivers ~40 Hz, and best-effort
-QoS drops a message rather than stall the link. With a constant `dt` the filter integrates the
-gyro for 20 ms per message it *receives*, so every dropped message is time that never happened
-and the heading drifts short under rotation. The firmware stamps every message with the
-agent-synced epoch (`getTime()` after `syncTime()`, the same stamp `/odom` carries and the EKF
-already trusts), so `constant_dt: 0.0` — the package default, "use the header stamps" — is the
-right setting on every board and at every baud rate. Do not put the constant back to make a
-bench number look steadier.
-
-**The same rule now applies one level down, inside the firmware.** The board's AHRS integrates over
-the interval `micros()` actually measured, not over `CONTROL_TIMER`, and skips an interval longer
-than a second as a stalled loop rather than integrating it as rotation. That is the identical
-mistake this section warns about -- a nominal period standing in for a measured one -- and it is the
-mistake that let a simulated wheel model report 4x its motor's speed when a loop stalled.
+### The IMU filter's `dt` is the interval that passed, not a constant
+The board's AHRS integrates over the interval `micros()` actually measured, not over
+`CONTROL_TIMER`, and skips an interval longer than a second as a stalled loop rather than
+integrating it as rotation. A nominal period standing in for a measured one is the mistake that
+once let `imu_filter_madgwick`, run with `constant_dt: 0.02`, integrate 20 ms per message it
+*received* -- so every message a best-effort link dropped was time that never happened -- and the
+one that let a simulated wheel model report 4x its motor's speed when a loop stalled.
 
 ### One `topic_prefix`, consumed on both sides, so two robots share a DDS domain
 `base_controller.topic_prefix` is a single key with two readers. The board prefixes every

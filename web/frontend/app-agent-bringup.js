@@ -263,15 +263,13 @@ function isDockerMode() {
 // again -- is exactly what 1-Click is supposed to spare the user. Check the
 // whole set and install what is missing in a single apt call.
 //
-// linorobot2_bringup pulls in robot_localization (ekf_node), imu_filter_madgwick
-// (only when madgwick is on, but it is by default), robot_state_publisher and
-// xacro. slam.launch.py pulls in slam_toolbox *and* nav2_bringup; navigation
+// linorobot2_bringup pulls in robot_localization (ekf_node), robot_state_publisher
+// and xacro -- no IMU filter, the board fuses its own orientation. slam.launch.py pulls in slam_toolbox *and* nav2_bringup; navigation
 // needs nav2_bringup. rosdep is supposed to cover these during the workspace
 // build, but its failures are non-fatal there, so a missing one only surfaces
 // as a launch exception much later.
 const BRINGUP_PACKAGES = [
   "robot_localization",
-  "imu_filter_madgwick",
   "robot_state_publisher",
   "joint_state_publisher",
   "xacro",
@@ -429,7 +427,6 @@ function bringupLaunchCommand() {
   const base = document.getElementById("bringup-base-type")?.value || (state.config && state.config.base_type) || "2wd";
   const dev = document.getElementById("bringup-agent-device")?.value || (state.config && state.config.agent_device) || "/dev/ttyACM0";
   const baud = document.getElementById("bringup-agent-baud")?.value || (state.config && state.config.agent_baud) || "1500000";
-  const madgwick = document.getElementById("bringup-madgwick-toggle")?.checked ? "true" : "false";
 
   // Bringup would otherwise start its own native micro_ros_agent. Skip that
   // when an agent is already up, or when the agent engine is a container --
@@ -440,7 +437,7 @@ function bringupLaunchCommand() {
 
   return { action: "bringup", args: {
     launcher, config_path: cfgPath, base, device: dev, baud,
-    madgwick, micro_ros: microRos, distro: getDistro(),
+    micro_ros: microRos, distro: getDistro(),
   } };
 }
 

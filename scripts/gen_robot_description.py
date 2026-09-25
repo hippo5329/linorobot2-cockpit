@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402
 
 # Frames the rest of the stack already agrees on. `imu_link` is what the firmware
-# stamps on /imu/data_raw (imu_interface.h) and `base_footprint` is the child
+# stamps on /imu/data (imu_interface.h) and `base_footprint` is the child
 # frame of its /odom/unfiltered; the EKF publishes odom -> base_link, which is
 # why base_footprint is a CHILD of base_link here and not its parent. They are
 # protocol, not robot facts, which is why they are not config keys.

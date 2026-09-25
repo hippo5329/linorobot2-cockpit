@@ -200,7 +200,7 @@ def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bo
 # this same `sensors:` block, so the config is the only thing that knows which
 # chips a board carries:
 #
-#   imu      -> /imu/data (already a hard requirement of the gate) + /imu/data_raw
+#   imu      -> /imu/data       rate-gated always; required here for its value check
 #   mag      -> /imu/mag        firmware/src/main.cpp, #ifdef PUBLISH_MAG
 #   current  -> /battery        BATTERY_PIN, or an INA219 found on the bus
 #   env      -> /pressure, /temperature   a barometer on the bus, and only when
@@ -210,10 +210,12 @@ def wants_stamped_cmd_vel(distro: str, controller_cfg: dict, params: dict) -> bo
 # publisher is created only if the barometer answered. That is precisely the
 # failure worth catching on a real base, so it is required like the rest.
 SENSOR_TOPICS = {
-    # The firmware's raw IMU topic, not the filtered /imu/data: gravity is what
-    # proves an accelerometer is alive, and bringup runs madgwick with
-    # remove_gravity_vector: True, so /imu/data has none by design.
-    "imu":     ["/imu/data_raw"],
+    # /imu/data is already rate-gated on every run. Naming it here is what turns
+    # on its physical check on a real base: the specific force rebuilt from the
+    # board's gravity subtraction, which is what proves the accelerometer is
+    # alive (verify_topics._imu_range). The board publishes no raw IMU topic --
+    # it fuses the orientation itself, with or without a magnetometer.
+    "imu":     ["/imu/data"],
     "mag":     ["/imu/mag"],
     "current": ["/battery"],
     "env":     ["/pressure", "/temperature"],

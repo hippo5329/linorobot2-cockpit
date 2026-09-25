@@ -240,12 +240,12 @@ class Wire:
         # (11.5 kB/s) -- and the firmware publishes BEST EFFORT, so what does not
         # fit is not delayed, it is GONE.
         #
-        # Which matters more than it looks, because madgwick pairs imu/data_raw
+        # It mattered more than it looked while madgwick paired imu/data_raw
         # with imu/mag through an ApproximateTime synchroniser five deep: an
-        # unpaired IMU sample produces no imu/data at all. So a link that drops
-        # 30% of messages costs far more than 30% of the EKF's orientation
-        # input, and the bench has already shown the asymmetry it predicts --
-        # /odom at 33 Hz beside /imu/data at 10 Hz on the same leg.
+        # unpaired IMU sample produced no imu/data at all, and the bench showed
+        # the asymmetry -- /odom at 33 Hz beside /imu/data at 10 Hz on the same
+        # leg. The board fuses its own orientation now, so a dropped message
+        # costs that message and no more; this is how to check that it does.
         #
         # 0 is unlimited, which is what every existing leg gets.
         self.bytes_per_s = max(float(bytes_per_s), 0.0)
@@ -362,8 +362,8 @@ class SimBaseNode(Node):
         # odom/unfiltered as a TOPIC and the EKF owns `odom -> base_link`
         # (`publish_tf: true` in every reference config). A base that also
         # broadcasts it puts two publishers on one transform -- the exact
-        # collision bringup.launch.py already avoids by forcing madgwick's
-        # publish_tf to false.
+        # collision every other node in bringup.launch.py is configured to
+        # avoid.
         #
         # It is not a harmless duplicate. On 2026-09-24 it silently invalidated
         # a latency sweep: the EKF's FRESH transform masked this node's delayed
@@ -391,10 +391,9 @@ class SimBaseNode(Node):
                              "must be positive")
         self.wheels = Wheels(self.d, (params.get("kinematics") or {}).get("pid") or {})
 
-        # No magnetometer here, so this base publishes imu/data itself and no
-        # madgwick runs -- the rule bringup.launch.py follows for a real board
-        # with no mag fitted, applied to the simulated one so the two stacks are
-        # the same shape.
+        # This base publishes imu/data itself, orientation included, as the
+        # board does -- there is no raw IMU topic and no filter node, so the two
+        # stacks are the same shape.
         sensor_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                                 history=HistoryPolicy.KEEP_LAST, depth=10,
                                 durability=DurabilityPolicy.VOLATILE)

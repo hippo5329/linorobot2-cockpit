@@ -227,8 +227,8 @@ filter stands aside: `hasFusedOrientation()` is the seam.
 
 Cost, measured by compiling one update for each target: **988 instructions and 422 hardware FPU ops
 on an ESP32** (~5 us, 0.025% of a 20 ms cycle), and on the RP2040 — the only target with no FPU —
-922 instructions and 188 soft-float helper calls, about 0.7% of the cycle. `madgwick:=true` still
-launches the node, for bisecting against an image built before this.
+922 instructions and 188 soft-float helper calls, about 0.7% of the cycle. There is no
+`imu/data_raw` and no filter node any more: the launch has nothing to start for the IMU.
 
 ### `base` reads the I2C bus before it believes the config
 The scan and the WHO_AM_I table live in **`firmware/common/lib/i2c_probe`**, not inside the
@@ -311,7 +311,7 @@ them in. `tests/test_qmi8658_driver.py` pins each of these.
 
 **Simulated wheels do not imply a simulated IMU.** Skipping the I2C sensors whenever `use_sim_wheel: true`
 would be right for a bare module with nothing on the bus and wrong for a board with no encoders and
-a real IMU: `/imu/data_raw` would be the simulation at 50 Hz and the driver you meant to test would
+a real IMU: `/imu/data` would be the simulation at 50 Hz and the driver you meant to test would
 never run. Only the sensors that are themselves sim are synthesised from the simulated wheels (`imu_from_wheels = sim_wheels && imu_is_sim`, likewise
 the magnetometer): a real IMU the config or the bus names is initialised with simulated wheels
 too, and one that fails to init on such a board falls back to the
@@ -662,7 +662,7 @@ remove that wait, but a best-effort writer does not match a reliable subscriber,
 best-effort (`qos: reliable` in the config → env `best_effort=0` turns it back), which removes
 the per-message ACK wait. Measured on one core, radio off: 1.5 Mbaud 42.3 → **50.0 Hz**;
 **921 600 baud 25.1 / 33.0 → 50.1 / 50.0 Hz** — the rate most ESP32 modules can run at. The
-launch tree's `imu_filter_madgwick` and `robot_localization` subscribe best-effort already:
+launch tree's `robot_localization` subscribes best-effort already:
 with the board best-effort, `/imu/data` 49.97 Hz and `/odom` 49.0 Hz. The first attempt lost `/odom/unfiltered` entirely (`fail=50` per second on the
 UART1 line): a best-effort XRCE stream cannot fragment, so a message must fit one transport MTU,
 and the client's default for a custom transport is **512 bytes** — `nav_msgs/Odometry` with its

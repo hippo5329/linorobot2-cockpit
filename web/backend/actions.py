@@ -238,11 +238,10 @@ def _bringup(a: Dict) -> str:
     base = _enum(a.get("base"), "base", {"2wd", "4wd", "mecanum", "ackermann"}, "2wd")
     dev = _device(a.get("device"), "device", "/dev/ttyACM0")
     baud = _int(a.get("baud"), "baud", 1200, 6000000, 1500000)
-    madgwick = "true" if _bool(a.get("madgwick")) else "false"
     micro_ros = "true" if _bool(a.get("micro_ros")) else "false"
     return (f"{ros_setup_shell(distro)}; ros2 launch {shlex.quote(launcher)} "
             f"config_file:={shlex.quote(cfg)} base:={base} base_serial_port:={shlex.quote(dev)} "
-            f"micro_ros_baudrate:={baud} madgwick:={madgwick} micro_ros:={micro_ros}")
+            f"micro_ros_baudrate:={baud} micro_ros:={micro_ros}")
 
 
 # The compose file is docker-compose.YML and has been since the first commit.

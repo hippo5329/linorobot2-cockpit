@@ -4,7 +4,7 @@
 #
 # Reads <config dir>/<robot>_config.yaml as single source of truth.
 # Launches:
-# 1. imu_filter_madgwick (publish_tf: false to prevent TF graph collision)
+# 1. (no IMU filter node: the board fuses its own orientation, ahrs.h)
 # 2. robot_localization (ekf_node)
 # 3. micro_ros_agent (optional, defaults to true for native serial/UDP)
 # 4. rosbridge_websocket + rosapi on port 9090, which is what the Web Cockpit's
@@ -248,13 +248,14 @@ def launch_setup(context, *args, **kwargs):
         for key, default in (("odom_frame", "odom"), ("base_link_frame", "base_link"),
                              ("world_frame", "odom"), ("map_frame", "map")):
             rp[key] = frame_prefix + str(rp.get(key, default))
-    imu_sensor = controller.get("sensors", {}).get("imu", "NONE")
-    use_sim_imu = controller.get("sensors", {}).get("use_sim_imu", False)
-    has_imu = (imu_sensor != "NONE") or use_sim_imu
 
     mag_sensor = controller.get("sensors", {}).get("mag", "NONE")
     use_sim_mag = controller.get("sensors", {}).get("use_sim_mag", False)
     use_mag_arg = context.launch_configurations.get("use_mag", "")
+    # Assigned on both branches: the AUTO notice below reads it, and it used to
+    # be set only when use_mag was left to the config -- so `use_mag:=true`, a
+    # declared argument, raised NameError instead of launching.
+    auto_mag = False
     if use_mag_arg != "":
         use_mag = (use_mag_arg.lower() in ("true", "1", "yes"))
     else:
@@ -264,64 +265,48 @@ def launch_setup(context, *args, **kwargs):
         # madgwick a fixed 90-degree error (see SimIMUFromWheels::applyMag).
         # The mag now points North and is rotated by the wheel heading for
         # exactly one reason: to anchor heading fusion to the simulated room.
-        # Left out of the fusion, madgwick integrates the gyro alone, the sim
+        # Left out of the fusion, the heading filter integrates the gyro alone, the sim
         # gyro's bias walks onto its +-0.004 rad/s clamp and stays there
-        # (13.7 deg/min), the EKF takes madgwick's yaw as absolute, and the
+        # (13.7 deg/min), the EKF takes that yaw as absolute, and the
         # body -- which follows the WHEEL yaw -- ends up 52 degrees from where
         # Nav2 thinks it is pointing. Measured at rest on a bare Pico 2 after an
         # hour: wheel yaw 59.4, EKF yaw 7.2. Every goal then veers, and with a
         # wall in the room it eventually parks itself there.
         #
-        # AUTO is not a promise of a magnetometer, and treating it as one costs
-        # the WHOLE imu topic. madgwick with use_mag=true synchronises
-        # /imu/data_raw against /imu/mag; if no magnetometer ever publishes, the
-        # filter never fires and /imu/data is silent -- so a 6-axis part under
-        # `mag: AUTO` produces no fused IMU at all, the topic verifier reports
-        # "NO DATA", and the run aborts before SLAM. Measured on a bench Pico 2
-        # with an LSM6DSOX (accel+gyro only) on 2026-09-23.
-        #
-        # The two failure modes are not symmetric, which is what decides this:
-        # a wrong `true` yields NO /imu/data, a wrong `false` yields /imu/data
-        # without heading anchoring -- degraded, but a working stack that says
-        # so. So AUTO resolves to false and names what to do about it.
+        # AUTO is not a promise of a magnetometer. This launch cannot see the
+        # bus, so it cannot know whether the board's heading is anchored to a
+        # field or is the gyro's own integral -- and the EKF fuses whatever
+        # imu/data says as ABSOLUTE yaw when use_mag is true. A wrong `true`
+        # hands it a drifting heading as truth; a wrong `false` leaves the
+        # heading to vyaw alone -- degraded, but a working stack that says so.
+        # So AUTO resolves to false and names what to do about it.
         auto_mag = str(mag_sensor).strip().upper() in ("AUTO", "")
         use_mag = (not auto_mag and str(mag_sensor).upper() != "NONE") or bool(use_sim_mag)
 
     if auto_mag and not use_sim_mag:
-        print("[bringup] sensors.mag is AUTO: heading fusion is OFF. The bus decides "
-              "whether a magnetometer exists and this launch cannot see it, so fusing "
-              "would risk starving /imu/data entirely. Name the part (mag: AK09918) "
-              "to fuse it.")
+        print("[bringup] sensors.mag is AUTO: the EKF will not fuse absolute yaw. The "
+              "bus decides whether a magnetometer exists and this launch cannot see it. "
+              "Name the part (mag: AK09918) to fuse it.")
 
-    # MADGWICK IS GONE. The board fuses its own orientation now.
+    # NO IMU FILTER NODE. The board fuses its own orientation (ahrs.h) and
+    # publishes imu/data; there is no imu/data_raw for a node to read.
     #
-    # It was launched to pair imu/data_raw with imu/mag, and that pairing -- a
-    # message_filters ApproximateTime synchroniser five deep -- made imu/data the
-    # rate of MATCHED PAIRS across a best-effort micro-ROS session. Two slowed
+    # imu_filter_madgwick used to pair imu/data_raw with imu/mag through a
+    # message_filters ApproximateTime synchroniser five deep, which made imu/data
+    # the rate of MATCHED PAIRS across a best-effort micro-ROS session. Two slowed
     # bench legs measured the cost: /odom, which needs no partner, held 33 Hz
-    # while imu/data fell to 10. The board has both readings in one cycle from
-    # one trigger, so firmware/common/lib/imu/ahrs.h -- a port of this node's own
-    # ImuFilter, held to it numerically by tests -- does the job with nothing to
-    # synchronise, and removes gravity at the source as the node did.
-    #
-    # `madgwick:=true` is still accepted, for bisecting against an older image:
-    # a board built before 2026-09-25 publishes imu/data_raw and needs the node.
-    madgwick_arg = context.launch_configurations.get("madgwick", "")
-    # `and has_imu` because a filter with no input is worse than no filter: it
-    # joins the graph, publishes nothing, and anything waiting on /imu/data waits
-    # for ever. It also keeps has_imu meaningful -- dropping the hardware rule left
-    # it assigned and unread.
-    enable_madgwick = (madgwick_arg.lower() in ("true", "1", "yes")) and has_imu
+    # while imu/data fell to 10. firmware/common/lib/imu/ahrs.h is a port of that
+    # node's own ImuFilter, held to it numerically by tests, with nothing to
+    # synchronise.
 
-    # THE EKF HALF OF THE SAME RULE, and it cannot ship without the other two.
+    # THE EKF HALF OF THE RULE: a heading is only absolute where a field anchors it.
     #
-    #   magnetometer    madgwick publishes imu/data with a field-anchored yaw,
-    #                   and the EKF fuses that yaw: imu0_config[5] = True.
-    #   no magnetometer no madgwick, the BOARD publishes imu/data, and its
-    #                   orientation is the identity quaternion. Fusing index 5
-    #                   there feeds the filter a constant zero heading -- the
-    #                   estimate pinned to the starting yaw however the robot
-    #                   turns, and not one line of log to say so. Angular speed
+    #   magnetometer    the board's imu/data yaw is anchored to the field, and
+    #                   the EKF fuses it: imu0_config[5] = True.
+    #   no magnetometer the board fuses gyro and accel alone, so its yaw is the
+    #                   gyro's own integral with nothing to correct it. Fusing
+    #                   index 5 there feeds the filter that drift as absolute
+    #                   heading, and not one line of log to say so. Angular speed
     #                   (index 11, vyaw) is what carries rotation instead, and
     #                   it is already true in every shipped config.
     #
@@ -337,8 +322,8 @@ def launch_setup(context, *args, **kwargs):
             cfg[5] = False
             rp["imu0_config"] = cfg
             print("[bringup] no magnetometer: imu0_config[5] (absolute yaw) -> False. "
-                  "The board's imu/data carries an identity quaternion, so fusing yaw "
-                  "would pin the heading to zero; vyaw carries rotation instead.")
+                  "The board's imu/data yaw is the gyro's own integral with nothing to "
+                  "anchor it; vyaw carries rotation instead.")
 
     # GRAVITY IS REMOVED ONCE, AND NOT HERE.
     #
@@ -351,7 +336,7 @@ def launch_setup(context, *args, **kwargs):
     # Whoever runs the fusion owns the subtraction, because only they have the
     # orientation estimate it needs. Since 2026-09-25 that is the BOARD: ahrs.h
     # subtracts its own gravity estimate before publishing, exactly as the
-    # madgwick node's remove_gravity_vector did. Doing it a second time here would
+    # madgwick node's remove_gravity_vector used to. Doing it a second time here would
     # fabricate 9.81 m/s2 upward, which is worse than the fault it was meant to
     # fix -- so this states an invariant rather than a branch, and it holds
     # whether the board has a magnetometer or not.
@@ -373,50 +358,7 @@ def launch_setup(context, *args, **kwargs):
 
     nodes = [
         LogInfo(
-            msg=f"[Linorobot2 Cockpit] Bringup controller='{controller_name}', transport='{transport}', serial='{serial_port}', baud='{baudrate}', udp_port='{udp_port}', lidar_mode='{effective_lidar_comm_mode}', madgwick={enable_madgwick}, use_mag={use_mag}, rosbridge_port='{context.launch_configurations.get("rosbridge_port", "9090")}', urdf='{urdf_path}'"
-        ),
-        # 1. Madgwick Filter (fuses imu/data_raw into imu/data with quaternion orientation)
-        Node(
-            condition=IfCondition("true" if enable_madgwick else "false"),
-            package="imu_filter_madgwick",
-            executable="imu_filter_madgwick_node",
-            name="madgwick_filter_node",
-            output="screen",
-            parameters=[
-                {"publish_tf": False},
-                {"use_mag": use_mag},
-                # ENU: x east, y north, z up (StatelessOrientation::
-                # computeOrientation). It is imu_filter_madgwick's default
-                # TODAY, and the default it derives heading from is exactly what
-                # SimIMUFromWheels::applyMag points its world field along
-                # (+Y = north). Pinned rather than inherited because this
-                # package's default was NWU before it was ENU, and a silent
-                # change of convention turns every fused heading 90 degrees
-                # without one line of the log saying so.
-                {"world_frame": "enu"},
-                # The EKF now fuses ax and ay (imu0_config 12, 13). A real
-                # accelerometer measures specific force, so on any slope gravity
-                # leaks into the horizontal axes and the filter reads it as
-                # acceleration. madgwick already has the orientation estimate
-                # needed to subtract it (filter_.getGravity), so it is removed
-                # once, at the source, and /imu/data means what it says.
-                {"remove_gravity_vector": True},
-                # What the EKF is told about how much to trust that heading:
-                # this becomes orientation_covariance[0,4,8]. Tighten it only as
-                # far as the magnetometer is actually calibrated.
-                {"orientation_stddev": 0.01},
-                # dt from the message stamps (0.0 is the package default), not
-                # a constant mirroring CONTROL_TIMER (20 ms): the firmware
-                # stamps /imu/data_raw with the agent-synced epoch, and the
-                # rate that arrives is not always the timer's -- an RP2040 at
-                # 921600 delivers ~40 Hz of the 50 -- so a constant 20 ms
-                # under-integrated the gyro by every message the link dropped.
-                {"constant_dt": 0.0},
-            ],
-            remappings=[
-                ("imu/data_raw", "imu/data_raw"),
-                ("imu/data", "imu/data"),
-            ],
+            msg=f"[Linorobot2 Cockpit] Bringup controller='{controller_name}', transport='{transport}', serial='{serial_port}', baud='{baudrate}', udp_port='{udp_port}', lidar_mode='{effective_lidar_comm_mode}', use_mag={use_mag}, rosbridge_port='{context.launch_configurations.get("rosbridge_port", "9090")}', urdf='{urdf_path}'"
         ),
         # 2. Robot Localization EKF Node
         Node(
@@ -660,11 +602,6 @@ def generate_launch_description():
                         "and CI use; the release gate still runs on hardware",
         ),
         DeclareLaunchArgument(
-            "madgwick",
-            default_value="",
-            description="Start imu_filter_madgwick node (auto-enabled if mag is present)",
-        ),
-        DeclareLaunchArgument(
             "description",
             default_value="true",
             description="Start robot_state_publisher description node",
@@ -732,7 +669,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "use_mag",
             default_value="",
-            description="Enable magnetometer fusion in madgwick node (auto-detected if empty)",
+            description="Fuse the board's field-anchored yaw in the EKF (imu0_config[5]); from sensors.mag if empty",
         ),
         OpaqueFunction(function=launch_setup),
     ])

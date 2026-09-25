@@ -222,7 +222,7 @@ ekf:
       - false
       - false
       - false
-      - true    # absolute yaw: madgwick, anchored by the magnetometer
+      - true    # absolute yaw: the board's AHRS, anchored by the magnetometer
       - false
       - false
       - false

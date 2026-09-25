@@ -31,9 +31,11 @@ def test_agent_start_udp_has_no_device():
 def test_bringup_passes_through_launch_args():
     cmd = actions.build("bringup", {"launcher": "/w/launch_bringup.py", "config_path": "/c/robot.yaml",
                                     "base": "mecanum", "device": "/dev/ttyACM0", "baud": 1500000,
-                                    "madgwick": True, "micro_ros": False, "distro": "jazzy"})
+                                    "micro_ros": False, "distro": "jazzy"})
     assert "ros2 launch /w/launch_bringup.py" in cmd
-    assert "base:=mecanum" in cmd and "madgwick:=true" in cmd and "micro_ros:=false" in cmd
+    assert "base:=mecanum" in cmd and "micro_ros:=false" in cmd
+    # The board fuses its own orientation; there is no filter node to switch on.
+    assert "madgwick" not in cmd
 
 
 def test_teleop_writes_params_and_runs():
