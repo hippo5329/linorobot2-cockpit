@@ -304,21 +304,35 @@ class _Wheel:
         # its dt is zero, so four wheels advance it by one cycle in total.
         no_load *= self.pack.scale(dt if first_in_tick else 0.0)
 
-        accel = ilim_scale * d["gear_eff"] * (no_load - self.rpm) / self.tau
-        accel -= self.rpm * d["viscous"]
-        if self.rpm > 0.0:
-            accel -= d["coulomb"]
-        elif self.rpm < 0.0:
-            accel += d["coulomb"]
-        accel = min(max(accel, -d["accel_clamp"]), d["accel_clamp"])
+        # SLICED at a quarter of tau, exactly as SimEncoder::integrate() does.
+        # An explicit Euler step of a first-order system overshoots once the step
+        # passes tau and DIVERGES past 2*tau, and this instrument is handed whatever
+        # interval the host's timer actually took -- so the bound has to be the
+        # model's own time constant, not the caller's good manners. At the normal
+        # 20 ms cycle `slices` is 1 and `h == dt`, so the calibrated model is
+        # untouched wherever nothing is wrong.
+        slices = int(dt / (0.25 * self.tau)) + 1
+        slices = min(slices, 64)
+        h = dt / slices
+        ceiling = d["motor_rpm"]      # already carries volt_ratio
+        for _ in range(slices):
+            accel = ilim_scale * d["gear_eff"] * (no_load - self.rpm) / self.tau
+            accel -= self.rpm * d["viscous"]
+            if self.rpm > 0.0:
+                accel -= d["coulomb"]
+            elif self.rpm < 0.0:
+                accel += d["coulomb"]
+            accel = min(max(accel, -d["accel_clamp"]), d["accel_clamp"])
 
-        was = self.rpm
-        self.rpm += accel * dt
-        # Coulomb drag brakes, it must not become a motor.
-        if no_load == 0.0 and was != 0.0 and (was > 0.0) != (self.rpm > 0.0):
-            self.rpm = 0.0
-        if no_load == 0.0 and abs(self.rpm) < 0.5:
-            self.rpm = 0.0
+            was = self.rpm
+            self.rpm += accel * h
+            # Coulomb drag brakes, it must not become a motor.
+            if no_load == 0.0 and was != 0.0 and (was > 0.0) != (self.rpm > 0.0):
+                self.rpm = 0.0
+            if no_load == 0.0 and abs(self.rpm) < 0.5:
+                self.rpm = 0.0
+            # A simulated motor may not turn faster than its own no-load speed.
+            self.rpm = min(max(self.rpm, -ceiling), ceiling)
 
 
 def _velocities(d, rpm):

@@ -257,3 +257,100 @@ def test_the_firmware_and_the_host_apply_it_the_same_way():
     assert "demand()[slot_] = ifrac * ilim_scale;" in body, "the pack must see the limited current"
     # ...and never the speed target.
     assert "no_load_rpm *= ilim_scale" not in body
+
+
+# ---------------------------------------------------------------------------
+# The integration STEP, which nothing above pinned.
+#
+# test_the_firmware_and_the_host_apply_it_the_same_way() greps sim_wheel.h for
+# three substrings about the current limiter, and all three survived the
+# 2026-09-25 fix that sliced integrate() at a quarter of tau -- so the firmware
+# gained the bound, this transcription did not, and the whole file stayed green.
+# Measured on the gendrv reference config, the transcription was still diverging
+# exactly as the header had:
+#
+#     step        old peak    motor's own no-load speed
+#     20 ms        126.8 rpm   140
+#     300 ms       190.0 rpm   140
+#     900 ms       561.9 rpm   140
+#
+# That matters more here than in the firmware, because sim_base_node.py hands
+# this model whatever interval the host's timer actually took -- and the
+# boardless matrix is what people reach for to reproduce a bench failure.
+#
+# So these are BEHAVIOURAL: they state the two properties a plant must have at
+# any step, rather than naming the code that currently provides them.
+def _peak_and_revs(d, step, secs=2.0, duty=1.0):
+    pack = dr._Pack(d)
+    wheels = [dr._Wheel(d, pack, i) for i in range(4)]
+    peak = revs = 0.0
+    for _ in range(int(secs / step)):
+        for i, w in enumerate(wheels):
+            w.duty = duty
+            w.step(step, i == 0)
+        peak = max(peak, abs(wheels[0].rpm))
+        revs += wheels[0].rpm / 60.0 * step
+    return peak, revs
+
+
+STEPS = (0.010, 0.020, 0.100, 0.200, 0.300, 0.500, 0.900)
+
+
+@pytest.mark.parametrize("step", STEPS)
+def test_the_transcription_cannot_take_the_wheel_past_its_own_motor(step):
+    """A simulated motor may not turn faster than its own no-load speed, at any
+    interval the caller happens to hand it. `motor_rpm` already carries the
+    voltage ratio, so it IS the ceiling."""
+    d = _d()
+    peak, _ = _peak_and_revs(d, step)
+    assert peak <= d["motor_rpm"] * 1.02, (
+        f"at a {step * 1000:.0f} ms step the wheel reached {peak:.1f} rpm, past the "
+        f"{d['motor_rpm']:.1f} rpm its motor can turn -- the Euler step is unbounded")
+
+
+@pytest.mark.parametrize("step", STEPS)
+def test_the_transcription_never_reports_more_distance_than_it_travelled(step):
+    """One-sided on purpose. A coarse step may legitimately lose a little
+    distance -- it cannot manufacture any, which is what put a simulated robot
+    30 m outside a 6 m room."""
+    d = _d()
+    _, fine = _peak_and_revs(d, 0.010)
+    _, coarse = _peak_and_revs(d, step)
+    assert coarse <= fine * 1.10, (
+        f"a {step * 1000:.0f} ms step reported {coarse:.2f} rev against the fine "
+        f"step's {fine:.2f} -- distance the wheel did not cover")
+    assert coarse > fine * 0.5, (
+        f"a {step * 1000:.0f} ms step reported {coarse:.2f} rev against {fine:.2f}: "
+        "the bound is discarding real motion rather than integrating it")
+
+
+def test_the_normal_control_cycle_is_untouched_by_the_bound():
+    """The fix must be invisible where nothing is wrong: at 20 ms the model is
+    already resolved, so it must agree with a 10 ms step."""
+    d = _d()
+    p10, r10 = _peak_and_revs(d, 0.010)
+    p20, r20 = _peak_and_revs(d, 0.020)
+    assert p20 == pytest.approx(p10, rel=0.01), f"{p20:.2f} vs {p10:.2f} rpm"
+    assert r20 == pytest.approx(r10, rel=0.02), f"{r20:.3f} vs {r10:.3f} rev"
+
+
+def test_the_transcription_slices_on_the_same_rule_as_the_header():
+    """Both sides bound the step by the model's own time constant, and the
+    fraction is the header's to choose. Read it out rather than repeat it."""
+    src = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "encoder",
+                            "sim_wheel.h"), encoding="utf-8").read()
+    body = src[src.index("void integrate()"):src.index("public:")]
+    m = re.search(r"slices\s*=\s*\(int\)\(dts\s*/\s*\(([0-9.]+)f?\s*\*\s*tau\)\)\s*\+\s*1", body)
+    assert m, "sim_wheel.h no longer slices its step -- the bound was removed"
+    frac = m.group(1)
+    cap = re.search(r"slices\s*>\s*(\d+)\)\s*slices\s*=\s*\1", body)
+    assert cap, "sim_wheel.h no longer caps the slice count"
+
+    host = open(os.path.join(REPO_ROOT, "scripts", "drivetrain_report.py"),
+                encoding="utf-8").read()
+    step = host[host.index("    def step(self, dt, first_in_tick):"):]
+    step = step[:step.index("\ndef ")]
+    assert f"{frac} * self.tau" in step, (
+        f"sim_wheel.h slices at {frac}*tau and the transcription does not")
+    assert f"min(slices, {cap.group(1)})" in step, (
+        f"sim_wheel.h caps the slices at {cap.group(1)} and the transcription does not")
