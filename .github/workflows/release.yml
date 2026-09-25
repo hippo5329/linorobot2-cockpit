@@ -216,8 +216,14 @@ jobs:
           exit 1
 
   images:
-    name: Docker image ${{ matrix.name }}
-    runs-on: ubuntu-24.04
+    # One build per architecture, each on a NATIVE runner, pushed by digest; the
+    # images-manifest job below publishes the tags as one multi-arch list. arm64
+    # is for the October robots (Raspberry Pi 5, Jetson Orin Nano). Native, not
+    # QEMU: this Dockerfile compiles picotool, micro_ros_agent and the cockpit
+    # workspace (and Nav2 when the archive lags), hours under emulation.
+    # The pio image stays amd64: firmware is built on a host, never on a robot.
+    name: Docker image ${{ matrix.name }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -226,14 +232,32 @@ jobs:
             dockerfile: docker/Dockerfile
             image: linorobot2-cockpit-robot
             distro: jazzy
+            arch: amd64
+            runner: ubuntu-24.04
+          - name: robot-jazzy
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: jazzy
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - name: robot-lyrical
             dockerfile: docker/Dockerfile
             image: linorobot2-cockpit-robot
             distro: lyrical
+            arch: amd64
+            runner: ubuntu-24.04
+          - name: robot-lyrical
+            dockerfile: docker/Dockerfile
+            image: linorobot2-cockpit-robot
+            distro: lyrical
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - name: pio
             dockerfile: docker/Dockerfile.pio
             image: linorobot2-cockpit-pio
             distro: ''
+            arch: amd64
+            runner: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Stage the sibling ROS package (LD19 driver)
@@ -251,8 +275,56 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Tags
-        id: tags
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            ROS_DISTRO=${{ matrix.distro || 'jazzy' }}
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+      - name: Record the digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          d="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${d#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.name }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  images-manifest:
+    # A tag is published only when EVERY architecture of that image built: a
+    # half list would pull on one robot and fail on the next.
+    name: Docker manifest ${{ matrix.name }}
+    needs: images
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: robot-jazzy, image: linorobot2-cockpit-robot, distro: jazzy}
+          - {name: robot-lyrical, image: linorobot2-cockpit-robot, distro: lyrical}
+          - {name: pio, image: linorobot2-cockpit-pio, distro: ''}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.name }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish the tags as one multi-arch list
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
@@ -263,19 +335,11 @@ jobs:
           # dispatch refreshes only the floating tags.
           if [ -n "${{ matrix.distro }}" ]; then
             tags="$base:${{ matrix.distro }}"
-            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }}-${{ matrix.distro }},$tags" ;; esac
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }}-${{ matrix.distro }} $tags" ;; esac
           else
             tags="$base:latest"
-            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }},$tags" ;; esac
+            case "$GITHUB_REF" in refs/tags/*) tags="$base:${{ github.ref_name }} $tags" ;; esac
           fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          build-args: |
-            ROS_DISTRO=${{ matrix.distro || 'jazzy' }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cd "$RUNNER_TEMP/digests"
+          docker buildx imagetools create $(printf -- '-t %s ' $tags) $(printf "$base@sha256:%s " *)
+          for t in $tags; do docker buildx imagetools inspect "$t" | grep -E '^Name|Platform'; done
