@@ -190,6 +190,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsof usbutils udev curl ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/*
 
+# A depth camera as the scan source on a robot without a LiDAR, or a second
+# obstacle source beside one (scripts/depth_camera.py): depthimage_to_laserscan,
+# and the drivers for upstream linorobot2's depth cameras that apt carries --
+# Intel RealSense and Luxonis OAK-D, both distros (checked 2026-09-26: jazzy
+# depthai 2.12, lyrical 3.4; +~320 MB). Stereolabs ZED needs its SDK and CUDA,
+# which no generic image can carry; bringup says what to install when a ZED is
+# configured and its wrapper is missing. The simulated camera needs only the
+# converter, so the bench tests the path with no camera attached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-depthimage-to-laserscan \
+        ros-${ROS_DISTRO}-realsense2-camera \
+        ros-${ROS_DISTRO}-depthai-ros-driver \
+    && rm -rf /var/lib/apt/lists/*
+
 # Nav2. The line this replaces installed `navigation2` and `nav2_bringup` and
 # shrugged if either was missing, which on lyrical meant an image with no
 # navigation at all -- announced once in the build log and then forgotten.

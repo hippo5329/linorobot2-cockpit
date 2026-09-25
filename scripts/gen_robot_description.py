@@ -48,6 +48,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402
+import depth_camera  # noqa: E402  (the camera frame each driver roots its tree at)
 
 # Frames the rest of the stack already agrees on. `imu_link` is what the firmware
 # stamps on /imu/data (imu_interface.h) and `base_footprint` is the child
@@ -125,6 +126,23 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
         sonar.setdefault(k, 0.0)
     sonar.setdefault("frame", DEFAULT_SONAR_FRAME)
 
+    # A depth camera looks forward from the front of the deck, at the LiDAR's
+    # height. Its frame is the root of the driver's own TF tree (depth_camera.py),
+    # so the driver's optical frames hang off the pose placed here.
+    camera = dict(geo.get("depth_camera") or {})
+    camera.setdefault("x", round(_f(body["length"]) / 2.0, 4))
+    camera.setdefault("y", 0.0)
+    camera.setdefault("z", laser["z"])
+    for k in ("roll", "pitch", "yaw"):
+        camera.setdefault(k, 0.0)
+    model = None
+    try:
+        model = depth_camera.depth_model(params.get("base_controller") or {})
+    except ValueError:
+        pass
+    camera.setdefault("frame", depth_camera.DEPTH_MODELS[model][2] if model else depth_camera.SIM_FRAME)
+    camera["fitted"] = model is not None or depth_camera.use_sim_depth(params.get("base_controller") or {})
+
     imu = dict(geo.get("imu") or {})
     for k in ("x", "y", "z", "roll", "pitch", "yaw"):
         imu.setdefault(k, 0.0)
@@ -134,7 +152,7 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
     mesh.setdefault("wheel", "")
 
     return {"body": body, "wheel": wheel, "casters": casters, "laser": laser,
-            "sonar": sonar, "imu": imu, "mesh": mesh}
+            "sonar": sonar, "imu": imu, "mesh": mesh, "depth_camera": camera}
 
 
 def geometry_warnings(params: Dict[str, Any]) -> List[str]:
@@ -328,6 +346,14 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
     ET.SubElement(robot, "link", name=sonar_frame)
     _joint(robot, f"{sonar_frame}_to_base_link", "fixed", BASE_FRAME, sonar_frame,
            (sonar["x"], sonar["y"], sonar["z"]), (sonar["roll"], sonar["pitch"], sonar["yaw"]))
+
+    # Only on a robot that has one: a camera frame on every robot would be a
+    # second parent in waiting for a driver that brings its own.
+    camera = geo["depth_camera"]
+    if camera["fitted"]:
+        ET.SubElement(robot, "link", name=camera["frame"])
+        _joint(robot, f"{camera['frame']}_to_base_link", "fixed", BASE_FRAME, camera["frame"],
+               (camera["x"], camera["y"], camera["z"]), (camera["roll"], camera["pitch"], camera["yaw"]))
 
     ET.indent(robot, space="  ")
     return '<?xml version="1.0"?>\n' + ET.tostring(robot, encoding="unicode") + "\n"

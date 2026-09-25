@@ -141,6 +141,16 @@ async def api_save_hardware_config(request: Request):
         ctrl["mcu"] = data["mcu"]
     if "sensors" in data and isinstance(data["sensors"], dict):
         ctrl.setdefault("sensors", {}).update(data["sensors"])
+    # The depth camera's model (scripts/depth_camera.py): one of upstream's
+    # cameras or none. Refused rather than stored when unknown, because bringup
+    # would otherwise find out at launch, on the robot, with no /scan.
+    if "depth_camera" in data and isinstance(data["depth_camera"], dict):
+        import depth_camera
+        model = str(data["depth_camera"].get("model") or "none").strip().lower()
+        if model not in depth_camera.NOT_FITTED and model not in depth_camera.DEPTH_MODELS:
+            raise HTTPException(status_code=400, detail=(
+                f"depth_camera.model must be none or one of {', '.join(depth_camera.DEPTH_MODELS)}, not {model!r}"))
+        ctrl.setdefault("depth_camera", {})["model"] = "none" if model in depth_camera.NOT_FITTED else model
     if "pins" in data and isinstance(data["pins"], dict):
         ctrl.setdefault("pins", {}).update(data["pins"])
     # The simulated robot's load and drivetrain losses. Merged rather than

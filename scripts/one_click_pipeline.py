@@ -33,6 +33,7 @@ import cockpit_paths  # noqa: E402
 import fetch_prebuilt  # noqa: E402
 import gen_bare_config  # noqa: E402
 import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
+import depth_camera  # noqa: E402  (who makes /scan: a LiDAR or a depth camera)
 import mcu_identity  # noqa: E402
 import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
 
@@ -338,9 +339,8 @@ def lidar_fitted(controller_cfg: dict) -> bool:
     because every gate config has one. NOT_FITTED is how every config here spells
     "not fitted", the same set sensor_topics() already honours.
     """
-    model = (controller_cfg.get("lidar") or {}).get("model")
-    real = bool(model) and str(model).strip().lower() not in NOT_FITTED
-    return real or bool((controller_cfg.get("sensors") or {}).get("use_sim_ld19", False))
+    # One rule, shared with bringup.launch.py (scripts/depth_camera.py).
+    return depth_camera.lidar_fitted(controller_cfg)
 
 
 def sensor_topics(controller_cfg: dict) -> list:
@@ -1346,7 +1346,19 @@ def main():
     # the rclpy sim_base_node, with no micro-ROS in the loop.
     sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
     is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
-    has_lidar = lidar_fitted(controller_cfg)
+    # Who makes /scan -- a LiDAR, or with none a depth camera -- is the rule
+    # bringup.launch.py uses too (depth_camera.scan_source). `has_lidar` below
+    # means "has a scan source", whichever it is.
+    try:
+        scan_from = depth_camera.scan_source(controller_cfg)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
+    has_lidar = scan_from is not None
+    # Simulation mode simulates the camera too, like every other sensor: there
+    # is no real one to read, and a robot with a camera and no LiDAR would
+    # otherwise have no scan at all. `auto` lets the config's use_sim_depth stand.
+    sim_depth = depth_camera.camera_fitted(controller_cfg) and (args.mode == "sim" or sim_mcu)
 
     # On a real base the sensors are soldered to the board and named in the
     # config, so their topics are evidence, not options. The firmware probes the
@@ -1612,7 +1624,8 @@ def main():
         # Step 4: bringup and the topic gate
         print(f"\n[4/6] [BRINGUP] Launching the bringup stack (controller={controller}, distro={args.distro})...")
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
-                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}")
+                       f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
+                       + (" sim_depth:=true" if sim_depth else ""))
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is
@@ -1675,6 +1688,10 @@ def main():
                          and controller_cfg.get("sensors", {}).get("use_sim_ld19", False)
                          and (lidar_mode != "serial" or not os.path.exists(lidar_port_cfg)))
             scan_wait = 15 if host_room else 90
+            if scan_from == "depth":
+                # The simulated camera publishes as soon as it starts; a real
+                # one has a driver to load and a USB device to open first.
+                scan_wait = 30 if (sim_depth or depth_camera.use_sim_depth(controller_cfg)) else 90
             print(f"  Waiting for the first /scan (up to {scan_wait} s)...")
             if wait_for_topic("/scan", timeout_sec=scan_wait, distro=args.distro,
                               require_message="header.frame_id"):

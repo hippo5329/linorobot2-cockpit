@@ -960,6 +960,21 @@
             <span class="input-hint">Built into every image; nothing to compile. Off saves serial bandwidth on a 921,600-baud link.</span>
           </div>
           <div class="form-group">
+            <label for="cfg-depth-camera" class="form-label">Depth Camera <span class="input-hint" style="font-weight:normal;">(on the robot computer)</span></label>
+            <select id="cfg-depth-camera" class="form-select">
+              <option value="none" selected>None</option>
+              <option value="realsense">Intel RealSense D400</option>
+              <option value="oakd">Luxonis OAK-D</option>
+              <option value="oakdlite">Luxonis OAK-D Lite</option>
+              <option value="oakdpro">Luxonis OAK-D Pro</option>
+              <option value="zed">Stereolabs ZED (needs the ZED SDK)</option>
+              <option value="zedm">Stereolabs ZED Mini (needs the ZED SDK)</option>
+              <option value="zed2">Stereolabs ZED 2 (needs the ZED SDK)</option>
+              <option value="zed2i">Stereolabs ZED 2i (needs the ZED SDK)</option>
+            </select>
+            <span class="input-hint">With no LiDAR it is the robot's <code>/scan</code> (depthimage_to_laserscan), so SLAM and Nav2 run on it. Beside a LiDAR, SLAM keeps the LiDAR and the camera is a second obstacle source for Nav2. Mount pose: <code>geometry.depth_camera</code>.</span>
+          </div>
+          <div class="form-group">
             <label for="cfg-sonar" class="form-label">Ultrasonic Sonar Range Sensor</label>
             <select id="cfg-sonar" class="form-select">
               <option value="false" selected>Disabled (Bare Module Default)</option>
@@ -988,6 +1003,10 @@
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-ld19" checked>
             <span>Simulated LD19</span>
+          </label>
+          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A simulated depth camera (a RealSense D435 in its 424x240 mode) looking at the same room as the simulated LD19. With the LD19 off it is the robot's /scan; with both on, SLAM keeps the LD19 and the camera is a second obstacle source for Nav2. Needs no camera model.">
+            <input type="checkbox" id="chk-sim-depth">
+            <span>Simulated Depth Camera</span>
           </label>
           <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-env">

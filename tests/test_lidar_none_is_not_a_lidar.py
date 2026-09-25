@@ -28,4 +28,7 @@ def test_the_simulated_lidar_counts_without_a_model():
 
 def test_the_pipeline_decides_with_it():
     src = open(ocp.__file__, encoding="utf-8").read()
-    assert "has_lidar = lidar_fitted(controller_cfg)" in src
+    # The rule moved to depth_camera.scan_source (a LiDAR, or with none a depth
+    # camera), shared with bringup; lidar_fitted above is that rule's LiDAR half.
+    assert "scan_from = depth_camera.scan_source(controller_cfg)" in src
+    assert "has_lidar = scan_from is not None" in src

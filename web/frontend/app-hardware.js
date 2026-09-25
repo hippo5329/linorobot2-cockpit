@@ -207,6 +207,8 @@ async function loadHardwareConfig() {
     if (chkSimWheel) chkSimWheel.checked = !!sensors.use_sim_wheel;
     const chkSimLd19 = document.getElementById("chk-sim-ld19");
     if (chkSimLd19) chkSimLd19.checked = !!sensors.use_sim_ld19;
+    const chkSimDepth = document.getElementById("chk-sim-depth");
+    if (chkSimDepth) chkSimDepth.checked = !!sensors.use_sim_depth;
     const chkSimEnv = document.getElementById("chk-sim-env");
     if (chkSimEnv) chkSimEnv.checked = !!sensors.use_sim_env;
     // Absent means on, as mcu_env reads it: the cone exists whenever the
@@ -275,6 +277,11 @@ async function loadHardwareConfig() {
     if (elDacPin && pins.dac !== undefined && pins.dac !== null) elDacPin.value = String(pins.dac);
 
     const lidar = tgt.lidar || {};
+    const depthSel = document.getElementById("cfg-depth-camera");
+    if (depthSel) {
+      const m = String((tgt.depth_camera || {}).model || "none").toLowerCase();
+      depthSel.value = [...depthSel.options].some((o) => o.value === m) ? m : "none";
+    }
     if (document.getElementById("cfg-lidar-rxd")) document.getElementById("cfg-lidar-rxd").value = lidar.rx_pin !== undefined ? lidar.rx_pin : -1;
 
     const elSerialPort = document.getElementById("cfg-serial-port");
@@ -1068,6 +1075,7 @@ async function saveCurrentHardwareConfig() {
     console: document.getElementById("cfg-console")?.value || "usb",
     geometry: readGeometryForm(kineType),
     simulation: readSimForm(),
+    depth_camera: { model: document.getElementById("cfg-depth-camera")?.value || "none" },
     kinematics: {
       base_type: kineType,
       wheel_diameter: parseFloat(document.getElementById("cfg-wheel-diameter")?.value || 0.152),
@@ -1099,6 +1107,7 @@ async function saveCurrentHardwareConfig() {
       use_sim_mag: !!document.getElementById("chk-sim-mag")?.checked,
       use_sim_wheel: !!document.getElementById("chk-sim-wheel")?.checked,
       use_sim_ld19: !!document.getElementById("chk-sim-ld19")?.checked,
+      use_sim_depth: !!document.getElementById("chk-sim-depth")?.checked,
       use_sim_env: !!document.getElementById("chk-sim-env")?.checked,
       use_sim_sonar: !!document.getElementById("chk-sim-sonar")?.checked,
       use_sim_battery: !!document.getElementById("chk-sim-battery")?.checked,

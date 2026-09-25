@@ -172,6 +172,50 @@ def has_real_sonar(params) -> bool:
         return False
 
 
+def add_camera_obstacle_source(nav2_data, params) -> list:
+    """A depth camera beside a LiDAR is a second obstacle source for the costmaps.
+
+    On a robot with both -- the Sim MCU with both of its simulated sensors on --
+    SLAM maps on the LiDAR's /scan and the camera's scan arrives on camera/scan
+    (depth_camera.camera_role "obstacles"). Every costmap layer that observes
+    `scan` gets a `camera` source beside it: a copy of the scan source pointed
+    at the camera's topic, starting where the camera can see (its 0.45 m near
+    limit) so the gap in front of it does not clear what the LiDAR marked.
+    Returns the layers it changed. The topic is written absolute here and the
+    namespace pass below prefixes it like every other topic.
+    """
+    import depth_camera
+    try:
+        role = depth_camera.camera_role((params or {}).get("base_controller") or {})
+    except ValueError:
+        return []
+    if role != "obstacles":
+        return []
+    changed = []
+    for cm in ("local_costmap", "global_costmap"):
+        block = nav2_data.get(cm) or {}
+        rp = (block.get(cm) or {}).get("ros__parameters") or block.get("ros__parameters") or {}
+        for layer in rp.get("plugins") or []:
+            lp = rp.get(layer)
+            if not isinstance(lp, dict):
+                continue
+            raw = lp.get("observation_sources") or ""
+            sources = list(raw) if isinstance(raw, (list, tuple)) else str(raw).split()
+            if "scan" not in sources or "camera" in sources or not isinstance(lp.get("scan"), dict):
+                continue
+            cam = dict(lp["scan"])
+            cam["topic"] = "/" + depth_camera.CAMERA_SCAN_TOPIC
+            cam["raytrace_min_range"] = max(float(cam.get("raytrace_min_range", 0.0)), depth_camera.SCAN_RANGE_MIN)
+            cam["obstacle_min_range"] = max(float(cam.get("obstacle_min_range", 0.0)), depth_camera.SCAN_RANGE_MIN)
+            lp["camera"] = cam
+            lp["observation_sources"] = (sources + ["camera"]) if isinstance(raw, (list, tuple)) \
+                else " ".join(sources + ["camera"])
+            changed.append(f"{cm}.{layer}")
+    if changed:
+        print(f"[nav2] depth camera beside the LiDAR: added as an obstacle source to {', '.join(changed)}")
+    return changed
+
+
 def launch_setup(context, *args, **kwargs):
     config_file = resolve_params_path(context)
     use_sim_time = context.launch_configurations.get("use_sim_time", "false")
@@ -377,6 +421,8 @@ def launch_setup(context, *args, **kwargs):
             "reports no sonar pins (base_controller.pins.sonar), so the topic "
             "would never publish and the monitor would stop the robot."
         )
+
+    add_camera_obstacle_source(nav2_data, params)
 
     # docking_server is the second node of that same class, and it surfaced only
     # once bt_navigator stopped aborting the stack first: it reads `dock_plugins`

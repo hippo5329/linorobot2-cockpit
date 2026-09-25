@@ -35,27 +35,14 @@ except ImportError as exc:
     sys.exit(1)
 
 
-# Room geometry (identical to sim_ld19.h)
-ROOM_MIN_X = -5.0
-ROOM_MAX_X =  5.0
-ROOM_MIN_Y = -3.0
-ROOM_MAX_Y =  3.0
-
-# Obstacle wall
-WALL_X1 =  2.0
-WALL_Y1 = -1.5
-WALL_X2 =  2.0
-WALL_Y2 =  1.5
-
-SEGMENTS = [
-    # Perimeter
-    (ROOM_MIN_X, ROOM_MIN_Y, ROOM_MAX_X, ROOM_MIN_Y),
-    (ROOM_MAX_X, ROOM_MIN_Y, ROOM_MAX_X, ROOM_MAX_Y),
-    (ROOM_MAX_X, ROOM_MAX_Y, ROOM_MIN_X, ROOM_MAX_Y),
-    (ROOM_MIN_X, ROOM_MAX_Y, ROOM_MIN_X, ROOM_MIN_Y),
-    # Interior Obstacle
-    (WALL_X1, WALL_Y1, WALL_X2, WALL_Y2),
-]
+# The room: base_controller.simulation through depth_camera.sim_room(), the same
+# keys mcu_env.py hands the firmware's sim_ld19.h, handed over by bringup.launch.py
+# as parameters. This file used to hardcode 10 x 6 m and the default wall, so a
+# config that moved the wall moved it for the board's LD19 and for the simulated
+# depth camera but not here.
+import os  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import depth_camera as dc  # noqa: E402
 
 
 class SimLaserNode(Node):
@@ -76,6 +63,10 @@ class SimLaserNode(Node):
         self.sonar = bool(self.get_parameter("sonar").value)
         self.sonar_frame_id = str(self.get_parameter("sonar_frame_id").value)
         self.offset_x = float(self.get_parameter("offset_x").value)
+        for k, v in dc.ROOM_DEFAULTS.items():
+            self.declare_parameter(k, v)
+        room = {k: self.get_parameter(k).value for k in dc.ROOM_DEFAULTS}
+        self.segments = dc.room_segments(room)
         self.pose_x = 0.0
         self.pose_y = 0.0
         self.pose_yaw = 0.0
@@ -102,7 +93,8 @@ class SimLaserNode(Node):
         self.angle_max = math.pi
         self.angle_step = (self.angle_max - self.angle_min) / self.num_points
 
-        self.get_logger().info("Simulated LD19 LaserScan Node active (10 Hz, 10x6m virtual room).")
+        self.get_logger().info(f"Simulated LD19 LaserScan Node active (10 Hz, "
+                               f"{room['map_width']}x{room['map_height']} m virtual room).")
 
     def _odom_cb(self, msg: Odometry):
         self.pose_x = msg.pose.pose.position.x
@@ -137,7 +129,7 @@ class SimLaserNode(Node):
             sin_a = math.sin(ray_angle)
 
             min_dist = 12.0
-            for (x1, y1, x2, y2) in SEGMENTS:
+            for (x1, y1, x2, y2) in self.segments:
                 sx = x2 - x1
                 sy = y2 - y1
                 denom = cos_a * sy - sin_a * sx

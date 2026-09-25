@@ -17,7 +17,8 @@ import sys
 import tempfile
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
@@ -28,6 +29,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402  (the user's config dir, never the repo's)
 import gen_robot_description  # noqa: E402  (the URDF, from the config)
 import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
+import depth_camera  # noqa: E402  (who makes /scan: a LiDAR or a depth camera)
 
 # The LD driver family the LiDAR block's `model` names, in the driver's own
 # vocabulary. `bins` is the ray count the fork's node resamples a revolution
@@ -160,7 +162,16 @@ def launch_setup(context, *args, **kwargs):
     # the simulated LD19 cannot ride the micro-ROS link and a bare DevKit has no
     # LIDAR_RXD bridge, so the robot runs teleop only. Starting a driver anyway
     # would leave it blocked forever on an empty tty and publish no /scan.
-    robot_has_lidar = bool(lidar_cfg)
+    # Who makes /scan is ONE rule (depth_camera.scan_source), shared with the
+    # pipeline. This read `bool(lidar_cfg)`, so `lidar: {model: none}` started a
+    # driver on a port nothing was wired to, while the pipeline -- which already
+    # honoured "none" -- did not wait for its scan.
+    try:
+        scan_from = depth_camera.scan_source(controller)
+        scan_error = ""
+    except ValueError as exc:
+        scan_from, scan_error = None, str(exc)
+    robot_has_lidar = scan_from == "lidar"
     lidar_port = (
         context.launch_configurations.get("lidar_port")
         or lidar_cfg.get("serial_port", "/dev/ttyUSB1")
@@ -591,7 +602,11 @@ def launch_setup(context, *args, **kwargs):
                     parameters=[{"frame_id": laser_frame,
                                  "offset_x": float(geometry["laser"]["x"]),
                                  "sonar": host_sonar,
-                                 "sonar_frame_id": sonar_frame}],
+                                 "sonar_frame_id": sonar_frame,
+                                 # The configured room, as the board's LD19 and the
+                                 # simulated depth camera get it.
+                                 **{k: (bool(v) if k == "wall_obstacle" else float(v))
+                                    for k, v in depth_camera.sim_room(params).items()}}],
                 )
                 # The virtual room stands in for the driver on a bare bench; see
                 # use_host_sim_laser above for why a present serial port is not.
@@ -642,6 +657,9 @@ def launch_setup(context, *args, **kwargs):
         ),
     ]
 
+    nodes += depth_scan_actions(context, controller, params, geometry, frame_prefix,
+                                no_board or controller_name == "sim", scan_from, scan_error)
+
     # `None` is the "this robot has no such node" placeholder above; launch
     # rejects it, so it never reaches the description.
     live = [n for n in nodes if n is not None]
@@ -653,6 +671,84 @@ def launch_setup(context, *args, **kwargs):
     if ns:
         return [GroupAction([PushRosNamespace(ns), *live])]
     return live
+
+
+def depth_scan_actions(context, controller, params, geometry, frame_prefix, boardless, scan_from, scan_error):
+    """A depth camera: its driver (or the simulated one) and depthimage_to_laserscan.
+
+    Its scan is /scan on a robot without a LiDAR, and camera/scan beside a LiDAR,
+    where Nav2 takes it as a second obstacle source (depth_camera.camera_role).
+    The simulated camera stands in when the pipeline runs in simulation mode
+    (sim_depth:=true), when the config asks for it (sensors.use_sim_depth, which
+    needs no model), and when there is no board -- the Sim MCU has no camera
+    either. Remaps are relative, so a topic_prefix namespace moves them with the
+    rest of the stack.
+    """
+    if scan_error:
+        return [LogInfo(msg=f"[bringup] depth camera: {scan_error}")]
+    role = depth_camera.camera_role(controller)
+    if role is None:
+        return []
+    scan_topic = "scan" if role == "scan" else depth_camera.CAMERA_SCAN_TOPIC
+    model = depth_camera.depth_model(controller)
+    cam = geometry["depth_camera"]
+    frame = frame_prefix + str(cam["frame"])
+    sim_arg = str(context.launch_configurations.get("sim_depth", "false")).strip().lower() in ("true", "1", "yes")
+    sim = sim_arg or boardless or depth_camera.use_sim_depth(controller) or model is None
+    distro = os.environ.get("ROS_DISTRO", "jazzy")
+    label = depth_camera.DEPTH_MODELS[model][1] if model else "depth camera"
+    out = []
+    if sim:
+        room = depth_camera.sim_room(params)
+        out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
+                               f"from the SIMULATED depth camera (standing in for the {label})"))
+        out.append(Node(
+            executable=sys.executable,
+            arguments=[os.path.join(REPO_ROOT, "scripts", "sim_depth_node.py")],
+            name="sim_depth_node",
+            output="screen",
+            parameters=[{"frame_id": frame,
+                         "offset_x": float(cam["x"]), "offset_y": float(cam["y"]),
+                         "offset_yaw": float(cam["yaw"]),
+                         "map_width": float(room["map_width"]), "map_height": float(room["map_height"]),
+                         "wall_obstacle": bool(room["wall_obstacle"]),
+                         "wall_x1": float(room["wall_x1"]), "wall_y1": float(room["wall_y1"]),
+                         "wall_x2": float(room["wall_x2"]), "wall_y2": float(room["wall_y2"]),
+                         "pose_topic": "odom/unfiltered"}],
+        ))
+        depth_topic, info_topic, scan_time = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC, 1.0 / 15.0
+    else:
+        pkg, launch_rel, launch_args = depth_camera.driver_launch(model, distro, frame)
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share = get_package_share_directory(pkg)
+        except Exception:  # PackageNotFoundError, or no ament index at all
+            family = depth_camera.DEPTH_MODELS[model][0]
+            return [LogInfo(msg=f"[bringup] depth camera {label}: the driver package '{pkg}' is not "
+                                f"installed, so there is no /scan. Install {depth_camera.INSTALL_HINT[family]}.")]
+        out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
+                               f"from the {label} via depthimage_to_laserscan"))
+        out.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(share, launch_rel)),
+            launch_arguments=list(launch_args.items()),
+        ))
+        _, _, _, depth_topic, info_topic = depth_camera.DEPTH_MODELS[model]
+        scan_time = 1.0 / 30.0
+    out.append(Node(
+        package="depthimage_to_laserscan",
+        executable="depthimage_to_laserscan_node",
+        name="depthimage_to_laserscan",
+        output="screen",
+        remappings=[("depth", depth_topic.lstrip("/")),
+                    ("depth_camera_info", info_topic.lstrip("/")),
+                    ("scan", scan_topic)],
+        parameters=[{"scan_time": scan_time,
+                     "range_min": depth_camera.SCAN_RANGE_MIN,
+                     "range_max": depth_camera.SCAN_RANGE_MAX,
+                     "scan_height": depth_camera.SCAN_HEIGHT,
+                     "output_frame": frame}],
+    ))
+    return out
 
 
 def generate_launch_description():
@@ -748,6 +844,12 @@ def generate_launch_description():
             "use_mag",
             default_value="",
             description="Fuse the board's field-anchored yaw in the EKF (imu0_config[5]); from sensors.mag if empty",
+        ),
+        DeclareLaunchArgument(
+            "sim_depth",
+            default_value="false",
+            description="Use the simulated depth camera instead of the configured one "
+                        "(the pipeline sets it in simulation mode)",
         ),
         OpaqueFunction(function=launch_setup),
     ])

@@ -362,6 +362,20 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
         env["sim_ld19"] = "1"
         env["sim_env"] = "1"
         env["sim_battery"] = "1"
+        # ...except the LD19 on a robot whose scan comes from a depth camera: it
+        # has no LiDAR to simulate, and the host's simulated camera is its scan
+        # (depth_camera.scan_source). An emulated LD19 there streams frames to a
+        # driver bringup never starts.
+        if params_path:
+            import yaml
+            import depth_camera
+            with open(params_path) as fh:
+                controller = (yaml.safe_load(fh) or {}).get("base_controller", {}) or {}
+            try:
+                if depth_camera.scan_source(controller) == "depth":
+                    env["sim_ld19"] = "0"
+            except ValueError:
+                pass
     else:
         env["sim_wheel"] = "0"
         env["sim_ld19"] = "0"
