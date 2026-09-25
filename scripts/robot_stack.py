@@ -84,13 +84,43 @@ def _is_zombie(pid: int) -> bool:
         return False
 
 
+def _pidns() -> str:
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return ""
+
+
+def _starttime(pid: int):
+    """Clock ticks after boot at which `pid` started (/proc/<pid>/stat field 22)."""
+    try:
+        with open(f"/proc/{int(pid)}/stat") as fh:
+            data = fh.read()
+        return int(data[data.rindex(")") + 1:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def is_alive(entry: dict) -> bool:
+    """Alive means THIS record's group, not merely a group with that number.
+
+    The record sits in the config volume and outlives the container. After a
+    restart the PID namespace is new, the numbers are handed out again from 1,
+    and a bare killpg(pgid, 0) calls a stranger alive -- whom stop() would then
+    signal. Measured 2026-09-25: a restarted cell still listed pgids 361, 741 and
+    878 from the run before. So a record carries the namespace it was made in and
+    its leader's start time, and an entry without them is not trusted: forgetting
+    a record costs a Stop button, signalling a stranger costs a process."""
     pgid = entry.get("pgid")
-    if not pgid:
+    if not pgid or not entry.get("pidns") or entry.get("pidns") != _pidns():
         return False
     pid = entry.get("pid")
     if pid and _is_zombie(pid):
         return False
+    started = _starttime(pid) if pid else None
+    if started is not None and entry.get("starttime") is not None \
+            and started != entry["starttime"]:
+        return False          # the leader's pid now belongs to someone else
     try:
         os.killpg(int(pgid), 0)
         return True
@@ -109,7 +139,8 @@ def record(tag: str, pid: int, pgid: int = None, state_dir: str = None) -> None:
             pgid = pid
     entries = [e for e in load(state_dir) if e.get("tag") != tag]
     entries.insert(0, {"tag": tag, "pid": int(pid), "pgid": int(pgid),
-                       "started": time.time()})
+                       "started": time.time(), "pidns": _pidns(),
+                       "starttime": _starttime(pid)})
     _write(entries, state_dir)
 
 
