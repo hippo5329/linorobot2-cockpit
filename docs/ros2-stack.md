@@ -179,7 +179,7 @@ pluginlib rejects — jazzy declares `nav2_bt_navigator::NavigateToPoseNavigator
 source** — one file drifting from nine is the likelier story, and `grep -rn "nav2_[a-z_]*/" config/`
 finds it in one command.
 
-### `slam_toolbox` is a lifecycle node too, and "no map" is three different faults
+### `slam_toolbox` is a lifecycle node too, and "no map" is several different faults
 `slam_toolbox`'s own launch file drives its transitions from a launch event handler, so when the
 configure result event is missed the node sits in `inactive` forever: it logs `Configuring`, picks its
 solver, and then says nothing. No map is published, the `map` frame never comes into existence, and
@@ -188,17 +188,31 @@ identical `Invalid frame ID "map" ... frame does not exist` complaints downstrea
 not Nav2's. The transition is idempotent and cheap, so `one_click_pipeline.py` asks for it directly
 (`ros2 lifecycle set --no-daemon /slam_toolbox activate`) rather than give up on somebody's race.
 
+It can also stop one step earlier, **inside** its configure: `Configuring`, the Ceres solver lines,
+and then no answer to any lifecycle query at all, because the node spins one thread and that thread
+is in `on_configure`. A manual activate cannot reach such a node. It happened on 11 of 1668
+SLAM starts on the bench, on every board kind. The log reads the same for both cases; the node's
+own answer does not, so when no map comes in 40 s the pipeline asks `ros2 lifecycle get` first:
+
+| slam_toolbox answers | what the pipeline does |
+|---|---|
+| `inactive` | activates it (the missed event) |
+| nothing, or `unconfigured` | restarts SLAM **once**, into `logs/slam2.log`, after the old process group is gone |
+| `active`, and still no map | reports the fault; a restart would only hide a real mapping failure |
+
 Use `--no-daemon`. The `ros2` CLI daemon caches the graph and was measured answering "Node not found"
 for 36 s straight about a `slam_toolbox` that was active at the time, in the same container where
 `--no-daemon` answered `active [3]` immediately. A recovery that asks the cache can be told the node
 is not there.
 
-**`SLAM: no map was published` is produced by three different faults**, and they are three different
-repairs: the lifecycle node stuck in `inactive`; a solver plugin that would not load; or scans
+**`SLAM: no map was published` is produced by several different faults**, and they are different
+repairs: the lifecycle node stuck in `inactive` or inside its configure; a solver plugin that would not load; or scans
 dropped because `odom`→`laser` was not in the TF buffer yet, which looks identical from outside
 because `/scan` is publishing at its full rate the whole time. So the pipeline no longer tells you to
 read `logs/slam.log` — on a bench that file lives inside a container the next run destroys. It reports
-the **last lifecycle transition reached** (no `Activating` is the stuck-in-`inactive` case by itself)
+the **last lifecycle transition reached** together with the node's own lifecycle answer (no
+`Activating` and an `inactive` answer is the missed event; no answer at all is a configure that never
+finished)
 and the distinct complaints, with numbers normalised so one dropped-scan fault carrying a moving
 timestamp is a single counted row instead of a page of near-identical ones:
 
@@ -464,7 +478,7 @@ no `/scan` at all:
   the serial driver dies on the missing port, `/scan` never comes, and SLAM and Nav2 sit there
   waiting — on the configuration that is supposed to be the easiest one to run.
 
-So the host emulator (`scripts/sim_laser_node.py`) takes over only when the scan is simd
+So the host emulator (`scripts/sim_laser_node.py`) takes over only when the scan is simulated
 **and** either the mode is not serial or the configured port does not exist:
 
 ```python

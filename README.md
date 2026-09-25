@@ -471,7 +471,7 @@ best-effort, like `SensorDataQoS` — subscribe best-effort, or set `qos: reliab
 | `odom/unfiltered` | `nav_msgs/Odometry` | always |
 | `imu/data` + `imu/mag` | `sensor_msgs/Imu`, `MagneticField` | `imu/data` always, orientation included -- the board fuses gyro, accel and field itself. `imu/mag` only with a magnetometer (`PUBLISH_MAG`), for calibration; nothing pairs against it |
 | `raw_scan` | `std_msgs/UInt8MultiArray` | simulated LD19 on the MCU |
-| `battery` (1 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simd. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simd range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
+| `battery` (1 Hz), `pressure`, `temperature`, `humidity` (1 Hz), `sonar` (10 Hz), `safety_stop` | | when the sensor is fitted or simulated. `sonar` takes its HC-SR04 pins from the env (`sonar_trig`, `sonar_echo`). `safety_stop` brakes the robot, so it is armed only where a real HC-SR04 is wired (`pico2_mecanum` does; add `safety_stop: {enabled: true, range_m: 0.25}` to any config with real sonar pins). It runs in the firmware every control cycle, below ROS, so it still acts when the ROS side is wedged or the link has dropped -- the case nav2_collision_monitor cannot cover because it is the ROS side. Only FORWARD motion is blocked, so the robot can still reverse and turn off the obstacle. A simulated range never arms it: the simulated cone is raycast from the emulated room, and a hazard stop must not fire at an imaginary obstacle.; `battery` reads an INA219 or an ADC divider (`pins.battery: {pin, r1, r2, min_v, max_v, capacity_ah}`), percentage only when the pack is described |
 
 **Two robots on one network.** Set `base_controller.topic_prefix: lino1` and every name
 above moves under `/lino1/` — on the board, which builds both its topic names *and* the
@@ -506,6 +506,19 @@ Subscribed: `cmd_vel` as `geometry_msgs/Twist` on jazzy and `TwistStamped` on ly
   calibration drawn as a curve so a bad channel is visible rather than inferred.
 - **Map Viewer**: `/map`, `/scan` and the robot pose drawn in the browser over rosbridge on
   port 9090, with 2D pose estimate and Nav goal tools — no RViz, nothing to install.
+- **RViz in the browser** (SLAM & Nav2 tab, section 9): RViz runs on the robot computer against a
+  virtual display and is served over noVNC on port 6080, with the SLAM or navigation layout
+  preloaded. A full Qt/OpenGL app, so it costs real CPU on a small board; the Map Viewer is the
+  cheap one.
+
+**RViz on another computer.** On a machine with a screen, on the same network as the robot, the
+same image runs RViz natively and joins the robot's graph (host networking, the same
+`ROS_DOMAIN_ID` and Fast DDS profile as the cockpit):
+
+```bash
+docker compose --profile rviz run --rm rviz                  # navigation layout
+docker compose --profile rviz run --rm rviz --config slam    # SLAM layout
+```
 - **Teleop**: virtual gamepad publishing `/cmd_vel`.
 
 ---

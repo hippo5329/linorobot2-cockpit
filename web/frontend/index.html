@@ -1673,8 +1673,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>🗺️ 9. Visualize &amp; SLAM Mapping / Nav2 Navigation (RViz via browser)</h2>
       <p class="hint">Most robot computers are headless -- RViz has nowhere to open a window
         on. This runs RViz against a virtual display and serves it over noVNC, the same idea
-        as the <code>kasmvnc</code> service in the cockpit's <code>docker/docker-compose.yaml</code>,
-        but native (no Docker) to match how the rest of the cockpit installs things. Works whether
+        as the <code>kasmvnc</code> service in linorobot2's own <code>docker/docker-compose.yaml</code>,
+        but inside the cockpit's container, so there is nothing else to install. Works whether
         you're viewing from the robot computer itself or a separate laptop on the network.</p>
       <p class="hint"><b>Heavier than the rest of the cockpit</b> -- RViz is a full Qt/OpenGL app,
         and on a small SBC (limited CPU, 4GB RAM class) running it headlessly through Xvfb adds

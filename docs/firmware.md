@@ -791,6 +791,24 @@ divides it under load, so it dips when the simulated robot accelerates. A 0.3 A 
 for the electronics, and an empty pack is swapped for a full one, so a soak runs forever.
 The Sim MCU runs this same firmware on the robot computer (`firmware/host/`), so it publishes the same model.
 
+### A lost ping is not a lost agent, and only a new run resets the simulated pose
+On a serial transport the board pings the agent every 200 ms while connected. It declares the agent
+gone only when pings have failed for `AGENT_LOSS_MS` (1 s), not on the first miss. When the session
+is rebuilt, the simulated pose goes back to the origin only for a **new run**: the first session
+since boot, or one after the agent was gone for at least `SIM_POSE_RESET_AFTER_MS` (3 s). A shorter
+gap is the same run's session coming back after a blip, and the pose is kept. syslog says which:
+`simulated pose reset to origin (new run)` or `agent back after N ms: the same run, simulated pose kept`.
+
+What this replaced: one failed 100 ms ping tore the session down, and every new session reset the
+pose. A GenDrv serial run on lyrical rebuilt its session twice in five seconds in the middle of a
+Nav2 goal, 3 m from the origin, and each rebuild teleported the simulated robot home. The EKF
+coasted through the gap, SLAM's `map`→`odom` jumped 2.3 m and the goal aborted.
+
+`one_click_pipeline.py` depends on the threshold. When a run finds the robot away from the origin it
+restarts the bringup to get a new run, and it keeps the agent down for longer than 3 s
+(`SIM_POSE_RESET_AFTER_S`, which a test holds equal to the firmware's constant); otherwise the new
+session would count as the same run and keep the pose it exists to clear.
+
 ### No robot feature is a build macro; only silicon is
 A released image is built per MCU and describes no robot, so every choice a robot makes is an env
 key read at boot. The conditionals left in the firmware name the silicon: `ESP32`,
