@@ -123,7 +123,12 @@ interface classes (is an application running at all?), the boot banner (which bu
 the env block that went with it. It lives with the config rather than in `$HOME` because the pipeline runs
 as container-root and the cockpit's web backend as the container user: keyed on `~`, the two wrote
 to different places and neither saw the other, so a board flashed seconds earlier still probed
-as "this host has no record of flashing it". `LINO_STAMP_DIR` overrides. The verdict decides the cost:
+as "this host has no record of flashing it". `LINO_STAMP_DIR` overrides. The `<env>` is whatever
+the flasher wrote, which for a prebuilt image is the profile's own `pio_env`: `pico2-jazzy` is the
+`pico2w` image (it runs on both boards), so the record is `pico2w_<port>` while the pipeline probes
+as `pico2`. `stamp_for()` falls back to the manifest's `pio_env`. Without that fallback, every
+Start 1-Click read "no record" a minute after writing one, and reflashed a board already running
+the build (2026-09-25). The verdict decides the cost:
 
 | verdict | what a run does |
 |---|---|

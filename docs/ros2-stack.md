@@ -39,7 +39,21 @@ hit the wrong process the way `pkill ros2` can.
 In the cockpit, the Bringup / SLAM / Nav2 **Stop** buttons reach it through `/api/stack/stop`, and
 stopping *bringup* stops the whole stack — SLAM and Nav2 on top of a dead robot are not worth keeping.
 An entry whose group has gone is dropped on read rather than reported as running, so the UI never
-claims a robot that is not there and never signals a pgid that now belongs to somebody else.
+claims a robot that is not there.
+
+**A record is alive only in the container that made it.** A pgid alone could not promise that: a
+restarted container reuses small PIDs, so a record from before the restart matched whatever now held
+that number. Each entry now carries its PID namespace and the process's start time
+(`/proc/<pid>/stat` field 22), and `is_alive` requires both to match. A record from another
+container or an earlier boot is dead, and is never signalled.
+
+**The next run stops the stack the last one kept** (`stop_previous_stack()`, before `[1/6]`). Two
+stacks on one robot was measured on the UI path on 2026-09-25: the old launch respawned its
+micro-ROS agent onto the tty the flasher had just released, so the 1200-baud pulse timed out; two
+agents shared one serial port and `/imu/data` went silent; and the old Nav2 kept driving the new
+run's robot. The new run owns the robot, so the old one goes first. It prints what it stopped, and
+warns by name about anything that survived. The usual cause is a stack another user started: Fast
+DDS shared memory and signals both stop at the user boundary.
 
 ---
 

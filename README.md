@@ -104,11 +104,13 @@ If the robot and the board disagree, the run stops before writing anything and s
 (`MCU MISMATCH`) — it will not flash an RP2350 image onto an RP2040. Pick the matching
 robot, or edit `base_controller.name` in the config, and press Start again.
 
-About a minute later the map appears in the **Map Viewer** tab and is saved under `maps/`.
-What happened: the cockpit fetched the release firmware for your board, asked the board what
-it was running, flashed it only if needed, wrote the 4 KB configuration block, started
-`micro_ros_agent`, bringup, SLAM Toolbox and Nav2, verified the topics, sent a navigation
-goal, and saved the map.
+A few minutes later (about five on a bare board) the map appears in the **Map Viewer** tab
+and is saved under `maps/`. What happened: the cockpit stopped anything a previous run left
+running, fetched the release firmware for your board, asked the board what it was running,
+flashed it only if needed, wrote a fresh 4 KB configuration block, started `micro_ros_agent`,
+bringup, SLAM Toolbox and Nav2, verified the topics, drove the eight-manoeuvre drive suite,
+drove four round trips to a goal behind the obstacle wall and back, and saved the map. The
+stack stays up afterwards so you can keep driving; the next run stops it first.
 
 ### Without Docker
 
@@ -118,7 +120,7 @@ python3 web/backend/main.py             # supervisor on :8000
 ```
 
 ROS 2 (jazzy or lyrical), `micro_ros_agent`, `slam_toolbox`, `nav2_bringup`,
-`robot_localization`, `imu_tools`, `rosbridge_server`, `robot_state_publisher`,
+`robot_localization`, `rosbridge_server`, `robot_state_publisher`,
 `joint_state_publisher` and the `ldlidar_stl_ros2` package must be installed and sourced; `esptool` and `picotool` are needed
 to flash. **Take `ldlidar_stl_ros2` from [our fork](https://github.com/hippo5329/ldlidar_stl_ros2),
 not from ldrobot** — see [Forks we maintain](#forks-we-maintain); with the upstream driver a
@@ -205,7 +207,11 @@ Reference robots ship in `config/reference/` and are copied into your directory 
 start. `secrets.yaml` beside them holds Wi-Fi credentials and addresses and is gitignored, and
 so is `generated/`, where the URDF built from each config lands. A config from an older
 cockpit is brought up to date by `python3 scripts/migrate_config_schema.py` (it adds a
-`geometry:` block derived from the kinematics and removes keys nothing reads).
+`geometry:` block derived from the kinematics and removes keys nothing reads). Values that would
+fail a run silently are not migrated: the 1-Click run refuses the config and lists them (the
+pre-rename `use_fake_*` keys or `FAKE` sensors, an EKF on a frame other than `base_link`, gravity
+removed twice). Replace such a config: select a `bare_<board>` robot, or copy one from
+`config/reference/` over it and re-apply your own pins and kinematics.
 
 **A board is a configuration, not a build.** Pins, I2C bus, LiDAR wiring, the battery
 divider and pack, whether the LiDAR emulator runs, transport, credentials and addresses all

@@ -1020,7 +1020,7 @@ def main():
                         help="Output path prefix for the map saver")
     parser.add_argument("--no-nav2", action="store_true", help="Skip Nav2 (run SLAM only)")
     parser.add_argument("--topics-only", action="store_true",
-                        help="Stop after the topics: bringup, topic verification and the six "
+                        help="Stop after the topics: bringup, topic verification and the eight "
                              "manoeuvres, with no SLAM, no Nav2 and no map. What a REAL-sensor "
                              "run is for -- the chips answer on the bus and publish at rate. "
                              "Navigation on a bench mixes a real IMU with simulated wheels and "
@@ -1042,7 +1042,7 @@ def main():
                              "than the config builds for")
     parser.add_argument("--explore-sec", type=int, default=15, help="Seconds to simulate mapping movement")
     parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
-                        help="Run the six-manoeuvre drive suite after the topic gate (default: on)")
+                        help="Run the eight-manoeuvre drive suite after the topic gate (default: on)")
     parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
                         help="Skip the drive suite")
     # The stack STAYS UP. Pressing Start 1-Click is how a person gets a running
