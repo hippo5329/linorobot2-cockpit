@@ -158,6 +158,15 @@ async def api_save_hardware_config(request: Request):
     # (map_width, the obstacle wall) is set elsewhere -- a whole-block assignment
     # would drop it.
     if "simulation" in data and isinstance(data["simulation"], dict):
+        # The simulated world by name (depth_camera.WORLDS). Refused rather than
+        # stored when unknown: the board would otherwise find out at flash time.
+        if "world" in data["simulation"]:
+            import depth_camera
+            world = str(data["simulation"]["world"] or "wall").strip().lower()
+            if world not in depth_camera.WORLDS:
+                raise HTTPException(status_code=400, detail=(
+                    f"simulation.world must be one of {', '.join(depth_camera.WORLDS)}, not {world!r}"))
+            data["simulation"]["world"] = world
         ctrl.setdefault("simulation", {}).update(data["simulation"])
     if "base_controller" in data and isinstance(data["base_controller"], dict):
         ctrl.update(data["base_controller"])

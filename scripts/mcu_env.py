@@ -817,10 +817,6 @@ def hardware_env(params: dict) -> dict:
     # constants -- a Nav2 test wants to move the obstacle wall without
     # rebuilding, and a 20 kg robot does not accelerate like a 3.5 kg one.
     sim = tgt.get("simulation") or {}
-    if isinstance(sim, dict) and sim.get("walls"):
-        # Interior walls: one key, "x1,y1,x2,y2;..." (sim_ld19.h applyEnvRoom).
-        import depth_camera
-        env["sim_walls"] = depth_camera.walls_env(depth_camera.sim_walls({"base_controller": tgt}))
     if isinstance(sim, dict):
         for key, cast in (("sim_map_w", float), ("sim_map_h", float),
                           ("sim_wall", int), ("sim_wall_x1", float),
@@ -876,6 +872,18 @@ def hardware_env(params: dict) -> dict:
         # is watching, rather than parsed wrong on the board.
         import lidar_mask
         env.update(lidar_mask.occlusion_env({"base_controller": tgt}))
+        # The world by name (depth_camera.WORLDS), resolved here into the keys
+        # the emulator reads, the way the host's laser and camera resolve it:
+        # "rooms" turns the single test wall off and lays the rooms' walls, and
+        # any configured walls are added. Interior walls go as one key,
+        # "x1,y1,x2,y2;..." (sim_ld19.h applyEnvRoom).
+        import depth_camera
+        whole = {"base_controller": tgt}
+        if depth_camera.sim_world(whole) == "rooms":
+            env["sim_wall"] = 0
+        walls = depth_camera.sim_walls(whole)
+        if walls:
+            env["sim_walls"] = depth_camera.walls_env(walls)
 
     # How close the simulated robot's centre may come to a simulated wall.
     #

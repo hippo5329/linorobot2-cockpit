@@ -388,10 +388,15 @@ function readSimForm() {
     const v = parseFloat(raw);
     if (Number.isFinite(v)) out[key] = v;
   });
+  // The world is a name, not a number (depth_camera.WORLDS).
+  const world = document.getElementById("cfg-sim-world")?.value;
+  if (world) out.world = world;
   return out;
 }
 
 function loadSimForm(sim) {
+  const worldSel = document.getElementById("cfg-sim-world");
+  if (worldSel) worldSel.value = (sim && sim.world) || "wall";
   SIM_FIELDS.forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (!el) return;

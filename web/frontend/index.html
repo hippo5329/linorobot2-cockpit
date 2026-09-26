@@ -572,6 +572,26 @@
            what the performance HUD above is most sensitive to -- mass most of all --
            and because sweeping one of them is a legitimate test that must not cost a
            firmware build. -->
+      <!-- The simulated world: base_controller.simulation.world (scripts/depth_camera.py
+           WORLDS). The Sim MCU's LiDAR, sonar and collision, the host's simulated laser
+           and the simulated depth camera all see the one chosen here. -->
+      <div class="form-section">
+        <h3 class="section-title">Simulated World</h3>
+        <p class="hint" style="margin-bottom:12px;">The map the simulated sensors see and the simulated
+          robot drives in. <b>Wall</b> is the room with the single obstacle wall the Nav2 goal test
+          plans around. <b>Rooms</b> is four spaces joined by doors, for exploring with
+          <code>--explore</code>. It takes effect at the next flash, or the next Sim MCU start.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-sim-world" class="form-label">World</label>
+            <select id="cfg-sim-world" class="form-input">
+              <option value="wall">Wall: one room, one obstacle wall (Nav2 goal test)</option>
+              <option value="rooms">Rooms: four spaces joined by doors (exploration)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="form-section">
         <h3 class="section-title">Load &amp; Drivetrain Losses</h3>
         <p class="hint" style="margin-bottom:12px;">Feeds the performance HUD at the top of this

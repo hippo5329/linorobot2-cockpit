@@ -64,3 +64,39 @@ def test_a_bad_wall_list_is_refused(bad):
 
 def test_no_walls_changes_nothing():
     assert dc.sim_walls({}) == [] and dc.walls_flat([]) == [0.0] and dc.walls_from_flat([0.0]) == []
+
+
+def world(name, **extra):
+    return {"base_controller": {"name": "sim", "simulation": dict({"world": name}, **extra)}}
+
+
+def test_the_default_world_is_the_wall_room():
+    assert dc.sim_world({}) == "wall"
+    assert dc.sim_room({})["wall_obstacle"] is True and dc.sim_walls({}) == []
+
+
+def test_the_rooms_world_is_resolved_the_same_everywhere():
+    p = world("rooms")
+    assert dc.sim_room(p)["wall_obstacle"] is False
+    assert dc.sim_walls(p) == [tuple(map(float, w)) for w in dc.MULTI_ROOM_WALLS]
+    env = mcu_env.hardware_env(p)
+    assert env["sim_wall"] in (0, "0") and env["sim_walls"] == dc.walls_env(dc.sim_walls(p))
+
+
+def test_configured_walls_add_to_a_world():
+    p = world("rooms", walls=[[0, 2, 0, 3]])
+    assert len(dc.sim_walls(p)) == len(dc.MULTI_ROOM_WALLS) + 1
+
+
+def test_an_unknown_world_is_refused():
+    with pytest.raises(ValueError, match="simulation.world"):
+        dc.sim_world(world("maze"))
+
+
+def test_the_ui_offers_every_world_and_saves_it():
+    html = open(os.path.join(REPO_ROOT, "web", "frontend", "index.html")).read()
+    for name in dc.WORLDS:
+        assert f'<option value="{name}">' in html
+    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app-hardware.js")).read()
+    assert 'getElementById("cfg-sim-world")' in js and "out.world = world" in js
+    assert "depth_camera.WORLDS" in open(os.path.join(REPO_ROOT, "web", "backend", "routes_config.py")).read()
