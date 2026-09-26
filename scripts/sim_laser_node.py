@@ -43,6 +43,7 @@ except ImportError as exc:
 import os  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import depth_camera as dc  # noqa: E402
+import lidar_mask  # noqa: E402  (the robot's own structure in view, as the firmware's LD19 sees it)
 
 
 class SimLaserNode(Node):
@@ -67,6 +68,15 @@ class SimLaserNode(Node):
             self.declare_parameter(k, v)
         room = {k: self.get_parameter(k).value for k in dc.ROOM_DEFAULTS}
         self.segments = dc.room_segments(room)
+        # Occluding posts, as flat [start, width, ...] degrees in the robot frame
+        # (lidar_mask.occlusion), and the topic: scan_raw when the robot is masked,
+        # so the laser_filters chain stands between this and /scan.
+        self.declare_parameter("occlusion", [0.0])
+        self.declare_parameter("occlusion_range", 0.12)
+        self.declare_parameter("topic", "scan")
+        flat = [float(v) for v in self.get_parameter("occlusion").value]
+        self.occl = [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+        self.occl_range = float(self.get_parameter("occlusion_range").value)
         self.pose_x = 0.0
         self.pose_y = 0.0
         self.pose_yaw = 0.0
@@ -83,7 +93,7 @@ class SimLaserNode(Node):
         # puts these under /<prefix>/. With no namespace they resolve to /scan
         # and /odom exactly as before -- an absolute "/scan" would have ignored
         # the namespace and published at the root, colliding between robots.
-        self.scan_pub = self.create_publisher(LaserScan, "scan", sensor_qos)
+        self.scan_pub = self.create_publisher(LaserScan, str(self.get_parameter("topic").value), sensor_qos)
         self.create_subscription(Odometry, "odom", self._odom_cb, 10)
         self.timer = self.create_timer(0.1, self._publish_scan)  # 10 Hz
         self.sonar_pub = self.create_publisher(Range, "sonar", sensor_qos) if self.sonar else None
@@ -124,7 +134,12 @@ class SimLaserNode(Node):
         sensor_oy = self.pose_y + self.offset_x * math.sin(self.pose_yaw)
 
         for i in range(self.num_points):
-            ray_angle = self.pose_yaw + self.angle_min + i * self.angle_step
+            rel = self.angle_min + i * self.angle_step
+            if self.occl and lidar_mask.occluded(math.degrees(rel), self.occl):
+                ranges.append(max(0.05, self.occl_range + (random.random() - 0.5) * 0.01))
+                intensities.append(200.0)
+                continue
+            ray_angle = self.pose_yaw + rel
             cos_a = math.cos(ray_angle)
             sin_a = math.sin(ray_angle)
 

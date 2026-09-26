@@ -866,6 +866,12 @@ def hardware_env(params: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             env[key] = int(value) if cast is int else _num(value)
+        # The robot's own structure in the simulated LD19's view (lidar_mask.py):
+        # sectors of the robot frame that return a near range, so the bench can
+        # prove the host's lidar.mask removes them. Validated here, where a person
+        # is watching, rather than parsed wrong on the board.
+        import lidar_mask
+        env.update(lidar_mask.occlusion_env({"base_controller": tgt}))
 
     # How close the simulated robot's centre may come to a simulated wall.
     #

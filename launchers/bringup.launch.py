@@ -30,6 +30,7 @@ import cockpit_paths  # noqa: E402  (the user's config dir, never the repo's)
 import gen_robot_description  # noqa: E402  (the URDF, from the config)
 import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
 import depth_camera  # noqa: E402  (who makes /scan: a LiDAR or a depth camera)
+import lidar_mask  # noqa: E402  (the robot's own structure, removed from the scan)
 
 # The LD driver family the LiDAR block's `model` names, in the driver's own
 # vocabulary. `bins` is the ray count the fork's node resamples a revolution
@@ -172,6 +173,16 @@ def launch_setup(context, *args, **kwargs):
     except ValueError as exc:
         scan_from, scan_error = None, str(exc)
     robot_has_lidar = scan_from == "lidar"
+    # A masked LiDAR publishes scan_raw and laser_filters makes /scan of it
+    # (lidar_mask.py). A mask that does not parse stops the bringup here, on the
+    # robot computer, rather than launching a scan with the mast still in it.
+    lidar_masked = robot_has_lidar and lidar_mask.masked(controller)
+    lidar_topic = "scan_raw" if lidar_masked else "scan"
+    # The simulated LD19's view of the robot's own structure, for the host laser
+    # (the firmware's emulator gets the same sectors through the env).
+    _occl_sectors, _occl_r = lidar_mask.occlusion(params)
+    occl_flat = [v for sec in _occl_sectors for v in sec] or [0.0]
+    occl_range = float(_occl_r or 0.12)
     lidar_port = (
         context.launch_configurations.get("lidar_port")
         or lidar_cfg.get("serial_port", "/dev/ttyUSB1")
@@ -581,7 +592,7 @@ def launch_setup(context, *args, **kwargs):
                 respawn_delay=2.0,
                 parameters=[{
                     "product_name": lidar_product,
-                    "topic_name": "scan",
+                    "topic_name": lidar_topic,
                     "frame_id": laser_frame,
                     "comm_mode": "udp_server",
                     "server_ip": "0.0.0.0",
@@ -603,6 +614,9 @@ def launch_setup(context, *args, **kwargs):
                                  "offset_x": float(geometry["laser"]["x"]),
                                  "sonar": host_sonar,
                                  "sonar_frame_id": sonar_frame,
+                                 "topic": lidar_topic,
+                                 "occlusion": occl_flat,
+                                 "occlusion_range": occl_range,
                                  # The configured room, as the board's LD19 and the
                                  # simulated depth camera get it.
                                  **{k: (bool(v) if k == "wall_obstacle" else float(v))
@@ -642,7 +656,7 @@ def launch_setup(context, *args, **kwargs):
                     respawn_delay=2.0,
                     parameters=[{
                         "product_name": lidar_product,
-                        "topic_name": "scan",
+                        "topic_name": lidar_topic,
                         "frame_id": laser_frame,
                         "comm_mode": lidar_comm_mode,
                         "raw_scan_topic": lidar_raw_topic,
@@ -657,6 +671,22 @@ def launch_setup(context, *args, **kwargs):
         ),
     ]
 
+    if lidar_masked:
+        chain = lidar_mask.filter_chain_params(controller, float(geometry["laser"].get("yaw", 0.0)),
+                                               frame_prefix + "base_link")
+        chain_file = tempfile.NamedTemporaryFile(mode="w", suffix="_laser_mask.yaml", delete=False)
+        yaml.safe_dump(chain, chain_file)
+        chain_file.close()
+        nodes.append(LogInfo(msg=f"[bringup] LiDAR mask: {len(chain['scan_to_scan_filter_chain']['ros__parameters'])} "
+                                 f"laser_filters stage(s), scan_raw -> scan"))
+        nodes.append(Node(
+            package="laser_filters",
+            executable="scan_to_scan_filter_chain",
+            name="scan_to_scan_filter_chain",
+            output="screen",
+            parameters=[chain_file.name],
+            remappings=[("scan", "scan_raw"), ("scan_filtered", "scan")],
+        ))
     nodes += depth_scan_actions(context, controller, params, geometry, frame_prefix,
                                 no_board or controller_name == "sim", scan_from, scan_error)
 

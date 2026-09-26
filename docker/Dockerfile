@@ -197,11 +197,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # depthai 2.12, lyrical 3.4; +~320 MB). Stereolabs ZED needs its SDK and CUDA,
 # which no generic image can carry; bringup says what to install when a ZED is
 # configured and its wrapper is missing. The simulated camera needs only the
-# converter, so the bench tests the path with no camera attached.
+# converter, so the bench tests the path with no camera attached. laser_filters
+# masks the robot's own structure out of the LiDAR scan (scripts/lidar_mask.py).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-depthimage-to-laserscan \
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-depthai-ros-driver \
+        ros-${ROS_DISTRO}-laser-filters \
     && rm -rf /var/lib/apt/lists/*
 
 # Nav2. The line this replaces installed `navigation2` and `nav2_bringup` and

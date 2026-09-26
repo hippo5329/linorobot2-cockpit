@@ -61,7 +61,8 @@ MAXIMAL_CONFIG = {
                        "mag_cov": 0.5, "env_cov": [3, 0.25, 9e-4],
                        "pose_cov": [1, 2, 3, 4, 5, 6], "twist_cov": 0.001,
                        "mag_bias": [1.5, -2.25, 0.75]},
-        "simulation": {"map_width": 10.0, "map_height": 6.0, "wall_obstacle": True,
+        "simulation": {"lidar_occlusion": [[150, 210]], "lidar_occlusion_range": 0.12,
+                       "map_width": 10.0, "map_height": 6.0, "wall_obstacle": True,
                        "wall_x1": 2.0, "wall_y1": -1.5, "wall_x2": 2.0,
                        "wall_y2": 1.5, "robot_mass": 3.5, "wheel_noise_rpm": 1.0,
                        # The simulated drivetrain's losses, swept from the env so

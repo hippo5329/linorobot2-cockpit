@@ -300,6 +300,15 @@ private:
     bool enabled_ = false;
     CommMode comm_mode_ = COMM_SERIAL;
     float offset_x_ = (float)SIM_LIDAR_OFFSET_X;   // where the LiDAR sits, forward of base_link
+    // The robot's own structure in view -- a mast, posts -- as up to four
+    // robot-frame sectors (degrees, counter-clockwise from ahead: start, width)
+    // that return a near range. A real LD19 under a deck sees these every scan;
+    // the bench needs them to prove the host's lidar.mask removes them
+    // (scripts/lidar_mask.py). Env keys sim_occl ("start,width,...") and sim_occl_r.
+    static const int SIM_OCCL_MAX = 4;
+    float occl_[SIM_OCCL_MAX * 2] = {0};
+    int occl_n_ = 0;
+    float occl_range_m_ = 0.12f;
 
 #ifdef SIM_LD19_UDP_SINK
     WiFiUDP udp_;
@@ -421,6 +430,23 @@ public:
         wall_x2_ = envFloat("sim_wall_x2", wall_x2_);
         wall_y2_ = envFloat("sim_wall_y2", wall_y2_);
         robot_radius_ = envFloat("sim_radius", robot_radius_);
+        occl_n_ = 0;
+        const char *occl = envGet("sim_occl", NULL);
+        while (occl && *occl && occl_n_ < SIM_OCCL_MAX)
+        {
+            char *end = NULL;
+            const float start = strtof(occl, &end);
+            if (end == occl || *end != ',') break;
+            const char *p = end + 1;
+            const float width = strtof(p, &end);
+            if (end == p) break;
+            occl_[occl_n_ * 2] = fmodf(fmodf(start, 360.0f) + 360.0f, 360.0f);
+            occl_[occl_n_ * 2 + 1] = width;
+            occl_n_++;
+            occl = end;
+            while (*occl == ',' || *occl == ' ') occl++;
+        }
+        occl_range_m_ = envFloat("sim_occl_r", occl_range_m_);
     }
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
@@ -617,6 +643,18 @@ public:
     // Raycast distance for a given beam angle (in degrees, 0..360)
     uint16_t raycastRangeMm(float beam_deg)
     {
+        // The robot's own structure first: nothing beyond it is visible there.
+        // beam_deg runs clockwise (see below), so the robot-frame angle is 360 - it.
+        if (occl_n_ > 0)
+        {
+            const float ccw = fmodf(360.0f - beam_deg + 720.0f, 360.0f);
+            for (int i = 0; i < occl_n_; i++)
+            {
+                if (fmodf(ccw - occl_[i * 2] + 360.0f, 360.0f) < occl_[i * 2 + 1])
+                    return (uint16_t)(occl_range_m_ * 1000.0f + (float)(rand() % 11) - 5.0f);
+            }
+        }
+
         // Global ray angle in radians: robot yaw MINUS the beam angle, because
         // an LD19's angle field increases the way the head physically turns,
         // which is clockwise seen from above -- the opposite of the
