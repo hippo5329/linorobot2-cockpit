@@ -7,7 +7,10 @@ after exploration_complete -- or complete, when return_to_init is off. The map's
 known area (free + occupied cells) is printed as it grows, so a stalled
 exploration is visible as a number that stops moving.
 
-exit 0: explored and back;  1: timed out;  2: exploration never reported starting.
+exit 0: explored and back;  1: timed out;  2: exploration never reported starting;
+     3: back, but the map is smaller than --min-area. "Complete" is explore_lite's
+     word that it found no more frontiers, not proof it mapped the space: a camera
+     run declared complete after 8 s with 5.7 m2 of a 60 m2 world and went home.
 """
 import argparse
 import sys
@@ -33,6 +36,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--timeout", type=float, default=900.0, help="seconds for the whole exploration")
     ap.add_argument("--no-return", action="store_true", help="success at exploration_complete")
+    ap.add_argument("--min-area", type=float, default=0.0,
+                    help="m² the map must know by the end (0 = no check); the world's size, less its walls")
     args = ap.parse_args()
     if ExploreStatus is None:
         print("❌ EXPLORE: explore_lite_msgs is not installed")
@@ -67,6 +72,10 @@ def main():
     node.destroy_node()
     rclpy.shutdown()
     elapsed = time.time() - t0
+    if ok and state["area"] < args.min_area:
+        print(f"❌ EXPLORE: {goal} after {elapsed:.0f} s, but known area {state['area']:.1f} m² "
+              f"is under the {args.min_area:.0f} m² this world holds")
+        return 3
     if ok:
         print(f"✅ EXPLORE: {goal} after {elapsed:.0f} s; known area {state['area']:.1f} m²")
         return 0

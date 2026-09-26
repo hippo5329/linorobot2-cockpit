@@ -1287,6 +1287,9 @@ def main():
                              "instead of the fixed Nav2 goal; the robot returns to its start")
     parser.add_argument("--explore-timeout", type=int, default=900,
                         help="Seconds the frontier exploration may take (default 900)")
+    parser.add_argument("--explore-min-area", type=float, default=0.0,
+                        help="m² the explored map must reach for the run to pass (0 = no check); "
+                             "a test in a known world sets it, since 'complete' only means no frontier was found")
     parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
                         help="Run the eight-manoeuvre drive suite after the topic gate (default: on)")
     parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
@@ -1906,7 +1909,7 @@ def main():
                                         distro=args.distro)
                     bg_processes.append(explore)
                     ex_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
-                                     f"--timeout {args.explore_timeout}",
+                                     f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}",
                                      timeout=args.explore_timeout + 60, distro=args.distro)
                     stop_bg(explore)
                     print(ex_res.stdout)
