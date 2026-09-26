@@ -31,17 +31,7 @@ import gen_robot_description  # noqa: E402  (the URDF, from the config)
 import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
 import depth_camera  # noqa: E402  (who makes /scan: a LiDAR or a depth camera)
 import lidar_mask  # noqa: E402  (the robot's own structure, removed from the scan)
-
-# The LD driver family the LiDAR block's `model` names, in the driver's own
-# vocabulary. `bins` is the ray count the fork's node resamples a revolution
-# to; each model's angular resolution sets it.
-LDLIDAR_MODELS = {
-    "ld19":   ("LDLiDAR_LD19", 456),
-    "ld06":   ("LDLiDAR_LD06", 456),
-    "ld14":   ("LDLiDAR_LD14", 360),
-    "ld14p":  ("LDLiDAR_LD14P", 360),
-    "stl27l": ("LDLiDAR_STL27L", 2160),
-}
+import lidar_drivers  # noqa: E402  (which vendor driver reads which LiDAR model)
 
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
@@ -187,10 +177,13 @@ def launch_setup(context, *args, **kwargs):
         context.launch_configurations.get("lidar_port")
         or lidar_cfg.get("serial_port", "/dev/ttyUSB1")
     )
-    lidar_baud = (
+    # The rate the config (or the launch) names; the LD default is 230400, and
+    # every other family takes its model's own rate when none is named.
+    lidar_baud_named = (
         context.launch_configurations.get("lidar_baud")
-        or str(lidar_cfg.get("baudrate", 230400))
+        or lidar_cfg.get("baudrate")
     )
+    lidar_baud = str(lidar_baud_named or 230400)
     lidar_comm_mode = (
         context.launch_configurations.get("lidar_comm_mode")
         or lidar_cfg.get("comm_mode", "serial")
@@ -299,7 +292,10 @@ def launch_setup(context, *args, **kwargs):
     # firmware's own cone is the publisher; two would disagree.
     host_sonar = no_board and bool(controller.get("sensors", {}).get("use_sim_sonar", True))
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
-    lidar_product, lidar_bins = LDLIDAR_MODELS.get(lidar_model, LDLIDAR_MODELS["ld19"])
+    # A model no driver here reads stops the launch with its name, not an LD19
+    # driver respawning on another vendor's port (lidar_drivers.family).
+    lidar_family = lidar_drivers.family(lidar_model) if robot_has_lidar else None
+    lidar_product, lidar_bins = lidar_drivers.ld_product(lidar_model)
 
     # Extract EKF parameters into a temporary YAML file for robot_localization.
     # A ROS 2 params file must be keyed by node name and ros__parameters; the config
@@ -625,6 +621,18 @@ def launch_setup(context, *args, **kwargs):
                 # The virtual room stands in for the driver on a bare bench; see
                 # use_host_sim_laser above for why a present serial port is not.
                 if use_host_sim_laser
+                # A real RPLIDAR, YDLIDAR or XV-11: its vendor's node, the
+                # vendor's per-model settings (lidar_drivers.py), respawned
+                # for the same reason as the LD driver below.
+                else Node(
+                    condition=IfCondition(LaunchConfiguration("lidar")),
+                    output="screen",
+                    respawn=True,
+                    respawn_delay=2.0,
+                    **lidar_drivers.serial_node(lidar_model, lidar_port, lidar_baud_named,
+                                                laser_frame, lidar_topic),
+                )
+                if lidar_family != "ldlidar"
                 else Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
                     package="ldlidar_stl_ros2",

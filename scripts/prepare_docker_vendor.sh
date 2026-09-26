@@ -27,7 +27,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_ROOT="${SRC_ROOT:-$(dirname "$REPO_ROOT")}"
 VENDOR="${REPO_ROOT}/docker/vendor"
-PACKAGES=(ldlidar_stl_ros2)
+# The LiDAR drivers bringup can start (scripts/lidar_drivers.py): LDRobot through
+# our fork, and each other vendor's own ROS 2 package, pinned to the commit the
+# image was verified with -- a vendor's default branch is not a version.
+# YDLidar-SDK is plain CMake (no package.xml): the Dockerfile builds and installs
+# it before colcon, and a COLCON_IGNORE keeps colcon from building it twice.
+PACKAGES=(ldlidar_stl_ros2 sllidar_ros2 ydlidar_ros2_driver xv_11_driver YDLidar-SDK)
 
 rm -rf "$VENDOR"
 mkdir -p "$VENDOR"
@@ -47,12 +52,35 @@ export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true
 upstream_of() {
     case "$1" in
         ldlidar_stl_ros2)       echo "https://github.com/hippo5329/ldlidar_stl_ros2.git ." ;;
+        sllidar_ros2)           echo "https://github.com/Slamtec/sllidar_ros2.git ." ;;
+        ydlidar_ros2_driver)    echo "https://github.com/YDLIDAR/ydlidar_ros2_driver.git ." ;;
+        xv_11_driver)           echo "https://github.com/mjstn/xv_11_driver.git ." ;;
+        YDLidar-SDK)            echo "https://github.com/YDLIDAR/YDLidar-SDK.git ." ;;
+    esac
+}
+# Commit pins (2026-09-26). Pinned packages are always fetched at the pin, never
+# taken from a local checkout, so the image cannot drift with a developer's tree.
+pin_of() {
+    case "$1" in
+        sllidar_ros2)           echo "34300099fadfc772965962dec837bf436706188f" ;;  # main
+        ydlidar_ros2_driver)    echo "4ef70d3f32a85704ade0be54b214f3763b1ab3e8" ;;  # humble (the ROS 2 branch)
+        xv_11_driver)           echo "82cce0fcb54f9edc61fe365df95f97aaf7bdc8c0" ;;  # main
+        YDLidar-SDK)            echo "42a82ed10d2304094c111fc63dee8e4a229b79b7" ;;  # master
     esac
 }
 
 for pkg in "${PACKAGES[@]}"; do
     src="${SRC_ROOT}/${pkg}"
-    if [ ! -d "$src" ]; then
+    pin="$(pin_of "$pkg")"
+    if [ -n "$pin" ]; then
+        read -r url subdir <<<"$(upstream_of "$pkg")"
+        tmp="$(mktemp -d)"
+        git init -q "$tmp/src"
+        git -C "$tmp/src" fetch -q --depth 1 "$url" "$pin"
+        git -C "$tmp/src" checkout -q FETCH_HEAD
+        echo "[vendor] ${pkg}: ${url} @ ${pin:0:12}"
+        src="$tmp/src/$subdir"
+    elif [ ! -d "$src" ]; then
         read -r url subdir <<<"$(upstream_of "$pkg")"
         echo "[vendor] ${src} not found — cloning ${url}"
         tmp="$(mktemp -d)"
@@ -192,7 +220,63 @@ PY
     echo "[vendor] ldlidar_stl_ros2: ament_target_dependencies -> target_link_libraries"
 fi
 
+# xv_11_driver (2020) declares its parameters with no default, which Humble and
+# later refuse to compile ("no matching function for call to
+# declare_parameter(const char [5])"). Its own XV11_*_DEFAULT macros give each
+# a default and so a type; the values are unchanged.
+XV="${VENDOR}/xv_11_driver/src/xv_11_driver.cpp"
+if [ -f "$XV" ] && grep -q 'declare_parameter("port");' "$XV"; then
+    sed -i -e 's/declare_parameter("port");/declare_parameter("port", std::string(XV11_PORT_DEFAULT));/' \
+           -e 's/declare_parameter("baud_rate");/declare_parameter("baud_rate", XV11_BAUD_RATE_DEFAULT);/' \
+           -e 's/declare_parameter("frame_id");/declare_parameter("frame_id", std::string(XV11_FRAME_ID_DEFAULT));/' \
+           -e 's/declare_parameter("firmware_version");/declare_parameter("firmware_version", XV11_FIRMWARE_VERSION_DEFAULT);/' "$XV"
+    echo "[vendor] xv_11_driver: typed parameter declarations"
+fi
+# YDLidar-SDK sets CMP0053, CMP0037 and CMP0043 to OLD. CMake 4 (lyrical's
+# resolute ships 4.2) refuses OLD for all three and stops configuring: "Policy
+# CMP0053 may not be set to OLD behavior because this version of CMake no longer
+# supports it". NEW is what every current CMake does anyway; CMP0037's OLD only
+# allowed a target named "test", and the SDK builds none with tests off.
+SDKCM="${VENDOR}/YDLidar-SDK/CMakeLists.txt"
+if [ -f "$SDKCM" ] && grep -qE 'cmake_policy\(SET CMP00(53|37|43) OLD\)' "$SDKCM"; then
+    sed -i -E 's/^([[:space:]]*)cmake_policy\(SET (CMP00(53|37|43)) OLD\)/\1# \2 left NEW: CMake 4 refuses OLD (prepare_docker_vendor.sh)/' "$SDKCM"
+    echo "[vendor] YDLidar-SDK: dropped three OLD policies CMake 4 refuses"
+fi
+touch "${VENDOR}/YDLidar-SDK/COLCON_IGNORE"
+
+# xv_11_driver on Lyrical's Boost: boost::asio::io_service is gone (renamed
+# io_context in 1.66, which Jazzy's 1.83 has too), and xv11_laser.cpp uses M_PI
+# without <cmath>, which the newer toolchain no longer pulls in by accident.
+if [ -d "${VENDOR}/xv_11_driver" ] && grep -rq "io_service" "${VENDOR}/xv_11_driver/src" "${VENDOR}/xv_11_driver/include"; then
+    grep -rl "io_service" "${VENDOR}/xv_11_driver/src" "${VENDOR}/xv_11_driver/include" \
+        | xargs sed -i 's/boost::asio::io_service/boost::asio::io_context/g'
+    sed -i '1i #include <cmath>' "${VENDOR}/xv_11_driver/src/xv11_laser.cpp"
+    echo "[vendor] xv_11_driver: io_service -> io_context, <cmath>"
+fi
+
+# ament_target_dependencies is gone in Lyrical (ament_cmake 2.8): the three
+# drivers stop configuring at it. The same rewrite as ldlidar_stl_ros2 above,
+# generalised: rclcpp -> rclcpp::rclcpp, an interface package -> its
+# ${pkg_TARGETS}. Both exist on Jazzy too, so one source builds on both.
+for pkg in sllidar_ros2 ydlidar_ros2_driver xv_11_driver; do
+    CM="${VENDOR}/${pkg}/CMakeLists.txt"
+    [ -f "$CM" ] && grep -q "ament_target_dependencies" "$CM" || continue
+    python3 - "$CM" <<'ATD_PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+def repl(m):
+    words = [w.strip('"') for w in m.group(1).split()]
+    target, deps = words[0], words[1:]
+    libs = ["rclcpp::rclcpp" if d == "rclcpp" else "${%s_TARGETS}" % d for d in deps]
+    return "target_link_libraries(%s %s)" % (target, " ".join(libs))
+s = re.sub(r"ament_target_dependencies\(\s*([^)]*)\)", repl, s)
+open(p, "w").write(s)
+ATD_PY
+    echo "[vendor] ${pkg}: ament_target_dependencies -> target_link_libraries"
+done
+
 for pkg in "${PACKAGES[@]}"; do
-    [ -f "${VENDOR}/${pkg}/package.xml" ] || { echo "[vendor] ❌ ${pkg} is not staged" >&2; exit 1; }
+    marker="package.xml"; [ "$pkg" = "YDLidar-SDK" ] && marker="CMakeLists.txt"
+    [ -f "${VENDOR}/${pkg}/${marker}" ] || { echo "[vendor] ❌ ${pkg} is not staged" >&2; exit 1; }
 done
 du -sh "$VENDOR"

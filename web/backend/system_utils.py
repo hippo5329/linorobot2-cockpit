@@ -50,7 +50,9 @@ LASER_SENSORS = {
         "driver_pkg": "sllidar_ros2",
         "models": [
             {"code": "a1", "label": "RPLIDAR A1"},
-            {"code": "a2", "label": "RPLIDAR A2"},
+            {"code": "a2", "label": "RPLIDAR A2 (A2M8)"},
+            {"code": "a2m7", "label": "RPLIDAR A2M7"},
+            {"code": "a2m12", "label": "RPLIDAR A2M12"},
             {"code": "a3", "label": "RPLIDAR A3"},
             {"code": "c1", "label": "RPLIDAR C1"},
             {"code": "s1", "label": "RPLIDAR S1"},
@@ -72,7 +74,11 @@ LASER_SENSORS = {
         "default_baud": "128000",
         "docker_key": "ydlidar",
         "driver_pkg": "ydlidar_ros2_driver",
-        "models": [{"code": "ydlidar", "label": "YDLIDAR X4 / G4 / others"}],
+        # One code per params/<Model>.yaml the driver ships (lidar_drivers.YDLIDAR_FILES).
+        "models": [{"code": "ydlidar", "label": "YDLIDAR (the driver's generic ydlidar.yaml)"}] + [
+            {"code": f"ydlidar_{m}", "label": f"YDLIDAR {m.replace('_', ' ').upper()}"}
+            for m in ("g1", "g2", "g4", "g6", "gs2", "gs5", "tea", "tg", "tmini", "tmini_plus_sh",
+                      "x2", "x3", "x4", "x4_pro", "sdm15")],
         "install": [
             "sudo apt-get update && sudo apt-get install -y ros-$ROS_DISTRO-ydlidar-ros2-driver || true",
         ],

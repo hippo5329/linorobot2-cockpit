@@ -365,9 +365,29 @@ RUN mkdir -p /opt/cockpit-rviz /rviz \
 # writes that file even when every package fails. rc-20260919 shipped that way
 # on both distros -- no local_setup.bash for this package and no
 # ldlidar_stl_ros2 at all -- so bringup could not start on any released image.
-# Redirect instead, show the tail only on failure, and assert the two artefacts
+# Redirect instead, show the tail only on failure, and assert the artefacts
 # that actually prove the overlay is usable.
+# The other LiDAR drivers (sllidar_ros2 for RPLIDAR, ydlidar_ros2_driver,
+# xv_11_driver) are staged beside ldlidar_stl_ros2. ydlidar_ros2_driver links
+# YDLIDAR's SDK, which is plain CMake (COLCON_IGNORE'd in the staging) and is
+# installed into /usr/local first. CMake 4 (lyrical) removed what the SDK's
+# install script still uses (a target's LOCATION property, CMP0026 OLD, and
+# cmake_minimum_required 2.8), so there it is configured with a pip-installed
+# CMake 3 used for this one build and deleted after.
 RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && if [ -d /ws/docker/vendor/YDLidar-SDK ]; then \
+        CM=cmake; \
+        if [ "$(cmake --version | head -1 | grep -o '[0-9]*' | head -1)" -ge 4 ]; then \
+            python3 -m pip install -q --break-system-packages --root-user-action=ignore \
+                --target /tmp/cm "cmake<4" && CM=/tmp/cm/cmake/data/bin/cmake; \
+        fi; \
+        mkdir -p /tmp/ydsdk && cd /tmp/ydsdk \
+        && if ! { $CM /ws/docker/vendor/YDLidar-SDK -DCMAKE_BUILD_TYPE=Release \
+                  && make -j"$(nproc)" && make install; } > /tmp/ydsdk.log 2>&1; then \
+            echo "[build] YDLidar-SDK build FAILED:"; tail -40 /tmp/ydsdk.log; exit 1; \
+        fi; \
+        cd / && rm -rf /tmp/ydsdk /tmp/ydsdk.log /tmp/cm && ldconfig; \
+    fi \
  && bases="/ws"; [ -d /ws/docker/vendor ] && bases="$bases /ws/docker/vendor"; \
     if ! colcon build --base-paths $bases --merge-install \
             --install-base /opt/lino_ws --build-base /tmp/colcon_build \
@@ -378,7 +398,10 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
  && rm -rf /tmp/colcon_build /ws/log /tmp/colcon.log \
  && test -f /opt/lino_ws/setup.bash \
  && test -f /opt/lino_ws/share/linorobot2_cockpit/local_setup.bash \
- && test -x /opt/lino_ws/lib/ldlidar_stl_ros2/ldlidar_stl_ros2_node
+ && test -x /opt/lino_ws/lib/ldlidar_stl_ros2/ldlidar_stl_ros2_node \
+ && test -x /opt/lino_ws/lib/sllidar_ros2/sllidar_node \
+ && test -x /opt/lino_ws/lib/ydlidar_ros2_driver/ydlidar_ros2_driver_node \
+ && test -x /opt/lino_ws/lib/xv_11_driver/xv_11_driver
 
 # ...and prove the overlay is usable, not merely present: ros2 must RESOLVE
 # both packages and the bringup launch file must be where a launch resolves it.
