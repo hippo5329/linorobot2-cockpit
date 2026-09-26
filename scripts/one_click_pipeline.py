@@ -936,7 +936,11 @@ def map_extent(text: str):
 
 def map_surrounds_origin(distro: str, margin: float = 0.5, say: bool = False) -> bool:
     """Does the latest /map reach `margin` past the start pose (0, 0) on every side?"""
-    res = run_ros("ros2 topic echo --once --qos-durability transient_local "
+    # VOLATILE, so it waits for SLAM's next publish (map_update_interval, 5 s):
+    # joining the latched history instead handed back the FIRST map it kept --
+    # the same forward-only extent at every poll while the map grew behind it
+    # (measured 2026-09-26, both distros).
+    res = run_ros("ros2 topic echo --once --qos-durability volatile "
                   "--qos-reliability reliable --field info /map", timeout=15, distro=distro)
     ext = map_extent(res.stdout)
     if say:
