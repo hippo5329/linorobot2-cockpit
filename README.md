@@ -57,6 +57,7 @@ The cockpit automatically detects your connected board (or uses **Sim MCU** if n
 | **ESP32 DevKit** | ESP32 | `esp32-jazzy`, `esp32-lyrical` | Serial or Wi-Fi (UDP) |
 | **ESP32-S3** | ESP32-S3 | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial (native USB CDC) |
 | **Waveshare General Driver** | ESP32 | `esp32-jazzy`, `esp32-lyrical` | Serial (1.5 Mbaud) or Wi-Fi |
+| **Yahboom ESP32-S3 (YB-EET01)** | ESP32-S3 | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial or Wi-Fi |
 | **Sim MCU** | Host CPU | Built into robot image | UDP4 micro-ROS client |
 
 Both **ROS 2 Jazzy** and **ROS 2 Lyrical** distributions are fully supported.
