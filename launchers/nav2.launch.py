@@ -216,6 +216,70 @@ def add_camera_obstacle_source(nav2_data, params) -> list:
     return changed
 
 
+def amcl_params(params, map_file, pose, bringup_share=None):
+    """AMCL's parameters for localising on a saved map.
+
+    Upstream Nav2 is the reference: the base is the `amcl` block of the
+    nav2_bringup package INSTALLED here (params/nav2_params.yaml), so each
+    distro gets its own release's defaults (lyrical adds random_seed and
+    introspection_mode). Only what this robot dictates is overridden: the base
+    frame (this stack's tree is odom -> base_link; Nav2's default is
+    base_footprint), the motion model (a mecanum base moves sideways, which the
+    differential model would call noise), and the initial pose -- the origin on
+    a map saved from a run that started there, unless the caller says
+    otherwise; the Map Viewer's 2D pose estimate (/initialpose) corrects it.
+    Last, the robot config's own `nav2.amcl` block, for anyone tuning further.
+    """
+    rp = {}
+    try:
+        share = bringup_share or FindPackageShare("nav2_bringup").find("nav2_bringup")
+        with open(os.path.join(share, "params", "nav2_params.yaml")) as fh:
+            rp = dict(((yaml.safe_load(fh) or {}).get("amcl") or {}).get("ros__parameters") or {})
+    except Exception:  # no nav2_bringup, or no such file: AMCL's own code defaults
+        rp = {}
+    base_type = str((params.get("kinematics") or {}).get("base_type", "2wd")).lower()
+    x, y, yaw = pose
+    rp.update({
+        "base_frame_id": (params.get("slam") or {}).get("base_frame", "base_link"),
+        "robot_model_type": ("nav2_amcl::OmniMotionModel" if base_type == "mecanum"
+                             else "nav2_amcl::DifferentialMotionModel"),
+        "set_initial_pose": True,
+        "initial_pose": {"x": float(x), "y": float(y), "z": 0.0, "yaw": float(yaw)},
+    })
+    rp.update(((params.get("nav2") or {}).get("amcl") or {}).get("ros__parameters") or {})
+    return {"amcl": {"ros__parameters": rp},
+            "map_server": {"ros__parameters": {"yaml_filename": map_file}}}
+
+
+def localization_actions(params, map_file, pose, ns, tf_remaps, autostart, use_sim_time):
+    """A map server, AMCL and their own lifecycle manager: navigating on a saved map.
+
+    nav2_bringup's navigation_launch.py -- the only file this launcher includes
+    -- starts neither a map server nor AMCL, so a `map:=` handed to it reached
+    nothing: no map frame, and every goal failed. Upstream linorobot2 gets them
+    from bringup_launch.py. They are started here as plain nodes with a manager
+    of their own, so they do not depend on which distro's container or manager
+    layout navigation_launch.py has.
+    """
+    loc = amcl_params(params, map_file, pose)
+    f = tempfile.NamedTemporaryFile(mode="w", suffix="_localization.yaml", delete=False)
+    yaml.safe_dump(cockpit_paths.namespace_params(loc, ns), f)
+    f.close()
+    truthy = lambda v: str(v).lower() in ("true", "1", "yes")  # noqa: E731
+    nodes = [
+        Node(package="nav2_map_server", executable="map_server", name="map_server",
+             namespace=ns or None, output="screen", parameters=[f.name], remappings=tf_remaps),
+        Node(package="nav2_amcl", executable="amcl", name="amcl",
+             namespace=ns or None, output="screen", parameters=[f.name], remappings=tf_remaps),
+        Node(package="nav2_lifecycle_manager", executable="lifecycle_manager",
+             name="lifecycle_manager_localization", namespace=ns or None, output="screen",
+             parameters=[{"autostart": truthy(autostart), "use_sim_time": truthy(use_sim_time),
+                          "node_names": ["map_server", "amcl"], "bond_timeout": 20.0}]),
+    ]
+    return [LogInfo(msg=f"[Linorobot2 Cockpit] Localising on the saved map {map_file} with AMCL "
+                        f"(initial pose {pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})")] + nodes
+
+
 def launch_setup(context, *args, **kwargs):
     config_file = resolve_params_path(context)
     use_sim_time = context.launch_configurations.get("use_sim_time", "false")
@@ -270,6 +334,10 @@ def launch_setup(context, *args, **kwargs):
         follow_path = ctrl_params.setdefault("FollowPath", {})
         if "primary_controller" in follow_path and isinstance(follow_path["primary_controller"], str):
             primary_plugin = follow_path["primary_controller"]
+            # Keys Lyrical's RPP does not read, taken off FollowPath too so a
+            # flat leftover cannot look like configuration.
+            for dead in ("transform_tolerance", "max_robot_pose_search_dist", "stateful"):
+                follow_path.pop(dead, None)
             follow_path["primary_controller"] = {
                 "plugin": primary_plugin,
                 "desired_linear_vel": follow_path.pop("desired_linear_vel", 0.4),
@@ -282,19 +350,18 @@ def launch_setup(context, *args, **kwargs):
                 # on every leg, and no edit to the YAML could reach it.
                 "rotate_to_heading_angular_vel": follow_path.pop(
                     "rotate_to_heading_angular_vel", 1.8),
-                # Carried across the nesting like every other key here, NOT
-                # hardcoded. It was 0.1 while the flat block Jazzy reads says
-                # 0.3, so the same robot tolerated three times less TF staleness
-                # on Lyrical than on Jazzy -- and the config's own value was
-                # silently discarded rather than overridden.
-                #
-                # It matters because map->odom does stall: measured at 601 ms on
-                # a serial leg (slam_toolbox, configured at 50 Hz). Both
-                # tolerances lose to a stall that long, but 0.1 also loses to
-                # every shorter one, and the Wi-Fi legs bear it out -- GenDrv
-                # Wi-Fi passes 88% on Jazzy against 75% on Lyrical across every
-                # run since 2026-09-22, same board, same link, same firmware.
-                "transform_tolerance": follow_path.pop("transform_tolerance", 0.3),
+                # NOT transform_tolerance, max_robot_pose_search_dist or stateful:
+                # Nav2 1.5.1 moved all three out of RPP (Kilted -> Lyrical,
+                # "Centralize Path Handler logic in Controller Server"), and its
+                # libnav2_regulated_pure_pursuit_controller.so declares none of
+                # them. Writing them here set nothing. The path handler now owns
+                # max_robot_pose_search_dist (defaults kept), the goal checker
+                # owns stateful (general_goal_checker sets it), and transforms
+                # on the control path use the local costmap's transform_tolerance
+                # (0.5 in every shipped config) -- looser than the 0.3 Jazzy's
+                # RPP reads, not tighter. This comment used to credit a 0.1 -> 0.3
+                # change here with the Lyrical Wi-Fi pass rate; the value never
+                # reached the controller, so that cannot have been the cause.
                 "use_velocity_scaled_lookahead_dist": False,
                 "min_approach_linear_velocity": 0.05,
                 "approach_velocity_scaling_dist": 0.6,
@@ -310,8 +377,6 @@ def launch_setup(context, *args, **kwargs):
                 "allow_reversing": False,
                 "rotate_to_heading_min_angle": 0.785,
                 "max_angular_accel": follow_path.pop("max_angular_accel", 3.2),
-                "max_robot_pose_search_dist": 10.0,
-                "stateful": True,
             }
         # 3. bt_navigator has to discover the action servers it calls, and on a
         #    loaded box it loses that race at the 1 s default: it gave up on
@@ -561,8 +626,9 @@ def launch_setup(context, *args, **kwargs):
     if supports_zones:
         launch_args["use_keepout_zones"] = "False"
         launch_args["use_speed_zones"] = "False"
-    if map_file:
-        launch_args["map"] = map_file
+    # The map is NOT handed to navigation_launch.py, which declares no such
+    # argument on either distro and starts nothing that would read it; the
+    # localization nodes below serve it.
 
     # navigation_launch.py COMPOSES but does not CONTAIN: with use_composition
     # it only issues LoadComposableNodes(target_container='nav2_container') and
@@ -644,6 +710,10 @@ def launch_setup(context, *args, **kwargs):
     # /<ns>/<server> for the manager to drive. The manager (LoadComposableNodes)
     # names the container by its absolute path, so it stays outside the group.
     actions.append(GroupAction([PushRosNamespace(ns), nav2_include]) if ns else nav2_include)
+    if map_file:
+        pose = tuple(float(context.launch_configurations.get(k, "0.0") or 0.0)
+                     for k in ("initial_x", "initial_y", "initial_yaw"))
+        actions += localization_actions(params, map_file, pose, ns, tf_remaps, autostart, use_sim_time)
     return actions + manager_actions
 
 
@@ -674,6 +744,12 @@ def generate_launch_description():
             default_value="",
             description="Full path to map yaml file to load",
         ),
+        DeclareLaunchArgument("initial_x", default_value="0.0",
+                              description="With map:=, AMCL's initial x in the map frame (m)"),
+        DeclareLaunchArgument("initial_y", default_value="0.0",
+                              description="With map:=, AMCL's initial y in the map frame (m)"),
+        DeclareLaunchArgument("initial_yaw", default_value="0.0",
+                              description="With map:=, AMCL's initial heading in the map frame (rad)"),
         DeclareLaunchArgument(
             "stamped_cmd_vel",
             default_value="",

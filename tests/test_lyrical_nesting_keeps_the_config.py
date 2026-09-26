@@ -1,20 +1,17 @@
-"""The Lyrical nesting must carry the config's values, not substitute its own.
+"""The Lyrical nesting must carry the config's values -- and only keys Lyrical reads.
 
-Lyrical (Nav2 >= 1.5.1 / Kilted) nests the primary controller under
+Lyrical (Nav2 1.5.1) nests the primary controller under
 FollowPath.primary_controller, where Jazzy reads a flat FollowPath block. The
-launcher rewrites one into the other -- and every key it moves is taken from
-the config with .pop(key, default) so the robot's own tuning survives.
+launcher rewrites one into the other, and every key it moves is taken from the
+config with .pop(key, default) so the robot's own tuning survives.
 
-transform_tolerance alone was hardcoded to 0.1 while the shipped configs say
-0.3. Same robot, same link, same firmware, three times less tolerance for a
-stale transform on one distro than the other -- and the config's value was not
-overridden, it was discarded, so no amount of editing the YAML could change it.
-
-It is not academic. map->odom does stall: 601 ms measured on a serial leg from
-a publisher configured at 50 Hz. A 0.3 s tolerance loses to a stall that long
-and so does 0.1, but 0.1 also loses to every shorter one -- and the GenDrv
-Wi-Fi legs, which run both distros off the same board and link, passed 88% on
-Jazzy against 75% on Lyrical across every run since 2026-09-22.
+It also used to carry transform_tolerance, max_robot_pose_search_dist and
+stateful into that block, with a comment crediting transform_tolerance for the
+Lyrical Wi-Fi pass rate. Nav2 1.5.1 moved all three out of RPP (Kilted ->
+Lyrical, "Centralize Path Handler logic in Controller Server"): the image's
+libnav2_regulated_pure_pursuit_controller.so declares none of them, where
+Jazzy's declares all three. Writing them set nothing. A key that reads as
+configuration and is not is worse than a missing one.
 """
 import ast
 import glob
@@ -31,10 +28,28 @@ def _src():
         return fh.read()
 
 
-def test_the_tolerance_comes_from_the_config():
-    src = _src()
-    assert '"transform_tolerance": follow_path.pop("transform_tolerance", 0.3),' in src, \
-        "the Lyrical nesting hardcodes a transform_tolerance again"
+# Declared by Jazzy's RPP, not by Lyrical's (strings of the installed .so, 2026-09-26).
+NOT_READ_BY_LYRICAL_RPP = {"transform_tolerance", "max_robot_pose_search_dist", "stateful"}
+
+
+def test_the_nesting_writes_no_key_lyrical_does_not_read():
+    nested = _nested_block()
+    keys = {k.value for k in nested.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    dead = sorted(keys & NOT_READ_BY_LYRICAL_RPP)
+    assert not dead, f"the Lyrical primary_controller block sets {dead}, which Nav2 1.5.1's RPP never reads"
+
+
+def _nested_block():
+    tree = ast.parse(_src())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                and any(isinstance(k, ast.Constant) and k.value == "plugin"
+                        for k in node.value.keys if k is not None)):
+            keys = [k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if "lookahead_dist" in keys and "desired_linear_vel" in keys:
+                return node.value
+    raise AssertionError("the Lyrical primary_controller block is gone")
 
 
 def test_no_key_in_the_nesting_silently_drops_a_configured_value():
@@ -44,19 +59,7 @@ def test_no_key_in_the_nesting_silently_drops_a_configured_value():
     it makes the config unreachable -- the flat key is left behind in a block
     the nested controller never reads.
     """
-    src = _src()
-    tree = ast.parse(src)
-    nested = None
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
-                and any(isinstance(k, ast.Constant) and k.value == "plugin"
-                        for k in node.value.keys if k is not None)):
-            keys = [k.value for k in node.value.keys
-                    if isinstance(k, ast.Constant) and isinstance(k.value, str)]
-            if "transform_tolerance" in keys and "lookahead_dist" in keys:
-                nested = node.value
-                break
-    assert nested is not None, "the Lyrical primary_controller block is gone"
+    nested = _nested_block()
 
     configured = set()
     for f in glob.glob(os.path.join(ROOT, "config", "reference", "*_config.yaml")):

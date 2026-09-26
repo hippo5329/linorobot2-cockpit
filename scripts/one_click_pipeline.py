@@ -1203,6 +1203,9 @@ def main():
     parser.add_argument("--map-output", default=os.path.join(REPO_ROOT, "maps", "one_click_map"),
                         help="Output path prefix for the map saver")
     parser.add_argument("--no-nav2", action="store_true", help="Skip Nav2 (run SLAM only)")
+    parser.add_argument("--map", default="",
+                        help="Navigate on this saved map (its .yaml) with AMCL instead of mapping "
+                             "with SLAM: no SLAM runs, and the robot starts at the map's origin")
     parser.add_argument("--topics-only", action="store_true",
                         help="Stop after the topics: bringup, topic verification and the eight "
                              "manoeuvres, with no SLAM, no Nav2 and no map. What a REAL-sensor "
@@ -1779,6 +1782,12 @@ def main():
         # --topics-only has nothing to map it for.
         if args.topics_only:
             print("\n[5/6] [SLAM] Skipped per --topics-only: this run verifies the topics.")
+        elif has_lidar and args.map:
+            # A saved map and SLAM together would be two publishers of map->odom.
+            print(f"\n[5/6] [MAP] Localising on the saved map {args.map} with AMCL (no SLAM).")
+            if not os.path.isfile(args.map):
+                failures.append(f"map: {args.map} does not exist")
+                print(f"  ❌ {args.map} does not exist.")
         elif has_lidar:
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
             failures += start_slam(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
@@ -1800,7 +1809,8 @@ def main():
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             nav2_ok, nav2_detail, nav2_log = start_nav2(
                 f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
-                f"distro:={args.distro} config_file:={params_path}",
+                f"distro:={args.distro} config_file:={params_path}"
+                + (f" map:={os.path.abspath(args.map)}" if args.map else ""),
                 args.distro, bg_processes, stack_processes)
             if not nav2_ok:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
@@ -1919,17 +1929,20 @@ def main():
             print("==================================================================")
             return 0
 
-        print(f"\n[MAP] Saving the map to '{args.map_output}'...")
-        # save_map_timeout=15: /map is transient-local and the saver has to get
-        # its subscription matched inside the window; 2 s is a coin toss on a
-        # machine that just brought Nav2 up.
-        save_res = run_ros(f"ros2 run nav2_map_server map_saver_cli -f {args.map_output} "
-                           f"--ros-args -p save_map_timeout:=15.0", timeout=30, distro=args.distro)
-        if save_res.returncode == 0:
-            print(f"🎉 MAP SAVED: {args.map_output}.yaml / .pgm")
+        if args.map:
+            print(f"\n[MAP] Navigated on the saved map {args.map}; there is no new map to save.")
         else:
-            print(f"⚠️ Map saver returned {save_res.returncode}: {save_res.stdout} {save_res.stderr}")
-            failures.append(f"Map saver: exit {save_res.returncode}")
+            print(f"\n[MAP] Saving the map to '{args.map_output}'...")
+            # save_map_timeout=15: /map is transient-local and the saver has to get
+            # its subscription matched inside the window; 2 s is a coin toss on a
+            # machine that just brought Nav2 up.
+            save_res = run_ros(f"ros2 run nav2_map_server map_saver_cli -f {args.map_output} "
+                               f"--ros-args -p save_map_timeout:=15.0", timeout=30, distro=args.distro)
+            if save_res.returncode == 0:
+                print(f"🎉 MAP SAVED: {args.map_output}.yaml / .pgm")
+            else:
+                print(f"⚠️ Map saver returned {save_res.returncode}: {save_res.stdout} {save_res.stderr}")
+                failures.append(f"Map saver: exit {save_res.returncode}")
 
         print("\n==================================================================")
         if failures:
