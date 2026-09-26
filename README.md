@@ -34,7 +34,7 @@ docker compose logs | grep token       # prints your authentication URL
 
 The cockpit automatically detects your connected board (or uses **Sim MCU** if no board is plugged in), flashes matching release firmware if needed, writes your configuration, starts `micro_ros_agent`, boots EKF, SLAM Toolbox, and Nav2, performs qualification drive manoeuvres, and displays the generated map in the **Map Viewer** tab.
 
-For a complete guide on using the web interface (Dashboard, Config Studio, Map Viewer, Teleop, and Hardware Tests), follow the **[Web UI Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide)** in the wiki.
+For a step-by-step beginner walkthrough and tour of the web interface (Dashboard, Config Studio, Map Viewer, Teleop, and Navigation), follow the **[Web UI Quick Start Walkthrough](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide#quick-start-web-ui-walkthrough-beginners)** in the wiki.
 
 ---
 
