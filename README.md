@@ -326,6 +326,13 @@ and CUDA, which no generic image can carry, so bringup names what to install. Th
 is a RealSense D435 in its 424×240 mode, raycasting the same room as the simulated LD19. On the Sim
 MCU the LiDAR stays the default; the Hardware tab turns on the camera alone or both.
 
+**Known open defect: Nav2 from the start pose with the camera alone.** SLAM's first map is the
+camera's cone ahead of the robot, starting at its 0.45 m near limit, so it does not contain the
+robot. Nav2's global costmap is sized to that map, and the first plan fails with "Robot is out of
+bounds of the costmap". A turn on the spot did not grow the map in simulation (measured
+2026-09-26), and the cause is still open. Mapping itself works: drive the robot around first, then
+navigate. The camera beside a LiDAR is unaffected.
+
 ### Navigating on a map you saved
 
 A run normally maps with SLAM as it goes. To navigate on a map saved from an earlier run, pass
