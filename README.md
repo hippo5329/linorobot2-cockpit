@@ -46,6 +46,8 @@ docker compose logs | grep token       # prints your authentication URL
 
 The cockpit automatically detects your connected board (or uses **Sim MCU** if no board is plugged in), flashes matching release firmware if needed, writes your configuration, starts `micro_ros_agent`, boots EKF, SLAM Toolbox, and Nav2, performs qualification drive manoeuvres, and displays the generated map in the **Map Viewer** tab.
 
+For a complete guide on using the web interface (Dashboard, Config Studio, Map Viewer, Teleop, and Hardware Tests), follow the **[Web UI Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide)** in the wiki.
+
 ---
 
 ## Supported Boards
@@ -61,28 +63,6 @@ The cockpit automatically detects your connected board (or uses **Sim MCU** if n
 | **Sim MCU** | Host CPU | Built into robot image | UDP4 micro-ROS client |
 
 Both **ROS 2 Jazzy** and **ROS 2 Lyrical** distributions are fully supported.
-
----
-
-## Essential CLI Workflows
-
-For automation, CI, or headless operation, all functions can be run from the command line:
-
-```bash
-# Run headless 1-Click pipeline on RP2350 with ROS 2 Jazzy
-python3 scripts/one_click_pipeline.py --controller pico2 --distro jazzy
-
-# Autonomous frontier exploration in multi-room virtual environments
-python3 scripts/one_click_pipeline.py --controller pico2 --explore
-
-# Navigate an existing pre-saved map
-python3 scripts/one_click_pipeline.py --controller pico2 --map ~/maps/room.yaml
-
-# Run unit tests (no hardware or ROS 2 dependencies needed)
-python3 -m pytest -q tests
-```
-
-See the [[Technical Details Wiki|https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details]] for detailed flag documentation, firmware flashing commands, and REST API test runners.
 
 ---
 
