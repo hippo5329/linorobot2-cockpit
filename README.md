@@ -42,13 +42,9 @@ docker compose logs | grep token       # prints your authentication URL
 ```
 
 1. Open the printed URL (**`http://<robot-computer>:8000/?token=…`**) in any browser. The browser remembers the token for future visits.
-2. Select your robot in the **Robot** dropdown at the top left (e.g. `pico2` for Raspberry Pi Pico 2, `esp32` for ESP32 DevKit).
-3. Click **Start 1-Click**.
+2. Click **Start 1-Click**.
 
-The cockpit automatically flashes matching release firmware if needed, writes your configuration, starts `micro_ros_agent`, boots EKF, SLAM Toolbox, and Nav2, performs qualification drive manoeuvres, and displays the generated map in the **Map Viewer** tab.
-
-> [!TIP]
-> **No board plugged in?** Select **Sim MCU** as the base controller. The entire micro-ROS firmware stack runs natively on the robot computer over UDP, letting you test SLAM and Nav2 navigation in a virtual room without any physical hardware.
+The cockpit automatically detects your connected board (or uses **Sim MCU** if no board is plugged in), flashes matching release firmware if needed, writes your configuration, starts `micro_ros_agent`, boots EKF, SLAM Toolbox, and Nav2, performs qualification drive manoeuvres, and displays the generated map in the **Map Viewer** tab.
 
 ---
 
