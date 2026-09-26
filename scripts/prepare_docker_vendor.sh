@@ -328,6 +328,73 @@ open(p, "w").write(s.replace(old, new))
 PYMP
     echo "[vendor] explore_lite: plan the next frontier only when the goal in progress has ended"
 fi
+# 4. Outside the map is not "explored". While SLAM's map (and the costmap sized
+#    to it) does not yet contain the robot -- a camera's first view starts past
+#    its near limit -- the frontier search logs "Robot out of costmap bounds"
+#    and returns nothing, and explore_lite took that as "No frontiers found,
+#    stopping": a camera run declared the rooms world explored after 2 s with
+#    2 m2 mapped. It now waits for the map to reach the robot.
+# 5. Home is retried. A go-home goal that fails (a planner timeout, a spin
+#    refused for "Collision Ahead") was dropped and the robot left where it
+#    stopped; it is now sent again, up to three times, 5 s apart.
+if [ -f "$EX" ] && ! grep -q "outside the costmap yet" "$EX"; then
+    python3 - "$EX" <<'PYWAIT'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  if (goal_active_) {
+    return;
+  }
+"""
+new = """  if (goal_active_) {
+    return;
+  }
+  {
+    // Outside the map is not "explored" (prepare_docker_vendor.sh): wait for it.
+    unsigned int mx, my;
+    auto here = costmap_client_.getRobotPose();
+    if (!costmap_client_.getCostmap()->worldToMap(here.position.x, here.position.y, mx, my)) {
+      RCLCPP_WARN(logger_, "Robot is outside the costmap yet; waiting for the map to reach it");
+      return;
+    }
+  }
+"""
+assert s.count(old) == 1, "makePlan() guard missing"
+s = s.replace(old, new)
+old = """        if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+          auto status_msg = explore_lite_msgs::msg::ExploreStatus();
+          status_msg.status = explore_lite_msgs::msg::ExploreStatus::RETURNED_TO_ORIGIN;
+          status_pub_->publish(status_msg);
+          RCLCPP_INFO(logger_, "Successfully returned to initial pose.");
+        }"""
+new = """        if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+          auto status_msg = explore_lite_msgs::msg::ExploreStatus();
+          status_msg.status = explore_lite_msgs::msg::ExploreStatus::RETURNED_TO_ORIGIN;
+          status_pub_->publish(status_msg);
+          RCLCPP_INFO(logger_, "Successfully returned to initial pose.");
+        } else if (home_attempts_ < 3) {
+          // Home is retried (prepare_docker_vendor.sh), 5 s apart.
+          home_attempts_++;
+          RCLCPP_WARN(logger_, "Return to initial pose failed; retry %d of 3 in 5 s", home_attempts_);
+          home_retry_timer_ = this->create_wall_timer(std::chrono::seconds(5), [this]() {
+            home_retry_timer_->cancel();
+            returnToInitialPose();
+          });
+        } else {
+          RCLCPP_ERROR(logger_, "Return to initial pose failed three times; giving up.");
+        }"""
+assert s.count(old) == 1, "returnToInitialPose() result callback changed upstream"
+s = s.replace(old, new)
+open(p, "w").write(s)
+H = p.replace("src/explore.cpp", "include/explore/explore.h")
+h = open(H).read()
+old = "  bool return_to_init_;"
+assert h.count(old) == 1, "explore.h changed upstream"
+h = h.replace(old, old + "\n  int home_attempts_ = 0;                       // prepare_docker_vendor.sh\n"
+              "  rclcpp::TimerBase::SharedPtr home_retry_timer_;")
+open(H, "w").write(h)
+PYWAIT
+    echo "[vendor] explore_lite: wait for the map to reach the robot; retry going home"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
