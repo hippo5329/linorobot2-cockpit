@@ -326,12 +326,32 @@ and CUDA, which no generic image can carry, so bringup names what to install. Th
 is a RealSense D435 in its 424×240 mode, raycasting the same room as the simulated LD19. On the Sim
 MCU the LiDAR stays the default; the Hardware tab turns on the camera alone or both.
 
-**Known open defect: Nav2 from the start pose with the camera alone.** SLAM's first map is the
-camera's cone ahead of the robot, starting at its 0.45 m near limit, so it does not contain the
-robot. Nav2's global costmap is sized to that map, and the first plan fails with "Robot is out of
-bounds of the costmap". A turn on the spot did not grow the map in simulation (measured
-2026-09-26), and the cause is still open. Mapping itself works: drive the robot around first, then
-navigate. The camera beside a LiDAR is unaffected.
+**A limited view explores first.** A camera, or a LiDAR partly blocked by the robot's body (a
+mower's, a vacuum's), maps only what it faces, so SLAM's first map may not contain the robot and
+Nav2 cannot plan from where it stands. Before Nav2 starts, the run reads the map. When it does not
+reach at least 0.5 m past the robot on every side, the robot drives out 0.8 m, turns once, drives back
+and turns again, then waits for the map to show it. A full-view LiDAR skips this.
+
+### Exploring to build the map
+
+Nav2 has no exploration of its own: its SLAM tutorial maps by sending goals by hand. To map a
+space the robot has never seen, several rooms included, run frontier exploration:
+
+```bash
+python3 scripts/one_click_pipeline.py --controller pico2 --explore
+```
+
+`explore_lite` (m-explore-ros2, in the image) keeps sending Nav2 to the edge between mapped and
+unmapped space until none is left, then drives back to the start. The run reports the mapped area
+as it grows and saves the map at the end. `--explore-timeout` bounds it (default 900 s), and an
+`explore: {ros__parameters: {...}}` block in the robot config tunes it over the package's own
+defaults.
+
+The simulated world can have rooms to explore. `base_controller.simulation.walls` adds interior
+walls, `[[x1, y1, x2, y2], ...]` in metres, up to 12. The Sim MCU's LiDAR, its sonar and its
+collision use them, and so do the host's simulated laser and depth camera, so every sensor sees
+the same world. Set `wall_obstacle: false` when the walls replace the test wall.
+`scripts/depth_camera.py` has `MULTI_ROOM_WALLS`, four spaces joined by 1.2 m doors.
 
 ### Navigating on a map you saved
 
