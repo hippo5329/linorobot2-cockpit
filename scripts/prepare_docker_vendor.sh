@@ -249,6 +249,56 @@ if [ -f "$SDKCM" ] && grep -qE 'cmake_policy\(SET CMP00(53|37|43) OLD\)' "$SDKCM
     echo "[vendor] YDLidar-SDK: dropped three OLD policies CMake 4 refuses"
 fi
 touch "${VENDOR}/YDLidar-SDK/COLCON_IGNORE"
+# explore_lite, two fixes (measured 2026-09-26 on the Sim MCU in the rooms world):
+# 1. Frontiers are searched on Nav2's global costmap (launchers/explore.launch.py
+#    says why), and the search accepted only cost-0 cells as free and only walked
+#    "downhill" in cost from the robot. Inflation gives every cell of a doorway a
+#    cost, so the search stopped at the first door: "No frontiers found" with
+#    three rooms unmapped. A cell Nav2 will drive through is free enough to explore
+#    from: below INSCRIBED_INFLATED_OBSTACLE.
+# 2. stop() fired cancel-all and then sent the go-home goal at once; the cancel
+#    landed 13 ms later and cancelled the go-home goal too, leaving the robot
+#    wherever exploration ended. Home is now sent from the cancel's own callback.
+FS="${VENDOR}/m-explore-ros2/explore/src/frontier_search.cpp"
+if [ -f "$FS" ] && grep -q "map_\[nbr\] == FREE_SPACE" "$FS"; then
+    python3 - "$FS" <<'PYFS'
+import sys
+p = sys.argv[1]; s = open(p).read()
+s = s.replace("using nav2_costmap_2d::FREE_SPACE;",
+              "using nav2_costmap_2d::FREE_SPACE;\nusing nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE;", 1)
+s = s.replace("if (map_[nbr] <= map_[idx] && !visited_flag[nbr]) {",
+              "if (map_[nbr] < INSCRIBED_INFLATED_OBSTACLE && !visited_flag[nbr]) {", 1)
+s = s.replace("if (map_[nbr] == FREE_SPACE) {", "if (map_[nbr] < INSCRIBED_INFLATED_OBSTACLE) {", 1)
+open(p, "w").write(s)
+PYFS
+    echo "[vendor] explore_lite: frontiers searched through navigable (inflated) cells"
+fi
+EX="${VENDOR}/m-explore-ros2/explore/src/explore.cpp"
+if [ -f "$EX" ] && grep -q "  move_base_client_->async_cancel_all_goals();\n  exploring_timer_->cancel();" "$EX" 2>/dev/null || grep -q "^  move_base_client_->async_cancel_all_goals();$" "$EX"; then
+    python3 - "$EX" <<'PYEX'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  move_base_client_->async_cancel_all_goals();
+  exploring_timer_->cancel();
+
+  if (return_to_init_ && finished_exploring) {
+    returnToInitialPose();
+  }"""
+new = """  exploring_timer_->cancel();
+
+  if (return_to_init_ && finished_exploring) {
+    // Home only once the cancel has been answered: sent at once, the late
+    // cancel-all cancelled the go-home goal as well (prepare_docker_vendor.sh).
+    move_base_client_->async_cancel_all_goals(
+        [this](auto) { returnToInitialPose(); });
+  } else {
+    move_base_client_->async_cancel_all_goals();
+  }"""
+assert s.count(old) == 1, "explore.cpp stop() changed upstream"
+open(p, "w").write(s.replace(old, new))
+PYEX
+    echo "[vendor] explore_lite: go home after the cancel is answered"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
