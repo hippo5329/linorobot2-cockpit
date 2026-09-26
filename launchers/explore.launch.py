@@ -9,8 +9,16 @@ see all round (a depth camera, a mower's or a vacuum's partly blocked LiDAR)
 included. Nav2 itself has no exploration: its SLAM tutorial maps by sending
 goals by hand.
 
-Needs bringup, SLAM and Nav2 running. Parameters are the package's own
-params.yaml as installed, with only what this robot dictates written over it:
+Needs bringup, SLAM and Nav2 running. Frontiers are searched on Nav2's GLOBAL
+COSTMAP, the package's own params_costmap.yaml, not on SLAM's raw /map: the
+raw map keeps unknown specks inside free space (between beams, a few cells
+each), each speck is a frontier, and around the start their centroid is the
+robot itself -- explore_lite sent Nav2 a goal at the robot's own position,
+reached at once, again and again (measured 2026-09-26, jazzy). The costmap's
+obstacle layer raytraces every scan and clears them; it tracks unknown space
+(track_unknown_space: true in the template), so real frontiers remain.
+Parameters are that file as installed, with only what this robot dictates
+written over it:
 use_sim_time false (the vendor launch file defaults it TRUE), the base frame
 from the SLAM block, the namespace, and last the robot config's own
 `explore: {ros__parameters: {...}}` block for tuning.
@@ -29,16 +37,20 @@ import cockpit_paths  # noqa: E402
 
 
 def explore_params(params: dict, share_dir=None) -> dict:
-    """explore_lite's parameters: the installed params.yaml, then this robot's."""
+    """explore_lite's parameters: the installed params_costmap.yaml, then this robot's."""
     rp = {}
     try:
         if share_dir is None:
             from ament_index_python.packages import get_package_share_directory
             share_dir = get_package_share_directory("explore_lite")
-        with open(os.path.join(share_dir, "config", "params.yaml")) as fh:
+        with open(os.path.join(share_dir, "config", "params_costmap.yaml")) as fh:
             doc = yaml.safe_load(fh) or {}
-        (block,) = doc.values()               # keyed "/**"
+        (block,) = doc.values()               # keyed by the vendor's node name
         rp = dict(block.get("ros__parameters") or {})
+        # Relative, so a namespaced robot finds /<ns>/global_costmap/costmap.
+        for k in ("costmap_topic", "costmap_updates_topic"):
+            if isinstance(rp.get(k), str):
+                rp[k] = rp[k].lstrip("/")
     except Exception:
         rp = {}
     ns = cockpit_paths.robot_namespace(params)
@@ -46,6 +58,9 @@ def explore_params(params: dict, share_dir=None) -> dict:
     rp.update({
         "use_sim_time": False,
         "robot_base_frame": f"{ns}/{base}" if ns else base,
+        # Home when done, as the package's other config (params.yaml) has it:
+        # params_costmap.yaml leaves it out and the code default is false.
+        "return_to_init": True,
     })
     rp.update(((params.get("explore") or {}).get("ros__parameters")) or {})
     return rp

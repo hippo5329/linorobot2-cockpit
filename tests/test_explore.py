@@ -24,8 +24,8 @@ def _explore_params():
 
 def _share(tmp_path):
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "params.yaml").write_text(yaml.safe_dump({"/**": {"ros__parameters": {
-        "robot_base_frame": "base_link", "return_to_init": True, "costmap_topic": "map",
+    (tmp_path / "config" / "params_costmap.yaml").write_text(yaml.safe_dump({"explore_node": {"ros__parameters": {
+        "robot_base_frame": "base_link", "return_to_init": True, "costmap_topic": "/global_costmap/costmap",
         "planner_frequency": 0.15, "min_frontier_size": 0.75}}}))
     return str(tmp_path)
 
@@ -34,6 +34,7 @@ def test_the_vendor_values_stand_and_the_clock_is_real(tmp_path):
     rp = _explore_params()({}, _share(tmp_path))
     assert rp["planner_frequency"] == 0.15 and rp["return_to_init"] is True
     assert rp["use_sim_time"] is False
+    assert rp["costmap_topic"] == "global_costmap/costmap", "the costmap, relative for a namespace"
 
 
 def test_the_robot_decides_its_frame_and_tuning(tmp_path):
