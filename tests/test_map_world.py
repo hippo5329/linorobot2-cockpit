@@ -81,3 +81,18 @@ def test_bringup_puts_the_host_laser_on_the_map():
     assert "**world_params," in launch
     for node in ("sim_laser_node.py", "sim_depth_node.py"):
         assert "dc.GridWorld(" in open(os.path.join(REPO_ROOT, "scripts", node)).read()
+
+
+def test_the_sonar_raycasts_the_map_too():
+    """The board's sonar only simulates while its LD19 emulator runs (main.cpp), which
+    a map world turns off -- so the host raycasts the map for the sonar, camera-only
+    robots included."""
+    launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
+    assert "host_sonar = (no_board or bool(world_map_path)) and" in launch
+    assert 'name="sim_sonar_node"' in launch and '"topic": "sim_sonar_scan", **world_params' in launch
+
+
+def test_lyrical_lets_a_new_goal_replace_the_current_one():
+    """Frontier exploration replans every few seconds; lyrical refused every replacement."""
+    assert 'bt_params.setdefault("allow_navigator_preemption", True)' in \
+        open(os.path.join(REPO_ROOT, "launchers", "nav2.launch.py")).read()
