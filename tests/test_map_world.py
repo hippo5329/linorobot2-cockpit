@@ -92,7 +92,10 @@ def test_the_sonar_raycasts_the_map_too():
     assert 'name="sim_sonar_node"' in launch and '"topic": "sim_sonar_scan", **world_params' in launch
 
 
-def test_lyrical_lets_a_new_goal_replace_the_current_one():
-    """Frontier exploration replans every few seconds; lyrical refused every replacement."""
-    assert 'bt_params.setdefault("allow_navigator_preemption", True)' in \
+def test_exploration_never_sends_a_goal_over_a_running_one():
+    """Lyrical's Nav2 refuses a goal sent over a running one, even with
+    allow_navigator_preemption (which stays at upstream's default, off)."""
+    assert 'setdefault("allow_navigator_preemption"' not in \
         open(os.path.join(REPO_ROOT, "launchers", "nav2.launch.py")).read()
+    assert "Never replace a goal in progress" in \
+        open(os.path.join(REPO_ROOT, "scripts", "prepare_docker_vendor.sh")).read()

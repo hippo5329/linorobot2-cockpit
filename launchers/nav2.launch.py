@@ -447,14 +447,11 @@ def launch_setup(context, *args, **kwargs):
         #    branch measured the same race at 10 s (67db8a3). This is a ceiling,
         #    not a delay: the wait returns as soon as the server appears.
         bt_params.setdefault("wait_for_service_timeout", 30000)
-        # 5. A new goal may replace the one in progress. Nav2 1.5.1 refuses it
-        #    otherwise ("Requested navigation from navigate_to_pose while another
-        #    navigator is processing, rejecting request"): measured 2026-09-26,
-        #    frontier exploration had every replanned goal refused, at exactly
-        #    its 6.6 s replan period, and its go-home goal too. Jazzy has no such
-        #    check. The option is Nav2's own: stop the current navigation, then
-        #    accept the new goal.
-        bt_params.setdefault("allow_navigator_preemption", True)
+        # NOT allow_navigator_preemption. Tried 2026-09-26 for frontier
+        # exploration, whose replanned goals Nav2 1.5.1 refused; with it on,
+        # each was refused after a 500 ms "Timed out waiting for current
+        # navigator to stop" instead. Left at upstream's default; explore_lite
+        # no longer sends a goal over a running one (prepare_docker_vendor.sh).
         # 4. Increase bond timeout for Lyrical lifecycle managers
         nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 60.0}
         nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 60.0}
