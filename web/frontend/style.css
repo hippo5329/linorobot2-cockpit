@@ -49,7 +49,11 @@ body:has(.console-wrap.collapsed) { --console-reserve: 74px; }
 }
 
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand-logo { color: var(--accent-primary); }
+.brand-logo {
+  flex-shrink: 0;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.35));
+}
 .brand-title { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .badge-accent {
   font-size: 11px;
@@ -671,7 +675,7 @@ body.console-collapsed {
 .git-version-popover {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   z-index: 100;
   width: 440px;
   max-width: min(90vw, 480px);
