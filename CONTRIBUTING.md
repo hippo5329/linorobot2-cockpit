@@ -69,7 +69,7 @@ published nothing. Say plainly what you ran, on which board, and what you did no
 - A commit message says what changed and **why**, with the failure that motivated it. The
   history here is the project's memory; a one-word message throws that away.
 - Update the documentation next to the rule you changed. Long-form knowledge lives in
-  `docs/firmware.md`, `docs/flashing.md` and `docs/ros2-stack.md`.
+  the [Technical Details & Developer Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details).
 - Add or adjust a test when the behaviour is testable without hardware.
 - Nothing private in this repository: no hostnames, LAN or VPN addresses, Wi-Fi names,
   registries, credentials or bench topology. Configs and docs describe boards, not benches.
@@ -78,7 +78,7 @@ published nothing. Say plainly what you ran, on which board, and what you did no
 
 Release candidates are `rc-YYYYMMDD` branches and tags with a two-week freeze; releases are
 datestamped `YYYYMMDD` tags. A release publishes the firmware archives and the container
-images, so CI must be green before one is cut. See `docs/` and the release workflow.
+images, so CI must be green before one is cut. See the release workflow and wiki documentation.
 
 ## Where things are
 
@@ -91,7 +91,6 @@ has to be wired up. The frontend is the same idea without a bundler: `index.html
 scope, so a function may only call *backwards* in that order unless the call is deferred to an
 event or a timer.
 
-`docs/firmware.md` covers the one-image-per-board design and the env partition,
-`docs/flashing.md` the flashing and BOOTSEL rules, and `docs/ros2-stack.md` the launch tree,
-QoS and the generated robot description. Each is written as lessons with the failure that
-taught them, so read the one nearest what you are about to change.
+The [Technical Details & Developer Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)
+covers the one-image-per-board design and the env partition, the flashing and BOOTSEL rules,
+the launch tree, QoS and the generated robot description.
