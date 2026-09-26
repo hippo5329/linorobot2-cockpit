@@ -4,7 +4,7 @@
 
 [![ROS 2](https://img.shields.io/badge/ROS%202-Jazzy%20%7C%20Lyrical-blue.svg)](https://docs.ros.org/)
 [![micro-ROS](https://img.shields.io/badge/micro--ROS-Jazzy%20%7C%20Lyrical-green.svg)](https://micro.ros.org/)
-[![Boards](https://img.shields.io/badge/Boards-RP2350%20%7C%20RP2040%20%7C%20ESP32%20%7C%20ESP32--S3-orange.svg)](#supported-boards)
+[![Microcontrollers](https://img.shields.io/badge/MCUs-RP2350%20%7C%20RP2040%20%7C%20ESP32%20%7C%20ESP32--S3-orange.svg)](#supported-microcontrollers)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](LICENSE)
 
 Linorobot2 Cockpit is the first robotics platform to combine an **end-to-end 1-click web workflow** with a **realistic built-in firmware physics simulator** for [linorobot2](https://github.com/linorobot/linorobot2)-style mobile robots:
@@ -40,17 +40,26 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 
 ---
 
-## Supported Boards
+## Supported Microcontrollers
 
-| Board | MCU Chip | Released Profiles | Default Transport |
-|---|---|---|---|
-| **Raspberry Pi Pico 2 / Pico 2 W** | RP2350 | `pico2-jazzy`, `pico2-lyrical` | Serial (USB CDC) |
-| **Raspberry Pi Pico / Pico W** | RP2040 | `pico-jazzy`, `pico-lyrical` | Serial (USB CDC) |
-| **ESP32 DevKit** | ESP32 | `esp32-jazzy`, `esp32-lyrical` | Serial or Wi-Fi (UDP) |
-| **ESP32-S3** | ESP32-S3 | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial (native USB CDC) |
-| **Waveshare General Driver** | ESP32 | `esp32-jazzy`, `esp32-lyrical` | Serial (1.5 Mbaud) or Wi-Fi |
-| **Yahboom ESP32-S3 (YB-EET01)** | ESP32-S3 | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial or Wi-Fi |
-| **Sim MCU** | Host CPU | Built into robot image | UDP4 micro-ROS client |
+| Microcontroller | Architecture | Released Profiles | Default Transport | Notes |
+|---|---|---|---|---|
+| **Raspberry Pi Pico 2 / Pico 2 W** | RP2350 (ARM Cortex-M33) | `pico2-jazzy`, `pico2-lyrical` | Serial (USB CDC) | High performance dual-core, hardware FPU |
+| **Raspberry Pi Pico / Pico W** | RP2040 (ARM Cortex-M0+) | `pico-jazzy`, `pico-lyrical` | Serial (USB CDC) | Reliable dual-core micro-ROS controller |
+| **ESP32 DevKit** | ESP32 (Xtensa Dual-Core) | `esp32-jazzy`, `esp32-lyrical` | Serial or Wi-Fi (UDP) | Built-in Wi-Fi micro-ROS transport; battery ADC linearizable |
+| **ESP32-S3** | ESP32-S3 (Xtensa Dual-Core) | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial (native USB CDC) or Wi-Fi | High-speed native USB CDC |
+
+---
+
+## Reference Designs & Virtual Simulation
+
+Cockpit ships pre-tuned configurations for commercial integrated boards, as well as a pure-software virtual MCU:
+
+- **Reference Designs**: Pre-configured robot builds with validated pin matrices, motor driver schemes, and IMUs:
+  - **Yahboom ESP32-S3 (YB-EET01 V2.0)** (`yahboom_esp32s3_config.yaml`): Integrated mobile robot controller with onboard ICM-42670-P IMU, dual-input BTS7960 motor drivers, and battery divider.
+  - **Waveshare General Driver Board** (`gendrv_config.yaml`): ESP32-based controller with 1.5 Mbaud CP2102N serial bridge, dual TB6612 motor drivers, and LD19 LiDAR header.
+  - *Full pinouts and schematics: see the [[Reference Designs Wiki Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs)].*
+- **Sim MCU (Virtual Simulation)**: A pure-software virtual microcontroller running directly on the host computer. It publishes simulated micro-ROS odometry, sensor data, and virtual room LiDAR scans without needing any physical board or wiring. See [[Simulation Mode & the Bare Module](https://github.com/hippo5329/linorobot2-cockpit/wiki/Simulation-Mode-and-the-Bare-Module)].
 
 ---
 
