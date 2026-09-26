@@ -577,10 +577,15 @@ def launch_bg(cmd_str: str, log_tag: str = "launch", distro: str = "jazzy") -> s
     return subprocess.Popen(full_cmd, stdout=f, stderr=subprocess.STDOUT, text=True, preexec_fn=os.setsid)
 
 
-def stop_bg(proc, first=signal.SIGINT):
+def stop_bg(proc, first=signal.SIGINT, step_s: float = 3.0):
     """Stop a background step: its process GROUP, by the pid we started, SIGINT
     first because `ros2 launch` tears its nodes down on SIGINT and is merely
-    killed by SIGTERM. Never a name match."""
+    killed by SIGTERM. Never a name match.
+
+    Escalates until the GROUP is empty, not until `ros2 launch` exits: the
+    launch leaves in a second while Nav2's composed container is still
+    shutting its servers down, and stopping there orphaned the container into
+    the next run (robot_stack.live_members)."""
     if proc is None:
         return
     try:
@@ -590,12 +595,15 @@ def stop_bg(proc, first=signal.SIGINT):
     for sig in (first, signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(pgid, sig)
-            proc.wait(timeout=2)
-            break
         except ProcessLookupError:
             break
-        except Exception:
-            continue
+        deadline = time.time() + step_s
+        while time.time() < deadline:
+            proc.poll()                       # reap our own leader
+            if not robot_stack.live_members(pgid):
+                return
+            time.sleep(0.2)
+    proc.poll()
 
 
 def _nav2_unmatched(lines: list, log_path: str, keep: int = 6) -> str:

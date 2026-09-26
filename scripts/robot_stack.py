@@ -84,6 +84,38 @@ def _is_zombie(pid: int) -> bool:
         return False
 
 
+def live_members(pgid) -> list:
+    """The pids in process group `pgid` that are still running (not zombies).
+
+    The group, not its leader, is the stack. `ros2 launch` exits on SIGINT
+    within a second, but Nav2's composed container is still tearing down its
+    servers then -- and it is in the same group. Judging by the leader alone
+    stopped escalating there, and the container outlived its run as an orphan
+    (measured 2026-09-26: a lyrical nav2_container alive after
+    --shutdown-when-done, answering the next run's lifecycle calls under the
+    same node name). killpg(pgid, 0) cannot answer either: it also counts the
+    zombies nothing reaps in a container whose PID 1 is not an init.
+    """
+    try:
+        pgid = int(pgid)
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat") as fh:
+                data = fh.read()
+            fields = data[data.rindex(")") + 1:].split()
+            # state, ppid, pgrp follow the comm field.
+            if int(fields[2]) == pgid and fields[0] != "Z":
+                out.append(int(name))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
 def _pidns() -> str:
     try:
         return os.readlink("/proc/self/ns/pid")
@@ -115,20 +147,15 @@ def is_alive(entry: dict) -> bool:
     if not pgid or not entry.get("pidns") or entry.get("pidns") != _pidns():
         return False
     pid = entry.get("pid")
-    if pid and _is_zombie(pid):
-        return False
-    started = _starttime(pid) if pid else None
+    started = _starttime(pid) if pid and not _is_zombie(pid) else None
     if started is not None and entry.get("starttime") is not None \
             and started != entry["starttime"]:
         return False          # the leader's pid now belongs to someone else
-    try:
-        os.killpg(int(pgid), 0)
-        return True
-    except (ProcessLookupError, ValueError):
-        return False
-    except PermissionError:
-        # It exists and belongs to someone else -- alive as far as we know.
-        return True
+    # A zombie or vanished leader is not the end of the stack: the group's
+    # other members are (live_members). A group cannot outlive all its
+    # members, and its number is not reissued while one is left, so this
+    # names no stranger.
+    return bool(live_members(pgid))
 
 
 def record(tag: str, pid: int, pgid: int = None, state_dir: str = None) -> None:
