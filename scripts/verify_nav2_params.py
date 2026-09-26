@@ -59,11 +59,15 @@ def main():
     spec.loader.exec_module(nav2_mod)
 
     def get_nav2_params(actions):
-        for k, v in actions[1].launch_arguments:
-            if k == "params_file":
-                with open(v, "r") as f:
-                    return yaml.safe_load(f)
-        raise RuntimeError("params_file not found in launch arguments")
+        # Found by what it carries, not by position: the nav2 include was
+        # actions[1] until the composition container (started before it on
+        # every distro since 2026-09-26) took that slot.
+        for action in actions:
+            for k, v in getattr(action, "launch_arguments", None) or []:
+                if k == "params_file":
+                    with open(v, "r") as f:
+                        return yaml.safe_load(f)
+        raise RuntimeError("params_file not found in any action's launch arguments")
 
     # 1. Test Jazzy default: enable_stamped_cmd_vel must be False (Jazzy Nav2 default)
     ctx_j = DummyContext("jazzy")
