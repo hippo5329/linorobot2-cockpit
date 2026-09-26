@@ -922,6 +922,41 @@ def _odom_xy(distro: str):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
+def map_extent(text: str):
+    """(x0, y0, x1, y1) in metres from `ros2 topic echo --field info /map` output, or None."""
+    res = re.search(r"resolution:\s*([0-9.eE+-]+)", text or "")
+    w = re.search(r"\bwidth:\s*(\d+)", text or "")
+    h = re.search(r"\bheight:\s*(\d+)", text or "")
+    o = re.search(r"origin:\s*position:\s*x:\s*(-?[0-9.eE+-]+)\s*y:\s*(-?[0-9.eE+-]+)", text or "")
+    if not (res and w and h and o):
+        return None
+    r, x0, y0 = float(res.group(1)), float(o.group(1)), float(o.group(2))
+    return (x0, y0, x0 + int(w.group(1)) * r, y0 + int(h.group(1)) * r)
+
+
+def map_surrounds_origin(distro: str, margin: float = 0.5) -> bool:
+    """Does the latest /map reach `margin` past the start pose (0, 0) on every side?"""
+    res = run_ros("ros2 topic echo --once --qos-durability transient_local "
+                  "--qos-reliability reliable --field info /map", timeout=15, distro=distro)
+    ext = map_extent(res.stdout)
+    return bool(ext) and ext[0] <= -margin and ext[1] <= -margin and ext[2] >= margin and ext[3] >= margin
+
+
+# Exploring for a camera-only robot: (vx m/s, wz rad/s, seconds). Out 0.8 m
+# along the start heading (the test room's wall is 2 m ahead), a full turn
+# there, back to the start, and a full turn at the start. Out and back returns
+# the base to where the pose check left it; the turn 0.8 m out is what puts the
+# start inside the camera's view, past its 0.45 m near limit.
+EXPLORE_MOVES = ((0.15, 0.0, 5.3), (0.0, 0.4, 16.0), (-0.15, 0.0, 5.3), (0.0, 0.4, 16.0))
+
+
+def _twist_pub(vx: float, wz: float, stamped: bool) -> str:
+    if stamped:
+        return ("ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/TwistStamped "
+                f"'{{header: {{frame_id: \"base_link\"}}, twist: {{linear: {{x: {vx}}}, angular: {{z: {wz}}}}}}}'")
+    return f"ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{{linear: {{x: {vx}}}, angular: {{z: {wz}}}}}'"
+
+
 # How far from (0, 0) the base and the EKF may sit after the reset and still
 # count as "at the origin". The goal is 3 m away and the start gap the gate
 # needs is 1 m, so a few cm change nothing; 0.05 argued with a healthy GenDrv.
@@ -1814,6 +1849,31 @@ def main():
         if args.topics_only:
             print("\n[6/6] [NAV2] Skipped per --topics-only.")
         elif not args.no_nav2 and has_lidar:
+            if not args.map and not map_surrounds_origin(args.distro):
+                # A sensor that does not see all round -- a depth camera's 87
+                # degrees, a LiDAR with a mask -- maps only what it faces, so
+                # SLAM's first map, and the global costmap sized to it, may not
+                # contain the robot: "Robot is out of bounds of the costmap",
+                # and every plan fails from where it stands (measured
+                # 2026-09-26, camera only). A turn on the spot did not grow the
+                # map; driving did. So measure, and when the map does not
+                # surround the robot, explore the space first -- as a person
+                # would -- and start Nav2 once the map shows it.
+                print("\n[5.5/6] [SLAM] The map does not surround the robot yet (limited field of "
+                      "view): exploring -- out 0.8 m, a turn, back, a turn...")
+                for i, (vx, wz, secs) in enumerate(EXPLORE_MOVES):
+                    mv = launch_bg(_twist_pub(vx, wz, stamped_cmd), log_tag=f"explore{i}", distro=args.distro)
+                    bg_processes.append(mv)
+                    time.sleep(secs)
+                    stop_bg(mv)
+                t_map = time.time()
+                while not map_surrounds_origin(args.distro) and time.time() - t_map < 60:
+                    time.sleep(3.0)
+                if map_surrounds_origin(args.distro):
+                    print(f"  ✅ the map surrounds the robot ({time.time() - t_map:.0f} s after exploring).")
+                else:
+                    print("  ⚠️ after exploring, the map still does not surround the robot; "
+                          "Nav2 may not plan from where it stands.")
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             nav2_ok, nav2_detail, nav2_log = start_nav2(
                 f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "

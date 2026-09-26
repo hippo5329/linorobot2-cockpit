@@ -189,3 +189,23 @@ def test_the_pipeline_and_bringup_share_the_rule():
     launch = read("launchers", "bringup.launch.py")
     assert 'robot_has_lidar = scan_from == "lidar"' in launch
     assert "robot_has_lidar = bool(lidar_cfg)" not in launch
+
+
+def test_a_limited_view_explores_before_nav2():
+    """Measured, not by sensor: a camera (or a masked LiDAR) maps only what it faces: the first map (and the global costmap)
+    does not contain the robot, and every plan failed from where it stood. A turn on
+    the spot did not grow the map; driving does. Out and back returns to the start."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import one_click_pipeline as ocp
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    i = pipe.index("if not args.map and not map_surrounds_origin(args.distro):")
+    assert i < pipe.index('print(f"\\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")')
+    assert "while not map_surrounds_origin(args.distro)" in pipe
+    net = sum(vx * t for vx, _, t in ocp.EXPLORE_MOVES)
+    assert abs(net) < 1e-9, "exploring must bring the base back to where it started"
+    assert max(vx * t for vx, _, t in ocp.EXPLORE_MOVES) < 1.5, "the test room's wall is 2 m ahead"
+    text = ("resolution: 0.05\nwidth: 80\nheight: 120\n"
+            "origin:\n  position:\n    x: 0.07\n    y: -3.2\n    z: 0.0\n")
+    x0, y0, x1, y1 = ocp.map_extent(text)
+    assert (round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)) == (0.07, -3.2, 4.07, 2.8)
+    assert "stamped" in ocp._twist_pub(0.1, 0.0, True).lower() and "TwistStamped" not in ocp._twist_pub(0.1, 0.0, False)
