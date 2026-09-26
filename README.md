@@ -50,17 +50,11 @@ For a complete guide on using the web interface (Dashboard, Config Studio, Map V
 | **Yahboom ESP32-S3 (YB-EET01)** | ESP32-S3 | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial or Wi-Fi |
 | **Sim MCU** | Host CPU | Built into robot image | UDP4 micro-ROS client |
 
-Both **ROS 2 Jazzy** and **ROS 2 Lyrical** distributions are fully supported.
-
 ---
 
-## Documentation
+## Supported ROS 2 Distributions
 
-* 📖 **[User Wiki (Getting Started & User Guides)](https://github.com/hippo5329/linorobot2-cockpit/wiki)**  
-  Installation, the 1-Click pipeline, Web UI guide, pin wiring charts, magnetometer calibration, ESP32 ADC tuning, multi-robot setups, and troubleshooting.
-
-* 🛠️ **[Technical Details & Developer Reference](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)**  
-  System architecture, advanced CLI pipelines, 4 KB `env` partition specification, firmware compilation, DC motor simulation physics, micro-ROS topics catalog, and developer test suites.
+Both **ROS 2 Jazzy** and **ROS 2 Lyrical** distributions are fully supported across all firmware profiles and Docker runtime images.
 
 ---
 
@@ -77,6 +71,16 @@ web/backend/        FastAPI web supervisor: REST endpoints and background runner
 web/frontend/       Dashboard, Config Studio, Map Viewer, and Teleop web UI
 docker-compose.yml  Production multi-container orchestration
 ```
+
+---
+
+## Documentation
+
+* 📖 **[User Wiki (Getting Started & User Guides)](https://github.com/hippo5329/linorobot2-cockpit/wiki)**  
+  Installation, the 1-Click pipeline, Web UI guide, pin wiring charts, magnetometer calibration, ESP32 ADC tuning, multi-robot setups, and troubleshooting.
+
+* 🛠️ **[Technical Details & Developer Reference](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)**  
+  System architecture, advanced CLI pipelines, 4 KB `env` partition specification, firmware compilation, DC motor simulation physics, micro-ROS topics catalog, and developer test suites.
 
 ---
 
