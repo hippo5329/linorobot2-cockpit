@@ -391,7 +391,7 @@ function initBaseControllerConfigModule() {
   const btnSmartAlloc = document.getElementById("btn-smart-alloc");
   if (btnSmartAlloc) btnSmartAlloc.addEventListener("click", autoAssignPins);
 
-  ["btn-save-base-config", "btn-save-drive-config", "btn-save-sensors-config", "btn-save-pins-config"].forEach(id => {
+  ["btn-save-mcu-config", "btn-save-base-config", "btn-save-drive-config", "btn-save-sensors-config", "btn-save-pins-config"].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.addEventListener("click", saveCurrentHardwareConfig);
   });

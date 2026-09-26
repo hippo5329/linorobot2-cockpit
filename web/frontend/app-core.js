@@ -860,6 +860,10 @@ async function loadGitInfo() {
     if (text && shown) {
       text.textContent = shown;
     }
+    const buildVerEl = document.getElementById("header-build-version");
+    if (buildVerEl && (gi.build_version || shown)) {
+      buildVerEl.textContent = gi.build_version ? `v${gi.build_version}` : `v${shown}`;
+    }
     if (badge) {
       if (gi.dirty || gi.moved_since_start) badge.classList.add("is-dirty");
       else badge.classList.remove("is-dirty");

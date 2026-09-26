@@ -787,9 +787,19 @@ def get_git_info_dict() -> Dict[str, Any]:
     version = commit or "unknown"
     version_at_start = SERVER_BOOT_COMMIT or version
 
+    build_version = ""
+    v_path = os.path.join(REPO_ROOT, "VERSION")
+    if os.path.isfile(v_path):
+        try:
+            with open(v_path, "r", encoding="utf-8") as vf:
+                build_version = vf.read().strip()
+        except Exception:
+            pass
+
     return {
         "version": version,
         "version_at_start": version_at_start,
+        "build_version": build_version,
         "commit": commit,
         "branch": branch or "unknown",
         "branches": branches,

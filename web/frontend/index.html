@@ -17,13 +17,16 @@
       <path d="M12 9V5M9 5h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
     </svg>
     <div>
-      <h1 class="brand-title" style="margin:0; font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <h1 class="brand-title" style="margin:0; font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
+        <span id="header-build-version" class="badge-pill" style="font-size:0.7rem; font-family:var(--font-mono); background:rgba(56, 189, 248, 0.15); color:#38bdf8; border:1px solid rgba(56, 189, 248, 0.35); padding:1px 6px; font-weight:700;" title="Firmware & Cockpit Build Version">v20260925-dev</span>
+      </div>
       <p class="brand-subtitle" style="margin:0; font-size:11px; color:var(--text-dim);">ROS 2 Autonomy &amp; Hardware Supervisor</p>
     </div>
   </div>
 
   <div class="header-actions">
-    <!-- Left Stack: Robot name, branch, git version, reference design selector & 1-Click Bringup Deploy Button -->
+    <!-- Left Stack: Robot name, branch, git version, & 1-Click Bringup Deploy Button -->
     <div class="reference-build-stack">
       <div class="hdr-field" title="Robot name -> &lt;robot&gt;_config.yaml">
         <label for="hdr-robot-name">🤖 Robot:</label>
@@ -56,14 +59,6 @@
           <span id="git-version-text">·······</span>
         </button>
         <div id="git-version-popover" class="git-version-popover" hidden></div>
-      </div>
-
-      <!-- Reference Design Selector: filtered according to detected MCU type -->
-      <div class="preset-selector-group" title="Reference Build Presets — updates dynamically according to detected MCU type">
-        <label for="preset-select" class="preset-label">⚡ Reference Build:</label>
-        <select id="preset-select" class="preset-select">
-          <option value="bare" selected>🧩 Bare Module — all pins N/C (Safe Default / Sim Mode)</option>
-        </select>
       </div>
 
       <!-- Start 1-Click in Header! -->
@@ -174,16 +169,17 @@
 
 
 <nav class="tabs" aria-label="Workflow">
-  <button class="tab-btn active" data-tab="base-mcu"><span class="tab-num">1</span>Base &amp; MCU</button>
-  <button class="tab-btn" data-tab="drive-motors"><span class="tab-num">2</span>Drive &amp; Motors</button>
-  <button class="tab-btn" data-tab="sensors"><span class="tab-num">3</span>Sensors</button>
-  <button class="tab-btn" data-tab="pin-matrix"><span class="tab-num">4</span>Pin Matrix</button>
-  <button class="tab-btn" data-tab="hw-tests"><span class="tab-num">5</span>Hardware Tests</button>
-  <button class="tab-btn" data-tab="lidar"><span class="tab-num">6</span>LiDAR / Scan</button>
-  <button class="tab-btn" data-tab="bringup"><span class="tab-num">7</span>Bringup</button>
-  <button class="tab-btn" data-tab="teleop"><span class="tab-num">8</span>Teleop</button>
-  <button class="tab-btn" data-tab="slam-nav"><span class="tab-num">9</span>SLAM &amp; Nav</button>
-  <button class="tab-btn" data-tab="cockpit"><span class="tab-num">10</span>Operations</button>
+  <button class="tab-btn active" data-tab="mcu-sim"><span class="tab-num">1</span>MCU &amp; Sim</button>
+  <button class="tab-btn" data-tab="base"><span class="tab-num">2</span>Base</button>
+  <button class="tab-btn" data-tab="drive-motors"><span class="tab-num">3</span>Drive &amp; Motors</button>
+  <button class="tab-btn" data-tab="sensors"><span class="tab-num">4</span>Sensors</button>
+  <button class="tab-btn" data-tab="pin-matrix"><span class="tab-num">5</span>Pin Matrix</button>
+  <button class="tab-btn" data-tab="hw-tests"><span class="tab-num">6</span>Hardware Tests</button>
+  <button class="tab-btn" data-tab="lidar"><span class="tab-num">7</span>LiDAR / Scan</button>
+  <button class="tab-btn" data-tab="bringup"><span class="tab-num">8</span>Bringup</button>
+  <button class="tab-btn" data-tab="teleop"><span class="tab-num">9</span>Teleop</button>
+  <button class="tab-btn" data-tab="slam-nav"><span class="tab-num">10</span>SLAM &amp; Nav</button>
+  <button class="tab-btn" data-tab="cockpit"><span class="tab-num">11</span>Operations</button>
   <span class="tab-sep" role="separator"></span>
   <button class="tab-btn tab-tool" data-tab="rosviz">Map Viewer</button>
   <button class="tab-btn tab-tool" data-tab="secrets">Secrets</button>
@@ -193,8 +189,8 @@
 
 <main class="tab-content">
 
-  <!-- 1. BASE & MCU -->
-  <section class="tab-pane active" id="tab-base-mcu">
+  <!-- 1. MCU & SIM -->
+  <section class="tab-pane active" id="tab-mcu-sim">
 
     <!-- Step 1: Hardware Discovery / Auto-Detected MCU Card -->
     <div class="card" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary);">
@@ -210,6 +206,30 @@
         <div style="display:flex; gap:8px; align-items:center;">
           <span id="base-mcu-status-pill" class="pill pill-ok">Online &amp; Bound</span>
           <button type="button" id="btn-redetect-mcu" class="btn btn-secondary btn-sm" title="Re-scan connected USB serial ports">🔄 Re-scan Hardware</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reference Build Presets -->
+    <div class="card" style="border-left: 4px solid #a855f7;">
+      <div class="section-header-flex">
+        <div>
+          <h3 style="margin:0; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
+            <span>⚡ Reference Build Presets</span>
+          </h3>
+          <p class="hint" style="margin:4px 0 0;">
+            Load ready-to-run configurations for proven reference designs or safe bare-module simulation.
+            Selecting a preset configures the microcontroller, kinematics, motor driver, pin matrix, sensors, and simulation parameters.
+          </p>
+        </div>
+      </div>
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label for="preset-select" class="form-label" style="font-weight:600;">Choose Reference Design / Preset</label>
+          <select id="preset-select" class="form-select" style="font-size:0.95rem; padding:8px 12px;">
+            <option value="bare" selected>🧩 Bare Module — all pins N/C (Safe Default / Sim Mode)</option>
+          </select>
+          <span class="input-hint">Loads tested hardware pins and parameters into this robot configuration.</span>
         </div>
       </div>
     </div>
@@ -252,12 +272,98 @@
       </div>
     </div>
 
+    <!-- Microcontroller Hardware & Serial Connection -->
     <div class="card">
       <div class="section-header-flex">
-        <h2 style="margin:0;">🤖 1. Base Controller &amp; Kinematics Configuration</h2>
-        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
+        <h2 style="margin:0;">🔌 1. Microcontroller Target &amp; Software Environment</h2>
+        <button type="button" id="btn-save-mcu-config" class="btn btn-primary btn-sm" onclick="saveCurrentHardwareConfig()">💾 Save MCU settings</button>
       </div>
-      <p class="hint">Configure the base controller, kinematics type (Differential, Skid Steer, Mecanum), physical dimensions, and rated motor speed. Automatically updates <code>&lt;robot&gt;_config.yaml</code> and generates C++ firmware headers.</p>
+      <p class="hint">Microcontroller silicon target, micro-ROS serial transport, and software simulation environment.</p>
+
+      <div class="form-section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 class="section-title" style="margin:0;">Microcontroller Target &amp; Serial Connection</h3>
+          <span class="badge-pill badge-accent" style="font-size:0.75rem;" title="This selection is mirrored to the Operations tab and the Flash MCU button, so one screen cannot target one chip while another targets a different one.">Shared with Operations &amp; Flash</span>
+        </div>
+        <p class="hint" style="margin-bottom:12px;">Unified base controller and serial connection settings. Changes here automatically synchronize with Bringup, Hardware Tests, and Config Studio tabs.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-mcu" class="form-label">Base Controller</label>
+            <select id="cfg-mcu" class="form-select">
+              <option value="pico2" selected>Raspberry Pi Pico 2 (RP2350 - Default USB Serial)</option>
+              <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
+              <option value="pico">Raspberry Pi Pico (RP2040)</option>
+              <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
+              <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
+              <option value="esp32s3">ESP32-S3 DevKitC-1</option>
+              <option value="sim">Sim MCU — no board (the firmware runs on this computer, nothing to flash)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-serial-port" class="form-label">Micro-ROS Serial Port</label>
+            <input type="text" id="cfg-serial-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
+            <div id="base-port-chips" class="port-chips-wrap mt-1"></div>
+            <span class="input-hint">USB serial device the board is plugged into on this robot computer</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-baudrate" class="form-label">Micro-ROS Serial Baudrate</label>
+            <select id="cfg-baudrate" class="form-select font-mono">
+              <option value="921600" selected>921,600 Baud (Standard micro-ROS)</option>
+              <option value="1500000">1,500,000 Baud (High Speed)</option>
+              <option value="115200">115,200 Baud (Legacy)</option>
+              <option value="57600">57,600 Baud</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-console" class="form-label">ESP32-S3 Console Port</label>
+            <select id="cfg-console" class="form-select font-mono">
+              <option value="usb" selected>Native USB (S3 DevKit, ttyACM)</option>
+              <option value="uart0">UART0 via USB bridge (Yahboom YB-EET01, ttyUSB)</option>
+            </select>
+            <span class="input-hint">Where the banner and micro-ROS serial go on an ESP32-S3 (env key <code>console</code>); ignored on other MCUs</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="section-title">Simulated World Environment</h3>
+        <p class="hint" style="margin-bottom:12px;">The map the simulated sensors see and the simulated
+          robot drives in. <b>Wall</b> is the room with the single obstacle wall the Nav2 goal test
+          plans around. <b>Rooms</b> is four spaces joined by doors, for exploring with
+          <code>--explore</code>. It takes effect at the next flash, or the next Sim MCU start.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-sim-world" class="form-label">World</label>
+            <select id="cfg-sim-world" class="form-input">
+              <option value="wall">Wall: one room, one obstacle wall (Nav2 goal test)</option>
+              <option value="rooms">Rooms: four spaces joined by doors (exploration)</option>
+              <option value="map">Map: a map you saved (the simulated LiDAR and camera raycast it)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-world-map" class="form-label">Saved Map (World: Map)</label>
+            <input type="text" id="cfg-sim-world-map" class="form-input" placeholder="one_click_map.yaml">
+            <span class="input-hint">A map .yaml in the maps folder, e.g. one saved by a SLAM or exploration run.
+              The robot starts at the map's origin, where that run started. No collision in a map world.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save MCU settings</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="base">Step 2: Robot Base &amp; Mechanical Chassis ➔</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. BASE -->
+  <section class="tab-pane" id="tab-base">
+    <div class="card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">🤖 2. Robot Base &amp; Mechanical Chassis Configuration</h2>
+        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+      </div>
+      <p class="hint">Mechanical chassis dimensions, kinematics drive mechanism (Differential, Skid Steer, Mecanum), physical geometry, URDF body &amp; sensor placement, and drivetrain physics. Automatically updates <code>&lt;robot&gt;_config.yaml</code> and generates C++ firmware headers.</p>
 
       <!-- Kinematics Physics HUD -->
       <div class="hud-card mt-3">
@@ -373,54 +479,16 @@
       </div>
 
       <div class="form-section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h3 class="section-title" style="margin:0;">Microcontroller Hardware &amp; Serial Connection</h3>
-          <span class="badge-pill badge-accent" style="font-size:0.75rem;" title="This selection is mirrored to the Operations tab and the Flash MCU button, so one screen cannot target one chip while another targets a different one.">Shared with Operations &amp; Flash</span>
-        </div>
-        <p class="hint" style="margin-bottom:12px;">Unified base controller and serial connection settings. Changes here automatically synchronize with Bringup, Hardware Tests, and Config Studio tabs.</p>
+        <h3 class="section-title">Kinematics Base Type</h3>
         <div class="form-grid">
-          <div class="form-group">
-            <label for="cfg-mcu" class="form-label">Base Controller</label>
-            <select id="cfg-mcu" class="form-select">
-              <option value="pico2" selected>Raspberry Pi Pico 2 (RP2350 - Default USB Serial)</option>
-              <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
-              <option value="pico">Raspberry Pi Pico (RP2040)</option>
-              <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
-              <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
-              <option value="esp32s3">ESP32-S3 DevKitC-1</option>
-              <option value="sim">Sim MCU — no board (the firmware runs on this computer, nothing to flash)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="cfg-serial-port" class="form-label">Micro-ROS Serial Port</label>
-            <input type="text" id="cfg-serial-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
-            <div id="base-port-chips" class="port-chips-wrap mt-1"></div>
-            <span class="input-hint">USB serial device the board is plugged into on this robot computer</span>
-          </div>
-          <div class="form-group">
-            <label for="cfg-baudrate" class="form-label">Micro-ROS Serial Baudrate</label>
-            <select id="cfg-baudrate" class="form-select font-mono">
-              <option value="921600" selected>921,600 Baud (Standard micro-ROS)</option>
-              <option value="1500000">1,500,000 Baud (High Speed)</option>
-              <option value="115200">115,200 Baud (Legacy)</option>
-              <option value="57600">57,600 Baud</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="cfg-console" class="form-label">ESP32-S3 Console Port</label>
-            <select id="cfg-console" class="form-select font-mono">
-              <option value="usb" selected>Native USB (S3 DevKit, ttyACM)</option>
-              <option value="uart0">UART0 via USB bridge (Yahboom YB-EET01, ttyUSB)</option>
-            </select>
-            <span class="input-hint">Where the banner and micro-ROS serial go on an ESP32-S3 (env key <code>console</code>); ignored on other MCUs</span>
-          </div>
-          <div class="form-group">
-            <label for="cfg-kinematics" class="form-label">Kinematics Base Type</label>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label for="cfg-kinematics" class="form-label">Kinematics Drive Mechanism</label>
             <select id="cfg-kinematics" class="form-select">
               <option value="2wd" selected>2WD Differential Drive (2 Motors)</option>
               <option value="4wd">4WD Skid Steer (4 Motors)</option>
               <option value="mecanum">4WD Mecanum Drive (4 Motors)</option>
             </select>
+            <span class="input-hint">Select the drive mechanism for your chassis. Affects geometry, wheel velocity calculation, and firmware odometry.</span>
           </div>
         </div>
       </div>
@@ -572,33 +640,6 @@
            what the performance HUD above is most sensitive to -- mass most of all --
            and because sweeping one of them is a legitimate test that must not cost a
            firmware build. -->
-      <!-- The simulated world: base_controller.simulation.world (scripts/depth_camera.py
-           WORLDS). The Sim MCU's LiDAR, sonar and collision, the host's simulated laser
-           and the simulated depth camera all see the one chosen here. -->
-      <div class="form-section">
-        <h3 class="section-title">Simulated World</h3>
-        <p class="hint" style="margin-bottom:12px;">The map the simulated sensors see and the simulated
-          robot drives in. <b>Wall</b> is the room with the single obstacle wall the Nav2 goal test
-          plans around. <b>Rooms</b> is four spaces joined by doors, for exploring with
-          <code>--explore</code>. It takes effect at the next flash, or the next Sim MCU start.</p>
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="cfg-sim-world" class="form-label">World</label>
-            <select id="cfg-sim-world" class="form-input">
-              <option value="wall">Wall: one room, one obstacle wall (Nav2 goal test)</option>
-              <option value="rooms">Rooms: four spaces joined by doors (exploration)</option>
-              <option value="map">Map: a map you saved (the simulated LiDAR and camera raycast it)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="cfg-sim-world-map" class="form-label">Saved Map (World: Map)</label>
-            <input type="text" id="cfg-sim-world-map" class="form-input" placeholder="one_click_map.yaml">
-            <span class="input-hint">A map .yaml in the maps folder, e.g. one saved by a SLAM or exploration run.
-              The robot starts at the map's origin, where that run started. No collision in a map world.</span>
-          </div>
-        </div>
-      </div>
-
       <div class="form-section">
         <h3 class="section-title">Load &amp; Drivetrain Losses</h3>
         <p class="hint" style="margin-bottom:12px;">Feeds the performance HUD at the top of this
@@ -674,17 +715,18 @@
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="mcu-sim">⬅ Step 1: MCU &amp; Sim</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 2: Configure Drive &amp; Motors ➔</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 3: Configure Drive &amp; Motors ➔</button>
       </div>
     </div>
   </section>
 
-  <!-- 2. DRIVE & MOTORS -->
+  <!-- 3. DRIVE & MOTORS -->
   <section class="tab-pane" id="tab-drive-motors">
     <div class="card">
       <div class="section-header-flex">
-        <h2 style="margin:0;">⚙️ 2. Motor Driver &amp; Inversion Controls</h2>
+        <h2 style="margin:0;">⚙️ 3. Motor Driver &amp; Inversion Controls</h2>
         <button type="button" id="btn-save-drive-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
       <p class="hint">Select your motor H-bridge driver architecture and configure PWM resolution, frequency, and motor/encoder spin directions.</p>
@@ -762,18 +804,18 @@
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base-mcu">⬅ Step 1: Base &amp; MCU</button>
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base">⬅ Step 2: Base</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 3: Configure Sensors ➔</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 4: Configure Sensors ➔</button>
       </div>
     </div>
   </section>
 
-  <!-- 3. SENSORS -->
+  <!-- 4. SENSORS -->
   <section class="tab-pane" id="tab-sensors">
     <div class="card">
       <div class="section-header-flex">
-        <h2 style="margin:0;">🧭 3. Sensors, IMU, Compass &amp; Battery Peripherals</h2>
+        <h2 style="margin:0;">🧭 4. Sensors, IMU, Compass &amp; Battery Peripherals</h2>
         <button type="button" id="btn-save-sensors-config" class="btn btn-primary btn-sm">💾 Save robot settings</button>
       </div>
       <p class="hint">The <strong>IMU, magnetometer and barometer are detected by the firmware at boot</strong>:
@@ -1052,19 +1094,19 @@
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 2: Drive &amp; Motors</button>
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 3: Drive &amp; Motors</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 4: Configure Pin Matrix ➔</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 5: Configure Pin Matrix ➔</button>
       </div>
     </div>
   </section>
 
-  <!-- 4. PIN MATRIX -->
+  <!-- 5. PIN MATRIX -->
   <section class="tab-pane" id="tab-pin-matrix">
     <div class="card">
       <div class="section-header-flex">
         <div>
-          <h2 style="margin:0;">🔌 4. Microcontroller Pinout Matrix</h2>
+          <h2 style="margin:0;">🔌 5. Microcontroller Pinout Matrix</h2>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; white-space:nowrap;">
           <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
@@ -1220,22 +1262,22 @@
       </div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 3: Sensors</button>
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 4: Sensors</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 5: Step-by-Step Hardware Tests ➔</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 6: Step-by-Step Hardware Tests ➔</button>
       </div>
     </div>
   </section>
 
-  <!-- 5. HARDWARE TESTS -->
+  <!-- 6. HARDWARE TESTS -->
   <section class="tab-pane" id="tab-hw-tests">
     <div class="card">
       <div class="section-header-flex">
-        <h2 style="margin:0;">⚡ 5. Low-Level Robot Hardware Tests &amp; Diagnostics Hub</h2>
+        <h2 style="margin:0;">⚡ 6. Low-Level Robot Hardware Tests &amp; Diagnostics Hub</h2>
         <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">🔄 Refresh Ports</button>
       </div>
       <p class="hint">Directly compile, flash, and verify microcontroller hardware sub-systems without starting the ROS 2 autonomy stack. Stop <code>micro_ros_agent</code> automatically, flash diagnostic binaries, and inspect serial output streams in real-time.</p>
-      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (the firmware, running on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the Base &amp; MCU tab to use these.</p>
+      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (the firmware, running on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the MCU &amp; Sim tab to use these.</p>
 
       <!-- Diagnostic firmware selection & serial port bar -->
       <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
@@ -1478,8 +1520,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="pin-matrix">⬅ Step 4: Pin Matrix</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="lidar" style="background:linear-gradient(135deg,#059669,#06b6d4);">Step 6: Verify LiDAR / Scan ➔</button>
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="pin-matrix">⬅ Step 5: Pin Matrix</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="lidar" style="background:linear-gradient(135deg,#059669,#06b6d4);">Step 7: Verify LiDAR / Scan ➔</button>
       </div>
     </div>
 
@@ -1536,19 +1578,20 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
   </section>
 
-  <!-- BRINGUP -->
+  <!-- 8. BRINGUP -->
   <section class="tab-pane" id="tab-bringup">
     <div class="card" id="card-robot-setup-bringup" style="background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.7)); border-left: 4px solid var(--accent-primary);">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
         <div>
           <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
-            <span>🤖 7. Active Robot Bringup &amp; State Estimation</span>
+            <span>🤖 8. Active Robot Bringup &amp; State Estimation</span>
             <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:700;">Read from your config</span>
           </h2>
           <p class="hint" style="margin:4px 0 0 0;">Unified parameters from <code>&lt;robot&gt;_config.yaml</code> passed directly to <code>bringup.launch.py</code>.</p>
         </div>
         <div style="display:flex; gap:8px;">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'base-mcu\']')?.click(); return false;">⚙️ Base &amp; MCU</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'base\']')?.click(); return false;">⚙️ Base</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'mcu-sim\']')?.click(); return false;">🔌 MCU &amp; Sim</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">🧭 Sensors</button>
         </div>
       </div>
@@ -1631,8 +1674,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div id="bringup-health-table" class="hint" style="margin-top:10px;"></div>
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
-        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="lidar">⬅ Step 6: LiDAR / Scan</button>
-        <button type="button" class="btn btn-accent btn-workflow-next" data-next="teleop">Step 8: Teleop &amp; Odometry ➔</button>
+        <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="lidar">⬅ Step 7: LiDAR / Scan</button>
+        <button type="button" class="btn btn-accent btn-workflow-next" data-next="teleop">Step 9: Teleop &amp; Odometry ➔</button>
       </div>
     </div>
   </section>
@@ -1641,7 +1684,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <!-- MAP VIEWER — Zero-RViz browser canvas over rosbridge -->
   <section class="tab-pane" id="tab-rosviz">
     <div class="card">
-      <h2>🗺️ Live Map &amp; Navigation Viewer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">companion to step 9</span></h2>
+      <h2>🗺️ Live Map &amp; Navigation Viewer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">companion to step 10</span></h2>
       <p class="hint">
         Draws <code>/map</code>, <code>/scan</code> and the robot's pose straight onto an HTML5
         canvas over <b>rosbridge</b> — no RViz, no noVNC, no X server on the robot. This is the
@@ -1717,7 +1760,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div class="card">
-      <h2>🗺️ 9. Visualize &amp; SLAM Mapping / Nav2 Navigation (RViz via browser)</h2>
+      <h2>🗺️ 10. Visualize &amp; SLAM Mapping / Nav2 Navigation (RViz via browser)</h2>
       <p class="hint">Most robot computers are headless -- RViz has nowhere to open a window
         on. This runs RViz against a virtual display and serves it over noVNC, the same idea
         as the <code>kasmvnc</code> service in linorobot2's own <code>docker/docker-compose.yaml</code>,
@@ -2023,16 +2066,16 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
   
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="teleop">⬅ Step 8: Teleop &amp; Odometry</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="cockpit">Step 10: Mission Operations ➔</button>
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="teleop">⬅ Step 9: Teleop &amp; Odometry</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="cockpit">Step 11: Mission Operations ➔</button>
     </div>
   </section>
 
-  <!-- TELEOP -->
+  <!-- 9. TELEOP -->
   <section class="tab-pane" id="tab-teleop">
 
     <div class="card">
-      <h2>🕹️ 8. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:600;">no hardware needed</span></h2>
+      <h2>🕹️ 9. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:600;">no hardware needed</span></h2>
       <p class="hint">Drive the robot from this page -- no physical joystick, and no
         terminal for <code>teleop_twist_keyboard</code>. Drag the stick (or use the arrow
         keys / WASD while it has focus) and the cockpit publishes <code>/cmd_vel</code> at
@@ -2089,17 +2132,17 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <button id="btn-teleop-stop" class="btn btn-danger" disabled>Stop</button>
     </div>
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="bringup">⬅ Step 7: Robot Bringup</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="slam-nav">Step 9: SLAM &amp; Nav2 ➔</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="bringup">⬅ Step 8: Robot Bringup</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="slam-nav">Step 10: SLAM &amp; Nav2 ➔</button>
     </div>
   </section>
 
-  <!-- LIDAR / SCAN -->
+  <!-- 7. LIDAR / SCAN -->
   <section class="tab-pane" id="tab-lidar">
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <h2 style="margin:0;">📡 6. Standalone Laser Driver &amp; Radar Viewer</h2>
+        <h2 style="margin:0;">📡 7. Standalone Laser Driver &amp; Radar Viewer</h2>
         <span class="badge-pill badge-accent" style="font-size:0.75rem; font-weight:700;">Live Sensor Stream</span>
       </div>
       <p class="hint">Directly run and verify the 2D LiDAR driver independently of the micro-ROS autonomy stack. Configured model synchronizes with <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">Sensors</a> tab.
@@ -2182,18 +2225,18 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
   
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="hw-tests">⬅ Step 5: Hardware Tests</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="bringup">Step 7: Robot Bringup ➔</button>
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="hw-tests">⬅ Step 6: Hardware Tests</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="bringup">Step 8: Robot Bringup ➔</button>
     </div>
   </section>
 
-  <!-- COCKPIT DASHBOARD -->
+  <!-- 11. OPERATIONS -->
   <section class="tab-pane" id="tab-cockpit">
     
     <!-- 1-Click Autonomous Operations Card -->
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <h2 style="margin:0;">🚀 10. One-Click Autonomous Operations Pipeline</h2>
+        <h2 style="margin:0;">🚀 11. One-Click Autonomous Operations Pipeline</h2>
         <span id="cockpit-pipeline-badge" class="pill pill-unknown">Ready</span>
       </div>
       <p class="hint">Executes the automated end-to-end mission on this robot computer: micro-ROS agent ➔ bringup ➔ Topic Echo &amp; Rate (Hz) verification gate ➔ SLAM mapping &amp; exploration ➔ Map saver ➔ Nav2 lifecycle activation ➔ Clean teardown.</p>
@@ -2376,9 +2419,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="slam-nav">⬅ Step 9: SLAM &amp; Nav2</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="secrets">Step 11: 🔐 Secrets ➔</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft); border-radius:10px;">
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="slam-nav">⬅ Step 10: SLAM &amp; Nav2</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="secrets">Step 12: 🔐 Secrets ➔</button>
     </div>
   </section>
 
@@ -2464,8 +2507,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="cockpit">⬅ Step 10: Operations</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="settings">Step 12: Config Studio ➔</button>
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="cockpit">⬅ Step 11: Operations</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="settings">Step 13: Config Studio ➔</button>
     </div>
   </section>
 
@@ -2475,7 +2518,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h3 style="margin:0 0 6px 0;">⚙️ Config Studio &amp; System Runtime</h3>
       <p class="hint" style="margin:0;">
         Authoritative studio for the single source of truth <code>&lt;robot&gt;_config.yaml</code> profile, workspace path, container runtime engines, and headless boot autostart daemons.<br>
-        • <strong>MCU &amp; Serial Connection:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'base-mcu\']')?.click(); return false;" style="color:var(--accent);">Base &amp; MCU</a>.<br>
+        • <strong>MCU &amp; Serial Connection:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'mcu-sim\']')?.click(); return false;" style="color:var(--accent);">MCU &amp; Sim</a>.<br>
+        • <strong>Robot Chassis &amp; Kinematics:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'base\']')?.click(); return false;" style="color:var(--accent);">Base</a>.<br>
         • <strong>Wi-Fi &amp; Network Passwords:</strong> Managed securely in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'secrets\']')?.click(); return false;" style="color:var(--accent);">🔐 Secrets</a>.
       </p>
     </div>
@@ -2626,8 +2670,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
   
     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="secrets">⬅ Step 11: 🔐 Secrets</button>
-      <button type="button" class="btn btn-accent btn-workflow-next" data-next="install">Step 13: Containers &amp; System Install ➔</button>
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="secrets">⬅ Step 12: 🔐 Secrets</button>
+      <button type="button" class="btn btn-accent btn-workflow-next" data-next="install">Step 14: Containers &amp; System Install ➔</button>
     </div>
   </section>
 
@@ -2777,7 +2821,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
   
     <div style="display:flex; justify-content:flex-start; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
-      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="settings">⬅ Step 12: Config Studio</button>
+      <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="settings">⬅ Step 13: Config Studio</button>
     </div>
   </section>
 

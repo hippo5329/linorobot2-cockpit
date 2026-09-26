@@ -241,6 +241,7 @@ def get_status(controller: Optional[str] = None):
         "liveness": liveness,
         "repo_root": REPO_ROOT,
         "web_dir": os.path.join(REPO_ROOT, "web"),
+        "build_version": git.get("build_version", ""),
         "git": git,
         "git_branch": git.get("branch", ""),
         "ports": ports_info,
