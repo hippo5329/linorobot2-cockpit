@@ -251,6 +251,65 @@ def amcl_params(params, map_file, pose, bringup_share=None):
             "map_server": {"ros__parameters": {"yaml_filename": map_file}}}
 
 
+def mecanum_controller(nav2_data, params, bringup_share=None) -> bool:
+    """A mecanum base follows the path with Nav2's MPPI and its omni model.
+
+    The shared template's RotationShim + Regulated Pure Pursuit cannot command
+    vy: a base that can strafe turns on the spot and drives forward instead.
+    Upstream Nav2's own controller is MPPI (nav2_bringup nav2_params.yaml, on
+    jazzy and lyrical), and it has an omni motion model. So on a mecanum base,
+    and only while FollowPath is still the template's controller (a robot that
+    names its own is left alone), FollowPath becomes the INSTALLED MPPI block
+    with this robot's figures written over Nav2's:
+
+      motion model   omni, in the installed release's spelling (jazzy "Omni";
+                     lyrical "omni" plus the `omni.plugin` it loads by name)
+      vx/vy/wz max   the template's cruise speed (desired_linear_vel) and the
+                     velocity smoother's angular ceiling -- the smoother clips
+                     anything above them anyway, and MPPI samples around its
+                     limits, so a limit the robot cannot reach wastes samples
+      ax/ay/az max   the velocity smoother's accelerations
+      transform_tolerance  0.3, the template's, where the release reads it
+
+    Returns whether FollowPath was replaced.
+    """
+    base_type = str((params.get("kinematics") or {}).get("base_type", "2wd")).lower()
+    cp = nav2_data.setdefault("controller_server", {}).setdefault("ros__parameters", {})
+    fp = cp.get("FollowPath") or {}
+    if base_type != "mecanum" or fp.get("plugin") != "nav2_rotation_shim_controller::RotationShimController":
+        return False
+    try:
+        share = bringup_share or FindPackageShare("nav2_bringup").find("nav2_bringup")
+        with open(os.path.join(share, "params", "nav2_params.yaml")) as fh:
+            mppi = copy.deepcopy(((yaml.safe_load(fh) or {}).get("controller_server") or {})
+                                 .get("ros__parameters", {}).get("FollowPath") or {})
+    except Exception:
+        mppi = {}
+    if mppi.get("plugin") != "nav2_mppi_controller::MPPIController":
+        return False    # no installed MPPI block to start from: keep the template's
+    vs = (nav2_data.get("velocity_smoother") or {}).get("ros__parameters") or {}
+    vmax = list(vs.get("max_velocity") or [0.5, 0.5, 1.9])
+    amax = list(vs.get("max_accel") or [3.0, 3.0, 3.5])
+    cruise = float(fp.get("desired_linear_vel", vmax[0]))
+    mppi.update({
+        "vx_max": cruise, "vx_min": -cruise, "vy_max": cruise, "wz_max": float(vmax[2]),
+        "ax_max": float(amax[0]), "ax_min": -float(amax[0]),
+        "ay_max": float(amax[1]), "ay_min": -float(amax[1]), "az_max": float(amax[2]),
+    })
+    diff = mppi.get("motion_model", "DiffDrive")
+    if diff == "diff_drive" or isinstance(mppi.get(diff), dict):
+        # Lyrical: models are plugins, loaded from <FollowPath>.<name>.plugin.
+        mppi.pop(diff, None)
+        mppi["motion_model"] = "omni"
+        mppi["omni"] = {"plugin": "mppi::OmniMotionModel"}
+    else:
+        mppi["motion_model"] = "Omni"
+    if "transform_tolerance" in mppi:
+        mppi["transform_tolerance"] = float(fp.get("transform_tolerance", mppi["transform_tolerance"]))
+    cp["FollowPath"] = mppi
+    return True
+
+
 def localization_actions(params, map_file, pose, ns, tf_remaps, autostart, use_sim_time):
     """A map server, AMCL and their own lifecycle manager: navigating on a saved map.
 
@@ -318,6 +377,8 @@ def launch_setup(context, *args, **kwargs):
     ]:
         srv_params = nav2_data.setdefault(server_name, {}).setdefault("ros__parameters", {})
         srv_params["enable_stamped_cmd_vel"] = stamped_cmd_vel
+
+    uses_mppi = mecanum_controller(nav2_data, params)
 
     # Cross-distro adaptation: Lyrical (Nav2 >= 1.5.1 / Kilted) vs Jazzy
     if distro == "lyrical":
@@ -589,8 +650,8 @@ def launch_setup(context, *args, **kwargs):
         "autostart": autostart,
         "params_file": nav2_params_path,
     }
-    if needs_own_manager:
-        # Compose the stack into one container process.
+    if _nav_launch_src:
+        # Compose the stack into one container process, on every distro.
         #
         # Participants are per PROCESS in rmw_fastrtps (__rmw_create_node reuses
         # context->impl->common), so an uncomposed nav2 is ~20 participants all
@@ -602,10 +663,12 @@ def launch_setup(context, *args, **kwargs):
         # QoS profile one_click_pipeline.py exports, because load_node is itself a
         # service and drops the same way.
         #
-        # Deliberately NOT applied where the launch file brings its own manager:
-        # nav2 defaults use_composition to False on both jazzy and lyrical, so
-        # that is the configuration the green jazzy hardware run actually used,
-        # and this is a lyrical bring-up problem.
+        # It was lyrical-only until 2026-09-26, on the grounds that
+        # navigation_launch.py defaults use_composition to False. But that file
+        # is not how Nav2 is brought up: nav2_bringup's bringup_launch.py
+        # defaults it to True on jazzy and lyrical alike, and upstream Nav2 is
+        # this project's reference. Jazzy's lost change_state replies (an RP2040
+        # leg, 2026-09-26) are the same too-many-participants traffic.
         launch_args["use_composition"] = "True"
     # Costmap filter zones are a kilted+ feature, and IncludeLaunchDescription
     # raises on an argument the included description never declared -- so passing
@@ -645,7 +708,7 @@ def launch_setup(context, *args, **kwargs):
     # the default single-robot layout keeps the historical /tf->tf remap. So the
     # remap is dropped when namespaced, leaving /tf and /tf_static global.
     tf_remaps = [] if ns else [("/tf", "tf"), ("/tf_static", "tf_static")]
-    nav2_container = None if not needs_own_manager else Node(
+    nav2_container = None if not _nav_launch_src else Node(
         name="nav2_container",
         namespace=ns or None,
         package="rclcpp_components",
@@ -698,7 +761,11 @@ def launch_setup(context, *args, **kwargs):
                 )],
             )]
 
-    actions = [LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}')")]
+    controller = "MPPI (omni)" if uses_mppi else \
+        str(((nav2_data.get("controller_server") or {}).get("ros__parameters", {})
+             .get("FollowPath") or {}).get("plugin", "?")).split("::")[-1]
+    actions = [LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}', "
+                           f"FollowPath={controller}, composed)")]
     if nav2_container is not None:
         # The container already carries namespace=ns; it is not wrapped again.
         actions.append(nav2_container)

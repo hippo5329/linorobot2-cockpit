@@ -607,7 +607,7 @@ nav2:
         inflation_layer:
           plugin: nav2_costmap_2d::InflationLayer
           cost_scaling_factor: 3.0
-          inflation_radius: 0.55
+          inflation_radius: 0.70   # nav2_bringup nav2_params.yaml, jazzy and lyrical
         voxel_layer:
           plugin: nav2_costmap_2d::VoxelLayer
           enabled: true
@@ -664,6 +664,6 @@ nav2:
         inflation_layer:
           plugin: nav2_costmap_2d::InflationLayer
           cost_scaling_factor: 3.0
-          inflation_radius: 0.55
+          inflation_radius: 0.70   # nav2_bringup nav2_params.yaml, jazzy and lyrical
         always_send_full_costmap: true
 ros_distro: jazzy

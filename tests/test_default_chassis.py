@@ -25,7 +25,7 @@ import gen_firmware_header    # noqa: E402
 
 DEFAULT_KINEMATICS = {"wheel_diameter": 0.1, "lr_wheels_distance": 0.271,
                       "max_rpm": 140, "counts_per_rev": 4000}
-ROBOT_RADIUS, INFLATION = 0.26, 0.55
+ROBOT_RADIUS, INFLATION = 0.26, 0.70   # inflation: nav2_bringup's own value
 
 
 def _reference_names():
