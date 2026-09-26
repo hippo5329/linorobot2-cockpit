@@ -14,18 +14,6 @@ Linorobot2 Cockpit is a web supervisor, prebuilt micro-ROS firmware, and a compl
 - **Single configuration file per robot.** Pins, sensors, kinematics, and navigation limits live in one YAML file in `~/linorobot2-config/`, kept in your own git repository.
 - **Full web interface.** Live SLAM map viewer, virtual joystick teleoperation, configuration editor with real-time pin conflict validation, and hardware diagnostic monitors in the browser.
 
----
-
-## Documentation
-
-* 📖 **[User Wiki (Getting Started & User Guides)](https://github.com/hippo5329/linorobot2-cockpit/wiki)**  
-  Installation, the 1-Click pipeline, Web UI guide, pin wiring charts, magnetometer calibration, ESP32 ADC tuning, multi-robot setups, and troubleshooting.
-
-* 🛠️ **[Technical Details & Developer Reference](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)**  
-  System architecture, advanced CLI pipelines, 4 KB `env` partition specification, firmware compilation, DC motor simulation physics, micro-ROS topics catalog, and developer test suites.
-
----
-
 ## Quick Start
 
 You need: a Linux computer with USB (the **robot computer**) and a supported microcontroller board on a USB cable.
@@ -63,6 +51,16 @@ For a complete guide on using the web interface (Dashboard, Config Studio, Map V
 | **Sim MCU** | Host CPU | Built into robot image | UDP4 micro-ROS client |
 
 Both **ROS 2 Jazzy** and **ROS 2 Lyrical** distributions are fully supported.
+
+---
+
+## Documentation
+
+* 📖 **[User Wiki (Getting Started & User Guides)](https://github.com/hippo5329/linorobot2-cockpit/wiki)**  
+  Installation, the 1-Click pipeline, Web UI guide, pin wiring charts, magnetometer calibration, ESP32 ADC tuning, multi-robot setups, and troubleshooting.
+
+* 🛠️ **[Technical Details & Developer Reference](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)**  
+  System architecture, advanced CLI pipelines, 4 KB `env` partition specification, firmware compilation, DC motor simulation physics, micro-ROS topics catalog, and developer test suites.
 
 ---
 
