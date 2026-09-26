@@ -204,6 +204,7 @@ _DRIVER_ENV_NAMES = {
     "GENERIC_2_IN": "generic2",
     "GENERIC_1_IN": "generic1",
     "BTS7960": "bts7960",
+    "AT8236": "bts7960",
     "ESC": "esc",
 }
 

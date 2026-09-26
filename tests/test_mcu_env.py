@@ -110,10 +110,13 @@ def test_sensor_three_state_mapping():
     # gendrv declares every chip on the Waveshare board: publish flags are 1s.
     env = _env("gendrv")
     assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 1, 1)
-    # pico2_mecanum declares no mag but does declare a battery divider and a
-    # BMP280, so only pub_mag is off.
+    # pico2_mecanum declares an ICM-20948 (with internal AK09916 mag), a battery
+    # divider and a BMP280, so all publish flags are on.
     env = _env("pico2_mecanum")
-    assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (0, 1, 1)
+    assert (env["pub_mag"], env["pub_battery"], env["pub_env"]) == (1, 1, 1)
+    # Without a magnetometer and with simulation disabled, pub_mag is off.
+    no_mag = _env_from_params(_with(reference_params("pico2_mecanum"), sensors={"mag": "NONE", "use_sim_mag": False}))
+    assert (no_mag["pub_mag"], no_mag["pub_battery"], no_mag["pub_env"]) == (0, 1, 1)
 
 
 def test_bare_config_has_no_real_pins(tmp_path):

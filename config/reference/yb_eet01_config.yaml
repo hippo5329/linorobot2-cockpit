@@ -32,9 +32,9 @@ base_controller:
   mcu: esp32s3
   board: esp32-s3-devkitc-1
   pio_env: esp32s3
-  # Two PWM lines per motor (M?A / M?B), no enable pin: the BTS7960 scheme,
+  # Two PWM lines per motor (M?A / M?B), no enable pin: the AT8236 dual-PWM scheme,
   # RPWM on in_a and LPWM on in_b, pwm (the enable) at -1.
-  driver_type: BTS7960
+  driver_type: AT8236
   transport: serial
   # Yahboom's USB is a CP2102 bridge on GPIO 43/44 (UART0): it enumerates as
   # ttyUSBn (USB serial "0001"), not the native-USB ttyACMn of the S3 DevKit.

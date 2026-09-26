@@ -68,7 +68,7 @@ def test_mecanum_four_motors_and_geometry(reference):
     # The IMU is a NAME now, not a macro. `USE_MPU6050_IMU` selected a driver
     # at compile time; sensor_factory dispatches on this string at boot and the
     # I2C probe overrides it when the bus disagrees.
-    assert m["IMU_DEFAULT_NAME"] == '"mpu6050"' 
+    assert m["IMU_DEFAULT_NAME"] == '"icm20948"' 
 
 
 def test_generated_bare_config_is_pinless(reference):

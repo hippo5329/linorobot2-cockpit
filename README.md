@@ -56,9 +56,9 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 Cockpit ships pre-tuned configurations for commercial integrated boards, as well as a pure-software virtual MCU:
 
 - **Reference Designs**: Pre-configured robot builds with validated pin matrices, motor driver schemes, and IMUs:
-  - **Yahboom ESP32-S3 (YB-EET01 V2.0)** (`yahboom_esp32s3_config.yaml`): Integrated mobile robot controller with onboard ICM-42670-P IMU, dual-input BTS7960 motor drivers, and battery divider.
+  - **Yahboom ESP32-S3 (YB-EET01 V2.0)** (`yb_eet01_config.yaml`): Integrated mobile robot controller with onboard ICM-42670-P IMU, AT8236 dual-PWM motor drivers, and battery divider.
   - **Waveshare General Driver Board** (`gendrv_config.yaml`): ESP32-based controller with 1.5 Mbaud CP2102N serial bridge, dual TB6612 motor drivers, and LD19 LiDAR header.
-  - **Raspberry Pi Pico 2 Mecanum** (`pico2_mecanum_config.yaml`): 4WD omnidirectional reference platform with independent PWM slices, MPU6050, sonar collision stop, and battery monitor.
+  - **Raspberry Pi Pico 2 Mecanum** (`pico2_mecanum_config.yaml`): 4WD omnidirectional reference platform with independent PWM slices, ICM-20948 9-DOF IMU, AT8236 dual H-bridge motor drivers, sonar collision stop, and battery monitor.
   - *Full pinouts and schematics: see the [[Reference Designs Wiki Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs)].*
 - **Sim MCU (Virtual Simulation)**: A pure-software virtual microcontroller running directly on the host computer. It publishes simulated micro-ROS odometry, sensor data, and virtual room LiDAR scans without needing any physical board or wiring. See the [[Built-In Simulator Wiki Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Built-in-Simulator)].
 

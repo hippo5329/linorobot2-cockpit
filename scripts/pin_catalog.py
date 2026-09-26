@@ -183,7 +183,7 @@ def check_config(params: dict) -> List[Finding]:
         if len(roles) < 2:
             continue
         if all(r.endswith(".pwm") for r in roles) and \
-                str(tgt.get("driver_type", "")).upper() == "BTS7960":
+                str(tgt.get("driver_type", "")).upper() in ("BTS7960", "AT8236"):
             continue
         findings.append(("error", f"GPIO {gpio} is used by {', '.join(roles)}"))
 

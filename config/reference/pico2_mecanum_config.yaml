@@ -4,12 +4,12 @@
 # UNVERIFIED ON HARDWARE: generated and checked through the header and env
 # generators only; no 4-motor rig has run it yet.
 #
-# A wired Raspberry Pi Pico 2 mecanum robot: four BTS7960-class drivers in the
-# two-PWM scheme, four quadrature encoders, an MPU6050 on I2C0, a battery
-# divider on ADC0, and the LD19 on the robot computer's own USB port (the
-# MCU never sees the scan). 21 of the 26 GPIOs are used; GP0/GP1 (UART0) are
-# left free on purpose as a debug console, GP4/GP5 (UART1) for a second
-# serial device.
+# A wired Raspberry Pi Pico 2 mecanum robot: four AT8236 motor drivers in the
+# two-PWM scheme (driver_type: AT8236), four quadrature encoders, an ICM20948
+# 9-axis IMU on I2C0, a battery divider on ADC0, and the LD19 on the robot
+# computer's own USB port (the MCU never sees the scan). 21 of the 26 GPIOs are
+# used; GP0/GP1 (UART0) are left free on purpose as a debug console, GP4/GP5
+# (UART1) for a second serial device.
 robot:
   name: pico2_mecanum
   description: Raspberry Pi Pico 2 mecanum (4WD, real hardware)
@@ -18,7 +18,7 @@ base_controller:
   description: Raspberry Pi Pico 2, mecanum, real hardware
   mcu: pico2
   board: rpipico2
-  driver_type: BTS7960
+  driver_type: AT8236
   transport: serial
   serial_port: /dev/ttyACM0
   baudrate: 921600
@@ -30,8 +30,8 @@ base_controller:
     serial_port: /dev/ttyUSB0
     baudrate: 230400
   sensors:
-    imu: MPU6050
-    mag: NONE
+    imu: ICM20948
+    mag: AK09916
     use_sim_imu: false
     use_sim_mag: false
     use_sim_wheel: false
@@ -66,8 +66,8 @@ base_controller:
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
   pins:
-    # Two-PWM (bts7960) drivers: in_a / in_b carry the complementary PWM, pwm
-    # is the driver's enable. One GPIO (GP22) enables all four bridges -- the
+    # Two-PWM (AT8236 / BTS7960 scheme) drivers: in_a / in_b carry the complementary PWM,
+    # pwm is the driver's enable. One GPIO (GP22) enables all four bridges -- the
     # driver holds it HIGH, once per motor, which is idempotent. Each motor's
     # pair sits on one RP2350 PWM slice (GP2/3 = slice 1, GP6/7 = 3, GP8/9 =
     # 4, GP10/11 = 5) so a slice never has to serve two motors.
