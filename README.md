@@ -56,7 +56,7 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 
 ## Reference Designs
 
-Cockpit includes pre-tuned, production-tested reference configurations for popular commercial integrated robot boards and custom DIY reference chassis (differential drive, 4WD mecanum, and omnidirectional):
+Cockpit includes pre-tuned, production-tested reference configurations for popular commercial integrated robot boards and custom DIY reference chassis (differential drive, skid steer, and omnidirectional 4WD mecanum):
 
 - **Integrated Commercial Boards**: Plug-and-play presets for all-in-one controller boards with built-in motor drivers, IMUs, and serial LiDAR headers.
 - **Reference Custom Builds**: Production-tested reference platforms combining microcontrollers with standalone dual H-bridge motor drivers, high-rate 9-DOF IMUs, sonar safety stops, and battery dividers.
