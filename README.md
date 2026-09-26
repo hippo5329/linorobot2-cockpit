@@ -42,33 +42,38 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 
 ## Supported Microcontrollers
 
-| Microcontroller | Architecture | Released Profiles | Default Transport | Notes |
-|---|---|---|---|---|
-| **Raspberry Pi Pico 2 / Pico 2 W** | RP2350 (ARM Cortex-M33) | `pico2-jazzy`, `pico2-lyrical` | Serial (USB CDC) | High performance dual-core, hardware FPU |
-| **Raspberry Pi Pico / Pico W** | RP2040 (ARM Cortex-M0+) | `pico-jazzy`, `pico-lyrical` | Serial (USB CDC) | Reliable dual-core micro-ROS controller |
-| **ESP32 DevKit** | ESP32 (Xtensa Dual-Core) | `esp32-jazzy`, `esp32-lyrical` | Serial or Wi-Fi (UDP) | Built-in Wi-Fi micro-ROS transport; battery ADC linearizable |
-| **ESP32-S3** | ESP32-S3 (Xtensa Dual-Core) | `esp32s3-jazzy`, `esp32s3-lyrical` | Serial (native USB CDC) or Wi-Fi | High-speed native USB CDC |
+| Microcontroller | Architecture | Default Transport | Recommended For |
+|---|---|---|---|
+| **Raspberry Pi Pico 2 / Pico 2 W** | RP2350 (ARM Cortex-M33) | Serial (USB CDC) | High performance dual-core, hardware FPU, ultra-low jitter |
+| **Raspberry Pi Pico / Pico W** | RP2040 (ARM Cortex-M0+) | Serial (USB CDC) | Solid, cost-effective dual-core micro-ROS controller |
+| **ESP32 DevKit** | ESP32 (Xtensa Dual-Core) | Serial / Wi-Fi (UDP) | Native Wi-Fi micro-ROS transport; battery ADC monitoring |
+| **ESP32-S3** | ESP32-S3 (Xtensa Dual-Core) | Native USB CDC / Wi-Fi | High-speed native USB CDC, vector extensions |
+| **Sim MCU (Virtual)** | Host x86_64 / ARM64 | UDP (`udp4`) | Pure software simulation without hardware or physical wiring |
+
+*For GPIO allocation guidelines, board-specific pinout diagrams, and wiring restrictions, see the [Pin Matrix & Wiring Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring).*
 
 ---
 
 ## Reference Designs
 
-Cockpit ships pre-tuned configurations for commercial integrated boards and reference platforms with validated pin matrices, motor driver schemes, and IMUs:
+Cockpit includes pre-tuned, production-tested reference configurations for popular commercial integrated robot boards and custom DIY reference chassis (differential drive, 4WD mecanum, and omnidirectional):
 
-- **Yahboom ESP32-S3 (YB-EET01 V2.0)** (`yb_eet01_config.yaml`): Integrated mobile robot controller with onboard ICM-42670-P IMU, AT8236 dual-PWM motor drivers, and battery divider.
-- **Waveshare General Driver Board** (`gendrv_config.yaml`): ESP32-based controller with 1.5 Mbaud CP2102N serial bridge, dual TB6612 motor drivers, and LD19 LiDAR header.
-- **Raspberry Pi Pico 2 Mecanum** (`pico2_mecanum_config.yaml`): 4WD omnidirectional reference platform with independent PWM slices, ICM-20948 9-DOF IMU, AT8236 dual H-bridge motor drivers, sonar collision stop, and battery monitor.
-- *Full pinouts and schematics: see the [[Reference Designs Wiki Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs)].*
+- **Integrated Commercial Boards**: Plug-and-play presets for all-in-one controller boards (Yahboom, Waveshare) with built-in motor drivers, IMU, and serial LiDAR headers.
+- **Reference Custom Builds**: Production-tested reference platforms combining microcontrollers with standalone dual H-bridge motor drivers (AT8236, TB6612, BTS7960), high-rate 9-DOF IMUs, sonar safety stops, and battery dividers.
+
+*For complete bills of materials, schematics, motor driver scheme comparisons, and wiring pinouts, see the [Reference Designs Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs).*
 
 ---
 
 ## Virtual Simulation (Built-In Simulator)
 
-Test your full autonomy stack (odometry, SLAM, Nav2) with zero physical hardware:
+Test your entire autonomy stack (odometry, EKF, SLAM, Nav2) with zero physical hardware:
 
-- **Sim MCU**: A pure-software virtual microcontroller running directly on the host computer. It communicates over micro-ROS via UDP (`udp4`) and publishes simulated odometry, sensor data, and virtual room LiDAR scans without needing any physical board or wiring.
-- **Realistic Drivetrain Physics**: Firmware includes voltage sag, Coulomb friction, motor torque curves, and encoder quantization noise for authentic simulation.
-- *Full details and usage: see the [[Built-In Simulator Wiki Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Built-in-Simulator)].*
+- **Host Sim MCU**: A pure-software virtual microcontroller running directly in the container. Communicates over micro-ROS via UDP (`udp4`) and publishes odometry, IMU, sonar, and virtual room LiDAR raycasts.
+- **Bare-Module Firmware Simulation**: Real microcontroller boards can be flashed with simulation mode enabled to validate physical MCU communication before wiring motors or sensors.
+- **Realistic Drivetrain Physics**: Built-in electro-mechanical simulation includes motor torque curves, battery voltage sag, Coulomb friction, and encoder quantization noise.
+
+*For detailed setup, world models, and simulation parameters, see the [Built-In Simulator Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Built-in-Simulator).*
 
 ---
 
@@ -96,11 +101,19 @@ docker-compose.yml  Production multi-container orchestration
 
 ## Documentation
 
-* 📖 **[User Wiki (Getting Started & User Guides)](https://github.com/hippo5329/linorobot2-cockpit/wiki)**  
-  Installation, the 1-Click pipeline, Web UI guide, pin wiring charts, magnetometer calibration, ESP32 ADC tuning, multi-robot setups, and troubleshooting.
+Explore the full documentation on the **[Cockpit Wiki](https://github.com/hippo5329/linorobot2-cockpit/wiki)**:
 
-* 🛠️ **[Technical Details & Developer Reference](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)**  
-  System architecture, advanced CLI pipelines, 4 KB `env` partition specification, firmware compilation, DC motor simulation physics, micro-ROS topics catalog, and developer test suites.
+* 📖 **[Wiki Home](https://github.com/hippo5329/linorobot2-cockpit/wiki)** — Overview, system concept, and getting started roadmap
+* 🚀 **[Installation & Docker](https://github.com/hippo5329/linorobot2-cockpit/wiki/Installation-and-Docker)** — Host prerequisites, container deployment, and rootless setup
+* 🖥️ **[Web UI Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Web-UI-Guide)** — Tour of Dashboard, MCU & Sim configuration, Base settings, Map Viewer, and Teleop
+* 🔄 **[The 1-Click Pipeline](https://github.com/hippo5329/linorobot2-cockpit/wiki/The-One-Click-Pipeline)** — Automated multi-stage bringup, qualification drive suite, and CLI options
+* 🕹️ **[Built-in Simulator](https://github.com/hippo5329/linorobot2-cockpit/wiki/Built-in-Simulator)** — Sim MCU, bare-module simulation mode, and virtual room environments
+* 🏎️ **[Reference Designs](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs)** — Pre-tuned builds, bills of materials, and motor driver scheme comparisons
+* 🔌 **[Pin Matrix & Wiring](https://github.com/hippo5329/linorobot2-cockpit/wiki/Pin-Matrix-and-Wiring)** — MCU pin assignments, hardware conflicts, and safety invariants
+* 🗺️ **[Sensors, LiDAR & Maps](https://github.com/hippo5329/linorobot2-cockpit/wiki/Sensors-and-Maps)** — LiDAR configuration, footprint masking, depth cameras, and Nav2 navigation
+* 🧮 **[Calibration Guides](https://github.com/hippo5329/linorobot2-cockpit/wiki/Heading-and-Magnetometer-Calibration)** — Magnetometer hard-iron offset tuning and ESP32 battery ADC calibration
+* 🛠️ **[Technical Details](https://github.com/hippo5329/linorobot2-cockpit/wiki/Technical-Details)** — Architecture, 4 KB flash env specification, micro-ROS topics, and test suites
+* 🔍 **[Troubleshooting & Error Index](https://github.com/hippo5329/linorobot2-cockpit/wiki/Troubleshooting)** — Searchable catalog of common hardware and software error resolutions
 
 ---
 
