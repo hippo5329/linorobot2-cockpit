@@ -60,7 +60,8 @@ class SimDepthNode(Node):
         self.optical = f"{self.frame}_sim_depth_optical_frame"
         self.off_x, self.off_y, self.off_yaw = float(g("offset_x")), float(g("offset_y")), float(g("offset_yaw"))
         room = {k: g(k) for k in dc.ROOM_DEFAULTS}
-        self.segments = dc.room_segments(room)
+        self.declare_parameter("walls", [0.0])     # interior walls, x1,y1,x2,y2 end to end
+        self.segments = dc.room_segments(room, dc.walls_from_flat(self.get_parameter("walls").value))
         self.angles = column_angles()
         self.rng = np.random.default_rng()
         self.pose = (0.0, 0.0, 0.0)
@@ -94,6 +95,7 @@ class SimDepthNode(Node):
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
+        self.pose_stamp = msg.header.stamp
 
     def _tick(self):
         x, y, yaw = self.pose
@@ -101,7 +103,14 @@ class SimDepthNode(Node):
         oy = y + self.off_x * math.sin(yaw) + self.off_y * math.cos(yaw)
         row = depth_row(ox, oy, yaw + self.off_yaw, self.segments, self.angles, self.rng)
         mm = np.clip(np.rint(row * 1000.0), 0, 65535).astype(np.uint16)
-        stamp = self.get_clock().now().to_msg()
+        # The image shows the world from the pose it was rendered at, so it
+        # carries that pose's time -- as a real camera stamps the exposure, not
+        # the moment the driver publishes. Stamped "now" it was newer than any
+        # transform yet published: slam_toolbox (scan_queue_size 1) dropped
+        # every scan waiting for one, and a camera-only robot never grew its
+        # map past the first view (measured 2026-09-26, jazzy: 0 SLAM updates
+        # over a 1 m drive).
+        stamp = getattr(self, "pose_stamp", None) or self.get_clock().now().to_msg()
 
         img = Image()
         img.header.stamp, img.header.frame_id = stamp, self.optical

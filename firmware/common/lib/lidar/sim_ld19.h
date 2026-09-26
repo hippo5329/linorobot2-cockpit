@@ -309,6 +309,13 @@ private:
     float occl_[SIM_OCCL_MAX * 2] = {0};
     int occl_n_ = 0;
     float occl_range_m_ = 0.12f;
+    // Interior walls beyond the box and the one obstacle: a multi-room world
+    // for exploration, as up to SIM_WALLS_MAX segments. Env key sim_walls,
+    // "x1,y1,x2,y2;x1,y1,x2,y2;..." in metres (scripts/mcu_env.py writes it from
+    // base_controller.simulation.walls). Raycast AND solid, like the obstacle.
+    static const int SIM_WALLS_MAX = 12;
+    float walls_[SIM_WALLS_MAX * 4] = {0};
+    int walls_n_ = 0;
 
 #ifdef SIM_LD19_UDP_SINK
     WiFiUDP udp_;
@@ -447,6 +454,25 @@ public:
             while (*occl == ',' || *occl == ' ') occl++;
         }
         occl_range_m_ = envFloat("sim_occl_r", occl_range_m_);
+        walls_n_ = 0;
+        const char *w = envGet("sim_walls", NULL);
+        while (w && *w && walls_n_ < SIM_WALLS_MAX)
+        {
+            float v[4];
+            int k = 0;
+            for (; k < 4; k++)
+            {
+                char *end = NULL;
+                v[k] = strtof(w, &end);
+                if (end == w) break;
+                w = end;
+                while (*w == ',' || *w == ' ') w++;
+            }
+            if (k < 4) break;
+            for (int j = 0; j < 4; j++) walls_[walls_n_ * 4 + j] = v[j];
+            walls_n_++;
+            while (*w == ';' || *w == ' ') w++;
+        }
     }
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
@@ -555,6 +581,11 @@ public:
             // nothing stops a plan that goes through it.
             pushOffSegment(x, y, wall_x1_, wall_y1_, wall_x2_, wall_y2_,
                            pose_x_, pose_y_, robot_radius_);
+        }
+        for (int i = 0; i < walls_n_; i++)
+        {
+            const float *w = &walls_[i * 4];
+            pushOffSegment(x, y, w[0], w[1], w[2], w[3], pose_x_, pose_y_, robot_radius_);
         }
         return (x != in_x) || (y != in_y);
     }
@@ -692,15 +723,19 @@ public:
         int count = wall_on_ ? 5 : 4;
         float min_dist = (float)SIM_LD19_MAX_RANGE_M; // nothing seen yet
 
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < count + walls_n_; i++)
         {
-            float sx = segs[i].x2 - segs[i].x1;
-            float sy = segs[i].y2 - segs[i].y1;
+            // the box and the obstacle, then the interior walls
+            const Segment sg = (i < count) ? segs[i]
+                : Segment{walls_[(i - count) * 4], walls_[(i - count) * 4 + 1],
+                          walls_[(i - count) * 4 + 2], walls_[(i - count) * 4 + 3]};
+            float sx = sg.x2 - sg.x1;
+            float sy = sg.y2 - sg.y1;
             float denom = dx * sy - dy * sx;
             if (fabsf(denom) < 1e-6f) continue;
 
-            float px = segs[i].x1 - ox;
-            float py = segs[i].y1 - oy;
+            float px = sg.x1 - ox;
+            float py = sg.y1 - oy;
 
             float t = (px * sy - py * sx) / denom;
             float u = (px * dy - py * dx) / denom;

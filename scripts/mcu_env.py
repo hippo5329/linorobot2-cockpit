@@ -817,6 +817,10 @@ def hardware_env(params: dict) -> dict:
     # constants -- a Nav2 test wants to move the obstacle wall without
     # rebuilding, and a 20 kg robot does not accelerate like a 3.5 kg one.
     sim = tgt.get("simulation") or {}
+    if isinstance(sim, dict) and sim.get("walls"):
+        # Interior walls: one key, "x1,y1,x2,y2;..." (sim_ld19.h applyEnvRoom).
+        import depth_camera
+        env["sim_walls"] = depth_camera.walls_env(depth_camera.sim_walls({"base_controller": tgt}))
     if isinstance(sim, dict):
         for key, cast in (("sim_map_w", float), ("sim_map_h", float),
                           ("sim_wall", int), ("sim_wall_x1", float),

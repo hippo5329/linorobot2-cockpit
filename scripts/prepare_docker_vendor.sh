@@ -32,7 +32,11 @@ VENDOR="${REPO_ROOT}/docker/vendor"
 # image was verified with -- a vendor's default branch is not a version.
 # YDLidar-SDK is plain CMake (no package.xml): the Dockerfile builds and installs
 # it before colcon, and a COLCON_IGNORE keeps colcon from building it twice.
-PACKAGES=(ldlidar_stl_ros2 sllidar_ros2 ydlidar_ros2_driver xv_11_driver YDLidar-SDK)
+# m-explore-ros2 is frontier exploration (explore_lite's ROS 2 port): it drives
+# Nav2 to the edge of the known map until none is left, which is how a robot
+# whose sensor does not see all round -- a camera, a masked LiDAR -- builds a
+# map of a multi-room space. Nav2 has no exploration of its own.
+PACKAGES=(ldlidar_stl_ros2 sllidar_ros2 ydlidar_ros2_driver xv_11_driver YDLidar-SDK m-explore-ros2)
 
 rm -rf "$VENDOR"
 mkdir -p "$VENDOR"
@@ -56,6 +60,7 @@ upstream_of() {
         ydlidar_ros2_driver)    echo "https://github.com/YDLIDAR/ydlidar_ros2_driver.git ." ;;
         xv_11_driver)           echo "https://github.com/mjstn/xv_11_driver.git ." ;;
         YDLidar-SDK)            echo "https://github.com/YDLIDAR/YDLidar-SDK.git ." ;;
+        m-explore-ros2)         echo "https://github.com/robo-friends/m-explore-ros2.git ." ;;
     esac
 }
 # Commit pins (2026-09-26). Pinned packages are always fetched at the pin, never
@@ -66,6 +71,7 @@ pin_of() {
         ydlidar_ros2_driver)    echo "4ef70d3f32a85704ade0be54b214f3763b1ab3e8" ;;  # humble (the ROS 2 branch)
         xv_11_driver)           echo "82cce0fcb54f9edc61fe365df95f97aaf7bdc8c0" ;;  # main
         YDLidar-SDK)            echo "42a82ed10d2304094c111fc63dee8e4a229b79b7" ;;  # master
+        m-explore-ros2)         echo "326cf8a0b487c34246bb8f3326afbcd69576dc60" ;;  # main
     esac
 }
 
@@ -243,6 +249,8 @@ if [ -f "$SDKCM" ] && grep -qE 'cmake_policy\(SET CMP00(53|37|43) OLD\)' "$SDKCM
     echo "[vendor] YDLidar-SDK: dropped three OLD policies CMake 4 refuses"
 fi
 touch "${VENDOR}/YDLidar-SDK/COLCON_IGNORE"
+# map_merge is multi-robot map merging, not exploration; it is not built.
+touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
 # xv_11_driver on Lyrical's Boost: boost::asio::io_service is gone (renamed
 # io_context in 1.66, which Jazzy's 1.83 has too), and xv11_laser.cpp uses M_PI
@@ -277,6 +285,7 @@ done
 
 for pkg in "${PACKAGES[@]}"; do
     marker="package.xml"; [ "$pkg" = "YDLidar-SDK" ] && marker="CMakeLists.txt"
+    [ "$pkg" = "m-explore-ros2" ] && marker="explore/package.xml"
     [ -f "${VENDOR}/${pkg}/${marker}" ] || { echo "[vendor] ❌ ${pkg} is not staged" >&2; exit 1; }
 done
 du -sh "$VENDOR"

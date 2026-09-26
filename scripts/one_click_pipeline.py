@@ -934,11 +934,14 @@ def map_extent(text: str):
     return (x0, y0, x0 + int(w.group(1)) * r, y0 + int(h.group(1)) * r)
 
 
-def map_surrounds_origin(distro: str, margin: float = 0.5) -> bool:
+def map_surrounds_origin(distro: str, margin: float = 0.5, say: bool = False) -> bool:
     """Does the latest /map reach `margin` past the start pose (0, 0) on every side?"""
     res = run_ros("ros2 topic echo --once --qos-durability transient_local "
                   "--qos-reliability reliable --field info /map", timeout=15, distro=distro)
     ext = map_extent(res.stdout)
+    if say:
+        print("     map spans " + (f"x {ext[0]:+.2f}..{ext[2]:+.2f}, y {ext[1]:+.2f}..{ext[3]:+.2f}"
+                                   if ext else "(no /map read)"), flush=True)
     return bool(ext) and ext[0] <= -margin and ext[1] <= -margin and ext[2] >= margin and ext[3] >= margin
 
 
@@ -1275,6 +1278,11 @@ def main():
                         help="Flash even when the USB bus says the board is different silicon "
                              "than the config builds for")
     parser.add_argument("--explore-sec", type=int, default=15, help="Seconds to simulate mapping movement")
+    parser.add_argument("--explore", action="store_true",
+                        help="Map the space by frontier exploration (explore_lite driving Nav2) "
+                             "instead of the fixed Nav2 goal; the robot returns to its start")
+    parser.add_argument("--explore-timeout", type=int, default=900,
+                        help="Seconds the frontier exploration may take (default 900)")
     parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
                         help="Run the eight-manoeuvre drive suite after the topic gate (default: on)")
     parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
@@ -1849,7 +1857,7 @@ def main():
         if args.topics_only:
             print("\n[6/6] [NAV2] Skipped per --topics-only.")
         elif not args.no_nav2 and has_lidar:
-            if not args.map and not map_surrounds_origin(args.distro):
+            if not args.map and not map_surrounds_origin(args.distro, say=True):
                 # A sensor that does not see all round -- a depth camera's 87
                 # degrees, a LiDAR with a mask -- maps only what it faces, so
                 # SLAM's first map, and the global costmap sized to it, may not
@@ -1867,7 +1875,7 @@ def main():
                     time.sleep(secs)
                     stop_bg(mv)
                 t_map = time.time()
-                while not map_surrounds_origin(args.distro) and time.time() - t_map < 60:
+                while not map_surrounds_origin(args.distro, say=True) and time.time() - t_map < 60:
                     time.sleep(3.0)
                 if map_surrounds_origin(args.distro):
                     print(f"  ✅ the map surrounds the robot ({time.time() - t_map:.0f} s after exploring).")
@@ -1883,53 +1891,75 @@ def main():
             if not nav2_ok:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
-            cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
-            n_legs = 2 * args.goal_round_trips if args.goal_round_trips else 1
-            if args.goal_round_trips:
-                print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y}) and back "
-                      f"home, {args.goal_round_trips} round trips ({n_legs} legs, "
-                      f"{args.goal_timeout} s each)...")
+            if args.explore:
+                # Frontier exploration instead of the fixed goal: explore_lite
+                # drives Nav2 to the edge of the known map until none is left and
+                # then home -- how a robot maps a space it has never seen.
+                print(f"  Frontier exploration (explore_lite), up to {args.explore_timeout} s...")
+                if nav2_ok:
+                    explore = launch_bg(f"ros2 launch linorobot2_cockpit explore.launch.py "
+                                        f"config_file:={params_path}", log_tag="explore_lite",
+                                        distro=args.distro)
+                    bg_processes.append(explore)
+                    ex_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
+                                     f"--timeout {args.explore_timeout}",
+                                     timeout=args.explore_timeout + 60, distro=args.distro)
+                    stop_bg(explore)
+                    print(ex_res.stdout)
+                    if ex_res.returncode != 0:
+                        print(_nav2_complaints(nav2_log))
+                        failures.append(f"Explore: exit {ex_res.returncode}")
+                else:
+                    print(f"  ❌ EXPLORE NOT STARTED: Nav2 never activated ({nav2_detail}).")
+                    failures.append("Explore: Nav2 never activated")
             else:
-                print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
-            goal_args = (f"--goal-x {args.goal_x} --goal-y {args.goal_y} "
-                         f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type} "
-                         f"--round-trips {args.goal_round_trips}")
-            if args.require_goal or args.goal_round_trips:
-                goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
-            if nav2_ok:
-                test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
-                                   + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
-                                   distro=args.distro)
-            else:
-                # A goal sent to a stack that never activated is rejected on
-                # arrival ("Action server is inactive") and the transcript then
-                # reads like a navigation failure. The failure is the lifecycle
-                # one above; say so and let the drive suite below place it.
-                test_res = subprocess.CompletedProcess(
-                    args=[], returncode=3, stderr="",
-                    stdout=f"❌ NAV2 GOAL NOT SENT: the stack never activated ({nav2_detail}); "
-                           f"a goal would only be rejected. See logs/{os.path.basename(nav2_log)}.")
-            print(test_res.stdout)
-            if test_res.returncode != 0:
-                # A goal that ABORTED says error_code=203 and nothing else, and the
-                # log that explains it dies with the container on a bench. Surface
-                # the reason HERE, where the transcript is kept: measured
-                # 2026-09-22, five legs aborted with TF error codes and there was
-                # nothing left afterwards to say which transform, or how late.
-                print(_nav2_complaints(nav2_log))
-            if test_res.returncode == 0:
-                print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
-            else:
-                print(f"  ⚠️ Nav2 goal test returned {test_res.returncode}; continuing to the mapping spin...")
-                if test_res.stderr and test_res.stderr.strip():
-                    print("     --- goal test stderr ---")
-                    for line in test_res.stderr.strip().splitlines():
-                        print(f"     {line}")
-                failures.append(f"Nav2: goal test exit {test_res.returncode}")
+                cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
+                n_legs = 2 * args.goal_round_trips if args.goal_round_trips else 1
+                if args.goal_round_trips:
+                    print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y}) and back "
+                          f"home, {args.goal_round_trips} round trips ({n_legs} legs, "
+                          f"{args.goal_timeout} s each)...")
+                else:
+                    print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
+                goal_args = (f"--goal-x {args.goal_x} --goal-y {args.goal_y} "
+                             f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type} "
+                             f"--round-trips {args.goal_round_trips}")
+                if args.require_goal or args.goal_round_trips:
+                    goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
+                if nav2_ok:
+                    test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
+                                       + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
+                                       distro=args.distro)
+                else:
+                    # A goal sent to a stack that never activated is rejected on
+                    # arrival ("Action server is inactive") and the transcript then
+                    # reads like a navigation failure. The failure is the lifecycle
+                    # one above; say so and let the drive suite below place it.
+                    test_res = subprocess.CompletedProcess(
+                        args=[], returncode=3, stderr="",
+                        stdout=f"❌ NAV2 GOAL NOT SENT: the stack never activated ({nav2_detail}); "
+                               f"a goal would only be rejected. See logs/{os.path.basename(nav2_log)}.")
+                print(test_res.stdout)
+                if test_res.returncode != 0:
+                    # A goal that ABORTED says error_code=203 and nothing else, and the
+                    # log that explains it dies with the container on a bench. Surface
+                    # the reason HERE, where the transcript is kept: measured
+                    # 2026-09-22, five legs aborted with TF error codes and there was
+                    # nothing left afterwards to say which transform, or how late.
+                    print(_nav2_complaints(nav2_log))
+                if test_res.returncode == 0:
+                    print("  🎉 Nav2 planned around the obstacle wall and executed the motion!")
+                else:
+                    print(f"  ⚠️ Nav2 goal test returned {test_res.returncode}; continuing to the mapping spin...")
+                    if test_res.stderr and test_res.stderr.strip():
+                        print("     --- goal test stderr ---")
+                        for line in test_res.stderr.strip().splitlines():
+                            print(f"     {line}")
+                    failures.append(f"Nav2: goal test exit {test_res.returncode}")
 
-                # Why it failed is the drive suite's job, below: it runs on every
-                # pass now, right after this, and a base that still does 6/6
-                # puts the fault above the base.
+                    # Why it failed is the drive suite's job, below: it runs on every
+                    # pass now, right after this, and a base that still does 6/6
+                    # puts the fault above the base.
         if args.drive_test:
             # Rates prove the board TALKS; only driving proves it MOVES, and moves
             # the way it was told -- the SimEncoder invert and the PID windup each

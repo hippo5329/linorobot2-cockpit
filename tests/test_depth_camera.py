@@ -94,7 +94,7 @@ def test_the_room_is_the_one_the_firmware_gets():
 def test_both_simulated_scanners_read_the_configured_room():
     """sim_laser_node hardcoded 10 x 6 m; it now takes the room bringup hands both nodes."""
     laser = read("scripts", "sim_laser_node.py")
-    assert "ROOM_MIN_X" not in laser and "dc.room_segments(room)" in laser
+    assert "ROOM_MIN_X" not in laser and "dc.room_segments(room, dc.walls_from_flat(" in laser
     launch = read("launchers", "bringup.launch.py")
     assert launch.count("depth_camera.sim_room(params)") == 2
 
@@ -198,9 +198,9 @@ def test_a_limited_view_explores_before_nav2():
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import one_click_pipeline as ocp
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
-    i = pipe.index("if not args.map and not map_surrounds_origin(args.distro):")
+    i = pipe.index("if not args.map and not map_surrounds_origin(args.distro, say=True):")
     assert i < pipe.index('print(f"\\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")')
-    assert "while not map_surrounds_origin(args.distro)" in pipe
+    assert "while not map_surrounds_origin(args.distro, say=True)" in pipe
     net = sum(vx * t for vx, _, t in ocp.EXPLORE_MOVES)
     assert abs(net) < 1e-9, "exploring must bring the base back to where it started"
     assert max(vx * t for vx, _, t in ocp.EXPLORE_MOVES) < 1.5, "the test room's wall is 2 m ahead"

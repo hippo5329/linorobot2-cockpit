@@ -202,13 +202,59 @@ def sim_room(params: dict) -> dict:
     return room
 
 
-def room_segments(room: dict) -> list:
-    """The room's walls as (x1, y1, x2, y2), centred on the origin, plus the obstacle."""
+# Interior walls: base_controller.simulation.walls, [[x1, y1, x2, y2], ...] in
+# metres -- a multi-room world for exploration. The firmware's table holds this
+# many (sim_ld19.h SIM_WALLS_MAX); the env key is sim_walls.
+SIM_WALLS_MAX = 12
+
+
+# A multi-room world for exploration tests, inside the default 10 x 6 m box
+# (set wall_obstacle: false). Four spaces: west, the middle one the robot starts
+# in, and the east room split in two -- joined by 1.2 m doors, wide enough for
+# the 0.26 m robot radius plus inflation to pass.
+MULTI_ROOM_WALLS = [
+    [-1.5, -3.0, -1.5, -0.6], [-1.5, 0.6, -1.5, 3.0],   # west wall of the middle room, door at y 0
+    [1.5, -3.0, 1.5, 1.8],                              # east wall of the middle room, door at the north end
+    [1.5, 0.0, 3.8, 0.0],                               # splits the east room, gap at the far wall
+]
+
+
+def sim_walls(params: dict) -> list:
+    """The configured interior walls as (x1, y1, x2, y2) tuples; ValueError on a bad one."""
+    sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
+    out = []
+    for w in sim.get("walls") or []:
+        if not isinstance(w, (list, tuple)) or len(w) != 4:
+            raise ValueError(f"simulation.walls: each wall is [x1, y1, x2, y2], not {w!r}")
+        out.append(tuple(float(v) for v in w))
+    if len(out) > SIM_WALLS_MAX:
+        raise ValueError(f"simulation.walls: at most {SIM_WALLS_MAX} walls, not {len(out)}")
+    return out
+
+
+def walls_flat(walls) -> list:
+    """A ROS double-array parameter: the walls end to end, or [0.0] for none."""
+    return [v for w in walls for v in w] or [0.0]
+
+
+def walls_from_flat(flat) -> list:
+    vals = [float(v) for v in (flat or [])]
+    return [tuple(vals[i:i + 4]) for i in range(0, len(vals) - len(vals) % 4, 4)] if len(vals) >= 4 else []
+
+
+def walls_env(walls) -> str:
+    """The firmware's sim_walls value: "x1,y1,x2,y2;x1,y1,x2,y2"."""
+    return ";".join(",".join(f"{v:g}" for v in w) for w in walls)
+
+
+def room_segments(room: dict, walls=()) -> list:
+    """The room's walls as (x1, y1, x2, y2), centred on the origin, the obstacle, then interior walls."""
     hw, hh = float(room["map_width"]) / 2.0, float(room["map_height"]) / 2.0
     segs = [(-hw, -hh, hw, -hh), (hw, -hh, hw, hh), (hw, hh, -hw, hh), (-hw, hh, -hw, -hh)]
     if room.get("wall_obstacle", True):
         segs.append((float(room["wall_x1"]), float(room["wall_y1"]),
                      float(room["wall_x2"]), float(room["wall_y2"])))
+    segs.extend(tuple(float(v) for v in w) for w in walls)
     return segs
 
 

@@ -615,6 +615,7 @@ def launch_setup(context, *args, **kwargs):
                                  "occlusion_range": occl_range,
                                  # The configured room, as the board's LD19 and the
                                  # simulated depth camera get it.
+                                 "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
                                  **{k: (bool(v) if k == "wall_obstacle" else float(v))
                                     for k, v in depth_camera.sim_room(params).items()}}],
                 )
@@ -752,6 +753,7 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                          "wall_obstacle": bool(room["wall_obstacle"]),
                          "wall_x1": float(room["wall_x1"]), "wall_y1": float(room["wall_y1"]),
                          "wall_x2": float(room["wall_x2"]), "wall_y2": float(room["wall_y2"]),
+                         "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
                          "pose_topic": "odom/unfiltered"}],
         ))
         depth_topic, info_topic, scan_time = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC, 1.0 / 15.0

@@ -67,7 +67,8 @@ class SimLaserNode(Node):
         for k, v in dc.ROOM_DEFAULTS.items():
             self.declare_parameter(k, v)
         room = {k: self.get_parameter(k).value for k in dc.ROOM_DEFAULTS}
-        self.segments = dc.room_segments(room)
+        self.declare_parameter("walls", [0.0])     # interior walls, x1,y1,x2,y2 end to end
+        self.segments = dc.room_segments(room, dc.walls_from_flat(self.get_parameter("walls").value))
         # Occluding posts, as flat [start, width, ...] degrees in the robot frame
         # (lidar_mask.occlusion), and the topic: scan_raw when the robot is masked,
         # so the laser_filters chain stands between this and /scan.

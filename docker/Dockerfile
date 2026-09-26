@@ -401,7 +401,8 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
  && test -x /opt/lino_ws/lib/ldlidar_stl_ros2/ldlidar_stl_ros2_node \
  && test -x /opt/lino_ws/lib/sllidar_ros2/sllidar_node \
  && test -x /opt/lino_ws/lib/ydlidar_ros2_driver/ydlidar_ros2_driver_node \
- && test -x /opt/lino_ws/lib/xv_11_driver/xv_11_driver
+ && test -x /opt/lino_ws/lib/xv_11_driver/xv_11_driver \
+ && test -x /opt/lino_ws/lib/explore_lite/explore
 
 # ...and prove the overlay is usable, not merely present: ros2 must RESOLVE
 # both packages and the bringup launch file must be where a launch resolves it.
