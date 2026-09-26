@@ -274,10 +274,13 @@ re-deriving any of this (AGENTS.md).
   would fight it for the same nodes. **Ask the installed file, never the distro name**, and read the
   managed-node list out of it too: it is spelled `lifecycle_nodes = [...]` on jazzy and
   `def get_lifecycle_nodes(): return (...)` on lyrical, and lyrical's set grew by three.
-- **Composition is gated on that same check, deliberately.** nav2 defaults `use_composition` to
-  `False` on both distros, so False is what the green jazzy hardware run actually used. Composition
-  is applied where the problem is (console measured composed 2 passes / 2 runs vs uncomposed 1 / 2 on
-  lyrical) and jazzy is left byte-for-byte as it was.
+- **Composition is on for both distros.** It used to be lyrical-only, on the reading that
+  `navigation_launch.py` defaults `use_composition` to False. But Nav2 is brought up by
+  `bringup_launch.py`, and that defaults it to **True** on jazzy and lyrical alike. One container
+  process is also one DDS participant instead of about twenty discovering each other at once,
+  which is the traffic that loses lifecycle replies (next section). The container is started
+  here on both distros. Only lyrical gets our lifecycle manager, since jazzy's file still brings
+  its own.
 
 ### rmw_fastrtps drops service replies, and nav2 hangs with no error of its own
 `rmw_fastrtps` will not send a service response until the server's response writer has matched the
@@ -325,6 +328,47 @@ activated. `one_click_pipeline.py` ends the wait as soon as that line appears, r
 four-minute window, and restarts Nav2 **once** into `logs/nav2_retry.log`. A hang with no verdict is
 restarted the same way. A manager that reports `Failed to bring up all requested nodes` has named a
 real fault, so that is reported and not retried.
+
+### Where Nav2 has an answer, take Nav2's
+
+Upstream linorobot2's configs are where this template started, and they are behind Nav2. The
+reference now is Nav2 itself: docs.nav2.org and `nav2_bringup/params/nav2_params.yaml` **as
+installed in the image**, read per distro because jazzy (1.3) and lyrical (1.5.1) differ.
+
+- **Inflation** is nav2_params.yaml's 0.70 m at `cost_scaling_factor` 3.0 on every reference
+  (it was 0.55). The test room's detour gap is 1.5 m, so at 0.70 on both sides a strip stays
+  uninflated.
+- **A mecanum base follows the path with MPPI and its omni model.** The shared template's
+  RotationShim + Regulated Pure Pursuit never commands `vy`, so a base that can strafe turned on
+  the spot instead. `nav2.launch.py` swaps FollowPath for the installed MPPI block on a mecanum
+  base. It keeps Nav2's critics and sampling, and writes only this robot's limits: the
+  template's cruise speed for vx and vy, and the velocity smoother's angular and acceleration
+  ceilings, which it would clip to anyway. The model is spelled `Omni` on jazzy. Lyrical
+  loads `omni` as a plugin named by `FollowPath.omni.plugin`. A config whose FollowPath is not
+  the template's controller is left alone.
+- **AMCL** on a saved map takes the installed `amcl` block (see `--map` in the README).
+
+### Every LiDAR driver is the vendor's, pinned, and patched only to build
+
+`scripts/prepare_docker_vendor.sh` stages `ldlidar_stl_ros2` (our fork), `sllidar_ros2`,
+`ydlidar_ros2_driver`, `xv_11_driver` and YDLIDAR's SDK into `docker/vendor/`, each fetched at a
+pinned commit, because a vendor's default branch is not a version. Lyrical needs patches to
+build them, all mechanical:
+
+- `ament_target_dependencies` is gone from ament_cmake 2.8. It is rewritten to
+  `target_link_libraries` with `rclcpp::rclcpp` and `${pkg_TARGETS}`, both of which jazzy has
+  too.
+- Boost dropped `io_service`; the XV-11 driver gets `io_context` and the `<cmath>` it relied on
+  by accident.
+- CMake 4 refuses the SDK's `OLD` policies and the `LOCATION` property its install script reads.
+  The policies are dropped, and the Dockerfile configures the SDK with a pip-installed CMake 3
+  used for that one build.
+
+The Dockerfile asserts all four driver executables after colcon. A driver that silently failed
+to build would otherwise surface on a robot as "no /scan". `scripts/lidar_drivers.py` maps each
+`lidar.model` to its driver with the vendor's per-model values: sllidar's launch-file baud and
+scan mode, and ydlidar's `params/<Model>.yaml` read at launch. Tests hold that table to the
+staged vendor files.
 
 ### Never add the ROS 2 apt source twice
 The `ros2-apt-source` .deb writes `/etc/apt/sources.list.d/ros2-apt-source.**sources**` with the key

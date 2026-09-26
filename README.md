@@ -274,6 +274,72 @@ with `geometry.laser.frame`, and in simulation mode the emulator raycasts from `
 so the scan and the transform always agree. Warnings you get for free: a LiDAR inside the
 body box, four mecanum wheels on one axle, a Nav2 `robot_radius` smaller than the body.
 
+### LiDARs, a mask, and a depth camera
+
+`base_controller.lidar.model` picks the driver, and each vendor's own ROS 2 package reads its
+own LiDAR with the vendor's per-model settings. All four are in the robot image.
+
+| `lidar.model` | driver |
+|---|---|
+| `ld19`, `ld06`, `stl27l` | `ldlidar_stl_ros2` (our fork: UDP and raw-topic modes) |
+| `a1`, `a2` (A2M8), `a2m7`, `a2m12`, `a3`, `c1`, `s1`, `s2`, `s3` | `sllidar_ros2` — baud rate and scan mode from its launch file for that model |
+| `ydlidar`, `ydlidar_x4`, `ydlidar_g4`, … (one per `params/<Model>.yaml`) | `ydlidar_ros2_driver`, with that model's params file |
+| `xv11` | `xv_11_driver` |
+| `none` | no LiDAR: a depth camera makes `/scan`, or the robot runs teleop only |
+
+An unknown model stops bringup with its name and the list above; it is never read as an LD19.
+`lidar.baudrate` overrides the model's rate when your unit differs. The LD14/LD14P need
+`ldlidar_sl_ros2`, which the image does not carry.
+
+**A mask removes the robot's own structure** (a mast, posts, a bumper) from the scan before
+SLAM and Nav2 see it. It is `laser_filters` between the driver, which then publishes `scan_raw`,
+and `/scan`:
+
+```yaml
+base_controller:
+  lidar:
+    mask:
+      sectors: [[150, 210]]   # degrees, robot frame: 0 ahead, counter-clockwise
+      boxes: [{min_x: -0.1, max_x: 0.1, min_y: -0.05, max_y: 0.05, min_z: -1, max_z: 1}]  # base_link
+```
+
+Masked beams become NaN, never "range max + 1": a valid long reading would clear the costmap
+straight through the mast. To see the mask work without a robot, give the simulated LD19 the
+posts: `simulation.lidar_occlusion: [[150, 210]]` and `lidar_occlusion_range: 0.12`.
+
+**A depth camera** is either the scan source (no LiDAR) or a second obstacle source beside one.
+`depthimage_to_laserscan` turns the rows at its optical centre into a scan, and SLAM and Nav2 run
+unchanged:
+
+```yaml
+base_controller:
+  depth_camera: {model: realsense}   # none | realsense | zed | zedm | zed2 | zed2i | oakd | oakdlite | oakdpro
+  sensors: {use_sim_depth: false}    # true: the simulated camera instead of a real one
+geometry:
+  depth_camera: {x: 0.1, z: 0.15}    # its mount, like geometry.laser
+```
+
+With `lidar.model: none` the camera's scan is `/scan`. With a LiDAR fitted it is `camera/scan`, and
+it is added to both costmaps' obstacle layers. Its scan is one row at the camera's own height, so
+it catches what stands only at that height, which the LiDAR's plane passes over. RealSense and OAK-D drivers are in the image. ZED needs the ZED SDK
+and CUDA, which no generic image can carry, so bringup names what to install. The simulated camera
+is a RealSense D435 in its 424×240 mode, raycasting the same room as the simulated LD19. On the Sim
+MCU the LiDAR stays the default; the Hardware tab turns on the camera alone or both.
+
+### Navigating on a map you saved
+
+A run normally maps with SLAM as it goes. To navigate on a map saved from an earlier run, pass
+it:
+
+```bash
+python3 scripts/one_click_pipeline.py --controller pico2 --map ~/maps/room.yaml
+```
+
+No SLAM runs. `map_server` serves the map and AMCL localises on it, started the way nav2_bringup's
+own `localization_launch.py` starts them. AMCL takes its parameters from the installed Nav2, with
+three overrides: this robot's base frame, the omni motion model on a mecanum base, and a start at
+the map's origin. Correct the start with the Map Viewer's 2D pose estimate.
+
 ---
 
 ## Supported boards
@@ -399,6 +465,7 @@ Simulation mode is what makes a bare board useful. Under `base_controller.sensor
 | `use_sim_ld19` | 360° LD19 LiDAR | raycast of a 10 m × 6 m room with an interior wall, on the MCU (`raw_scan`, a UART, or UDP) or on the robot computer (`scripts/sim_laser_node.py`); both raycast from `geometry.laser.x`. On the MCU it is also the env key `sim_ld19`, so a prebuilt image built with the emulator in is silent on a real robot |
 | `use_sim_env` | barometer | sea-level pressure and 25 °C |
 | `use_sim_sonar` | ultrasonic range | raycast ahead from the same room, drives the firmware's safety stop |
+| `use_sim_depth` | RealSense D435 depth camera | on the robot computer (`scripts/sim_depth_node.py`), 424×240, the same room; noise grows with the square of the distance, as a stereo camera's does |
 
 **Every one of these is an env key, not a build switch.** The config value is only the
 default a board falls back to with a blank env: `sim_wheel`, `sim_ld19`, `sim_env`,
