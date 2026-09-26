@@ -240,6 +240,17 @@ def launch_setup(context, *args, **kwargs):
             os.path.join(os.path.dirname(config_file), "generated", f"{robot_label}_host_env.bin"),
             agent_port=int(udp_port), lidar_port=int(lidar_udp_port))
 
+    # World "map" (depth_camera.WORLDS): a saved occupancy map is the world, and
+    # no board can hold one -- the firmware's LD19 emulator knows only its box and
+    # walls (mcu_env turns it off for this world). The host's simulated laser,
+    # which raycasts the map, is the /scan instead, whatever the board.
+    world_map_path, world_start = depth_camera.world_map(params)
+    if world_map_path and robot_has_lidar:
+        use_host_sim_laser = True
+        print(f"[bringup] world: the saved map {world_map_path} -- /scan from the host's simulated laser")
+    world_params = ({"world_map": world_map_path, "world_start": list(world_start)}
+                    if world_map_path else {})
+
     if transport in ("udp4", "udp", "wifi"):
         micro_ros_args = ["udp4", "--port", str(udp_port)]
     else:
@@ -598,7 +609,7 @@ def launch_setup(context, *args, **kwargs):
                     "enable_angle_crop_func": False,
                 }],
             )
-            if effective_lidar_comm_mode == "udp_server" and not no_board
+            if effective_lidar_comm_mode == "udp_server" and not no_board and not world_map_path
             else (
                 Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
@@ -616,6 +627,7 @@ def launch_setup(context, *args, **kwargs):
                                  # The configured room, as the board's LD19 and the
                                  # simulated depth camera get it.
                                  "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
+                                 **world_params,
                                  **{k: (bool(v) if k == "wall_obstacle" else float(v))
                                     for k, v in depth_camera.sim_room(params).items()}}],
                 )
@@ -739,6 +751,7 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
     out = []
     if sim:
         room = depth_camera.sim_room(params)
+        wm, ws = depth_camera.world_map(params)
         out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
                                f"from the SIMULATED depth camera (standing in for the {label})"))
         out.append(Node(
@@ -754,6 +767,7 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                          "wall_x1": float(room["wall_x1"]), "wall_y1": float(room["wall_y1"]),
                          "wall_x2": float(room["wall_x2"]), "wall_y2": float(room["wall_y2"]),
                          "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
+                         **({"world_map": wm, "world_start": list(ws)} if wm else {}),
                          "pose_topic": "odom/unfiltered"}],
         ))
         depth_topic, info_topic, scan_time = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC, 1.0 / 15.0

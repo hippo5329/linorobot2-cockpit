@@ -69,6 +69,13 @@ class SimLaserNode(Node):
         room = {k: self.get_parameter(k).value for k in dc.ROOM_DEFAULTS}
         self.declare_parameter("walls", [0.0])     # interior walls, x1,y1,x2,y2 end to end
         self.segments = dc.room_segments(room, dc.walls_from_flat(self.get_parameter("walls").value))
+        # World "map": a saved occupancy map is the world instead (depth_camera.GridWorld).
+        self.declare_parameter("world_map", "")
+        self.declare_parameter("world_start", [0.0, 0.0, 0.0])
+        wm = str(self.get_parameter("world_map").value or "")
+        if wm:
+            self.segments = dc.GridWorld(wm, tuple(self.get_parameter("world_start").value))
+            self.get_logger().info(f"world: the saved map {wm}, start {tuple(self.get_parameter('world_start').value)}")
         # Occluding posts, as flat [start, width, ...] degrees in the robot frame
         # (lidar_mask.occlusion), and the topic: scan_raw when the robot is masked,
         # so the laser_filters chain stands between this and /scan.
@@ -134,6 +141,11 @@ class SimLaserNode(Node):
         sensor_ox = self.pose_x + self.offset_x * math.cos(self.pose_yaw)
         sensor_oy = self.pose_y + self.offset_x * math.sin(self.pose_yaw)
 
+        grid = self.segments if isinstance(self.segments, dc.GridWorld) else None
+        if grid is not None:
+            wx, wy, wyaw = grid.to_world(sensor_ox, sensor_oy, self.pose_yaw)
+            grid_ranges = grid.ranges(wx, wy, [wyaw + self.angle_min + i * self.angle_step
+                                               for i in range(self.num_points)], 12.0)
         for i in range(self.num_points):
             rel = self.angle_min + i * self.angle_step
             if self.occl and lidar_mask.occluded(math.degrees(rel), self.occl):
@@ -145,7 +157,9 @@ class SimLaserNode(Node):
             sin_a = math.sin(ray_angle)
 
             min_dist = 12.0
-            for (x1, y1, x2, y2) in self.segments:
+            if grid is not None:
+                min_dist = min(12.0, float(grid_ranges[i]))
+            for (x1, y1, x2, y2) in (() if grid is not None else self.segments):
                 sx = x2 - x1
                 sy = y2 - y1
                 denom = cos_a * sy - sin_a * sx

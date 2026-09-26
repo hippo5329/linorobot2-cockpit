@@ -370,9 +370,14 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
             import yaml
             import depth_camera
             with open(params_path) as fh:
-                controller = (yaml.safe_load(fh) or {}).get("base_controller", {}) or {}
+                whole = yaml.safe_load(fh) or {}
+            controller = whole.get("base_controller", {}) or {}
             try:
                 if depth_camera.scan_source(controller) == "depth":
+                    env["sim_ld19"] = "0"
+                # ...and on a saved-map world, where the host's laser raycasts
+                # the map and the board's emulator knows only its box.
+                if depth_camera.sim_world(whole) == "map":
                     env["sim_ld19"] = "0"
             except ValueError:
                 pass
@@ -881,6 +886,16 @@ def hardware_env(params: dict) -> dict:
         whole = {"base_controller": tgt}
         if depth_camera.sim_world(whole) == "rooms":
             env["sim_wall"] = 0
+        if depth_camera.sim_world(whole) == "map":
+            # A saved map is raycast on the host (bringup's simulated laser); the
+            # board cannot hold one. Its LD19 emulator goes quiet, and its own
+            # box -- which its sonar and its collision clamp still use -- is made
+            # too big to meet, so neither contradicts the map. The map world
+            # has no collision: the robot can be driven through a mapped wall.
+            env["sim_ld19"] = "0"
+            env["sim_wall"] = 0
+            env["sim_map_w"] = 100
+            env["sim_map_h"] = 100
         walls = depth_camera.sim_walls(whole)
         if walls:
             env["sim_walls"] = depth_camera.walls_env(walls)

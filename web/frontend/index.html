@@ -587,7 +587,14 @@
             <select id="cfg-sim-world" class="form-input">
               <option value="wall">Wall: one room, one obstacle wall (Nav2 goal test)</option>
               <option value="rooms">Rooms: four spaces joined by doors (exploration)</option>
+              <option value="map">Map: a map you saved (the simulated LiDAR and camera raycast it)</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label for="cfg-sim-world-map" class="form-label">Saved Map (World: Map)</label>
+            <input type="text" id="cfg-sim-world-map" class="form-input" placeholder="one_click_map.yaml">
+            <span class="input-hint">A map .yaml in the maps folder, e.g. one saved by a SLAM or exploration run.
+              The robot starts at the map's origin, where that run started. No collision in a map world.</span>
           </div>
         </div>
       </div>

@@ -391,12 +391,16 @@ function readSimForm() {
   // The world is a name, not a number (depth_camera.WORLDS).
   const world = document.getElementById("cfg-sim-world")?.value;
   if (world) out.world = world;
+  const worldMap = document.getElementById("cfg-sim-world-map")?.value?.trim();
+  if (world === "map" && worldMap) out.world_map = worldMap;
   return out;
 }
 
 function loadSimForm(sim) {
   const worldSel = document.getElementById("cfg-sim-world");
   if (worldSel) worldSel.value = (sim && sim.world) || "wall";
+  const worldMap = document.getElementById("cfg-sim-world-map");
+  if (worldMap) worldMap.value = (sim && sim.world_map) || "";
   SIM_FIELDS.forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (!el) return;

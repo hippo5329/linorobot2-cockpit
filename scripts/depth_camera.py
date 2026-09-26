@@ -26,6 +26,7 @@ firmware's simulated LD19 raycasts (sim_room() below reads the config keys the
 firmware reads), from the same pose.
 """
 import math
+import os
 
 # How every config here spells "not fitted" (one_click_pipeline.NOT_FITTED).
 NOT_FITTED = {"", "none", "null", "off", "false", "no"}
@@ -227,7 +228,8 @@ MULTI_ROOM_WALLS = [
 #          the world for frontier exploration
 # Explicit `walls` still add to either, for a layout of one's own.
 WORLDS = {"wall": "one room, the obstacle wall the Nav2 goal sits behind",
-          "rooms": "four spaces joined by 1.2 m doors, for exploration"}
+          "rooms": "four spaces joined by 1.2 m doors, for exploration",
+          "map": "a saved map (simulation.world_map), raycast by the host's simulated sensors"}
 
 
 def sim_world(params: dict) -> str:
@@ -236,6 +238,91 @@ def sim_world(params: dict) -> str:
     if w not in WORLDS:
         raise ValueError(f"simulation.world must be one of {', '.join(WORLDS)}, not {w!r}")
     return w
+
+
+def world_map(params: dict):
+    """(map .yaml path, (x, y, yaw) start in the map) for world "map", else (None, None).
+
+    The start defaults to the map's own (0, 0, 0): a map this pipeline saved is
+    anchored where its run started, so the robot starts where that one did.
+    A relative path is taken from the maps directory (/ws/maps in the image)."""
+    if sim_world(params) != "map":
+        return None, None
+    sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
+    path = str(sim.get("world_map") or "").strip()
+    if not path:
+        raise ValueError("simulation.world is map but simulation.world_map names no map .yaml")
+    if not os.path.isabs(path):
+        path = os.path.join(os.environ.get("COCKPIT_MAPS_DIR", "/ws/maps"), path)
+    start = sim.get("world_start") or [0.0, 0.0, 0.0]
+    if not isinstance(start, (list, tuple)) or len(start) != 3:
+        raise ValueError(f"simulation.world_start is [x, y, yaw], not {start!r}")
+    return path, tuple(float(v) for v in start)
+
+
+class GridWorld:
+    """A saved occupancy map as the simulated world: every beam cast at once.
+
+    The pose the simulated sensors get is the robot's odometry pose, which
+    starts at (0, 0, 0); `start` places that origin in the map. Cells past the
+    map's edge are empty, like the unknown beyond a real room's open door."""
+
+    def __init__(self, yaml_path: str, start=(0.0, 0.0, 0.0)):
+        import numpy as np
+        import yaml
+        with open(yaml_path) as fh:
+            meta = yaml.safe_load(fh)
+        img = meta["image"]
+        if not os.path.isabs(img):
+            img = os.path.join(os.path.dirname(yaml_path), img)
+        with open(img, "rb") as fh:
+            data = fh.read()
+        # PGM (P5): magic, optional comments, width height, maxval, bytes.
+        tokens, pos = [], 0
+        while len(tokens) < 4:
+            while data[pos:pos + 1].isspace():
+                pos += 1
+            if data[pos:pos + 1] == b"#":
+                pos = data.index(b"\n", pos) + 1
+                continue
+            end = pos
+            while not data[end:end + 1].isspace():
+                end += 1
+            tokens.append(data[pos:end]); pos = end
+        if tokens[0] != b"P5":
+            raise ValueError(f"{img}: only binary PGM (P5) maps are read")
+        w, h, maxval = int(tokens[1]), int(tokens[2]), int(tokens[3])
+        px = np.frombuffer(data[pos + 1:pos + 1 + w * h], dtype=np.uint8).reshape(h, w).astype(np.float64)
+        occ = (maxval - px) / maxval if not meta.get("negate", 0) else px / maxval
+        # row 0 of the image is the TOP of the map; index [y][x] from the bottom
+        self.occupied = (occ > float(meta.get("occupied_thresh", 0.65)))[::-1, :]
+        self.res = float(meta["resolution"])
+        self.ox, self.oy = float(meta["origin"][0]), float(meta["origin"][1])
+        self.start = tuple(float(v) for v in start)
+        self.np = np
+
+    def to_world(self, x: float, y: float, yaw: float):
+        sx, sy, syaw = self.start
+        c, s = math.cos(syaw), math.sin(syaw)
+        return sx + c * x - s * y, sy + s * x + c * y, syaw + yaw
+
+    def ranges(self, ox: float, oy: float, angles, max_range: float = 12.0):
+        """Ranges from (ox, oy) in the MAP frame along each absolute angle; inf where nothing is hit."""
+        np = self.np
+        a = np.asarray(angles, dtype=np.float64)
+        steps = np.arange(0.03, max_range, self.res * 0.5)
+        xs = ox + np.cos(a)[:, None] * steps[None, :]
+        ys = oy + np.sin(a)[:, None] * steps[None, :]
+        cx = np.floor((xs - self.ox) / self.res).astype(np.int64)
+        cy = np.floor((ys - self.oy) / self.res).astype(np.int64)
+        h, w = self.occupied.shape
+        inside = (cx >= 0) & (cx < w) & (cy >= 0) & (cy < h)
+        hit = np.zeros(cx.shape, dtype=bool)
+        hit[inside] = self.occupied[cy[inside], cx[inside]]
+        first = np.where(hit.any(axis=1), hit.argmax(axis=1), -1)
+        out = np.full(a.shape, np.inf)
+        out[first >= 0] = steps[first[first >= 0]]
+        return out
 
 
 def sim_walls(params: dict) -> list:
@@ -316,8 +403,12 @@ def depth_row(ox, oy, yaw, segments, angles, rng=None):
     """One row of z-depth in metres (0 = no return), with the camera's noise when rng is given."""
     import numpy as np
     z = np.zeros(WIDTH, dtype=np.float64)
+    if isinstance(segments, GridWorld):
+        # a saved map as the world: every column in one pass, in the map frame
+        wx, wy, wyaw = segments.to_world(ox, oy, yaw)
+        ts = segments.ranges(wx, wy, wyaw + np.asarray(angles), 12.0)
     for u, a in enumerate(angles):
-        t = raycast(ox, oy, yaw + a, segments, 12.0)
+        t = float(ts[u]) if isinstance(segments, GridWorld) else raycast(ox, oy, yaw + a, segments, 12.0)
         if math.isinf(t):
             continue
         zz = t * math.cos(a)                  # range along the ray -> depth along the optical axis

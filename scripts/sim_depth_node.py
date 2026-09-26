@@ -62,6 +62,13 @@ class SimDepthNode(Node):
         room = {k: g(k) for k in dc.ROOM_DEFAULTS}
         self.declare_parameter("walls", [0.0])     # interior walls, x1,y1,x2,y2 end to end
         self.segments = dc.room_segments(room, dc.walls_from_flat(self.get_parameter("walls").value))
+        # World "map": a saved occupancy map is the world instead (depth_camera.GridWorld).
+        self.declare_parameter("world_map", "")
+        self.declare_parameter("world_start", [0.0, 0.0, 0.0])
+        wm = str(self.get_parameter("world_map").value or "")
+        if wm:
+            self.segments = dc.GridWorld(wm, tuple(self.get_parameter("world_start").value))
+            self.get_logger().info(f"world: the saved map {wm}, start {tuple(self.get_parameter('world_start').value)}")
         self.angles = column_angles()
         self.rng = np.random.default_rng()
         self.pose = (0.0, 0.0, 0.0)
