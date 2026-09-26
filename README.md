@@ -58,8 +58,8 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 
 Cockpit includes pre-tuned, production-tested reference configurations for popular commercial integrated robot boards and custom DIY reference chassis (differential drive, 4WD mecanum, and omnidirectional):
 
-- **Integrated Commercial Boards**: Plug-and-play presets for all-in-one controller boards (Yahboom, Waveshare) with built-in motor drivers, IMU, and serial LiDAR headers.
-- **Reference Custom Builds**: Production-tested reference platforms combining microcontrollers with standalone dual H-bridge motor drivers (AT8236, TB6612, BTS7960), high-rate 9-DOF IMUs, sonar safety stops, and battery dividers.
+- **Integrated Commercial Boards**: Plug-and-play presets for all-in-one controller boards with built-in motor drivers, IMUs, and serial LiDAR headers.
+- **Reference Custom Builds**: Production-tested reference platforms combining microcontrollers with standalone dual H-bridge motor drivers, high-rate 9-DOF IMUs, sonar safety stops, and battery dividers.
 
 *For complete bills of materials, schematics, motor driver scheme comparisons, and wiring pinouts, see the [Reference Designs Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs).*
 
