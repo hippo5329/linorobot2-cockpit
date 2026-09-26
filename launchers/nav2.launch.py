@@ -15,7 +15,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import LoadComposableNodes, Node, PushRosNamespace
+from launch_ros.actions import LoadComposableNodes, Node, PushRosNamespace, SetParameter
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
@@ -457,7 +457,8 @@ def launch_setup(context, *args, **kwargs):
         nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 60.0}
     else:
         # Jazzy standards
-        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 20.0}
+        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 60.0}
+        nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 60.0}
 
     # collision_monitor is the one Nav2 node with no usable code default: it
     # reads `observation_sources` during on_configure and errors out if the key
@@ -769,8 +770,11 @@ def launch_setup(context, *args, **kwargs):
     controller = "MPPI (omni)" if uses_mppi else \
         str(((nav2_data.get("controller_server") or {}).get("ros__parameters", {})
              .get("FollowPath") or {}).get("plugin", "?")).split("::")[-1]
-    actions = [LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}', "
-                           f"FollowPath={controller}, composed)")]
+    actions = [
+        SetParameter("bond_timeout", 60.0),
+        LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}', "
+                    f"FollowPath={controller}, composed)"),
+    ]
     if nav2_container is not None:
         # The container already carries namespace=ns; it is not wrapped again.
         actions.append(nav2_container)
