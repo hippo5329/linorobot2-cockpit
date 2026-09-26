@@ -112,6 +112,11 @@ def launch_setup(context, *args, **kwargs):
     if "ros__parameters" not in slam_data.get("slam_toolbox", {}):
         slam_data = {"slam_toolbox": {"ros__parameters": slam_data}}
 
+    rp = slam_data.setdefault("slam_toolbox", {}).setdefault("ros__parameters", {})
+    # By default, slam_toolbox shouldProcessScan ignores heading if dist < min_dist,
+    # skipping scans during in-place turns. Require precise heading checks.
+    rp.setdefault("check_min_dist_and_heading_precisely", True)
+
     # Multi-robot: prefix SLAM's frames and scan topic so it maps THIS robot's
     # namespace, matching bringup. Unset -> "" -> untouched.
     ns = cockpit_paths.robot_namespace(params)

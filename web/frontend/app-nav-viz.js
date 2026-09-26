@@ -524,8 +524,7 @@ async function loadNav2Config(distro) {
       hint.textContent = on === null || on === undefined
         ? ""
         : `This file lists observation_sources: ${on ? "scan pointcloud" : "scan"}. ` +
-          `At launch, launch_nav2.py passes depth_costmap:=<true|false> from the Bringup ` +
-          `depth-sensor selection and generates a gated copy if needed — your saved YAML is not modified.`;
+          `At launch, nav2.launch.py gates depth sources if needed — your saved YAML is not modified.`;
     }
   } catch (e) {}
 }
@@ -560,7 +559,8 @@ if (btnNav2Save) {
       });
       const data = await res.json();
       if (nav2Status) {
-        nav2Status.textContent = data.status === "ok" ? `✓ Saved to console_nav2_${d}.yaml` : "Error saving";
+        const savedTarget = data.path || (state.status?.robot_config_path ? state.status.robot_config_path.split("/").pop() : "robot config");
+        nav2Status.textContent = data.status === "ok" ? `✓ Saved to ${savedTarget}` : "Error saving";
         setTimeout(() => { if (nav2Status) nav2Status.textContent = ""; }, 4000);
       }
     } catch (e) {
