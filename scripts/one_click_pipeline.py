@@ -949,21 +949,6 @@ def map_surrounds_origin(distro: str, margin: float = 0.5, say: bool = False) ->
     return bool(ext) and ext[0] <= -margin and ext[1] <= -margin and ext[2] >= margin and ext[3] >= margin
 
 
-# Exploring for a camera-only robot: (vx m/s, wz rad/s, seconds). Out 0.8 m
-# along the start heading (the test room's wall is 2 m ahead), a full turn
-# there, back to the start, and a full turn at the start. Out and back returns
-# the base to where the pose check left it; the turn 0.8 m out is what puts the
-# start inside the camera's view, past its 0.45 m near limit.
-EXPLORE_MOVES = ((0.15, 0.0, 5.3), (0.0, 0.4, 16.0), (-0.15, 0.0, 5.3), (0.0, 0.4, 16.0))
-
-
-def _twist_pub(vx: float, wz: float, stamped: bool) -> str:
-    if stamped:
-        return ("ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/TwistStamped "
-                f"'{{header: {{frame_id: \"base_link\"}}, twist: {{linear: {{x: {vx}}}, angular: {{z: {wz}}}}}}}'")
-    return f"ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist '{{linear: {{x: {vx}}}, angular: {{z: {wz}}}}}'"
-
-
 # How far from (0, 0) the base and the EKF may sit after the reset and still
 # count as "at the origin". The goal is 3 m away and the start gap the gate
 # needs is 1 m, so a few cm change nothing; 0.05 argued with a healthy GenDrv.
@@ -1876,11 +1861,9 @@ def main():
                 # would -- and start Nav2 once the map shows it.
                 print("\n[5.5/6] [SLAM] The map does not surround the robot yet (limited field of "
                       "view): exploring -- out 0.8 m, a turn, back, a turn...")
-                for i, (vx, wz, secs) in enumerate(EXPLORE_MOVES):
-                    mv = launch_bg(_twist_pub(vx, wz, stamped_cmd), log_tag=f"explore{i}", distro=args.distro)
-                    bg_processes.append(mv)
-                    time.sleep(secs)
-                    stop_bg(mv)
+                nudge = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_nudge.py')}"
+                                + (" --stamped" if stamped_cmd else ""), timeout=200, distro=args.distro)
+                print((nudge.stdout or "").rstrip())
                 t_map = time.time()
                 while not map_surrounds_origin(args.distro, say=True) and time.time() - t_map < 60:
                     time.sleep(3.0)

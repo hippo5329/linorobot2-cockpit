@@ -201,11 +201,11 @@ def test_a_limited_view_explores_before_nav2():
     i = pipe.index("if not args.map and not map_surrounds_origin(args.distro, say=True):")
     assert i < pipe.index('print(f"\\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")')
     assert "while not map_surrounds_origin(args.distro, say=True)" in pipe
-    net = sum(vx * t for vx, _, t in ocp.EXPLORE_MOVES)
-    assert abs(net) < 1e-9, "exploring must bring the base back to where it started"
-    assert max(vx * t for vx, _, t in ocp.EXPLORE_MOVES) < 1.5, "the test room's wall is 2 m ahead"
+    assert "explore_nudge.py" in pipe, "driven by odometry, not by a timed topic pub"
+    nudge = open(os.path.join(REPO_ROOT, "scripts", "explore_nudge.py")).read()
+    assert 'default=0.8, help="metres out, and back"' in nudge, "under the test rooms' 1.5 m to a wall"
+    assert "a >= 2 * math.pi" in nudge
     text = ("resolution: 0.05\nwidth: 80\nheight: 120\n"
             "origin:\n  position:\n    x: 0.07\n    y: -3.2\n    z: 0.0\n")
     x0, y0, x1, y1 = ocp.map_extent(text)
     assert (round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)) == (0.07, -3.2, 4.07, 2.8)
-    assert "stamped" in ocp._twist_pub(0.1, 0.0, True).lower() and "TwistStamped" not in ocp._twist_pub(0.1, 0.0, False)
