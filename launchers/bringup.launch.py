@@ -301,7 +301,11 @@ def launch_setup(context, *args, **kwargs):
     # for good -- "Robot to stop due to invalid source" -- because the board
     # that normally publishes it is the thing that is missing. With a board the
     # firmware's own cone is the publisher; two would disagree.
-    host_sonar = no_board and bool(controller.get("sensors", {}).get("use_sim_sonar", True))
+    # ...and on a saved-map world, where the board's emulator is off (mcu_env)
+    # and its sonar with it (main.cpp: range_sim = sim_lidar_on && sim_sonar):
+    # the host raycasts the map for the LiDAR, the camera AND the sonar.
+    host_sonar = (no_board or bool(world_map_path)) and \
+        bool(controller.get("sensors", {}).get("use_sim_sonar", True))
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
     # A model no driver here reads stops the launch with its name, not an LD19
     # driver respawning on another vendor's port (lidar_drivers.family).
@@ -691,6 +695,18 @@ def launch_setup(context, *args, **kwargs):
             )
         ),
     ]
+
+    if world_map_path and not robot_has_lidar and host_sonar:
+        # A camera-only robot on a map world still has its simulated sonar: the
+        # host laser node raycasts the map for it, its scan on a topic nothing reads.
+        nodes.append(Node(
+            executable=sys.executable,
+            arguments=[os.path.join(REPO_ROOT, "scripts", "sim_laser_node.py")],
+            name="sim_sonar_node", output="screen",
+            parameters=[{"frame_id": laser_frame, "offset_x": float(geometry["laser"]["x"]),
+                         "sonar": True, "sonar_frame_id": sonar_frame,
+                         "topic": "sim_sonar_scan", **world_params}],
+        ))
 
     if lidar_masked:
         chain = lidar_mask.filter_chain_params(controller, float(geometry["laser"].get("yaw", 0.0)),
