@@ -299,6 +299,35 @@ open(p, "w").write(s.replace(old, new))
 PYEX
     echo "[vendor] explore_lite: go home after the cancel is answered"
 fi
+# 3. No goal replaces a goal in progress. explore_lite re-targets every replan
+#    (planner_frequency) by sending a new goal over the running one, and Nav2
+#    1.5.1 refuses that -- "another navigator is processing, rejecting request",
+#    and with allow_navigator_preemption "Timed out waiting for current
+#    navigator to stop": every replanned goal on lyrical, measured 2026-09-26.
+#    Planning now waits for the goal in progress to end (reached or aborted --
+#    Nav2's own progress checker aborts a stuck one, and an aborted frontier is
+#    blacklisted); the result callback plans the next. Exploration therefore
+#    also ends with no goal running, so going home never races a cancel.
+if [ -f "$EX" ] && ! grep -q "Never replace a goal in progress" "$EX"; then
+    python3 - "$EX" <<'PYMP'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """void Explore::makePlan()
+{
+"""
+new = """void Explore::makePlan()
+{
+  // Never replace a goal in progress (prepare_docker_vendor.sh): Nav2 1.5.1
+  // refuses a goal sent over a running one. The result callback plans next.
+  if (goal_active_) {
+    return;
+  }
+"""
+assert s.count(old) == 1, "explore.cpp makePlan() changed upstream"
+open(p, "w").write(s.replace(old, new))
+PYMP
+    echo "[vendor] explore_lite: plan the next frontier only when the goal in progress has ended"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
