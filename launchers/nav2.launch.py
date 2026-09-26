@@ -452,13 +452,17 @@ def launch_setup(context, *args, **kwargs):
         # each was refused after a 500 ms "Timed out waiting for current
         # navigator to stop" instead. Left at upstream's default; explore_lite
         # no longer sends a goal over a running one (prepare_docker_vendor.sh).
-        # 4. Increase bond timeout for Lyrical lifecycle managers
-        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 60.0}
-        nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 60.0}
+        # 4. In a single-threaded composed container, servers share one thread;
+        # heavy costmap or route computations cause bond heartbeats to starve.
+        # Process-level lifecycle bonds within the same composed process are
+        # redundant and harmful; setting bond_timeout to 0.0 disables bond
+        # timers completely in nav2_lifecycle_manager.
+        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 0.0, "bond_heartbeat_period": 0.0}
+        nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 0.0, "bond_heartbeat_period": 0.0}
     else:
         # Jazzy standards
-        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 60.0}
-        nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 60.0}
+        nav2_data.setdefault("lifecycle_manager_navigation", {})["ros__parameters"] = {"bond_timeout": 0.0, "bond_heartbeat_period": 0.0}
+        nav2_data.setdefault("lifecycle_manager_slam", {})["ros__parameters"] = {"bond_timeout": 0.0, "bond_heartbeat_period": 0.0}
 
     # collision_monitor is the one Nav2 node with no usable code default: it
     # reads `observation_sources` during on_configure and errors out if the key
@@ -771,7 +775,8 @@ def launch_setup(context, *args, **kwargs):
         str(((nav2_data.get("controller_server") or {}).get("ros__parameters", {})
              .get("FollowPath") or {}).get("plugin", "?")).split("::")[-1]
     actions = [
-        SetParameter("bond_timeout", 60.0),
+        SetParameter("bond_timeout", 0.0),
+        SetParameter("bond_heartbeat_period", 0.0),
         LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}', "
                     f"FollowPath={controller}, composed)"),
     ]
