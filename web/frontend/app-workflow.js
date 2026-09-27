@@ -1057,12 +1057,13 @@ function initCockpitDashboard() {
     // make the setting impossible to turn off from the UI.
     const autoUpdate = document.getElementById("cockpit-auto-update")?.checked ?? true;
 
+    const isReal = mode === "real";
     const exploreCheck = document.getElementById("cockpit-explore");
     const explore = exploreCheck ? exploreCheck.checked : true;
     const worldSel = document.getElementById("cockpit-pipeline-world");
-    const world = worldSel ? worldSel.value : "";
+    const world = (!isReal && worldSel) ? worldSel.value : "";
     const worldMapInput = document.getElementById("cockpit-pipeline-world-map");
-    const worldMap = (world === "map" && worldMapInput) ? worldMapInput.value.trim() : "";
+    const worldMap = (!isReal && world === "map" && worldMapInput) ? worldMapInput.value.trim() : "";
 
     if (btnOneClick) btnOneClick.disabled = true;
     if (btnHdrDeploy) btnHdrDeploy.disabled = true;

@@ -470,6 +470,9 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
         "--explore-sec", str(explore_sec),
         "--distro", d_str,
     ]
+    if (mode or "").lower() == "real":
+        world = None
+        world_map = None
     if not explore:
         cmd.append("--no-explore")
     if world:
@@ -519,6 +522,9 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
     selected_controller = controller or get_controller_name(params, "pico2")
     pipeline_script = os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")
     m_str = mode or "sim"
+    if m_str.lower() == "real":
+        world = None
+        world_map = None
 
     d_str = distro
     if not d_str:

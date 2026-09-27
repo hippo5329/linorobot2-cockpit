@@ -883,23 +883,30 @@ def hardware_env(params: dict) -> dict:
         # "rooms" turns the single test wall off and lays the rooms' walls, and
         # any configured walls are added. Interior walls go as one key,
         # "x1,y1,x2,y2;..." (sim_ld19.h applyEnvRoom).
+        # Rooms and custom simulated worlds are for simulation only; real robots
+        # observe real space and must have all simulated room keys disabled.
         import depth_camera
         whole = {"base_controller": tgt}
-        if depth_camera.sim_world(whole) == "rooms":
-            env["sim_wall"] = 0
-        if depth_camera.sim_world(whole) == "map":
-            # A saved map is raycast on the host (bringup's simulated laser); the
-            # board cannot hold one. Its LD19 emulator goes quiet, and its own
-            # box -- which its sonar and its collision clamp still use -- is made
-            # too big to meet, so neither contradicts the map. The map world
-            # has no collision: the robot can be driven through a mapped wall.
-            env["sim_ld19"] = "0"
-            env["sim_wall"] = 0
-            env["sim_map_w"] = 100
-            env["sim_map_h"] = 100
-        walls = depth_camera.sim_walls(whole)
-        if walls:
-            env["sim_walls"] = depth_camera.walls_env(walls)
+        if not depth_camera.is_real_robot(whole):
+            if depth_camera.sim_world(whole) == "rooms":
+                env["sim_wall"] = 0
+            if depth_camera.sim_world(whole) == "map":
+                # A saved map is raycast on the host (bringup's simulated laser); the
+                # board cannot hold one. Its LD19 emulator goes quiet, and its own
+                # box -- which its sonar and its collision clamp still use -- is made
+                # too big to meet, so neither contradicts the map. The map world
+                # has no collision: the robot can be driven through a mapped wall.
+                env["sim_ld19"] = "0"
+                env["sim_wall"] = 0
+                env["sim_map_w"] = 100
+                env["sim_map_h"] = 100
+            walls = depth_camera.sim_walls(whole)
+            if walls:
+                env["sim_walls"] = depth_camera.walls_env(walls)
+        else:
+            for sk in ("sim_wall", "sim_wall_x1", "sim_wall_y1", "sim_wall_x2", "sim_wall_y2",
+                       "sim_map_w", "sim_map_h", "sim_walls"):
+                env.pop(sk, None)
 
     # How close the simulated robot's centre may come to a simulated wall.
     #

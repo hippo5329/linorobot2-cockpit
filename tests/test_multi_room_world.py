@@ -100,3 +100,50 @@ def test_the_ui_offers_every_world_and_saves_it():
     js = open(os.path.join(REPO_ROOT, "web", "frontend", "app-hardware.js")).read()
     assert 'getElementById("cfg-sim-world")' in js and "out.world = world" in js
     assert "depth_camera.WORLDS" in open(os.path.join(REPO_ROOT, "web", "backend", "routes_config.py")).read()
+
+
+def test_real_robot_disables_rooms_and_walls():
+    """Rooms and simulated worlds are for simulation only; disabled for real robot."""
+    real_robot = {
+        "base_controller": {
+            "name": "pico2",
+            "sensors": {
+                "use_sim_imu": False,
+                "use_sim_wheel": False,
+                "use_sim_ld19": False,
+                "use_sim_mag": False,
+                "use_sim_env": False,
+                "use_sim_sonar": False,
+                "use_sim_battery": False,
+            },
+            "simulation": {
+                "world": "rooms",
+                "walls": [[1.0, 2.0, 3.0, 4.0]],
+            }
+        }
+    }
+    assert dc.is_real_robot(real_robot) is True
+    assert dc.sim_walls(real_robot) == []
+    assert dc.sim_world(real_robot) == "none"
+    assert dc.world_map(real_robot) == (None, None)
+    assert dc.sim_room(real_robot)["wall_obstacle"] is False
+    env = mcu_env.hardware_env(real_robot)
+    assert "sim_walls" not in env
+    assert "sim_wall" not in env
+
+
+def test_explicit_real_mode_disables_rooms_and_walls():
+    sim_robot_with_real_override = {
+        "base_controller": {
+            "name": "sim",
+            "mode": "real",
+            "simulation": {
+                "world": "rooms",
+                "walls": [[1.0, 2.0, 3.0, 4.0]],
+            }
+        }
+    }
+    assert dc.is_real_robot(sim_robot_with_real_override) is True
+    assert dc.sim_walls(sim_robot_with_real_override) == []
+    assert dc.sim_world(sim_robot_with_real_override) == "none"
+    assert dc.world_map(sim_robot_with_real_override) == (None, None)

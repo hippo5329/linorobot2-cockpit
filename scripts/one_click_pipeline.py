@@ -1406,11 +1406,16 @@ def main():
     # the rclpy sim_base_node, with no micro-ROS in the loop.
     sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
     is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
-    if is_real and (args.world or args.world_map):
-        print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "
-              "are disabled. Physical MCU and sensors observe the real space directly.")
-        args.world = None
-        args.world_map = None
+    if is_real:
+        if args.world or args.world_map:
+            print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "
+                  "are disabled. Physical MCU and sensors observe the real space directly.")
+            args.world = None
+            args.world_map = None
+        sim_cfg = controller_cfg.setdefault("simulation", {})
+        sim_cfg["mode"] = "real"
+        sim_cfg["world"] = "none"
+        sim_cfg["walls"] = []
     # Who makes /scan -- a LiDAR, or with none a depth camera -- is the rule
     # bringup.launch.py uses too (depth_camera.scan_source). `has_lidar` below
     # means "has a scan source", whichever it is.
@@ -1691,8 +1696,9 @@ def main():
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
                        f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
                        + (" sim_depth:=true" if sim_depth else "")
-                       + (f" world:={args.world}" if args.world else "")
-                       + (f" world_map:={args.world_map}" if args.world_map else ""))
+                       + f" mode:={"real" if is_real else "sim"}"
+                       + (f" world:={args.world}" if (args.world and not is_real) else "")
+                       + (f" world_map:={args.world_map}" if (args.world_map and not is_real) else ""))
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is

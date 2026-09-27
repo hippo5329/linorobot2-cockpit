@@ -194,7 +194,29 @@ ROOM_DEFAULTS = {"map_width": 10.0, "map_height": 6.0, "wall_obstacle": True,
                  "wall_x1": 2.0, "wall_y1": -1.5, "wall_x2": 2.0, "wall_y2": 1.5}
 
 
+def is_real_robot(params: dict) -> bool:
+    """Return True if this configuration represents a real physical robot rather than simulation."""
+    bc = (params or {}).get("base_controller") or {}
+    sim = bc.get("simulation") or {}
+    mode = str(sim.get("mode") or bc.get("mode") or (params or {}).get("mode") or "").strip().lower()
+    if mode == "real":
+        return True
+    if mode in ("sim", "simulation"):
+        return False
+    if sim.get("enabled") is False:
+        return True
+    if bc.get("name") == "sim":
+        return False
+    sensors = bc.get("sensors") or {}
+    sim_flags = [sensors[k] for k in sensors if k.startswith("use_sim_")]
+    if sim_flags and not any(bool(v) for v in sim_flags):
+        return True
+    return False
+
+
 def sim_room(params: dict) -> dict:
+    if is_real_robot(params):
+        return dict(ROOM_DEFAULTS, wall_obstacle=False)
     sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
     room = dict(ROOM_DEFAULTS)
     for k in ROOM_DEFAULTS:
@@ -226,6 +248,8 @@ MULTI_ROOM_WALLS = [
 #   wall   the 10 x 6 m room with the one obstacle wall the Nav2 goal sits behind (default)
 #   rooms  the same box as four spaces joined by doors (MULTI_ROOM_WALLS), no obstacle wall:
 #          the world for frontier exploration
+#   map    a saved map (simulation.world_map), raycast by the host's simulated sensors
+#   none   real robot / physical space (simulation disabled)
 # Explicit `walls` still add to either, for a layout of one's own.
 WORLDS = {"wall": "one room, the obstacle wall the Nav2 goal sits behind",
           "rooms": "four spaces joined by 1.2 m doors, for exploration",
@@ -233,6 +257,8 @@ WORLDS = {"wall": "one room, the obstacle wall the Nav2 goal sits behind",
 
 
 def sim_world(params: dict) -> str:
+    if is_real_robot(params):
+        return "none"
     sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
     w = str(sim.get("world") or "wall").strip().lower()
     if w not in WORLDS:
@@ -246,6 +272,8 @@ def world_map(params: dict):
     The start defaults to the map's own (0, 0, 0): a map this pipeline saved is
     anchored where its run started, so the robot starts where that one did.
     A relative path is taken from the maps directory (/ws/maps in the image)."""
+    if is_real_robot(params):
+        return None, None
     if sim_world(params) != "map":
         return None, None
     sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
@@ -327,6 +355,8 @@ class GridWorld:
 
 def sim_walls(params: dict) -> list:
     """The interior walls as (x1, y1, x2, y2): the world's, then the configured ones; ValueError on a bad one."""
+    if is_real_robot(params):
+        return []
     sim = (((params or {}).get("base_controller") or {}).get("simulation") or {})
     out = [tuple(float(v) for v in w) for w in MULTI_ROOM_WALLS] if sim_world(params) == "rooms" else []
     for w in sim.get("walls") or []:

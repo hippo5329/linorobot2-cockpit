@@ -110,14 +110,8 @@ def launch_setup(context, *args, **kwargs):
 
     # The config file names exactly one base controller; the launch argument only
     # relabels it (pins and ports still come from the file).
+    mode_arg = str(context.launch_configurations.get("mode", "auto")).strip().lower()
     controller = params.get("base_controller") or {}
-    world_arg = str(context.launch_configurations.get("world", "")).strip()
-    if world_arg:
-        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = world_arg
-    world_map_arg = str(context.launch_configurations.get("world_map", "")).strip()
-    if world_map_arg:
-        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = "map"
-        params.setdefault("base_controller", {}).setdefault("simulation", {})["world_map"] = world_map_arg
     controller_arg = context.launch_configurations.get("controller", "").strip()
     controller_name = controller_arg or controller.get("name") or "pico2"
     # No board at all: `sim_base:=true`, or the base controller named `sim` (the
@@ -140,6 +134,28 @@ def launch_setup(context, *args, **kwargs):
                     in ("true", "1", "yes"))
     host_fw_bin = host_firmware.binary() if (controller_name == "sim" and not sim_base_arg) else None
     no_board = sim_base_arg or (controller_name == "sim" and host_fw_bin is None)
+
+    is_real = (mode_arg == "real") or (
+        mode_arg != "sim"
+        and not no_board
+        and controller_name != "sim"
+        and not controller.get("sensors", {}).get("use_sim_ld19", False)
+        and not controller.get("sensors", {}).get("use_sim_wheel", False)
+    )
+
+    if is_real:
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["mode"] = "real"
+        # Rooms and custom simulated worlds are for simulation only; disable for real robot
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = "none"
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["walls"] = []
+    else:
+        world_arg = str(context.launch_configurations.get("world", "")).strip()
+        if world_arg:
+            params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = world_arg
+        world_map_arg = str(context.launch_configurations.get("world_map", "")).strip()
+        if world_map_arg:
+            params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = "map"
+            params.setdefault("base_controller", {}).setdefault("simulation", {})["world_map"] = world_map_arg
 
     serial_port = (
         context.launch_configurations.get("serial_port")
@@ -252,11 +268,11 @@ def launch_setup(context, *args, **kwargs):
     # walls (mcu_env turns it off for this world). The host's simulated laser,
     # which raycasts the map, is the /scan instead, whatever the board.
     world_map_path, world_start = depth_camera.world_map(params)
-    if world_map_path and robot_has_lidar:
+    if world_map_path and robot_has_lidar and not is_real:
         use_host_sim_laser = True
         print(f"[bringup] world: the saved map {world_map_path} -- /scan from the host's simulated laser")
     world_params = ({"world_map": world_map_path, "world_start": list(world_start)}
-                    if world_map_path else {})
+                    if (world_map_path and not is_real) else {})
 
     if transport in ("udp4", "udp", "wifi"):
         micro_ros_args = ["udp4", "--port", str(udp_port)]
@@ -937,6 +953,11 @@ def generate_launch_description():
             "world_map",
             default_value="",
             description="Path to map .yaml when world is 'map'",
+        ),
+        DeclareLaunchArgument(
+            "mode",
+            default_value="auto",
+            description="Execution mode: 'sim', 'real', or 'auto' (real disables simulated worlds and rooms)",
         ),
         OpaqueFunction(function=launch_setup),
     ])
