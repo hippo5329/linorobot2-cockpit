@@ -52,3 +52,30 @@ def test_the_pipeline_explores_instead_of_the_fixed_goal():
     watch = open(os.path.join(REPO_ROOT, "scripts", "explore_watch.py")).read()
     assert '"returned_to_origin"' in watch and "TRANSIENT_LOCAL" in watch
     assert "test -x /opt/lino_ws/lib/explore_lite/explore" in open(os.path.join(REPO_ROOT, "docker", "Dockerfile")).read()
+
+
+def test_explore_is_default_unless_disabled_manually():
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert '"--no-explore"' in pipe
+    assert "args.explore = not args.require_goal" in pipe
+    html = open(os.path.join(REPO_ROOT, "web", "frontend", "index.html")).read()
+    assert 'id="cockpit-explore" checked' in html
+    assert 'id="cockpit-pipeline-world"' in html
+
+
+def test_multi_room_exploration_world():
+    import depth_camera
+    params = {"base_controller": {"simulation": {"world": "rooms"}}}
+    walls = depth_camera.sim_walls(params)
+    assert len(walls) == len(depth_camera.MULTI_ROOM_WALLS)
+    assert depth_camera.sim_room(params)["wall_obstacle"] is False
+
+
+def test_feed_map_to_simulator():
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert '"--world-map"' in pipe
+    assert 'world_map:={args.world_map}' in pipe
+    bringup = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
+    assert 'world_map_arg' in bringup
+
+

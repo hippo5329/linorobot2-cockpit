@@ -111,6 +111,13 @@ def launch_setup(context, *args, **kwargs):
     # The config file names exactly one base controller; the launch argument only
     # relabels it (pins and ports still come from the file).
     controller = params.get("base_controller") or {}
+    world_arg = str(context.launch_configurations.get("world", "")).strip()
+    if world_arg:
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = world_arg
+    world_map_arg = str(context.launch_configurations.get("world_map", "")).strip()
+    if world_map_arg:
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = "map"
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world_map"] = world_map_arg
     controller_arg = context.launch_configurations.get("controller", "").strip()
     controller_name = controller_arg or controller.get("name") or "pico2"
     # No board at all: `sim_base:=true`, or the base controller named `sim` (the
@@ -920,6 +927,16 @@ def generate_launch_description():
             default_value="false",
             description="Use the simulated depth camera instead of the configured one "
                         "(the pipeline sets it in simulation mode)",
+        ),
+        DeclareLaunchArgument(
+            "world",
+            default_value="",
+            description="Override simulated world ('wall', 'rooms' for multi-room exploration, or 'map')",
+        ),
+        DeclareLaunchArgument(
+            "world_map",
+            default_value="",
+            description="Path to map .yaml when world is 'map'",
         ),
         OpaqueFunction(function=launch_setup),
     ])

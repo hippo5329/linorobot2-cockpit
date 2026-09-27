@@ -332,9 +332,9 @@
       </div>
 
       <div class="form-section">
-        <h3 class="section-title">Simulated World Environment</h3>
-        <p class="hint" style="margin-bottom:12px;">The map the simulated sensors see and the simulated
-          robot drives in. <b>Wall</b> is the room with the single obstacle wall the Nav2 goal test
+        <h3 class="section-title">Simulated World Environment (Sim MCU / Zero-Wiring Only)</h3>
+        <p class="hint" style="margin-bottom:12px;">Applies only to Sim MCU or simulation mode. Physical hardware does not store or load map files on the MCU; real robots use physical LiDAR/sensors to observe the real world.
+          <b>Wall</b> is the room with the single obstacle wall the Nav2 goal test
           plans around. <b>Rooms</b> is four spaces joined by doors, for exploring with
           <code>--explore</code>. It takes effect at the next flash, or the next Sim MCU start.</p>
         <div class="form-grid">
@@ -2273,6 +2273,27 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" style="width:75px; min-width:unset;">
             <span style="color:var(--text-dim); font-size:12px;">sec</span>
           </div>
+        </label>
+
+        <div id="grp-cockpit-sim-world" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <label>Simulated World (Sim MCU Only)
+            <select id="cockpit-pipeline-world" style="min-width:160px;">
+              <option value="" selected>From Config</option>
+              <option value="rooms">Rooms (Multi-Room Exploration)</option>
+              <option value="wall">Wall (Single Room + Obstacle)</option>
+              <option value="map">Saved Map</option>
+            </select>
+          </label>
+
+          <label id="lbl-cockpit-world-map" style="display:none; flex-direction:column; gap:4px;">Saved Map (.yaml)
+            <input type="text" id="cockpit-pipeline-world-map" placeholder="e.g. one_click_map.yaml" style="min-width:160px;">
+          </label>
+        </div>
+
+        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+               title="On (default): robot autonomously explores unknown space (multi-room or single-room) using frontier exploration (explore_lite) and returns to start. Off: fallback to fixed Nav2 goal navigation.">
+          <input type="checkbox" id="cockpit-explore" checked>
+          <span>Autonomous Frontier Exploration</span>
         </label>
 
         <label class="checkbox" style="margin-bottom:8px; cursor:pointer;">

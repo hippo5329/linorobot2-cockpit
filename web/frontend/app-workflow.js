@@ -1012,9 +1012,31 @@ function initCockpitDashboard() {
   // --- 7. One-Click Autonomous Pipeline ---
   const hdrMode = document.getElementById("hdr-pipeline-mode");
   const cockpitMode = document.getElementById("cockpit-pipeline-mode");
+  const grpSimWorld = document.getElementById("grp-cockpit-sim-world");
+  const updateSimWorldVisibility = () => {
+    const curMode = (cockpitMode && cockpitMode.value) || (hdrMode && hdrMode.value) || "sim";
+    if (grpSimWorld) {
+      grpSimWorld.style.display = curMode === "real" ? "none" : "flex";
+    }
+  };
   if (hdrMode && cockpitMode) {
-    hdrMode.addEventListener("change", () => { cockpitMode.value = hdrMode.value; });
-    cockpitMode.addEventListener("change", () => { hdrMode.value = cockpitMode.value; });
+    hdrMode.addEventListener("change", () => {
+      cockpitMode.value = hdrMode.value;
+      updateSimWorldVisibility();
+    });
+    cockpitMode.addEventListener("change", () => {
+      hdrMode.value = cockpitMode.value;
+      updateSimWorldVisibility();
+    });
+  }
+  updateSimWorldVisibility();
+
+  const cockpitWorldSel = document.getElementById("cockpit-pipeline-world");
+  const cockpitWorldMapLbl = document.getElementById("lbl-cockpit-world-map");
+  if (cockpitWorldSel && cockpitWorldMapLbl) {
+    cockpitWorldSel.addEventListener("change", () => {
+      cockpitWorldMapLbl.style.display = cockpitWorldSel.value === "map" ? "flex" : "none";
+    });
   }
 
   const btnHdrDeploy = document.getElementById("btn-header-start-pipeline");
@@ -1035,6 +1057,13 @@ function initCockpitDashboard() {
     // make the setting impossible to turn off from the UI.
     const autoUpdate = document.getElementById("cockpit-auto-update")?.checked ?? true;
 
+    const exploreCheck = document.getElementById("cockpit-explore");
+    const explore = exploreCheck ? exploreCheck.checked : true;
+    const worldSel = document.getElementById("cockpit-pipeline-world");
+    const world = worldSel ? worldSel.value : "";
+    const worldMapInput = document.getElementById("cockpit-pipeline-world-map");
+    const worldMap = (world === "map" && worldMapInput) ? worldMapInput.value.trim() : "";
+
     if (btnOneClick) btnOneClick.disabled = true;
     if (btnHdrDeploy) btnHdrDeploy.disabled = true;
     if (btnHdrDeployText) btnHdrDeployText.innerHTML = "<strong>Running...</strong>";
@@ -1043,10 +1072,10 @@ function initCockpitDashboard() {
       pipelineBadge.className = "pill pill-ok";
       pipelineBadge.textContent = "Running...";
     }
-    if (pipelineMsg) pipelineMsg.textContent = `Pipeline active: ${controller} [mode: ${mode}], exploring for ${sec}s...`;
+    if (pipelineMsg) pipelineMsg.textContent = `Pipeline active: ${controller} [mode: ${mode}${world ? `, world: ${world}` : ""}], ${explore ? "autonomous exploration" : `fixed goal (${sec}s)`}...`;
 
     openTerminal(`One-Click Pipeline (${controller})`);
-    logLine(`[pipeline] Starting automated pipeline for robot '${state.robot_name || "?"}', base controller '${controller}' (explore: ${sec}s, no_nav2: ${noNav2}, mode: ${mode}, auto_update: ${autoUpdate}, force_update: ${updateFw})...`);
+    logLine(`[pipeline] Starting automated pipeline for robot '${state.robot_name || "?"}', base controller '${controller}' (explore: ${explore ? "autonomous" : "fixed goal"}, duration: ${sec}s, no_nav2: ${noNav2}, mode: ${mode}, world: ${world || "config"}${worldMap ? ` [map: ${worldMap}]` : ""}, auto_update: ${autoUpdate}, force_update: ${updateFw})...`);
 
     const abortCtrl = new AbortController();
     activePipelineAbort = abortCtrl;
@@ -1067,7 +1096,10 @@ function initCockpitDashboard() {
       // one line deep in the log.
       const robotName = state.robot_name || document.getElementById("hdr-robot-name")?.value || "";
       const robotParam = robotName ? `&robot=${encodeURIComponent(robotName)}` : "";
-      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}&explore_sec=${sec}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}`;
+      const worldParam = world ? `&world=${encodeURIComponent(world)}` : "";
+      const worldMapParam = worldMap ? `&world_map=${encodeURIComponent(worldMap)}` : "";
+      const exploreParam = `&explore=${explore}`;
+      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}&explore_sec=${sec}${exploreParam}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}${worldParam}${worldMapParam}`;
       const res = await fetch(url, { signal: abortCtrl.signal });
       if (!res.ok || !res.body) {
         logLine(`[pipeline] Failed to start: HTTP ${res.status}`);

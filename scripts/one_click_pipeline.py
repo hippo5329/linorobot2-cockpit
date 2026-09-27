@@ -1267,14 +1267,21 @@ def main():
                         help="Flash even when the USB bus says the board is different silicon "
                              "than the config builds for")
     parser.add_argument("--explore-sec", type=int, default=15, help="Seconds to simulate mapping movement")
-    parser.add_argument("--explore", action="store_true",
+    parser.add_argument("--explore", dest="explore", action="store_true", default=None,
                         help="Map the space by frontier exploration (explore_lite driving Nav2) "
-                             "instead of the fixed Nav2 goal; the robot returns to its start")
+                             "instead of the fixed Nav2 goal; the robot returns to its start (default: on)")
+    parser.add_argument("--no-explore", dest="explore", action="store_false",
+                        help="Skip frontier exploration and fall back to the fixed Nav2 goal")
     parser.add_argument("--explore-timeout", type=int, default=900,
                         help="Seconds the frontier exploration may take (default 900)")
     parser.add_argument("--explore-min-area", type=float, default=0.0,
                         help="m² the explored map must reach for the run to pass (0 = no check); "
                              "a test in a known world sets it, since 'complete' only means no frontier was found")
+    parser.add_argument("--world", choices=list(depth_camera.WORLDS.keys()), default=None,
+                        help="Override simulated world: 'wall' (default obstacle room), "
+                             "'rooms' (multi-room space for exploration), or 'map'")
+    parser.add_argument("--world-map", type=str, default=None,
+                        help="Path to map .yaml to feed into the simulator as the physical world (--world map)")
     parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
                         help="Run the eight-manoeuvre drive suite after the topic gate (default: on)")
     parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
@@ -1324,9 +1331,11 @@ def main():
                              "that must arrive: it failed mid-detour, 3.7 m out.")
     parser.add_argument("--flash-timeout", type=int, default=600,
                         help="Seconds allowed for the whole flash, including every recovery stage")
-    parser.add_argument("--flash-attempt-timeout", type=int, default=90,
-                        help="Seconds allowed for a single upload attempt inside the flasher")
     args = parser.parse_args()
+    if args.explore is None:
+        # Default to frontier exploration, unless the caller specifically requested
+        # the fixed goal gate (--require-goal) or passed --no-explore.
+        args.explore = not args.require_goal
     if args.distro == "auto":
         args.distro = _default_distro
     if args.goal_timeout is None:
@@ -1349,6 +1358,11 @@ def main():
     params_path = select_robot_config(args.robot, args.controller)
     with open(params_path, "r") as f:
         params = yaml.safe_load(f) or {}
+    if args.world:
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = args.world
+    if args.world_map:
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = "map"
+        params.setdefault("base_controller", {}).setdefault("simulation", {})["world_map"] = args.world_map
     controller_cfg = params.get("base_controller") or {}
     if args.goal_tolerance is None:
         # Nav2 stops when ITS goal checker is satisfied. A Yahboom leg ended
@@ -1392,6 +1406,11 @@ def main():
     # the rclpy sim_base_node, with no micro-ROS in the loop.
     sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
     is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
+    if is_real and (args.world or args.world_map):
+        print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "
+              "are disabled. Physical MCU and sensors observe the real space directly.")
+        args.world = None
+        args.world_map = None
     # Who makes /scan -- a LiDAR, or with none a depth camera -- is the rule
     # bringup.launch.py uses too (depth_camera.scan_source). `has_lidar` below
     # means "has a scan source", whichever it is.
@@ -1671,7 +1690,9 @@ def main():
         print(f"\n[4/6] [BRINGUP] Launching the bringup stack (controller={controller}, distro={args.distro})...")
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
                        f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
-                       + (" sim_depth:=true" if sim_depth else ""))
+                       + (" sim_depth:=true" if sim_depth else "")
+                       + (f" world:={args.world}" if args.world else "")
+                       + (f" world_map:={args.world_map}" if args.world_map else ""))
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is

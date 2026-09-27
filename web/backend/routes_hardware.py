@@ -450,7 +450,7 @@ def trigger_firmware_generation(controller: Optional[str] = None):
 
 
 @app.post("/api/workflow/one-click")
-def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = None, flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto"):
+def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = None, flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", explore: bool = True, world: Optional[str] = None, world_map: Optional[str] = None):
     params = load_params()
     selected_controller = controller or get_controller_name(params, "gendrv")
     pipeline_script = os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")
@@ -470,6 +470,12 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
         "--explore-sec", str(explore_sec),
         "--distro", d_str,
     ]
+    if not explore:
+        cmd.append("--no-explore")
+    if world:
+        cmd.extend(["--world", world])
+    if world_map:
+        cmd.extend(["--world-map", world_map])
     if no_nav2:
         cmd.append("--no-nav2")
     if firmware in ("build", "prebuilt"):
@@ -497,7 +503,7 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
 
 
 @app.get("/api/workflow/one-click/stream")
-def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None):
+def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None, explore: bool = True, world: Optional[str] = None, world_map: Optional[str] = None):
     # `robot` is not optional decoration: without it the pipeline resolves the
     # config from --controller alone, and where two robots declare the same
     # base_controller it takes the alphabetically first one. Measured with
@@ -532,6 +538,12 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
     ]
     if robot:
         cmd.extend(["--robot", robot])
+    if not explore:
+        cmd.append("--no-explore")
+    if world:
+        cmd.extend(["--world", world])
+    if world_map:
+        cmd.extend(["--world-map", world_map])
     if no_nav2:
         cmd.append("--no-nav2")
     if firmware in ("build", "prebuilt"):
@@ -544,8 +556,9 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
     def event_generator():
         start_line = (f">>> Starting One-Click Pipeline on robot: {robot or '<resolved from controller>'}, "
                       f"controller: {selected_controller} "
-                      f"(distro: {d_str}, mode: {m_str}, "
-                      f"auto-update: {'on' if auto_update else 'off'})")
+                      f"(distro: {d_str}, mode: {m_str}, explore: {'on' if explore else 'off'}"
+                      + (f", world: {world}" if world else "")
+                      + f", auto-update: {'on' if auto_update else 'off'})")
         yield f"event: output\ndata: {json.dumps({'line': start_line})}\n\n"
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in iter(proc.stdout.readline, ""):
