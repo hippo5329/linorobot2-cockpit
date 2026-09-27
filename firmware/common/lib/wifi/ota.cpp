@@ -28,20 +28,16 @@ void initOta(void)
     // The port is a robot fact like every other address: telemetry.ota_port in
     // the config, `ota_port` in the env. 3232 is ArduinoOTA's own default.
     ArduinoOTA.setPort(envU16("ota_port", 3232));
-    // Port defaults to 3232
-    // Port defaults to 8266
-    // ArduinoOTA.setPort(8266);
 
-    // Hostname defaults to esp3232-[MAC]
-    // Hostname defaults to esp8266-[ChipID]
-    // ArduinoOTA.setHostname("myesp8266");
-
-    // No authentication by default
-    // ArduinoOTA.setPassword("admin");
-
-    // Password can be set with it's md5 value as well
-    // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
-    // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
+    const char *pwd = envGet("ota_password", NULL);
+#if defined(OTA_PASSWORD)
+    if (!pwd || pwd[0] == '\0') {
+        pwd = OTA_PASSWORD;
+    }
+#endif
+    if (pwd && pwd[0] != '\0') {
+        ArduinoOTA.setPassword(pwd);
+    }
 
     ArduinoOTA.onStart([]() {
       String type;

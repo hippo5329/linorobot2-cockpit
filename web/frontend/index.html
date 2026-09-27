@@ -26,7 +26,7 @@
     <div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <h1 class="brand-title" style="margin:0; font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
-        <span id="header-build-version" class="badge-pill" style="font-size:0.7rem; font-family:var(--font-mono); background:rgba(56, 189, 248, 0.15); color:#38bdf8; border:1px solid rgba(56, 189, 248, 0.35); padding:1px 6px; font-weight:700;" title="Firmware & Cockpit Build Version">v20260925-dev</span>
+        <span id="header-build-version" class="badge-pill" style="font-size:0.7rem; font-family:var(--font-mono); background:rgba(56, 189, 248, 0.15); color:#38bdf8; border:1px solid rgba(56, 189, 248, 0.35); padding:1px 6px; font-weight:700;" title="Firmware & Cockpit Build Version">rc-20260927.3</span>
         <div class="git-version-row">
           <button id="git-version-badge" class="git-version-badge" type="button" aria-expanded="false"
                   title="Repo version the web server started on — click for branch, remotes &amp; recent commits">
@@ -37,6 +37,7 @@
           </button>
           <div id="git-version-popover" class="git-version-popover" hidden></div>
         </div>
+        <button id="btn-about-cockpit" class="btn-mini" type="button" title="About Linorobot2 Cockpit" style="font-size:0.7rem; padding:2px 7px; border-radius:4px; background:rgba(255,255,255,0.06); border:1px solid var(--border-soft); color:var(--text-dim); cursor:pointer;">ℹ️ About</button>
       </div>
       <p class="brand-subtitle" style="margin:0; font-size:11px; color:var(--text-dim);">ROS 2 Autonomy &amp; Hardware Supervisor</p>
     </div>
@@ -2516,6 +2517,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <label style="flex:0.6; min-width:100px;">ArduinoOTA Port
           <input type="number" id="secrets-ota-port" placeholder="3232" value="3232">
         </label>
+        <label style="flex:0.8; min-width:140px;">OTA Password
+          <input type="password" id="secrets-ota-password" placeholder="Optional">
+        </label>
       </div>
 
       <!-- Actions -->
@@ -2967,6 +2971,50 @@ podman run --rm hello-world</code></pre>
         <button type="button" id="btn-test-rootless-daemon" class="btn btn-sm">🔍 Test Daemon</button>
         <button type="button" id="btn-close-rootless-modal-foot" class="btn btn-sm btn-primary">Done</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- About Cockpit Modal -->
+<div id="modal-about-cockpit" class="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(8px);">
+  <div class="modal-card" style="background:var(--bg-card, #111827);border:1px solid #38bdf8;border-radius:14px;padding:26px 30px;min-width:420px;max-width:640px;width:90%;box-shadow:0 25px 65px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:12px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:1.6rem;">🚀</span>
+        <div>
+          <h2 style="margin:0;font-size:1.25rem;color:#f8fafc;font-weight:700;">Linorobot2 <span style="color:#38bdf8;">Cockpit</span></h2>
+          <span style="font-size:0.75rem;font-family:var(--font-mono);background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.35);padding:1px 6px;border-radius:4px;font-weight:700;">rc-20260927.3</span>
+        </div>
+      </div>
+      <button type="button" id="btn-close-about-modal" class="btn btn-sm" style="font-size:1.1rem;padding:2px 8px;">✕</button>
+    </div>
+
+    <div style="font-size:0.88rem;color:#cbd5e1;line-height:1.6;margin-bottom:20px;">
+      <p style="margin-top:0;"><strong>1-Click Mobile Robot Autonomy</strong> from browser to bare microcontroller: unified micro-ROS firmware, realistic physics simulation, SLAM &amp; Nav2 supervisor.</p>
+
+      <div style="background:rgba(15,23,42,0.6);border:1px solid var(--border-soft);border-radius:8px;padding:12px 14px;margin:12px 0;">
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:0.82rem;">
+          <span style="color:var(--text-dim);">Supported MCUs:</span>
+          <span style="color:#f1f5f9;">Raspberry Pi Pico 2 / 2 W (RP2350), Pico / Pico W (RP2040), ESP32, ESP32-S3, Sim MCU</span>
+          <span style="color:var(--text-dim);">ROS 2 Distros:</span>
+          <span style="color:#f1f5f9;">Jazzy Jalisco (Ubuntu 24.04 LTS), Lyrical Lemur (Ubuntu 26.04)</span>
+          <span style="color:var(--text-dim);">Autonomy Stack:</span>
+          <span style="color:#f1f5f9;">micro_ros_agent, robot_localization, SLAM Toolbox, Nav2, rosbridge</span>
+          <span style="color:var(--text-dim);">Network &amp; OTA:</span>
+          <span style="color:#f1f5f9;">Serial CDC &amp; Wi-Fi UDP, UDP Syslog telemetry, authenticated ArduinoOTA</span>
+          <span style="color:var(--text-dim);">License:</span>
+          <span style="color:#f1f5f9;">Apache License 2.0</span>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;">
+        <a href="https://github.com/hippo5329/linorobot2-cockpit/wiki" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-accent" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">📖 Documentation &amp; Wiki</a>
+        <a href="https://github.com/hippo5329/linorobot2-cockpit" target="_blank" rel="noopener noreferrer" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">⭐ GitHub Repository</a>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;border-top:1px solid rgba(255,255,255,0.1);padding-top:14px;">
+      <button type="button" id="btn-close-about-modal-foot" class="btn btn-sm btn-primary">Close</button>
     </div>
   </div>
 </div>

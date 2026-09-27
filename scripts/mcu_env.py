@@ -296,12 +296,13 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
     agent_port = tgt.get("udp_port") or micro.get("agent_port", 8888)
 
     telemetry = tgt.get("telemetry", {}) or {}
+    sec_telem = secrets.get("telemetry", {}) or {}
     syslog_ip = (telemetry.get("syslog_server")
-                 or (secrets.get("telemetry", {}) or {}).get("syslog_server")
+                 or sec_telem.get("syslog_server")
                  or agent_ip)
     syslog_port = resolve_syslog_port(
         telemetry.get("syslog_port")
-        or (secrets.get("telemetry", {}) or {}).get("syslog_port", SYSLOG_PORT_DEFAULT))
+        or sec_telem.get("syslog_port", SYSLOG_PORT_DEFAULT))
 
     lidar = tgt.get("lidar", {}) or {}
     lidar_ip = lidar.get("server_ip") or agent_ip
@@ -317,6 +318,9 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
         "lidar_ip": lidar_ip,
         "lidar_port": lidar_port,
     }
+    ota_password = sec_telem.get("ota_password") or telemetry.get("ota_password")
+    if ota_password:
+        env["ota_password"] = str(ota_password)
     env.update(hardware_env(params))
     return env
 
@@ -621,6 +625,8 @@ def hardware_env(params: dict) -> dict:
     telemetry = tgt.get("telemetry", {}) or {}
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
+    if telemetry.get("ota_password"):
+        env["ota_password"] = str(telemetry["ota_password"])
 
     # --- sensors. Sim wins: a config asking for a simulated IMU on a board that
     # also names a QMI8658 wants the simulation, not the chip.
@@ -1016,6 +1022,8 @@ def redact(env: dict) -> dict:
     out = dict(env)
     if out.get("wifi_psk"):
         out["wifi_psk"] = "*" * 8
+    if out.get("ota_password"):
+        out["ota_password"] = "*" * 8
     return out
 
 

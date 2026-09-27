@@ -297,6 +297,22 @@ function initWorkflowSetup() {
   if (btnSetupRootless) btnSetupRootless.addEventListener("click", () => triggerRootlessDockerSetup(true));
   checkAndAutoSetupRootlessDocker();
 
+  // About Cockpit modal
+  const btnAbout = document.getElementById("btn-about-cockpit");
+  const modalAbout = document.getElementById("modal-about-cockpit");
+  const btnCloseAbout = document.getElementById("btn-close-about-modal");
+  const btnCloseAboutFoot = document.getElementById("btn-close-about-modal-foot");
+  const openAboutModal = () => { if (modalAbout) modalAbout.style.display = "flex"; };
+  const closeAboutModal = () => { if (modalAbout) modalAbout.style.display = "none"; };
+  if (btnAbout) btnAbout.addEventListener("click", openAboutModal);
+  if (btnCloseAbout) btnCloseAbout.addEventListener("click", closeAboutModal);
+  if (btnCloseAboutFoot) btnCloseAboutFoot.addEventListener("click", closeAboutModal);
+  if (modalAbout) {
+    modalAbout.addEventListener("click", (e) => {
+      if (e.target === modalAbout) closeAboutModal();
+    });
+  }
+
   // Copy buttons
   if (btnCopyUbuntu) {
     btnCopyUbuntu.addEventListener("click", () => {

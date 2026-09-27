@@ -864,6 +864,13 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
 
     # ArduinoOTA: compiled in wherever there is a radio (HAS_WIFI); the
     # `ota_port` env key and the radio being wanted decide whether it runs.
+    ota_password = (secrets.get("telemetry", {}) or {}).get("ota_password") or tgt.get("telemetry", {}).get("ota_password")
+    if ota_password:
+        lines.extend([
+            "// --- ArduinoOTA Password (compiled fallback; env `ota_password` decides) ---",
+            f'#define OTA_PASSWORD "{ota_password}"',
+            "",
+        ])
 
     # LiDAR UDP Streaming.
     #

@@ -771,6 +771,9 @@ async function loadSecrets() {
     const elOtaPort = document.getElementById("secrets-ota-port");
     if (elOtaPort) elOtaPort.value = telem.ota_port || 3232;
 
+    const elOtaPwd = document.getElementById("secrets-ota-password");
+    if (elOtaPwd) elOtaPwd.value = telem.ota_password || "";
+
     const rawEditor = document.getElementById("secrets-raw-editor");
     if (rawEditor && data.raw_yaml) rawEditor.value = data.raw_yaml;
 
@@ -822,6 +825,7 @@ async function saveSecrets() {
           syslog_server: document.getElementById("secrets-syslog-server")?.value.trim() || "192.168.1.100",
           syslog_port: parseInt(document.getElementById("secrets-syslog-port")?.value, 10) || 514,
           ota_port: parseInt(document.getElementById("secrets-ota-port")?.value, 10) || 3232,
+          ota_password: document.getElementById("secrets-ota-password")?.value || "",
         }
       }
     };
