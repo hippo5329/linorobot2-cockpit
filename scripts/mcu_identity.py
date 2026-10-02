@@ -25,6 +25,7 @@ import os
 _ENV_FAMILY = {
     "pico": "pico", "picow": "pico",
     "pico2": "pico2", "pico2w": "pico2",
+    "xrp": "xrp",                                   # SparkFun XRP Controller: an RP2350B board
     "esp32": "esp32", "gendrv": "esp32",
     "esp32s3": "esp32s3", "yb_eet01": "esp32s3",   # Yahboom YB-EET01: an ESP32-S3 board
 }
@@ -35,7 +36,7 @@ _ENV_FAMILY = {
 _BRIDGE_AMBIGUOUS = {"esp32", "esp32s3", "esp32s2", "gendrv"}
 
 FAMILY_LABEL = {
-    "pico": "RP2040", "pico2": "RP2350",
+    "pico": "RP2040", "pico2": "RP2350", "xrp": "RP2350B (SparkFun XRP Controller)",
     "esp32": "ESP32", "esp32s3": "ESP32-S3", "esp32s2": "ESP32-S2",
     "gendrv": "ESP32",
 }
@@ -62,6 +63,14 @@ def classify_usb(vid: str, pid: str, product: str = "") -> tuple:
         # An RP2 we do not have a pid for: still an RP2 board, but which one is
         # a guess, so it must not be grounds to refuse a flash.
         return ("pico2", "Raspberry Pi RP2", False)
+
+    if vid == "1b4f" and (pid == "0046" or "xrp" in prod):
+        # The SparkFun XRP Controller's application enumerates under SparkFun's
+        # vid with its own pid (arduino-pico's sparkfun_xrp_controller board).
+        # It is an RP2350B with the radio and the I2C bus on other pins than a
+        # Pico 2 W, so a Pico 2 image does not belong on it. In BOOTSEL it is
+        # the ROM's 2e8a:000f like every RP2350 -- see mismatch().
+        return ("xrp", "SparkFun XRP Controller (RP2350B)", True)
 
     if vid == "303a":
         if pid in ("1001", "1002") or "esp32-s3" in prod:
@@ -321,6 +330,12 @@ def mismatch(expected_family: str, detected_family: str, decisive: bool) -> bool
         return False
     # Anything fronted by a bridge is indistinguishable from its siblings.
     if expected_family in _BRIDGE_AMBIGUOUS and detected_family in _BRIDGE_AMBIGUOUS:
+        return False
+    # An XRP Controller in BOOTSEL is the RP2350 ROM, 2e8a:000f, exactly like a
+    # Pico 2 -- and BOOTSEL is precisely when an image is written. So "pico2" on
+    # the bus is not evidence against an xrp env. The converse still stands: an
+    # XRP running its own image says 1b4f:0046, and a Pico 2 image is refused.
+    if expected_family == "xrp" and detected_family == "pico2":
         return False
     return True
 

@@ -153,7 +153,8 @@ def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "   
 
 def is_pico_family(env: str) -> bool:
     env_lower = (env or "").lower()
-    return any(k in env_lower for k in ("pico", "rp2040", "rp2350", "rpipico"))
+    # xrp: the SparkFun XRP Controller, an RP2350B -- picotool, not esptool.
+    return any(k in env_lower for k in ("pico", "rp2040", "rp2350", "rpipico", "xrp"))
 
 
 def is_esp_family(env: str) -> bool:
@@ -858,7 +859,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
     except Exception:
         pass
 
-    is_rp2350 = "2350" in env.lower() or "pico2" in env.lower()
+    is_rp2350 = "2350" in env.lower() or "pico2" in env.lower() or "xrp" in env.lower()
     family_flag = ["--family", "rp2350-arm-s"] if is_rp2350 else ["--family", "rp2040"]
     # Which board. The family only says which CHIP; with two RP2350s, or with a
     # Pico and a Pico 2 both in BOOTSEL, picotool still has a choice to make and
@@ -959,7 +960,7 @@ def flash_env_via_picotool(env_bin: str, env: str = "pico2") -> bool:
         log(f"No env offset known for '{env}'; skipping the env block.")
         return False
 
-    is_rp2350 = "2350" in env.lower() or "pico2" in env.lower()
+    is_rp2350 = "2350" in env.lower() or "pico2" in env.lower() or "xrp" in env.lower()
     family_flag = ["--family", "rp2350-arm-s"] if is_rp2350 else ["--family", "rp2040"]
 
     for pt in pts:

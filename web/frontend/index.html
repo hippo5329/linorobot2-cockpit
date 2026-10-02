@@ -301,6 +301,7 @@
               <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
               <option value="pico">Raspberry Pi Pico (RP2040)</option>
               <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
+              <option value="xrp">SparkFun XRP Controller (RP2350B + RM2 Wi-Fi)</option>
               <option value="esp32">ESP32 DevKit DOIT V1 (serial or Wi-Fi UDP)</option>
               <option value="esp32s3">ESP32-S3 DevKitC-1</option>
               <option value="sim">Sim MCU — no board (the firmware runs on this computer, nothing to flash)</option>
@@ -746,6 +747,7 @@
             <select id="cfg-driver-type" class="form-select">
               <option value="GENERIC_2_IN">GENERIC_2_IN: 3 pins per motor (PWM enable + IN_A + IN_B) — L298N, TB6612FNG with STBY, VNH5019</option>
               <option value="AT8236" selected>AT8236 / BTS7960: 2 pins per motor (Dual PWM / IN_A + IN_B, recommended)</option>
+              <option value="DRV8411A">DRV8411A (SparkFun XRP): 2 pins per motor (Dual PWM / IN_A + IN_B)</option>
               <option value="BTS7960">BTS7960 / DRV8833: 2 pins per motor (Dual PWM / RPWM + LPWM)</option>
               <option value="GENERIC_1_IN">GENERIC_1_IN: 2 pins per motor (PWM speed + single direction pin) — Cytron MD10C / MD30C</option>
               <option value="ESC">ESC: 1 pin per motor (Standard RC servo PWM pulse)</option>
@@ -1307,6 +1309,7 @@
             <option value="pico2w">pico2w</option>
             <option value="pico">pico</option>
             <option value="picow">picow</option>
+            <option value="xrp">xrp</option>
             <option value="esp32">esp32</option>
             <option value="esp32s3">esp32s3</option>
             <option value="sim">sim</option>
@@ -2254,6 +2257,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <option value="pico2" selected>Raspberry Pi Pico 2 (Default - Recommended for Beginners)</option>
             <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
             <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
+            <option value="xrp">SparkFun XRP Controller (RP2350B - Serial uROS + Wi-Fi Syslog/OTA)</option>
             <option value="esp32">ESP32 DevKit (serial or Wi-Fi UDP - the env partition picks)</option>
             <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>
             <option value="pico">Raspberry Pi Pico (RP2040)</option>

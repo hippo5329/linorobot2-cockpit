@@ -46,6 +46,7 @@ BOARDS = {
     "picow":   ("rpipicow",     "Raspberry Pi Pico W (RP2040 + CYW43)"),
     "pico2":   ("rpipico2",     "Raspberry Pi Pico 2 (RP2350)"),
     "pico2w":  ("rpipico2w",    "Raspberry Pi Pico 2 W (RP2350 + CYW43)"),
+    "xrp":     ("sparkfun_xrp_controller", "SparkFun XRP Controller (RP2350B + RM2)"),
     "esp32":   ("esp32dev",     "ESP32 (WROOM)"),
     "esp32s3": ("esp32-s3-devkitc-1", "ESP32-S3"),
 }
@@ -91,7 +92,8 @@ def _bare_comm_mode(mcu: str) -> str:
     BARE ESP32 has neither wired, so it has no scan source, which is the honest
     default rather than one that quietly halves the control rate.
     """
-    return "topic" if mcu.startswith("pico") else "serial"
+    # RP2_MCUS, not startswith("pico"): the SparkFun XRP Controller is an RP2350B too.
+    return "topic" if mcu in gen_firmware_header.RP2_MCUS else "serial"
 
 
 # The simulated world, written out IN FULL rather than left to the firmware's
@@ -284,7 +286,7 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
             "board": board,
             "driver_type": "BTS7960",
             "transport": "serial",
-            "serial_port": "/dev/ttyACM0" if key.startswith("pico") else "/dev/ttyUSB0",
+            "serial_port": "/dev/ttyACM0" if key in gen_firmware_header.RP2_MCUS else "/dev/ttyUSB0",
             "baudrate": 921600,
             "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
                       "raw_scan_topic": "raw_scan"},

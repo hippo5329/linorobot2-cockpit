@@ -252,8 +252,8 @@ jobs:
         # radio is compiled in but nothing touches the CYW43 unless Wi-Fi is
         # wanted AND an AP list exists. The non-W envs stay in the matrix so
         # they keep compiling, but nothing is built from them.
-        env: [esp32, esp32s3, pico, pico2, picow, pico2w,
-              esp32_lyrical, esp32s3_lyrical, picow_lyrical, pico2w_lyrical]
+        env: [esp32, esp32s3, pico, pico2, picow, pico2w, xrp,
+              esp32_lyrical, esp32s3_lyrical, picow_lyrical, pico2w_lyrical, xrp_lyrical]
     steps:
       - uses: actions/checkout@v4
       # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
@@ -366,6 +366,10 @@ jobs:
             # W-specific facts (LED on the CYW43, GP23/24/25/29 owned by the
             # radio) live in scripts/pin_catalog.py, keyed on the mcu name.
             pico*)   cfg=config/reference/pico2_mecanum_config.yaml ;;
+            # The SparkFun XRP Controller is an RP2350B with its own board
+            # definition (16 MB flash, the RM2 radio on GP26-29), so it builds
+            # from its own reference.
+            xrp*)    cfg=config/reference/xrp_config.yaml ;;
           esac
           distro=jazzy; case "${{ matrix.env }}" in *_lyrical) distro=lyrical ;; esac
           python3 scripts/gen_firmware_header.py --params "$cfg" --distro "$distro" --no-embed-secrets

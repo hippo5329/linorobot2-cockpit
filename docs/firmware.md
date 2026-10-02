@@ -284,7 +284,7 @@ than "the driver exists", and the only one backed by a measurement.
 | QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | GenDrv |
 | LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | bench Pico 2, 2026-09-23 |
 | GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | — |
-| BNO085 | 0x4A, 0x4B | — | — |
+| BNO085 / BNO080 | 0x4A, 0x4B | the address alone | bench Pico 2 W, 2026-10-02 (on-chip fusion, 50 Hz) |
 
 **Read the last column as the honest state.** A dash means the driver exists
 and no real chip of that part has answered on a bench yet. The GenDrv's QMI8658
@@ -431,6 +431,7 @@ That file is authoritative; the table below records intent, not a copy to keep i
 | `base_pico2` | same | `rpipico2` | `upload_protocol picotool` |
 | `base_picow` | same | `rpipicow` | + `board_build.filesystem_size 1m` |
 | `base_pico2w` | same | `rpipico2w` | + `board_build.filesystem_size 1m` |
+| `base_xrp` | same | `sparkfun_xrp_controller` | + `board_build.filesystem_size 1m` |
 
 Shared `[env]`: `framework = arduino`, `monitor_speed`, `lib_extra_dirs = common/lib`.
 Each env is one `extends` plus its build flags, e.g.:
@@ -476,7 +477,8 @@ reserves for EEPROM emulation. Its builder computes `eeprom_start = 0x10000000 +
 - 4096` and `maximum_sketch_size = flash_size - 4096 - filesystem_size`, so that sector sits
 above **both** the sketch and the filesystem on every RP2 board, whatever the flash size and
 whether or not a filesystem is configured. Addresses: `0x101FF000` (pico/picow, 2 MB),
-`0x103FF000` (pico2/pico2w, 4 MB), stated once in `scripts/mcu_env.py:RP2_ENV_OFFSETS`.
+`0x103FF000` (pico2/pico2w, 4 MB), `0x10FFF000` (xrp, 16 MB), stated once in
+`scripts/mcu_env.py:RP2_ENV_OFFSETS`.
 
 **That placement is what preserves the keys through an update.** `picotool load firmware.uf2`
 writes only the blocks the UF2 carries, and a sketch UF2 carries none above
@@ -539,6 +541,30 @@ the transport is installed at boot by `initUrosTransport()` from the env partiti
 That is also why there is one ESP32 *config* — `config/reference/gendrv_config.yaml`. A serial and a
 udp4 DevKit reference beside it would describe the same silicon and differ only in keys the env
 decides at boot; `-e esp32` builds gendrv, and `transport=` in the env picks the rest.
+
+### The SparkFun XRP Controller is an RP2350B with its own env
+`config/reference/xrp_config.yaml` is the SparkFun XRP robot kit: the XRP Controller (RP2350B,
+16 MB flash, 8 MB PSRAM, Raspberry Pi RM2 radio) on the kit's 2WD chassis. It builds `-e xrp`
+(`xrp_lyrical` for Lyrical) and is a prebuilt release profile (`xrp-jazzy`, `xrp-lyrical`). The
+Pico envs do not fit it: the RM2 sits on GP26–29 rather than a Pico 2 W's GP23/24/25/29, the
+flash is four times larger, and its IMU is on GP38/39, an I2C1 pair. So `env:xrp` binds `Wire`
+to I2C1 (`-D__WIRE0_DEVICE=i2c1 -D__WIRE1_DEVICE=i2c0`); the pin catalogue knows that binding.
+
+| part | wiring |
+|---|---|
+| motors | DRV8411A, two PWM inputs per motor and no enable (`DRV8411A` maps to the dual-PWM scheme): left 34/35, right 32/33 |
+| encoders | left 30/31, right 24/25; 585 counts per wheel revolution. The PIO encoder reads A and A+1, so the mirrored left encoder is `invert: true` rather than swapped pins |
+| IMU | LSM6DSOX at 0x6A/0x6B on SDA 38 / SCL 39 |
+| battery | VIN through 100k/33k into GP46 (ADC6) |
+| sonar | the kit's HC-SR04 header, trigger GP0 / echo GP1 |
+| LED | on the RM2, pin 64 |
+| USB | application `1b4f:0046`; BOOTSEL `2e8a:000f`, the RP2350's own ROM |
+
+Transport is micro-ROS over USB serial; the radio carries syslog and OTA. The kinematics are the
+kit's (60 mm wheels, 155 mm track, 140 rpm at 4.5 V), not the default chassis, and its Nav2 limits
+are what `drivetrain_report.py` derives for those motors: 0.16 m/s on the path, 0.19 m/s at the
+smoother's ceiling. The wiring is from SparkFun's schematic and XRPLib; motor and encoder
+directions are confirmed by driving a kit, not by the build.
 
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
@@ -705,7 +731,8 @@ understood; the UART1 line is the instrument to catch it with.
 ### The pin catalogue: a config is checked against the silicon before anything is written
 `scripts/pin_catalog.py` knows, per MCU, which GPIOs exist, which must never be driven (the
 ESP32's flash bus 6–11, the S3's 26–32), which are input-only or strapping, which are ADC (and
-which ADC the Wi-Fi driver owns), and which pin pairs an RP2 I2C block accepts.
+which ADC the Wi-Fi driver owns), which pin pairs an RP2 I2C block accepts, and which block `Wire` is bound to on that board —
+a valid pair on the other block passes the pin check and then hangs the bus at boot.
 `gen_firmware_header.py` runs it on every config: an **error** stops the generation (fix the
 config or pass `--no-pin-check`), a **warn** is printed for a human. The first run found
 `gendrv_config.yaml` still carrying the ESP32-S3 matrix — GPIO 20, 6, 8, 11 and 1 on a WROOM —

@@ -153,7 +153,7 @@ def test_each_profile_records_its_own_env_address():
         got = build_prebuilt.env_offset_for(env)
         want = f"0x{mcu_env.env_offset(env):X}"
         assert got == want, f"{profile}: manifest would say {got}, board uses {want}"
-        if env.startswith("pico"):
+        if env.split("_")[0] in mcu_env.RP2_ENV_OFFSETS:
             assert got.startswith("0x10"), (
                 f"{profile}: {got} is not an RP2 flash address -- that is the ESP32 constant")
         else:

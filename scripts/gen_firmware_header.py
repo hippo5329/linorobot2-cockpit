@@ -93,7 +93,7 @@ def env_uses_wifi_transport(env_name, ini_path=DEFAULT_PIO_INI):
     return None
 
 
-RP2_MCUS = ("pico", "picow", "pico2", "pico2w")
+RP2_MCUS = ("pico", "picow", "pico2", "pico2w", "xrp")
 
 
 # Margin over Nav2's own footprint. The clamp holds the robot's CENTRE at this
@@ -205,6 +205,7 @@ _DRIVER_ENV_NAMES = {
     "GENERIC_1_IN": "generic1",
     "BTS7960": "bts7960",
     "AT8236": "bts7960",
+    "DRV8411A": "bts7960",   # IN/IN H-bridge: PWM on both inputs (SparkFun XRP Controller)
     "ESC": "esc",
 }
 
@@ -739,7 +740,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         or (isinstance(tgt.get("wifi"), dict) and tgt.get("wifi").get("enabled", True))
         or (isinstance(tgt.get("wifi"), bool) and tgt.get("wifi"))
         or transport in ("udp4", "udp", "wifi")
-        or tgt.get("mcu") in ("picow", "pico2w")
+        or tgt.get("mcu") in ("picow", "pico2w", "xrp")
     )
     # WIFI_DEFAULT_ENABLED says what this config WANTS; the Wi-Fi code itself is
     # compiled into every ESP32 build regardless, because one binary has to be
@@ -972,7 +973,7 @@ def bare_mcu_params(mcu: str) -> dict:
     # `host`: the robot computer itself as the MCU (firmware/host/app) -- the Sim
     # MCU. Its only transport is udp4 to a local micro_ros_agent, and it has no
     # GPIO, so everything it has is simulated.
-    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w", "host")
+    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w", "xrp", "host")
     if mcu not in known:
         print(f"Error: unknown --mcu '{mcu}'. Known: {', '.join(known)}", file=sys.stderr)
         sys.exit(2)
@@ -1023,6 +1024,7 @@ def bare_mcu_params(mcu: str) -> dict:
                 # pin 64 (PIN_LED); the same image on a non-W Pico maps 64 to
                 # GP25, so the W default lights both. (It was 32: no such GPIO.)
                 "led": {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64,
+                        "xrp": 64,  # the XRP's status LED is on the radio module's GPIO0, as on a W
                         "esp32": 2, "esp32s3": 48}.get(mcu, -1),
             },
         },

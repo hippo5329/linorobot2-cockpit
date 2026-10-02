@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
 import gen_bare_config as gbc  # noqa: E402
 import mcu_env  # noqa: E402
+from kit_chassis import kit  # noqa: E402
 
 REF = os.path.join(REPO_ROOT, "config", "reference")
 
@@ -70,7 +71,10 @@ def test_the_shown_values_are_the_firmware_defaults_not_a_second_opinion():
     defaults = gbc.bare_simulation()
     for f in sorted(glob.glob(os.path.join(REF, "*_config.yaml"))):
         sim = yaml.safe_load(open(f))["base_controller"]["simulation"]
+        own = (kit(os.path.basename(f)) or {}).get("simulation", set())
         for key, want in defaults.items():
+            if key in own:
+                continue   # a vendor kit's real mass and motors (kit_chassis.py)
             got = sim[key]
             if isinstance(want, bool):
                 assert got is want, (f, key, got, want)

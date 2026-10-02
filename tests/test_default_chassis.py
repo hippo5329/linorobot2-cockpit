@@ -22,6 +22,7 @@ REF = os.path.join(REPO_ROOT, "config", "reference")
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import gen_robot_description  # noqa: E402
 import gen_firmware_header    # noqa: E402
+from kit_chassis import DERIVED_NAV2_KEYS, kit  # noqa: E402
 
 DEFAULT_KINEMATICS = {"wheel_diameter": 0.1, "lr_wheels_distance": 0.271,
                       "max_rpm": 140, "counts_per_rev": 4000}
@@ -64,6 +65,8 @@ def test_no_default_config_inverts_a_motor_or_encoder():
         pins = params.get("base_controller", {}).get("pins", {})
         for unit, cfg in pins.items():
             if isinstance(cfg, dict) and "invert" in cfg:
+                if kit(name) and unit in kit(name)["inverted"]:
+                    continue
                 assert cfg["invert"] is False, f"{name}: {unit}.invert is on -- the default is forward"
     presets = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js")).read()
     assert not re.search(r"invert:\s*true", presets), "a preset inverts a motor or encoder"
@@ -107,6 +110,8 @@ def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
         values = {float(v) for v in re.findall(rf"\n      {key}: ([0-9.]+)", presets)}
         assert values == {float(want)}, f"presets disagree on {key}: {sorted(values)}"
     for name, params in _refs():
+        if kit(name):
+            continue   # a vendor kit ships its own published wheels (kit_chassis.py)
         k = params.get("kinematics", {})
         for key, want in DEFAULT_KINEMATICS.items():
             assert k.get(key) == want, f"{name}: {key}={k.get(key)}, not the default {want}"
@@ -180,7 +185,8 @@ def test_the_generated_bare_config_is_the_default_chassis():
     config on every run, so a cell can no longer test a two-day-old file."""
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import gen_bare_config
-    leds = {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64, "esp32": 2, "esp32s3": 48}
+    leds = {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64, "esp32": 2, "esp32s3": 48,
+            "xrp": 64}   # the XRP's LED is on its RM2 radio, like a Pico W's
     for mcu in sorted(gen_bare_config.BOARDS):
         cfg = gen_bare_config.bare_config(mcu)
         for key, want in DEFAULT_KINEMATICS.items():
@@ -267,6 +273,8 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         for sec in ("ekf", "slam", "nav2"):
             walk(base.get(sec), d.get(sec), (sec,), diffs)
         allowed = set(lateral) | set(angular) if name == "pico2_mecanum" else set()
+        if kit(name):
+            allowed |= DERIVED_NAV2_KEYS   # its own motors set its speed limits
         if _sonar_fitted(d) and not _sonar_fitted(base):
             allowed |= sonar_keys
         bad = [p for p in diffs if p not in allowed]

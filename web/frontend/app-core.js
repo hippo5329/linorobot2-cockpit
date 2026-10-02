@@ -1,4 +1,4 @@
-// Base controller selects list SILICON (pico, pico2, picow, pico2w, esp32,
+// Base controller selects list SILICON (pico, pico2, picow, pico2w, xrp, esp32,
 // esp32s3) plus the Sim MCU. A board is a reference design, not a controller:
 // the GenDrv is an ESP32, the Yahboom YB-EET01 an ESP32-S3. A config that names
 // its board is shown as its silicon, and Save / Start 1-Click send the board's

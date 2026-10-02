@@ -181,7 +181,8 @@ PROBE_ENUMERATE_WAIT = float(os.environ.get("LINO_PROBE_ENUMERATE_WAIT", "8"))
 
 
 def is_pico_family(env: str) -> bool:
-    return "pico" in (env or "").lower() or "rp2" in (env or "").lower()
+    e = (env or "").lower()
+    return "pico" in e or "rp2" in e or "xrp" in e   # xrp: the SparkFun XRP Controller, an RP2350B
 
 
 def usb_mode(env: str, port: str) -> str:

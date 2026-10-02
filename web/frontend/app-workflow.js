@@ -1205,7 +1205,7 @@ function initCockpitDashboard() {
     const val = targetSelect.value;
     // Every ESP32 build compiles the radio in; the W boards have one too. The
     // esp32_wifi entry went with its config on 2026-09-20.
-    const isWifi = ["pico2w", "picow", "esp32", "gendrv", "esp32s3"].includes(val);
+    const isWifi = ["pico2w", "picow", "xrp", "esp32", "gendrv", "esp32s3"].includes(val);
     wifiHint.style.display = isWifi ? "block" : "none";
   }
   if (targetSelect) {

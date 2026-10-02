@@ -289,7 +289,7 @@ async function loadHardwareConfig() {
       // `targetMcu` here was never defined: every config without a port (every
       // bare robot, the Sim MCU included) threw, and the rest of this function --
       // pin safety, kinematics HUD, DAC availability, port refresh -- never ran.
-      const portVal = tgt.serial_port || tgt.port || (siliconOf(loadedControllerName).includes("pico") ? "/dev/ttyACM0" : "/dev/ttyUSB0");
+      const portVal = tgt.serial_port || tgt.port || (/pico|xrp/.test(siliconOf(loadedControllerName)) ? "/dev/ttyACM0" : "/dev/ttyUSB0");
       elSerialPort.value = portVal;
     }
     syncMcuSerialSettings();
@@ -705,7 +705,7 @@ function updateMotorPinVisibility() {
   let p1Used = true, p2Used = true, p3Used = true;
   let p1Label = "PWM (Speed)", p2Label = "IN_A (Dir 1)", p3Label = "IN_B (Dir 2)";
 
-  if (drv === "BTS7960" || drv === "AT8236") {
+  if (drv === "BTS7960" || drv === "AT8236" || drv === "DRV8411A") {
     // Two-PWM drivers: RPWM (IN_A) and LPWM (IN_B) carry the speed, and the
     // pin the config calls `pwm` is the driver's ENABLE (R_EN/L_EN on a
     // BTS7960 module, PWMA/PWMB on the Waveshare General Driver's TB6612),
@@ -817,6 +817,27 @@ function autoAssignPins() {
       document.getElementById("pin-enc-4a").value = 8;
       document.getElementById("pin-enc-4b").value = 9;
     }
+  } else if (mcu === "xrp") {
+    // The SparkFun XRP Controller's own wiring (config/reference/xrp_config.yaml):
+    // a 2WD kit, so motors 3-4 are left as they are.
+    document.getElementById("pin-led").value = 64;          // on the RM2 radio, as on a Pico W
+    document.getElementById("pin-i2c-sda").value = 38;      // the on-board LSM6DSOX, I2C1
+    document.getElementById("pin-i2c-scl").value = 39;
+    document.getElementById("pin-battery").value = 46;      // VIN through 100k / 33k
+    document.getElementById("pin-sonar-trig").value = 0;
+    document.getElementById("pin-sonar-echo").value = 1;
+
+    document.getElementById("pin-m1-p1").value = -1;        // DRV8411A: two PWM inputs, no enable
+    document.getElementById("pin-m1-p2").value = 35;
+    document.getElementById("pin-m1-p3").value = 34;
+    document.getElementById("pin-m2-p1").value = -1;
+    document.getElementById("pin-m2-p2").value = 32;
+    document.getElementById("pin-m2-p3").value = 33;
+
+    document.getElementById("pin-enc-1a").value = 30;
+    document.getElementById("pin-enc-1b").value = 31;
+    document.getElementById("pin-enc-2a").value = 24;
+    document.getElementById("pin-enc-2b").value = 25;
   } else if (mcu === "esp32" || mcu === "gendrv") {
     document.getElementById("pin-led").value = 2;
     document.getElementById("pin-i2c-sda").value = 21;
@@ -908,6 +929,11 @@ function validateHardwareSafety() {
       if ((mcu === "picow" || mcu === "pico2w") && [23, 24, 25, 29].includes(val)) {
         warnings.push(`GP${val} (${label}) is connected to CYW43439 Wi-Fi chip.`);
       }
+    } else if (mcu === "xrp") {
+      if (id === "pin-led" && val === 64) return;
+      if (val > 47) errors.push(`GP${val} (${label}) is out of range for the RP2350B (0-47).`);
+      if ([26, 27, 28, 29].includes(val)) errors.push(`GP${val} (${label}) belongs to the XRP's RM2 Wi-Fi module.`);
+      if (val === 47) errors.push(`GP47 (${label}) is the XRP's PSRAM chip select.`);
     } else if (mcu === "esp32" || mcu === "gendrv") {
       if (ESP32_FLASH_PINS.includes(val)) {
         errors.push(`GPIO ${val} (${label}) connects to internal SPI flash!`);
@@ -970,7 +996,7 @@ function validateHardwareSafety() {
   const drvType = document.getElementById("cfg-driver-type")?.value || "";
   for (const [pin, names] of Object.entries(assigned)) {
     if (names.length < 2) continue;
-    if ((drvType === "BTS7960" || drvType === "AT8236") && names.every((n) => /^Motor \d PWM$/.test(n))) continue;
+    if ((drvType === "BTS7960" || drvType === "AT8236" || drvType === "DRV8411A") && names.every((n) => /^Motor \d PWM$/.test(n))) continue;
     errors.push(`GPIO Pin ${pin} is assigned to multiple devices: ${names.join(", ")}`);
   }
 

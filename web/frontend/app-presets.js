@@ -317,6 +317,7 @@ const REFERENCE_DESIGNS = {
 function normalizeMcuFamily(mcu) {
   if (!mcu) return "pico2";
   const s = String(mcu).toLowerCase();
+  if (s.includes("xrp")) return "xrp";   // an RP2350B with its own board, not a Pico 2
   if (s.includes("pico2") || s.includes("rp2350")) return "pico2";
   if (s.includes("pico") || s.includes("rp2040")) return "pico";
   if (s.includes("s3") || s.includes("esp32s3") || s.includes("yb_eet01")) return "esp32s3";
@@ -333,6 +334,7 @@ function updateReferenceDesigns(mcuHint) {
   const mcuLabels = {
     pico2: "Raspberry Pi Pico 2 (RP2350)",
     pico: "Raspberry Pi Pico (RP2040)",
+    xrp: "SparkFun XRP Controller (RP2350B)",
     esp32: "ESP32",
     esp32s3: "ESP32-S3",
   };
@@ -465,7 +467,7 @@ async function applyReferenceDesign(designId) {
   }
 
   const mcuTarget = found.mcu || "pico2";
-  const defaultPort = mcuTarget.includes("pico") ? "/dev/ttyACM0" : "/dev/ttyUSB0";
+  const defaultPort = (mcuTarget.includes("pico") || mcuTarget.includes("xrp")) ? "/dev/ttyACM0" : "/dev/ttyUSB0";
   const portToUse = found.serial_port || defaultPort;
   setVal("cfg-serial-port", portToUse);
   setVal("cfg-baudrate", 921600);

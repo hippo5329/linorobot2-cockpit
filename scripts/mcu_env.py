@@ -99,6 +99,7 @@ RP2_ENV_OFFSETS = {
     "picow":   0x101FF000,
     "pico2":   0x103FF000,   # 4 MB
     "pico2w":  0x103FF000,
+    "xrp":     0x10FFF000,   # 16 MB (SparkFun XRP Controller)
 }
 
 
@@ -690,6 +691,7 @@ def hardware_env(params: dict) -> dict:
         "GENERIC_1_IN": "generic1",
         "BTS7960": "bts7960",
         "AT8236": "bts7960",
+        "DRV8411A": "bts7960",
         "ESC": "esc",
     }.get(driver, "generic2")
     env["sim_wheel"] = _bool(sensors.get("use_sim_wheel", False))

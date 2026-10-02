@@ -27,6 +27,11 @@ _RP2_I2C = {
     0: ({0, 4, 8, 12, 16, 20, 28}, {1, 5, 9, 13, 17, 21}),
     1: ({2, 6, 10, 14, 18, 26}, {3, 7, 11, 15, 19, 27}),
 }
+# RP2350B (QFN-80): the same every-fourth-pin pattern, out to GPIO47.
+_RP2350B_I2C = {
+    0: (set(range(0, 48, 4)), set(range(1, 48, 4))),
+    1: (set(range(2, 48, 4)), set(range(3, 48, 4))),
+}
 
 CATALOG: Dict[str, dict] = {
     "rp2040": {
@@ -39,6 +44,10 @@ CATALOG: Dict[str, dict] = {
         "adc_wifi_conflict": set(),
         "led": 25,
         "i2c": _RP2_I2C,
+        # Every driver here talks to `Wire`, and on arduino-pico `Wire` is ONE
+        # block. A pair that is valid on the other block passes the hardware's
+        # rules and still halts the core in Wire.setSDA() at boot.
+        "wire": 0,
     },
     "rp2350": {
         "label": "RP2350 (Pico 2)",
@@ -50,6 +59,24 @@ CATALOG: Dict[str, dict] = {
         "adc_wifi_conflict": set(),
         "led": 25,
         "i2c": _RP2_I2C,
+        "wire": 0,
+    },
+    # SparkFun XRP Controller. The RP2350B's own 48 GPIO, minus what the board
+    # has spent: the Radio Module 2 on GP26-29 and the PSRAM chip select on
+    # GP47. ADC is GPIO40-47. Its env [env:xrp] builds `Wire` on I2C1, because
+    # that is where the LSM6DSOX is (GP38/GP39, both PCB and XRPLib agree).
+    "xrp": {
+        "label": "RP2350B (SparkFun XRP Controller)",
+        "gpio": set(range(0, 48)),
+        "never": {47},
+        "radio": {26, 27, 28, 29},
+        "input_only": set(),
+        "strapping": set(),
+        "adc": set(range(40, 48)),
+        "adc_wifi_conflict": set(),
+        "led": CYW43_LED,
+        "i2c": _RP2350B_I2C,
+        "wire": 1,
     },
     "esp32": {
         "label": "ESP32 (WROOM)",
@@ -84,6 +111,7 @@ CATALOG: Dict[str, dict] = {
 _MCU_ALIASES = {
     "pico": "rp2040", "picow": "rp2040", "rp2040": "rp2040",
     "pico2": "rp2350", "pico2w": "rp2350", "rp2350": "rp2350",
+    "xrp": "xrp",
     "esp32": "esp32", "esp32s3": "esp32s3", "esp32-s3": "esp32s3",
 }
 
@@ -139,7 +167,7 @@ def check_config(params: dict) -> List[Finding]:
         return [("warn", f"no pin catalogue for mcu '{tgt.get('mcu')}'; pins unchecked")]
     cat = CATALOG[key]
     board = str(tgt.get("mcu") or tgt.get("name") or "").lower()
-    wireless_rp2 = board in ("picow", "pico2w")
+    wireless_rp2 = board in ("picow", "pico2w", "xrp")
     wifi = bool((tgt.get("wifi") or {}).get("enabled", False)) or \
         str(tgt.get("transport", "")).lower() in ("udp4", "udp", "wifi")
     findings: List[Finding] = []
@@ -154,6 +182,9 @@ def check_config(params: dict) -> List[Finding]:
             continue
         if gpio in cat["never"]:
             findings.append(("error", f"{role}: GPIO {gpio} is the {cat['label']}'s flash/PSRAM bus; driving it resets or bricks the board"))
+            continue
+        if gpio in cat.get("radio", set()):
+            findings.append(("error", f"{role}: GPIO {gpio} is the {cat['label']}'s radio interface (RM2); the Wi-Fi chip owns it"))
             continue
         if direction == "out" and gpio in cat["input_only"]:
             findings.append(("error", f"{role}: GPIO {gpio} is input-only on the {cat['label']}"))
@@ -170,7 +201,7 @@ def check_config(params: dict) -> List[Finding]:
                 findings.append(("error", f"{role}: GPIO {gpio} is not an ADC input on the {cat['label']}"))
             elif wifi and gpio in cat["adc_wifi_conflict"]:
                 findings.append(("warn", f"{role}: GPIO {gpio} is on ADC2, which the Wi-Fi driver owns while the radio is up; reads will fail"))
-        if wireless_rp2 and gpio in (23, 24, 25, 29):
+        if wireless_rp2 and board != "xrp" and gpio in (23, 24, 25, 29):
             findings.append(("warn", f"{role}: GPIO {gpio} belongs to the wireless interface on a {board}; the LED is on the CYW43 (led: -1)"))
 
     # One pin, one job -- except a shared enable line, which is the same job
@@ -183,7 +214,7 @@ def check_config(params: dict) -> List[Finding]:
         if len(roles) < 2:
             continue
         if all(r.endswith(".pwm") for r in roles) and \
-                str(tgt.get("driver_type", "")).upper() in ("BTS7960", "AT8236"):
+                str(tgt.get("driver_type", "")).upper() in ("BTS7960", "AT8236", "DRV8411A"):
             continue
         findings.append(("error", f"GPIO {gpio} is used by {', '.join(roles)}"))
 
@@ -197,6 +228,13 @@ def check_config(params: dict) -> List[Finding]:
             if not ok:
                 findings.append(("error", f"i2c: GP{sda}/GP{scl} is not a valid SDA/SCL pair on one {cat['label']} I2C block "
                                           f"(I2C0 SDA {sorted(i2c[0][0])} SCL {sorted(i2c[0][1])}; I2C1 SDA {sorted(i2c[1][0])} SCL {sorted(i2c[1][1])})"))
+            elif "wire" in cat:
+                block = cat["wire"]
+                s_ok, c_ok = i2c[block]
+                if not (sda in s_ok and scl in c_ok):
+                    findings.append(("error", f"i2c: GP{sda}/GP{scl} is an I2C{1 - block} pair, but the firmware's Wire is "
+                                              f"I2C{block} on the {cat['label']}; setSDA() halts the core at boot "
+                                              f"(I2C{block} SDA {sorted(s_ok)} SCL {sorted(c_ok)})"))
     return findings
 
 
