@@ -174,13 +174,13 @@ document.getElementById("btn-import").addEventListener("click", async () => {
     return;
   }
   if (data.type === "unified_yaml") {
-    resultEl.innerHTML = `<span style="color: var(--success);">✓ Imported Unified Configuration! Linorobot2, Nav2, EKF, and SLAM synchronized.</span>`;
+    resultEl.innerHTML = `<span style="color: var(--accent-ok);">✓ Imported Unified Configuration! Linorobot2, Nav2, EKF, and SLAM synchronized.</span>`;
     loadRobotEnv();
     loadUnifiedConfig();
     return;
   }
   if (data.type === "robot_env") {
-    resultEl.innerHTML = `<span style="color: var(--success);">✓ Imported robot.env! Environment settings updated and synced to ~/.bashrc.</span>`;
+    resultEl.innerHTML = `<span style="color: var(--accent-ok);">✓ Imported robot.env! Environment settings updated and synced to ~/.bashrc.</span>`;
     loadRobotEnv();
     return;
   }

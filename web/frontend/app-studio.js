@@ -651,7 +651,7 @@ async function saveRobotConfigFromBringup() {
     });
     const data = await res.json();
     if (data.status === "saved") {
-      if (statusEl) statusEl.innerHTML = `<span style="color: var(--success);">✓ Updated robot_config.yaml</span>`;
+      if (statusEl) statusEl.innerHTML = `<span style="color: var(--accent-ok);">✓ Updated robot_config.yaml</span>`;
       loadRobotConfig();
       logLine(`[console] Updated robot parameters in ${data.path}`);
     } else {
@@ -676,7 +676,7 @@ async function saveRobotConfigFromEditor() {
     });
     const data = await res.json();
     if (data.status === "saved") {
-      if (statusEl) statusEl.innerHTML = `<span style="color: var(--success);">✓ Saved ${data.path}</span>`;
+      if (statusEl) statusEl.innerHTML = `<span style="color: var(--accent-ok);">✓ Saved ${data.path}</span>`;
       loadRobotConfig();
       logLine(`[console] robot_config.yaml saved (single source of truth)`);
       refreshConfigGit();
@@ -839,7 +839,7 @@ async function saveSecrets() {
     });
     const data = await res.json();
     if (data.success) {
-      if (statusEl) statusEl.innerHTML = `<span style="color:var(--success);">✓ Saved secrets.yaml &amp; regenerated firmware headers</span>`;
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-ok);">✓ Saved secrets.yaml &amp; regenerated firmware headers</span>`;
       if (pill) {
         pill.textContent = "✅ secrets.yaml Active";
         pill.className = "pill pill-ok";
@@ -851,10 +851,10 @@ async function saveSecrets() {
       // Reload values & raw YAML to stay in sync
       await loadSecrets();
     } else {
-      if (statusEl) statusEl.innerHTML = `<span style="color:var(--danger);">${data.detail || data.message || "Failed to save"}</span>`;
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-danger);">${data.detail || data.message || "Failed to save"}</span>`;
     }
   } catch (err) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:var(--danger);">Error: ${err.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-danger);">Error: ${err.message}</span>`;
   }
 }
 
