@@ -1951,7 +1951,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
                set, and doing that on every page load to fill a textarea
                nobody opened is waste. app.js has toggled this since it was
                ported; only the two elements were missing. -->
-          <h4 style="margin: 6px 0; color: var(--accent);">Nav2 Parameters</h4>
+          <h4 style="margin: 6px 0; color: var(--accent-primary);">Nav2 Parameters</h4>
           <button type="button" id="btn-nav2-toggle-editor" class="btn btn-sm" style="margin-bottom:8px;">Edit Nav2 Parameters (YAML)</button>
           <div id="nav2-editor-box" style="display:none;">
           <div class="row" style="margin-bottom: 6px;">
@@ -1973,7 +1973,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </div><!-- /nav2-editor-box -->
 
           <!-- EKF Sub-Editor -->
-          <h4 style="margin: 6px 0; color: var(--accent);">EKF Parameters (robot_localization)</h4>
+          <h4 style="margin: 6px 0; color: var(--accent-primary);">EKF Parameters (robot_localization)</h4>
           <div class="row" style="margin-bottom: 6px;">
             <button id="btn-ekf-reset-defaults" class="btn btn-sm">Reset EKF to Defaults</button>
           </div>
@@ -1984,7 +1984,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </div>
 
           <!-- SLAM Sub-Editor -->
-          <h4 style="margin: 6px 0; color: var(--accent);">SLAM Toolbox Parameters</h4>
+          <h4 style="margin: 6px 0; color: var(--accent-primary);">SLAM Toolbox Parameters</h4>
           <div class="row" style="margin-bottom: 6px;">
             <button id="btn-slam-reset-defaults" class="btn btn-sm">Reset SLAM to Defaults</button>
           </div>
@@ -1995,7 +1995,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </div>
 
           <!-- Export / Merge / Promote -->
-          <h4 style="margin: 6px 0; color: var(--accent);">Export &amp; Merge</h4>
+          <h4 style="margin: 6px 0; color: var(--accent-primary);">Export &amp; Merge</h4>
           <p class="hint" style="margin: 0 0 6px;">Take the tuned Nav2/EKF/SLAM params out of the console:
             <b>export</b> a standalone bundle (configs + a launch file), <b>merge</b> the active config's
             values into the repo template (comment-preserving, per-key), or <b>promote</b> a whole file
@@ -2549,7 +2549,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
   <!-- CONFIG STUDIO (SYSTEM & ROBOT PROFILE) -->
   <section class="tab-pane" id="tab-settings">
-    <div class="card u-mb-14" style="border-left: 4px solid var(--accent);">
+    <div class="card u-mb-14" style="border-left: 4px solid var(--accent-primary);">
       <h3 style="margin:0 0 6px 0;">⚙️ Config Studio &amp; System Runtime</h3>
       <p class="hint" style="margin:0;">
         Authoritative studio for the single source of truth <code>&lt;robot&gt;_config.yaml</code> profile, workspace path, container runtime engines, and headless boot autostart daemons.<br>

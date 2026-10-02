@@ -1529,7 +1529,7 @@ body.console-collapsed {
 .u-font-600 { font-weight: 600; }
 .u-font-700 { font-weight: 700; }
 .u-font-normal { font-weight: normal; }
-.u-text-accent { color: var(--accent); }
+.u-text-accent { color: var(--accent-primary); }
 .u-text-dim { color: var(--text-dim); }
 .u-text-sky-400 { color: #38bdf8; }
 .u-text-slate-50 { color: #f8fafc; }
