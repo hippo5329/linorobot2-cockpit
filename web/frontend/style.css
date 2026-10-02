@@ -978,7 +978,7 @@ body.console-collapsed {
 .wiring-table-body .pin-table { margin: 0.25rem 0 0.5rem; }
 .wiring-table-body .pin-table th,
 .wiring-table-body .pin-table td { padding: 0.4rem 0.7rem; }
-.wiring-table-body .pin-table code { font-family: var(--font-mono); color: var(--text-bright); }
+.wiring-table-body .pin-table code { font-family: var(--font-mono); color: var(--text-primary); }
 .wiring-table-body ul { margin: 0.25rem 0 0.5rem 1.1rem; font-size: 0.85rem; color: var(--text-dim); }
 .wiring-table-body p { margin: 0.25rem 0; font-size: 0.82rem; color: var(--text-dim); }
 
