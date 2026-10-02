@@ -38,6 +38,10 @@ from core import (
 )
 
 import gen_bare_config  # scripts/ is on sys.path via core
+import mcu_identity  # noqa: E402  (scripts/, the controller -> silicon table)
+
+# A board's base_controller.mcu is its silicon; every other controller name is one.
+_BOARD_SILICON = {"gendrv": "esp32", "yb_eet01": "esp32s3"}
 
 
 def write_bare_robot(name: str):
@@ -107,7 +111,8 @@ async def api_save_hardware_config(request: Request):
     ctrl = params.setdefault("base_controller", {})
     # The robot file names exactly one controller; a posted name renames it
     # (e.g. switching this robot from pico2 to esp32), it does not add a second.
-    controller_name = data.get("controller") or ctrl.get("name") or "pico2"
+    previous_name = ctrl.get("name")
+    controller_name = data.get("controller") or previous_name or "pico2"
     ctrl["name"] = controller_name
 
     if "kinematics" in data and isinstance(data["kinematics"], dict):
@@ -139,6 +144,12 @@ async def api_save_hardware_config(request: Request):
     # a pasted address with stray whitespace cannot become an unreachable URL.
     if "mcu" in data:
         ctrl["mcu"] = data["mcu"]
+    elif controller_name != previous_name and mcu_identity.env_family(controller_name):
+        # Renamed to another controller without naming the chip: the chip follows
+        # the controller. Keeping the old one is how applying the GenDrv design
+        # to bare_pico2 saved name=gendrv, mcu=pico2 -- the GenDrv's pins were then
+        # checked against the RP2350, refused, and the header was never built.
+        ctrl["mcu"] = _BOARD_SILICON.get(controller_name, controller_name)
     if "sensors" in data and isinstance(data["sensors"], dict):
         ctrl.setdefault("sensors", {}).update(data["sensors"])
     # The depth camera's model (scripts/depth_camera.py): one of upstream's

@@ -230,3 +230,29 @@ def test_a_listed_robot_can_actually_be_selected():
     finally:
         if original:
             call("POST", "/api/robot/select", {"robot": original})
+
+
+def test_renaming_the_controller_moves_the_chip_with_it():
+    """Applying a design from another family must not keep the old chip.
+
+    The Reference Design picker saved {controller: "gendrv"} with no `mcu`, and
+    the server kept base_controller.mcu at the robot's old value: the GenDrv
+    applied to a Pico 2 robot became name=gendrv, mcu=pico2. Its pins were then
+    checked against the RP2350 ("GPIO 34 does not exist on the RP2350"), the
+    header was not built, and the page jumped to the Pin Matrix to say so.
+    """
+    status, before = call("GET", "/api/config")
+    assert status == 200, before
+    ctrl = (before or {}).get("base_controller") or {}
+    name, mcu = ctrl.get("name"), ctrl.get("mcu")
+    if not name or mcu in (None, "sim", "esp32"):
+        pytest.skip(f"needs an active robot on a non-ESP32 chip, not {name}/{mcu}")
+    try:
+        status, body = call("POST", "/api/hardware/config", {"controller": "gendrv"})
+        assert status == 200, body
+        status, after = call("GET", "/api/config")
+        got = ((after or {}).get("base_controller") or {})
+        assert (got.get("name"), got.get("mcu")) == ("gendrv", "esp32"), \
+            f"renamed to gendrv, chip left at {got.get('mcu')!r}"
+    finally:
+        call("POST", "/api/hardware/config", {"controller": name, "mcu": mcu})

@@ -1104,6 +1104,9 @@ async function saveCurrentHardwareConfig() {
 
   const payload = {
     controller: activeController,
+    // The silicon, always: without it a design from another family (the GenDrv
+    // applied to a Pico 2 robot) kept the old chip and failed its own pin check.
+    ...(activeController === "sim" ? {} : { mcu: siliconOf(activeController) }),
     driver_type: driverType,
     baudrate: baudrate,
     serial_port: serialPort,
@@ -1466,6 +1469,21 @@ async function executeHardwareAction(action, customFirmware = null) {
       },
       onDone: (exitCode) => {
         if (btnStop) btnStop.style.display = "none";
+        // Say what actually ran. This used to report every action as a flash, so
+        // closing a Monitor stream toasted "Flashing test_sensors failed" and a
+        // finished Build "flashed successfully" -- neither touched the board.
+        if (action !== "upload") {
+          const what = action === "monitor" ? "Monitor" : "Build";
+          if (exitCode === 0 || action === "monitor") {
+            // A monitor ends when it is stopped; its exit code is the signal, not a fault.
+            logLine(`ℹ️ [Hardware Test] ${what} of ${firmwareName} ended (exit ${exitCode}).`);
+            if (action === "build" && exitCode === 0) showToast(`✅ Build of ${firmwareName} (${mcuEnv}) finished.`, 4000);
+          } else {
+            logLine(`❌ [Hardware Test] ${what} of ${firmwareName} failed with exit code ${exitCode}.`);
+            showToast(`❌ ${what} of ${firmwareName} failed. Check terminal for details.`, 7000);
+          }
+          return;
+        }
         if (exitCode === 0) {
           hideActionBanner();
           logLine(`✅ [Hardware Test] ${firmwareName} completed successfully.`);
