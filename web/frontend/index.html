@@ -24,8 +24,8 @@
       <circle cx="16" cy="14.5" r="1.3" fill="#0ea5e9"/>
     </svg>
     <div>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <h1 class="brand-title" style="margin:0; font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
+      <div class="u-flex u-items-center u-gap-8 u-flex-wrap">
+        <h1 class="brand-title u-m-0" style="font-size:17px; line-height:1.2;">Linorobot2 <span class="badge-accent">Cockpit</span></h1>
         <span id="header-build-version" class="badge-pill" style="font-size:0.7rem; font-family:var(--font-mono); background:rgba(56, 189, 248, 0.15); color:#38bdf8; border:1px solid rgba(56, 189, 248, 0.35); padding:1px 6px; font-weight:700;" title="Firmware & Cockpit Build Version">rc-20260927.3</span>
         <div class="git-version-row">
           <button id="git-version-badge" class="git-version-badge" type="button" aria-expanded="false"
@@ -201,16 +201,16 @@
 
     <!-- Step 1: Hardware Discovery / Auto-Detected MCU Card -->
     <div class="card" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary);">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-10">
         <div>
-          <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Step 1 · Microcontroller Discovery</span>
-          <h3 style="margin:4px 0 0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+          <span class="u-text-0-75rem u-font-700 u-uppercase" style="letter-spacing:0.05em; color:var(--accent-primary);">Workflow Step 1 · Microcontroller Discovery</span>
+          <h3 class="u-flex u-items-center u-gap-8" style="margin:4px 0 0; font-size:1.1rem;">
             <span>🔌 Auto-Detected MCU:</span>
             <span id="base-detected-mcu-name" style="color:#38bdf8; font-family:var(--font-mono); font-weight:700;">Raspberry Pi Pico 2 (RP2350)</span>
           </h3>
           <p class="hint" id="base-detected-mcu-desc" style="margin:4px 0 0;">Probed via USB sysfs VID:PID on host port <code>/dev/ttyACM0</code>.</p>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
+        <div class="u-flex u-gap-8 u-items-center">
           <span id="base-mcu-status-pill" class="pill pill-ok">Online &amp; Bound</span>
           <button type="button" id="btn-redetect-mcu" class="btn btn-secondary btn-sm" title="Re-scan connected USB serial ports">🔄 Re-scan Hardware</button>
         </div>
@@ -221,7 +221,7 @@
     <div class="card" style="border-left: 4px solid #a855f7;">
       <div class="section-header-flex">
         <div>
-          <h3 style="margin:0; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
+          <h3 class="u-flex u-items-center u-gap-8" style="margin:0; font-size:1.05rem;">
             <span>⚡ Reference Build Presets</span>
           </h3>
           <p class="hint" style="margin:4px 0 0;">
@@ -230,7 +230,7 @@
           </p>
         </div>
       </div>
-      <div class="form-grid" style="margin-top:12px;">
+      <div class="form-grid u-mt-12">
         <div class="form-group" style="grid-column: 1 / -1;">
           <label for="preset-select" class="form-label" style="font-weight:600;">Choose Reference Design / Preset</label>
           <select id="preset-select" class="form-select" style="font-size:0.95rem; padding:8px 12px;">
@@ -243,8 +243,8 @@
 
     <!-- Sim Mode Simulation Preview Card (Active by Default) -->
     <div class="card" id="simulation-mode-preview-card" style="background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.35); border-radius:10px;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div style="display:flex; align-items:center; gap:8px;">
+      <div class="u-flex u-justify-between u-items-center">
+        <div class="u-flex u-items-center u-gap-8">
           <span style="font-size:1.3rem;">✨</span>
           <h3 style="margin:0; font-size:0.96rem; color:#34d399; font-weight:700;" id="simulation-mode-card-title">Sim Mode / Zero-Wiring Simulation Preview (Active by Default)</h3>
         </div>
@@ -254,7 +254,7 @@
         Linorobot2 defaults to safe <b>Sim Mode</b> simulation. Embedded firmware generates synthetic wheel encoder ticks (<code>USE_SIM_WHEEL</code>), simulated 6-DOF IMU quaternion telemetry (<code>USE_SIM_IMU</code>), and simulated planar LiDAR scans (<code>USE_SIM_LD19</code>).
         This enables complete end-to-end Map, SLAM, and Nav2 testing on a bare MCU module before physical wheels or motors are wired.
       </p>
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px; margin-top:10px;">
+      <div class="u-grid u-gap-8 u-mt-10" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
         <div id="sim-odom-status" style="background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b; font-size:0.78rem;">
           <span style="color:#94a3b8;">Simulated Odometry:</span> <b style="color:#34d399;">Active (50 Hz /odom)</b>
         </div>
@@ -265,13 +265,13 @@
           <span style="color:#94a3b8;">Simulated LiDAR:</span> <b style="color:#34d399;">Active (10 Hz /scan)</b>
         </div>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
-        <div style="display:flex; gap:8px; align-items:center;">
+      <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-10 u-mt-14" style="padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+        <div class="u-flex u-gap-8 u-items-center">
           <button type="button" id="btn-toggle-sim-mode" class="btn btn-secondary" title="Toggle Sim Mode off to begin designing real hardware">
             ⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design
           </button>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
+        <div class="u-flex u-gap-8 u-items-center">
           <button type="button" id="btn-jump-preview" class="btn btn-secondary btn-sm" title="Jump to SLAM &amp; Nav tab to preview mapping and navigation in sim simulation">
             🚀 Jump to SLAM / Nav2 Preview ➔
           </button>
@@ -288,7 +288,7 @@
       <p class="hint">Microcontroller silicon target, micro-ROS serial transport, and software simulation environment.</p>
 
       <div class="form-section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="u-flex u-justify-between u-items-center u-mb-8">
           <h3 class="section-title" style="margin:0;">Microcontroller Target &amp; Serial Connection</h3>
           <span class="badge-pill badge-accent" style="font-size:0.75rem;" title="This selection is mirrored to the Operations tab and the Flash MCU button, so one screen cannot target one chip while another targets a different one.">Shared with Operations &amp; Flash</span>
         </div>
@@ -357,7 +357,7 @@
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save MCU settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="base">Step 2: Robot Base &amp; Mechanical Chassis ➔</button>
       </div>
@@ -722,7 +722,7 @@
         </label>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="mcu-sim">⬅ Step 1: MCU &amp; Sim</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 3: Configure Drive &amp; Motors ➔</button>
@@ -770,11 +770,11 @@
         <h3 class="section-title">Motor Spin Direction Inversion</h3>
         <p class="input-hint">Check to invert direction if a wheel rotates backwards when moving forward.</p>
         <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr));">
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="pin-m1-inv">
             <span><strong>Motor 1 Invert</strong> (<span class="motor-pos" data-motor="m1">Front Left</span>)</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="pin-m2-inv" checked>
             <span><strong>Motor 2 Invert</strong> (<span class="motor-pos" data-motor="m2">Front Right</span>)</span>
           </label>
@@ -793,11 +793,11 @@
         <h3 class="section-title">Encoder Quadrature Counting Inversion</h3>
         <p class="input-hint">Check to invert encoder ticks count to ensure positive ticks match forward rotation.</p>
         <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr));">
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="pin-enc-1-inv">
             <span><strong>Encoder 1 Invert</strong> (Left)</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="pin-enc-2-inv">
             <span><strong>Encoder 2 Invert</strong> (Right)</span>
           </label>
@@ -812,7 +812,7 @@
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base">⬅ Step 2: Base</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 4: Configure Sensors ➔</button>
@@ -835,9 +835,9 @@
 
       <!-- AI I2C Sensor Auto-Detection Card -->
       <div class="card p-3 mb-3 border-accent-glow" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.7)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; margin: 1rem 0;">
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <div class="u-flex u-justify-between u-items-center u-flex-wrap" style="gap: 1rem;">
           <div>
-            <h4 style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0; font-weight: 600;">🤖 I2C Bus Probe</h4>
+            <h4 class="u-font-600" style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0;">🤖 I2C Bus Probe</h4>
             <p class="hint" style="margin:0;">Runs the same scan the firmware runs at every boot (WHO_AM_I identification) and shows what answered. This is a read-out, not a setting: whatever is on the bus is what the robot firmware will drive.</p>
           </div>
           <button type="button" id="btn-auto-detect-i2c" class="btn btn-primary" style="white-space:nowrap; padding:0.6rem 1.2rem;">
@@ -856,7 +856,7 @@
           <div class="form-group">
             <label for="cfg-laser-sensor" class="form-label">Primary LiDAR Sensor</label>
             <select id="cfg-laser-sensor" class="form-select"></select>
-            <span class="input-hint">For live radar visualization and UDP bridge setup, use the <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'lidar\']')?.click(); return false;" style="color:var(--accent-primary); font-weight:600;">LiDAR / Scan ➔</a> tab.</span>
+            <span class="input-hint">For live radar visualization and UDP bridge setup, use the <a class="u-font-600" href="#" onclick="document.querySelector('.tab-btn[data-tab=\'lidar\']')?.click(); return false;" style="color:var(--accent-primary);">LiDAR / Scan ➔</a> tab.</span>
           </div>
 
           <div class="form-group">
@@ -879,7 +879,7 @@
              compiled in, so switching one needs no rebuild. -->
         <div class="form-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
           <div class="form-group">
-            <label for="cfg-imu" class="form-label">IMU <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
+            <label for="cfg-imu" class="form-label">IMU <span class="input-hint u-font-normal">(fallback — the bus wins)</span></label>
             <select id="cfg-imu" class="form-select font-mono">
               <option value="NONE">None</option>
               <option value="SIM">SIM — simulated 6-DOF</option>
@@ -895,7 +895,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="cfg-mag" class="form-label">Magnetometer <span class="input-hint" style="font-weight:normal;">(fallback — the bus wins)</span></label>
+            <label for="cfg-mag" class="form-label">Magnetometer <span class="input-hint u-font-normal">(fallback — the bus wins)</span></label>
             <select id="cfg-mag" class="form-select font-mono">
               <option value="NONE">None</option>
               <option value="SIM">SIM — simulated field</option>
@@ -947,9 +947,9 @@
 
         <!-- Magnetometer Calibration Tool -->
         <div class="mt-3 p-3" style="background:rgba(0,0,0,0.25); border-radius:8px; border:1px solid var(--border-soft);">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-8">
             <div>
-              <span style="font-weight:600; font-size:0.9rem; color:#38bdf8;">🧭 Live Magnetometer Calibration Tool</span>
+              <span class="u-font-600" style="font-size:0.9rem; color:#38bdf8;">🧭 Live Magnetometer Calibration Tool</span>
               <p class="hint" style="margin:2px 0 0 0; font-size:0.8rem;">Spins the robot in place to sample heading offsets and compute hard-iron calibration bias.</p>
             </div>
             <button type="button" id="btn-mag-cal" class="btn btn-secondary btn-sm">⚡ Run Calibration</button>
@@ -1029,7 +1029,7 @@
         <h3 class="section-title">Environmental &amp; Range Sensors</h3>
         <div class="form-grid">
           <div class="form-group">
-            <label for="cfg-env" class="form-label">Environmental Barometer <span class="input-hint" style="font-weight:normal;">(detected at boot)</span></label>
+            <label for="cfg-env" class="form-label">Environmental Barometer <span class="input-hint u-font-normal">(detected at boot)</span></label>
             <select id="cfg-env" class="form-select">
               <option value="AUTO" selected>Auto — publish a BMP280/BME280 if one answers (0x76/0x77)</option>
               <option value="BMP280">BMP280 — always publish (a missing chip shows as a dead topic)</option>
@@ -1039,7 +1039,7 @@
             <span class="input-hint">Built into every image; nothing to compile. Off saves serial bandwidth on a 921,600-baud link.</span>
           </div>
           <div class="form-group">
-            <label for="cfg-depth-camera" class="form-label">Depth Camera <span class="input-hint" style="font-weight:normal;">(on the robot computer)</span></label>
+            <label for="cfg-depth-camera" class="form-label">Depth Camera <span class="input-hint u-font-normal">(on the robot computer)</span></label>
             <select id="cfg-depth-camera" class="form-select">
               <option value="none" selected>None</option>
               <option value="realsense">Intel RealSense D400</option>
@@ -1067,42 +1067,42 @@
         <h3 class="section-title">Bare Module Zero-Wiring Simulation Toggles</h3>
         <p class="input-hint">Enables virtual software sensors on bench when physical sensors are not yet wired.</p>
         <div class="form-grid" style="grid-template-columns:repeat(auto-fit, minmax(180px,1fr));">
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-imu" checked>
             <span>Simulated IMU</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-mag" checked>
             <span>Simulated Magnetometer</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-wheel" checked>
             <span>Simulated Wheels</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-ld19" checked>
             <span>Simulated LD19</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A simulated depth camera (a RealSense D435 in its 424x240 mode) looking at the same room as the simulated LD19. With the LD19 off it is the robot's /scan; with both on, SLAM keeps the LD19 and the camera is a second obstacle source for Nav2. Needs no camera model.">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);" title="A simulated depth camera (a RealSense D435 in its 424x240 mode) looking at the same room as the simulated LD19. With the LD19 off it is the robot's /scan; with both on, SLAM keeps the LD19 and the camera is a second obstacle source for Nav2. Needs no camera model.">
             <input type="checkbox" id="chk-sim-depth">
             <span>Simulated Depth Camera</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);">
             <input type="checkbox" id="chk-sim-env">
             <span>Simulated Barometer</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A forward range cone raycast from the simulated LiDAR's room, published on /sonar. It runs only with the Simulated LD19; a fully real robot reads the wired HC-SR04 instead.">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);" title="A forward range cone raycast from the simulated LiDAR's room, published on /sonar. It runs only with the Simulated LD19; a fully real robot reads the wired HC-SR04 instead.">
             <input type="checkbox" id="chk-sim-sonar" checked>
             <span>Simulated Sonar</span>
           </label>
-          <label class="checkbox-label" style="display:flex; align-items:center; gap:8px; padding:10px; background:rgba(15,23,42,0.6); border-radius:6px; border:1px solid var(--border-soft);" title="A battery voltage sensor for a board with none wired, published on /battery: the pack sags when the simulated wheels draw current and drains as the robot drives. Its range and capacity are the Battery section's min/max voltage and capacity (a 3S Li-ion pack if those are blank).">
+          <label class="checkbox-label u-items-center u-p-10 u-bg-slate-900-60" style="display:flex; gap:8px; border-radius:6px; border:1px solid var(--border-soft);" title="A battery voltage sensor for a board with none wired, published on /battery: the pack sags when the simulated wheels draw current and drains as the robot drives. Its range and capacity are the Battery section's min/max voltage and capacity (a 3S Li-ion pack if those are blank).">
             <input type="checkbox" id="chk-sim-battery">
             <span>Simulated Battery</span>
           </label>
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 3: Drive &amp; Motors</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 5: Configure Pin Matrix ➔</button>
@@ -1117,7 +1117,7 @@
         <div>
           <h2 style="margin:0;">🔌 5. Microcontroller Pinout Matrix</h2>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; white-space:nowrap;">
+        <div class="u-flex u-gap-8 u-flex-wrap" style="white-space:nowrap;">
           <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
           <button type="button" id="btn-wiring-table" class="btn btn-sm" title="The wiring chart for this robot, generated from the saved pins">🔌 Wiring Table</button>
           <button type="button" id="btn-save-pins-config" class="btn btn-secondary btn-sm">💾 Save robot settings</button>
@@ -1127,15 +1127,15 @@
       <!-- The sheet you want at the bench: function -> GPIO and GPIO -> functions,
            from the SAVED config (press Save first if you have edited pins). -->
       <div id="wiring-table-panel" class="mt-2" hidden>
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div class="u-flex u-justify-between u-items-center u-gap-8 u-flex-wrap">
           <span class="sub-title">🔌 Wiring chart <span class="input-hint">(from the saved config)</span></span>
-          <div style="display:flex; gap:6px;">
+          <div class="u-flex u-gap-6">
             <button type="button" id="btn-wiring-copy" class="btn btn-xs btn-secondary">📋 Copy Markdown</button>
             <button type="button" id="btn-wiring-download" class="btn btn-xs btn-secondary">⬇ Download .md</button>
             <button type="button" id="btn-wiring-close" class="btn btn-xs">✕</button>
           </div>
         </div>
-        <div id="wiring-table-body" class="wiring-table-body" style="max-height:460px; overflow:auto; padding:8px 4px;"></div>
+        <div id="wiring-table-body" class="wiring-table-body u-overflow-auto" style="max-height:460px; padding:8px 4px;"></div>
       </div>
       <p class="hint">Allocate GPIO pins for motors, encoders, I2C bus, ADC battery, and sonar. Real-time electrical inspection prevents hardware hazards (strapping pin lockups, input-only pins, SPI flash contention).</p>
 
@@ -1270,7 +1270,7 @@
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 4: Sensors</button>
         <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 6: Step-by-Step Hardware Tests ➔</button>
@@ -1290,7 +1290,7 @@
 
       <!-- Diagnostic firmware selection & serial port bar -->
       <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
-        <div class="form-group" style="flex:2; min-width:200px;">
+        <div class="form-group u-min-w-200" style="flex:2;">
           <label for="hw-flash-target" class="form-label">Application (env <code>app</code> key)</label>
           <select id="hw-flash-target" class="form-select">
             <option value="test_sensors" selected>🧭 test_sensors — Sensor Diagnostics &amp; I2C Scanner</option>
@@ -1302,8 +1302,8 @@
           </select>
         </div>
 
-        <div class="form-group" style="flex:1; min-width:140px;">
-          <label for="hw-flash-env" class="form-label">Base Controller Env <span class="input-hint" style="font-weight:normal;">(Synced)</span></label>
+        <div class="form-group u-min-w-140" style="flex:1;">
+          <label for="hw-flash-env" class="form-label">Base Controller Env <span class="input-hint u-font-normal">(Synced)</span></label>
           <select id="hw-flash-env" class="form-select font-mono">
             <option value="pico2" selected>pico2</option>
             <option value="pico2w">pico2w</option>
@@ -1316,13 +1316,13 @@
           </select>
         </div>
 
-        <div class="form-group" style="flex:2; min-width:220px;">
-          <label for="hw-flash-port" class="form-label">Upload Serial Port <span class="input-hint" style="font-weight:normal;">(Synced with Base &amp; MCU)</span></label>
+        <div class="form-group u-min-w-220" style="flex:2;">
+          <label for="hw-flash-port" class="form-label">Upload Serial Port <span class="input-hint u-font-normal">(Synced with Base &amp; MCU)</span></label>
           <input type="text" id="hw-flash-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
           <div id="hw-port-chips" class="port-chips-wrap mt-1"></div>
         </div>
 
-        <div style="display:flex; gap:8px;">
+        <div class="u-flex u-gap-8">
           <button type="button" id="btn-hw-flash" class="btn btn-primary" title="Compile and upload firmware to MCU">⚡ Flash MCU</button>
           <button type="button" id="btn-hw-build" class="btn btn-secondary" title="Compile only without uploading">🔨 Build</button>
           <button type="button" id="btn-hw-monitor" class="btn btn-secondary" title="Stream serial monitor">📡 Monitor</button>
@@ -1332,7 +1332,7 @@
 
       <!-- Direct 1-Click Microcontroller Uploads Grid -->
       <div class="direct-upload-section mt-4">
-        <label class="form-label" style="margin-bottom:8px; display:block;">🚀 1-Click Diagnostic Upload Buttons</label>
+        <label class="form-label u-mb-8" style="display:block;">🚀 1-Click Diagnostic Upload Buttons</label>
         <div class="direct-upload-grid">
           <button type="button" id="btn-upload-sensors" class="btn-direct-upload" title="Upload test_sensors">
             <span class="direct-upload-icon">🧭</span>
@@ -1403,7 +1403,7 @@
           <button type="button" id="btn-adc-run-cal" class="btn btn-primary btn-sm">⚡ Run Hardware Calibration</button>
         </div>
 
-        <div class="form-grid" style="grid-template-columns: 2fr 1fr; gap:12px; align-items:center;">
+        <div class="form-grid u-items-center" style="grid-template-columns: 2fr 1fr; gap:12px;">
           <div class="form-group">
             <label for="cfg-dac-pin" class="form-label">DAC Sweep Output Pin (Jumper to Battery ADC Pin)</label>
             <select id="cfg-dac-pin" class="form-select font-mono">
@@ -1421,12 +1421,12 @@
              sample of the inverse it stored. The 4096-entry table itself never
              leaves the board -- it goes to the `adclut` partition. -->
         <div class="adc-chart-pane mt-3">
-          <div class="adc-chart-toolbar" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div class="adc-chart-toolbar u-flex u-justify-between u-items-center u-gap-10 u-flex-wrap">
             <span class="sub-title">📊 ADC transfer function &amp; linearisation</span>
-            <div class="adc-chart-legend" style="display:flex; gap:12px; flex-wrap:wrap; font-size:0.78rem;">
-              <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#f43f5e;"></span> Raw (measured)</span>
-              <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#38bdf8;"></span> Ideal (linear)</span>
-              <span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#10b981;"></span> Corrected</span>
+            <div class="adc-chart-legend u-flex u-gap-12 u-flex-wrap" style="font-size:0.78rem;">
+              <span><span class="u-inline-block u-w-9 u-h-9 u-rounded-full" style="background:#f43f5e;"></span> Raw (measured)</span>
+              <span><span class="u-inline-block u-w-9 u-h-9 u-rounded-full" style="background:#38bdf8;"></span> Ideal (linear)</span>
+              <span><span class="u-inline-block u-w-9 u-h-9 u-rounded-full" style="background:#10b981;"></span> Corrected</span>
             </div>
           </div>
           <div class="adc-canvas-container" style="position:relative;">
@@ -1516,7 +1516,7 @@
             <canvas id="adc-chart-canvas" width="400" height="200" style="width:100%; height:auto; margin-top:8px;"></canvas>
           </div>
           <div class="adc-lut-pane">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div class="u-flex u-justify-between u-items-center u-mb-6">
               <span class="sub-title">Generated ADC_LUT[4096]</span>
               <button type="button" id="btn-copy-lut-code" class="btn btn-xs btn-secondary">📋 Copy</button>
             </div>
@@ -1529,7 +1529,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
 
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="pin-matrix">⬅ Step 5: Pin Matrix</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="lidar" style="background:linear-gradient(135deg,#059669,#06b6d4);">Step 7: Verify LiDAR / Scan ➔</button>
       </div>
@@ -1576,7 +1576,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <button id="btn-webserial-connect" class="btn btn-primary">Open port…</button>
         <button id="btn-webserial-disconnect" class="btn btn-danger" disabled>Close</button>
         <button id="btn-webserial-clear" class="btn btn-sm">Clear</button>
-        <label style="display:flex; align-items:center; gap:6px;">
+        <label class="u-items-center" style="display:flex; gap:6px;">
           <input type="checkbox" id="webserial-autoscroll" checked> autoscroll
         </label>
       </div>
@@ -1591,15 +1591,15 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <!-- 8. BRINGUP -->
   <section class="tab-pane" id="tab-bringup">
     <div class="card" id="card-robot-setup-bringup" style="background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.7)); border-left: 4px solid var(--accent-primary);">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-10 u-mb-8">
         <div>
-          <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+          <h2 class="u-flex u-items-center u-gap-8" style="margin:0; font-size:1.1rem;">
             <span>🤖 8. Active Robot Bringup &amp; State Estimation</span>
-            <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:700;">Read from your config</span>
+            <span class="badge-pill badge-ok u-text-0-7rem u-font-700">Read from your config</span>
           </h2>
           <p class="hint" style="margin:4px 0 0 0;">Unified parameters from <code>&lt;robot&gt;_config.yaml</code> passed directly to <code>bringup.launch.py</code>.</p>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div class="u-flex u-gap-8">
           <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'base\']')?.click(); return false;">⚙️ Base</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'mcu-sim\']')?.click(); return false;">🔌 MCU &amp; Sim</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="document.querySelector('.tab-btn[data-tab=\'sensors\']')?.click(); return false;">🧭 Sensors</button>
@@ -1607,21 +1607,21 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
 
       <!-- Live Summary Badges -->
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:10px;">
-        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
-          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Kinematics</span>
+      <div class="u-grid u-gap-10 u-mt-10" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        <div class="u-bg-black-30 u-p-8-12" style="border-radius:6px; border:1px solid var(--border-soft);">
+          <span class="u-text-0-75rem u-uppercase u-font-600 u-block" style="color:var(--text-dim);">Kinematics</span>
           <b id="summary-bringup-base" style="color:#38bdf8; font-size:0.95rem;">2WD Differential</b>
         </div>
-        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
-          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Micro-ROS Port</span>
+        <div class="u-bg-black-30 u-p-8-12" style="border-radius:6px; border:1px solid var(--border-soft);">
+          <span class="u-text-0-75rem u-uppercase u-font-600 u-block" style="color:var(--text-dim);">Micro-ROS Port</span>
           <b id="summary-bringup-port" style="color:#34d399; font-size:0.95rem; font-family:var(--font-mono);">/dev/ttyACM0 @ 921600</b>
         </div>
-        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
-          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">LiDAR Sensor</span>
+        <div class="u-bg-black-30 u-p-8-12" style="border-radius:6px; border:1px solid var(--border-soft);">
+          <span class="u-text-0-75rem u-uppercase u-font-600 u-block" style="color:var(--text-dim);">LiDAR Sensor</span>
           <b id="summary-bringup-laser" style="color:#f59e0b; font-size:0.95rem;">LD19</b>
         </div>
-        <div style="background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft);">
-          <span style="color:var(--text-dim); font-size:0.75rem; text-transform:uppercase; font-weight:600; display:block;">Depth Camera</span>
+        <div class="u-bg-black-30 u-p-8-12" style="border-radius:6px; border:1px solid var(--border-soft);">
+          <span class="u-text-0-75rem u-uppercase u-font-600 u-block" style="color:var(--text-dim);">Depth Camera</span>
           <b id="summary-bringup-depth" style="color:#a78bfa; font-size:0.95rem;">None</b>
         </div>
       </div>
@@ -1660,7 +1660,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <button id="btn-bringup-stop" class="btn btn-danger" disabled>Stop</button>
         <button id="btn-bringup-logs" class="btn">Stream logs</button>
       </div>
-      <div class="row" style="margin-top: 8px;">
+      <div class="row u-mt-8">
         <label class="checkbox-label">
           <input type="checkbox" id="bringup-auto-toggle" checked>
           <span>Auto-launch Bringup when Teleop, SLAM, Nav, or Calibration starts</span>
@@ -1683,7 +1683,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
       <div id="bringup-health-table" class="hint" style="margin-top:10px;"></div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft);">
+      <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="lidar">⬅ Step 7: LiDAR / Scan</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="teleop">Step 9: Teleop &amp; Odometry ➔</button>
       </div>
@@ -1694,7 +1694,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <!-- MAP VIEWER — Zero-RViz browser canvas over rosbridge -->
   <section class="tab-pane" id="tab-rosviz">
     <div class="card">
-      <h2>🗺️ Live Map &amp; Navigation Viewer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">companion to step 10</span></h2>
+      <h2>🗺️ Live Map &amp; Navigation Viewer <span class="badge-pill badge-idle u-text-0-7rem u-font-600">companion to step 10</span></h2>
       <p class="hint">
         Draws <code>/map</code>, <code>/scan</code> and the robot's pose straight onto an HTML5
         canvas over <b>rosbridge</b> — no RViz, no noVNC, no X server on the robot. This is the
@@ -1715,14 +1715,14 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <button id="btn-rosviz-disconnect" class="btn btn-danger">Disconnect</button>
       </div>
 
-      <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+      <div class="row u-mt-10" style="gap:8px; flex-wrap:wrap;">
         <button id="btn-rosviz-initialpose" class="btn btn-sm" title="Click the robot's true position on the map, drag to aim its heading">
           📍 2D Pose Estimate <span class="hint" style="opacity:0.7;">/initialpose</span>
         </button>
         <button id="btn-rosviz-goal" class="btn btn-sm" title="Click the destination, drag to aim the final heading">
           🎯 Nav Goal <span class="hint" style="opacity:0.7;">/goal_pose</span>
         </button>
-        <span style="flex:1;"></span>
+        <span class="u-flex-1"></span>
         <button id="btn-rosviz-fit" class="btn btn-sm">Fit map</button>
         <button id="btn-rosviz-follow" class="btn btn-sm">Centre on robot</button>
       </div>
@@ -1731,7 +1731,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <canvas id="rosviz-canvas"></canvas>
       </div>
 
-      <div class="row" style="justify-content:space-between; margin-top:8px; flex-wrap:wrap; gap:8px;">
+      <div class="row u-justify-between u-mt-8" style="flex-wrap:wrap; gap:8px;">
         <span id="rosviz-status" class="hint rosviz-status rosviz-status-info">Not connected.</span>
         <span id="rosviz-pose" class="hint" style="font-size:0.72rem;"
               title="Which pose the robot marker is drawn from. The filtered pose and the base's own odometry differ, and on a long run they differ by more than a robot radius.">pose: waiting</span>
@@ -1750,10 +1750,10 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
     <!-- Sim Mode Preview Callout in SLAM & Nav -->
     <div class="card simulation-mode-preview-callout" id="slam-sim-mode-banner" style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)); border-left: 4px solid var(--accent-primary); margin-bottom: 16px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-        <div style="flex:1; min-width:280px;">
-          <span style="font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent-primary);">Workflow Transition · Autonomy Preview</span>
-          <h3 style="margin:4px 0 0; font-size:1.05rem; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+      <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-12">
+        <div class="u-flex-1" style="min-width:280px;">
+          <span class="u-text-0-75rem u-font-700 u-uppercase" style="letter-spacing:0.05em; color:var(--accent-primary);">Workflow Transition · Autonomy Preview</span>
+          <h3 class="u-text-slate-50 u-flex u-items-center u-gap-8" style="margin:4px 0 0; font-size:1.05rem;">
             <span>✨ Finished Previewing Map / SLAM / Nav2 in Sim Mode?</span>
             <span class="badge-pill badge-ok" id="slam-sim-mode-badge" style="font-size:0.72rem; padding:2px 8px;">Zero-Wiring Simulation Active</span>
           </h3>
@@ -1807,7 +1807,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>SLAM</h2>
       <button id="btn-slam-start" class="btn btn-primary">Start SLAM</button>
       <button id="btn-slam-stop" class="btn btn-danger" disabled>Stop</button>
-      <div class="row" style="margin-top:12px">
+      <div class="row u-mt-12">
         <input type="text" id="map-save-name" placeholder="map name">
         <button id="btn-map-save" class="btn">Save map</button>
       </div>
@@ -1821,11 +1821,11 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </label>
         <button id="btn-refresh-maps" class="btn">Refresh maps</button>
       </div>
-      <div class="row" style="margin-top: 10px;">
+      <div class="row u-mt-10">
         <input type="text" id="nav-params-file" placeholder="(custom params file override, blank = auto-resolve active console config)" style="flex: 1;">
         <button type="button" class="btn pick-btn" data-pick="file" data-exts="yaml,yml" data-target="nav-params-file">&#128193;</button>
       </div>
-      <div class="row" style="margin-top: 10px;">
+      <div class="row u-mt-10">
         <button id="btn-nav-start" class="btn btn-primary">Start Navigation</button>
         <button id="btn-nav-stop" class="btn btn-danger" disabled>Stop Navigation</button>
       </div>
@@ -1835,13 +1835,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <p class="hint">Diagnose navigation issues, optimize for specific environments, or configure kinematic parameters (holonomic Mecanum vs Differential 2WD/4WD) using our robotics AI engine and expert presets.</p>
 
       <!-- AI Prompt Assistant -->
-      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px; margin-bottom: 14px;">
-        <h3 style="margin-top: 0; font-size: 14px; color: var(--accent);">🤖 AI Robotics Tuning Assistant</h3>
+      <div class="u-mb-14" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px;">
+        <h3 class="u-text-accent" style="margin-top: 0; font-size: 14px;">🤖 AI Robotics Tuning Assistant</h3>
         <div class="row" style="margin-bottom: 8px;">
           <input type="text" id="ai-tune-prompt" placeholder="Describe symptoms or requirements (e.g. 'Mecanum robot hesitates in 85cm doors and wobbles at goal')..." style="flex: 1;">
           <button id="btn-ai-tune-ask" class="btn btn-primary">Ask AI</button>
         </div>
-        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+        <div class="u-flex u-flex-wrap u-gap-6" style="margin-bottom: 10px;">
           <button class="btn btn-sm btn-chip" data-prompt="Mecanum robot needs full lateral strafe and omnidirectional navigation">🤖 Mecanum Strafe</button>
           <button class="btn btn-sm btn-chip" data-prompt="Robot hesitates and gets stuck in 80cm narrow doorways">🚪 80cm Doorway Hesitation</button>
           <button class="btn btn-sm btn-chip" data-prompt="Eliminate rotational hunting and oscillation when reaching goal pose">🔄 Stop Goal Oscillation</button>
@@ -1885,8 +1885,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <!-- Interactive Parameter Controls -->
       <details id="tune-interactive-details" style="margin-bottom: 14px; border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; background: rgba(15, 23, 42, 0.4);">
-        <summary style="cursor: pointer; font-weight: 600; color: #e2e8f0; outline: none;">⚡ Quick Parameter Sliders & Robot Kinematics</summary>
-        <div style="margin-top: 10px;">
+        <summary class="u-cursor-pointer u-font-600" style="color: #e2e8f0; outline: none;">⚡ Quick Parameter Sliders & Robot Kinematics</summary>
+        <div class="u-mt-10">
           <div class="row">
             <label>Robot Kinematics
               <select id="tune-base-type">
@@ -1905,7 +1905,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
               <input type="number" step="0.1" min="0.5" max="5.0" id="tune-max-vel-theta" value="2.5">
             </label>
           </div>
-          <div class="row" style="margin-top: 8px;">
+          <div class="row u-mt-8">
             <label>Linear Accel (m/s²)
               <input type="number" step="0.1" min="0.5" max="5.0" id="tune-max-accel-x" value="2.5">
             </label>
@@ -1919,23 +1919,23 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
               <input type="number" step="0.5" min="1.0" max="15.0" id="tune-cost-scaling" value="3.0">
             </label>
           </div>
-          <div class="row" style="margin-top: 8px;">
+          <div class="row u-mt-8">
             <label>EKF Frequency (Hz)
               <input type="number" step="1.0" min="10" max="100" id="tune-ekf-freq" value="50">
             </label>
             <label>SLAM Resolution (m)
               <input type="number" step="0.005" min="0.01" max="0.1" id="tune-slam-res" value="0.05">
             </label>
-            <label class="checkbox-label" style="align-self: flex-end; margin-bottom: 6px;">
+            <label class="checkbox-label u-mb-6" style="align-self: flex-end;">
               <input type="checkbox" id="tune-fuse-vy">
               <span>Fuse Lateral Vel (EKF vy)</span>
             </label>
-            <label class="checkbox-label" style="align-self: flex-end; margin-bottom: 6px;">
+            <label class="checkbox-label u-mb-6" style="align-self: flex-end;">
               <input type="checkbox" id="tune-fuse-imu-yaw">
               <span>Fuse IMU Yaw</span>
             </label>
           </div>
-          <div class="row" style="margin-top: 10px;">
+          <div class="row u-mt-10">
             <button id="btn-apply-interactive-tuning" class="btn btn-primary">Apply Tuning to Active Configs</button>
             <span id="tune-interactive-status" class="hint" style="align-self: center;"></span>
           </div>
@@ -1944,8 +1944,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <!-- Collapsible Raw Config Editors -->
       <details id="tune-raw-editors-details" style="border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; background: rgba(15, 23, 42, 0.4);">
-        <summary style="cursor: pointer; font-weight: 600; color: #e2e8f0; outline: none;">📝 Direct YAML Editors (Nav2, EKF & SLAM)</summary>
-        <div style="margin-top: 10px;">
+        <summary class="u-cursor-pointer u-font-600" style="color: #e2e8f0; outline: none;">📝 Direct YAML Editors (Nav2, EKF & SLAM)</summary>
+        <div class="u-mt-10">
           <!-- Nav2 Sub-Editor. The box is collapsed and the toggle is what
                loads it: loadNav2Config() fetches a distro's whole parameter
                set, and doing that on every page load to fill a textarea
@@ -2032,12 +2032,12 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <button id="btn-params-promote" class="btn btn-sm">Promote</button>
           </div>
           <details style="margin-bottom: 4px;">
-            <summary class="hint" style="cursor: pointer;">Merge an external params file into the active config</summary>
+            <summary class="hint u-cursor-pointer">Merge an external params file into the active config</summary>
             <textarea id="params-import-text" rows="4" placeholder="paste an external navigation_*.yaml / ekf.yaml / slam.yaml here"
               style="width: 100%; font-family: var(--font-mono); font-size: 11px; background: #0c121e; color: #cbd5e1; border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px; margin: 6px 0;"></textarea>
             <button id="btn-params-merge-import" class="btn btn-sm">Merge into active</button>
           </details>
-          <pre id="params-op-result" class="hint" style="white-space: pre-wrap; margin: 4px 0 0; max-height: 160px; overflow: auto;"></pre>
+          <pre id="params-op-result" class="hint u-max-h-160 u-overflow-auto" style="white-space: pre-wrap; margin: 4px 0 0;"></pre>
         </div>
       </details>
     </div>
@@ -2045,7 +2045,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>🛠️ AI Custom Robot Builder Studio</h2>
       <p class="hint">Guided end-to-end workflow for designing, tuning, and deploying your custom robot. Provide your mechanical/electrical specs or click a chassis template below to auto-generate the complete software stack (kinematics, EKF, Nav2, SLAM, and sensors).</p>
       
-      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">
+      <div class="u-flex u-flex-wrap u-gap-6" style="margin-bottom: 12px;">
         <button class="btn btn-sm btn-robot-chip" data-robot="4WD Mecanum AMR with 97mm wheels, 30cm track width, 25cm wheelbase, LD19 lidar for narrow indoor hallways">🤖 Mecanum 97mm AMR</button>
         <button class="btn btn-sm btn-robot-chip" data-robot="Differential 2WD robot with 66mm wheels, 16cm track width, RPLIDAR A1 for home service">🐢 TurtleBot-Style 2WD</button>
         <button class="btn btn-sm btn-robot-chip" data-robot="Heavy 4WD Skid Steer outdoor rover with 130mm wheels, 35cm track width, 28cm wheelbase, high speed">🏎️ 4WD Outdoor Rover</button>
@@ -2059,8 +2059,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <!-- Generated Robot Spec Preview -->
       <div id="ai-robot-spec-box" style="display: none; background: #0c121e; border: 1px solid var(--border-soft); border-radius: 8px; padding: 14px; margin-top: 10px;">
-        <h3 style="margin-top: 0; color: #38bdf8; font-size: 14px;">📋 Generated Robot Architecture & Kinematics</h3>
-        <div class="row" style="font-size: 12px; color: #cbd5e1; margin-bottom: 10px;">
+        <h3 class="u-text-sky-400" style="margin-top: 0; font-size: 14px;">📋 Generated Robot Architecture & Kinematics</h3>
+        <div class="row u-text-12" style="color: #cbd5e1; margin-bottom: 10px;">
           <div><strong>Kinematics:</strong> <span id="spec-base">-</span></div>
           <div><strong>Wheels:</strong> <span id="spec-wheel">-</span></div>
           <div><strong>Track:</strong> <span id="spec-track">-</span></div>
@@ -2075,7 +2075,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
     </div>
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-p-14-18 u-bg-card" style="border:1px solid var(--border-soft); border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="teleop">⬅ Step 9: Teleop &amp; Odometry</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="cockpit">Step 11: Mission Operations ➔</button>
     </div>
@@ -2085,7 +2085,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <section class="tab-pane" id="tab-teleop">
 
     <div class="card">
-      <h2>🕹️ 9. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok" style="font-size:0.7rem; font-weight:600;">no hardware needed</span></h2>
+      <h2>🕹️ 9. Manual Teleop &amp; Velocity Driving — virtual gamepad <span class="badge-pill badge-ok u-text-0-7rem u-font-600">no hardware needed</span></h2>
       <p class="hint">Drive the robot from this page -- no physical joystick, and no
         terminal for <code>teleop_twist_keyboard</code>. Drag the stick (or use the arrow
         keys / WASD while it has focus) and the cockpit publishes <code>/cmd_vel</code> at
@@ -2122,7 +2122,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div class="card">
-      <h2>🎮 USB gamepad on the robot computer <span class="badge-pill badge-idle" style="font-size:0.7rem; font-weight:600;">needs hardware</span></h2>
+      <h2>🎮 USB gamepad on the robot computer <span class="badge-pill badge-idle u-text-0-7rem u-font-600">needs hardware</span></h2>
       <p class="hint"><b>This card needs a physical gamepad plugged into the robot computer.</b> Start
         runs <code>joy_linux_node</code> and <code>teleop_twist_joy</code> there; with no joystick on
         <code>/dev/input/js*</code> they come up and publish nothing, which looks like the button did
@@ -2142,7 +2142,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <button id="btn-teleop-stop" class="btn btn-danger" disabled>Stop</button>
     </div>
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t" style="border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="bringup">⬅ Step 8: Robot Bringup</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="slam-nav">Step 10: SLAM &amp; Nav2 ➔</button>
     </div>
@@ -2151,7 +2151,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <!-- 7. LIDAR / SCAN -->
   <section class="tab-pane" id="tab-lidar">
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">📡 7. Standalone Laser Driver &amp; Radar Viewer</h2>
         <span class="badge-pill badge-accent" style="font-size:0.75rem; font-weight:700;">Live Sensor Stream</span>
       </div>
@@ -2221,7 +2221,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         for the full map / costmap / TF view use the RViz-in-browser card on the
         <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'cockpit\']')?.click(); return false;">Operations</a> tab.</p>
       <div class="row" style="align-items:center; gap:8px; margin-bottom:8px;">
-        <label for="laser-driver-topic" class="form-label" style="margin:0;">Scan topic</label>
+        <label for="laser-driver-topic" class="form-label u-m-0">Scan topic</label>
         <input type="text" id="laser-driver-topic" class="form-input font-mono"
                value="/scan" placeholder="/scan" style="max-width:220px;">
         <span class="input-hint">Which topic to plot. Change it for a robot publishing
@@ -2234,7 +2234,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <canvas id="lidar-canvas" width="480" height="480"></canvas>
     </div>
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-p-14-18 u-bg-card" style="border:1px solid var(--border-soft); border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="hw-tests">⬅ Step 6: Hardware Tests</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="bringup">Step 8: Robot Bringup ➔</button>
     </div>
@@ -2245,13 +2245,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     
     <!-- 1-Click Autonomous Operations Card -->
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">🚀 11. One-Click Autonomous Operations Pipeline</h2>
         <span id="cockpit-pipeline-badge" class="pill pill-unknown">Ready</span>
       </div>
       <p class="hint">Executes the automated end-to-end mission on this robot computer: micro-ROS agent ➔ bringup ➔ Topic Echo &amp; Rate (Hz) verification gate ➔ SLAM mapping &amp; exploration ➔ Map saver ➔ Nav2 lifecycle activation ➔ Clean teardown.</p>
       
-      <div class="row" style="margin-top:14px;">
+      <div class="row u-mt-14">
         <label>Base Controller
           <select id="cockpit-target-select" style="min-width:260px;">
             <option value="pico2" selected>Raspberry Pi Pico 2 (Default - Recommended for Beginners)</option>
@@ -2274,9 +2274,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </label>
         
         <label>Explore Duration
-          <div style="display:flex; align-items:center; gap:6px;">
+          <div class="u-flex u-items-center u-gap-6">
             <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" style="width:75px; min-width:unset;">
-            <span style="color:var(--text-dim); font-size:12px;">sec</span>
+            <span class="u-text-12" style="color:var(--text-dim);">sec</span>
           </div>
         </label>
 
@@ -2295,13 +2295,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </label>
         </div>
 
-        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+        <label class="checkbox u-mb-8 u-cursor-pointer"
                title="On (default): robot autonomously explores unknown space (multi-room or single-room) using frontier exploration (explore_lite) and returns to start. Off: fallback to fixed Nav2 goal navigation.">
           <input type="checkbox" id="cockpit-explore" checked>
           <span>Autonomous Frontier Exploration</span>
         </label>
 
-        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;">
+        <label class="checkbox u-mb-8 u-cursor-pointer">
           <input type="checkbox" id="cockpit-no-nav2">
           <span>Skip Nav2</span>
         </label>
@@ -2313,13 +2313,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
              a write even when the board already runs this build. Neither affects
              the 4 KB env block, which is written on its own terms whenever the
              config or the selected application changed. -->
-        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+        <label class="checkbox u-mb-8 u-cursor-pointer"
                title="On (default): when the probe reports the board is running a different build, the run rebuilds and reflashes it. Off: the board keeps its firmware and the run says so before testing against it.">
           <input type="checkbox" id="cockpit-auto-update" checked>
           <span>Auto-update firmware when stale</span>
         </label>
 
-        <label class="checkbox" style="margin-bottom:8px; cursor:pointer;"
+        <label class="checkbox u-mb-8 u-cursor-pointer"
                title="Force a reflash even when the board already runs this build. Leave off unless you mean to rewrite a matching image.">
           <input type="checkbox" id="cockpit-update-firmware">
           <span>Force firmware update</span>
@@ -2334,13 +2334,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
 
       <!-- Post-Preview Hardware Design Callout -->
-      <div id="cockpit-sim-mode-banner" style="background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
-        <div style="flex:1; min-width:260px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-weight:700;font-size:0.88rem;color:#38bdf8;">✨ Finished Previewing 1-Click Autonomy?</span>
+      <div class="u-justify-between" id="cockpit-sim-mode-banner" style="background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.3); border-radius:8px; padding:12px 16px; margin-top:14px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div class="u-flex-1" style="min-width:260px;">
+          <div class="u-flex u-items-center u-gap-6">
+            <span class="u-font-700" style="font-size:0.88rem; color:#38bdf8;">✨ Finished Previewing 1-Click Autonomy?</span>
             <span class="badge-pill badge-ok" id="cockpit-sim-mode-badge" style="font-size:0.7rem; padding:1px 6px;">Sim Mode Active</span>
           </div>
-          <span style="font-size:0.8rem;color:#cbd5e1;display:block;margin-top:2px;">Switch Sim Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
+          <span class="u-block" style="font-size:0.8rem; color:#cbd5e1; margin-top:2px;">Switch Sim Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
         </div>
         <button type="button" class="btn btn-sm btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4);font-weight:700;">
           ⚡ Switch Sim OFF &amp; Design Hardware ➔
@@ -2350,9 +2350,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
     <!-- Live ROS 2 Topic Echo & Rate Verification Gate Card -->
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">🔍 ROS 2 Topic Echo &amp; Publishing Rate (Hz) Gate</h2>
-        <div style="display:flex; align-items:center; gap:8px;">
+        <div class="u-flex u-items-center u-gap-8">
           <span id="cockpit-verify-status" class="hint"></span>
           <button type="button" id="btn-cockpit-verify-topics" class="btn">⚡ Run Rate &amp; Echo Audit</button>
         </div>
@@ -2363,32 +2363,32 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         
         <!-- Odom Card -->
         <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="u-flex u-justify-between u-items-center">
             <b style="font-family:var(--font-mono); color:var(--text-primary);">/odom</b>
             <span id="topic-badge-odom" class="pill pill-unknown">-- Hz</span>
           </div>
-          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>10.0 Hz</b></div>
-          <div id="topic-echo-odom" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+          <div class="u-text-11-5 u-text-dim u-mt-6">Min Threshold: <b>10.0 Hz</b></div>
+          <div class="u-max-h-60 u-overflow-hidden" id="topic-echo-odom" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px;">Waiting for audit...</div>
         </div>
 
         <!-- IMU Card -->
         <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="u-flex u-justify-between u-items-center">
             <b style="font-family:var(--font-mono); color:var(--text-primary);">/imu/data</b>
             <span id="topic-badge-imu" class="pill pill-unknown">-- Hz</span>
           </div>
-          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>10.0 Hz</b></div>
-          <div id="topic-echo-imu" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+          <div class="u-text-11-5 u-text-dim u-mt-6">Min Threshold: <b>10.0 Hz</b></div>
+          <div class="u-max-h-60 u-overflow-hidden" id="topic-echo-imu" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px;">Waiting for audit...</div>
         </div>
 
         <!-- Scan Card -->
         <div class="card" style="background:#0c1220; padding:12px; border-radius:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="u-flex u-justify-between u-items-center">
             <b style="font-family:var(--font-mono); color:var(--text-primary);">/scan</b>
             <span id="topic-badge-scan" class="pill pill-unknown">-- Hz</span>
           </div>
-          <div style="font-size:11.5px; color:var(--text-dim); margin-top:6px;">Min Threshold: <b>5.0 Hz</b></div>
-          <div id="topic-echo-scan" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px; max-height:60px; overflow:hidden;">Waiting for audit...</div>
+          <div class="u-text-11-5 u-text-dim u-mt-6">Min Threshold: <b>5.0 Hz</b></div>
+          <div class="u-max-h-60 u-overflow-hidden" id="topic-echo-scan" style="font-family:var(--font-mono); font-size:11px; color:#8a94a8; margin-top:6px; background:#060910; padding:6px; border-radius:4px;">Waiting for audit...</div>
         </div>
 
       </div>
@@ -2396,7 +2396,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
     <!-- UDP Syslog Server & Live Telemetry Logger Card -->
     <div class="card" id="card-syslog-server">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">📡 UDP Syslog Server &amp; Live Telemetry Logger</h2>
         <span id="syslog-status-badge" class="pill pill-warn">Syslog: Offline</span>
       </div>
@@ -2405,16 +2405,16 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <label style="flex:0.6; min-width:110px;">UDP Port
           <input type="number" id="cfg-syslog-server-port" placeholder="514 or 5140" value="5140">
         </label>
-        <div style="display:flex; gap:8px; align-items:flex-end;">
+        <div class="u-flex u-gap-8" style="align-items:flex-end;">
           <button type="button" id="btn-syslog-start" class="btn btn-primary">▶️ Launch Syslog Server</button>
           <button type="button" id="btn-syslog-stop" class="btn btn-danger" style="display:none;">⏹️ Stop Syslog Server</button>
           <button type="button" id="btn-syslog-logs" class="btn">📂 Inspect Logs</button>
         </div>
-        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; margin-left:auto;">
+        <label class="u-items-center u-cursor-pointer" style="display:flex; gap:6px; font-size:12px; margin-left:auto;">
           <input type="checkbox" id="chk-stream-syslog-terminal" checked> Stream into Terminal
         </label>
       </div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; background:#0c1220; border:1px solid var(--border-soft); border-radius:6px; padding:10px; font-size:12px;">
+      <div class="u-grid u-gap-10 u-p-10 u-text-12" style="grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); background:#0c1220; border:1px solid var(--border-soft); border-radius:6px;">
         <div><span style="color:var(--text-dim);">Active Log:</span> <code id="syslog-stat-file" style="color:#38bdf8;">logs/syslog_YYYYMMDD.log</code></div>
         <div><span style="color:var(--text-dim);">Packets Received:</span> <strong id="syslog-stat-packets" style="color:var(--success);">0</strong></div>
         <div><span style="color:var(--text-dim);">Last Sender:</span> <span id="syslog-stat-client" style="font-family:var(--font-mono); color:var(--warning);">--</span></div>
@@ -2423,9 +2423,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
     <!-- SSoT Profile Callout Card -->
     <div class="card" style="background:linear-gradient(135deg,rgba(15,23,42,0.8),rgba(30,41,59,0.7)); border-left:4px solid var(--accent-primary);">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-10">
         <div>
-          <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+          <h2 class="u-flex u-items-center u-gap-8" style="margin:0; font-size:1.1rem;">
             <span>⚙️ Central Parameter Profile (<code>&lt;robot&gt;_config.yaml</code>)</span>
             <span class="badge-pill badge-accent" style="font-size:0.75rem;">Single Source of Truth</span>
           </h2>
@@ -2442,7 +2442,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
     <!-- Saved Maps Gallery Card -->
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">🗺️ Saved SLAM Maps Gallery</h2>
         <button type="button" id="btn-cockpit-refresh-maps" class="btn">🔄 Refresh Maps</button>
       </div>
@@ -2451,7 +2451,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:14px; border-top:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t" style="border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="slam-nav">⬅ Step 10: SLAM &amp; Nav2</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="secrets">Step 12: 🔐 Secrets ➔</button>
     </div>
@@ -2460,7 +2460,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
   <!-- SECRETS (secrets.yaml) -->
   <section class="tab-pane" id="tab-secrets">
     <div class="card" id="card-secrets-settings">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">🔐 Wi-Fi &amp; Network Secrets (<code>secrets.yaml</code>)</h2>
         <span class="pill pill-unknown" id="secrets-status-pill">checking...</span>
       </div>
@@ -2472,13 +2472,13 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </p>
 
       <!-- Wi-Fi Station Credentials Section -->
-      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">📡 Wi-Fi Station Credentials (ESP32 / Pico W / Pico 2 W)</h3>
+      <h3 class="u-text-sky-400 u-uppercase u-tracking-half" style="font-size:13px; margin:14px 0 8px 0;">📡 Wi-Fi Station Credentials (ESP32 / Pico W / Pico 2 W)</h3>
       <div class="row" style="gap:12px; flex-wrap:wrap;">
-        <label style="flex:1; min-width:200px;">Wi-Fi SSID
+        <label class="u-min-w-200" style="flex:1;">Wi-Fi SSID
           <input type="text" id="secrets-wifi-ssid" placeholder="Enter Wi-Fi SSID..." autocomplete="off">
         </label>
-        <label style="flex:1; min-width:200px;">Wi-Fi Password
-          <div style="display:flex; gap:6px;">
+        <label class="u-min-w-200" style="flex:1;">Wi-Fi Password
+          <div class="u-flex u-gap-6">
             <input type="password" id="secrets-wifi-password" placeholder="Enter Wi-Fi Password..." autocomplete="new-password" style="flex:1;">
             <button type="button" class="btn" id="btn-toggle-secrets-pw" title="Show/Hide Password">👁️</button>
           </div>
@@ -2486,48 +2486,48 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
 
       <!-- Static IP / Addressing (Optional) -->
-      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">🌐 IP Addressing (Blank = DHCP)</h3>
+      <h3 class="u-text-sky-400 u-uppercase u-tracking-half" style="font-size:13px; margin:14px 0 8px 0;">🌐 IP Addressing (Blank = DHCP)</h3>
       <div class="row" style="gap:12px; flex-wrap:wrap;">
-        <label style="flex:1; min-width:140px;">Static IP (optional)
+        <label class="u-min-w-140" style="flex:1;">Static IP (optional)
           <input type="text" id="secrets-wifi-static-ip" placeholder="Leave blank for DHCP (e.g. 192.168.1.50)">
         </label>
-        <label style="flex:1; min-width:140px;">Gateway (optional)
+        <label class="u-min-w-140" style="flex:1;">Gateway (optional)
           <input type="text" id="secrets-wifi-gateway" placeholder="e.g. 192.168.1.1">
         </label>
-        <label style="flex:1; min-width:140px;">Subnet Mask
+        <label class="u-min-w-140" style="flex:1;">Subnet Mask
           <input type="text" id="secrets-wifi-subnet" placeholder="255.255.255.0" value="255.255.255.0">
         </label>
-        <label style="flex:1; min-width:140px;">DNS Server
+        <label class="u-min-w-140" style="flex:1;">DNS Server
           <input type="text" id="secrets-wifi-dns" placeholder="8.8.8.8" value="8.8.8.8">
         </label>
       </div>
 
       <!-- micro-ROS & Telemetry Endpoints -->
-      <h3 style="font-size:13px; color:#38bdf8; margin:14px 0 8px 0; text-transform:uppercase; letter-spacing:0.5px;">🎯 micro-ROS &amp; Telemetry Endpoints</h3>
+      <h3 class="u-text-sky-400 u-uppercase u-tracking-half" style="font-size:13px; margin:14px 0 8px 0;">🎯 micro-ROS &amp; Telemetry Endpoints</h3>
       <div class="row" style="gap:12px; flex-wrap:wrap;">
         <label style="flex:1; min-width:160px;">micro-ROS Agent IP
           <input type="text" id="secrets-agent-ip" placeholder="192.168.1.100">
         </label>
-        <label style="flex:0.6; min-width:100px;">Agent UDP Port
+        <label class="u-min-w-100" style="flex:0.6;">Agent UDP Port
           <input type="number" id="secrets-agent-port" placeholder="8888" value="8888">
         </label>
         <label style="flex:1; min-width:160px;">Syslog Server IP
           <input type="text" id="secrets-syslog-server" placeholder="192.168.1.100">
         </label>
-        <label style="flex:0.6; min-width:100px;">Syslog Port
+        <label class="u-min-w-100" style="flex:0.6;">Syslog Port
           <input type="number" id="secrets-syslog-port" placeholder="514 or 5140" value="514">
-          <span style="font-size:10.5px; color:var(--text-dim); display:block; margin-top:2px;">(Falls back to 5140 in rootless)</span>
+          <span class="u-block" style="font-size:10.5px; color:var(--text-dim); margin-top:2px;">(Falls back to 5140 in rootless)</span>
         </label>
-        <label style="flex:0.6; min-width:100px;">ArduinoOTA Port
+        <label class="u-min-w-100" style="flex:0.6;">ArduinoOTA Port
           <input type="number" id="secrets-ota-port" placeholder="3232" value="3232">
         </label>
-        <label style="flex:0.8; min-width:140px;">OTA Password
+        <label class="u-min-w-140" style="flex:0.8;">OTA Password
           <input type="password" id="secrets-ota-password" placeholder="Optional">
         </label>
       </div>
 
       <!-- Actions -->
-      <div class="row" style="margin-top:14px; gap:8px; align-items:center; flex-wrap:wrap;">
+      <div class="row u-mt-14" style="gap:8px; align-items:center; flex-wrap:wrap;">
         <button type="button" id="btn-save-secrets" class="btn btn-primary">💾 Save secrets.yaml &amp; Generate Header</button>
         <button type="button" id="btn-reload-secrets" class="btn">🔄 Reload</button>
         <button type="button" id="btn-toggle-secrets-yaml" class="btn">📋 Toggle Raw YAML</button>
@@ -2541,7 +2541,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
     </div>
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-p-14-18 u-bg-card" style="border:1px solid var(--border-soft); border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="cockpit">⬅ Step 11: Operations</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="settings">Step 13: Config Studio ➔</button>
     </div>
@@ -2549,18 +2549,18 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
   <!-- CONFIG STUDIO (SYSTEM & ROBOT PROFILE) -->
   <section class="tab-pane" id="tab-settings">
-    <div class="card" style="border-left: 4px solid var(--accent); margin-bottom: 14px;">
+    <div class="card u-mb-14" style="border-left: 4px solid var(--accent);">
       <h3 style="margin:0 0 6px 0;">⚙️ Config Studio &amp; System Runtime</h3>
       <p class="hint" style="margin:0;">
         Authoritative studio for the single source of truth <code>&lt;robot&gt;_config.yaml</code> profile, workspace path, container runtime engines, and headless boot autostart daemons.<br>
-        • <strong>MCU &amp; Serial Connection:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'mcu-sim\']')?.click(); return false;" style="color:var(--accent);">MCU &amp; Sim</a>.<br>
-        • <strong>Robot Chassis &amp; Kinematics:</strong> Configured in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'base\']')?.click(); return false;" style="color:var(--accent);">Base</a>.<br>
-        • <strong>Wi-Fi &amp; Network Passwords:</strong> Managed securely in <a href="#" onclick="document.querySelector('.tab-btn[data-tab=\'secrets\']')?.click(); return false;" style="color:var(--accent);">🔐 Secrets</a>.
+        • <strong>MCU &amp; Serial Connection:</strong> Configured in <a class="u-text-accent" href="#" onclick="document.querySelector('.tab-btn[data-tab=\'mcu-sim\']')?.click(); return false;">MCU &amp; Sim</a>.<br>
+        • <strong>Robot Chassis &amp; Kinematics:</strong> Configured in <a class="u-text-accent" href="#" onclick="document.querySelector('.tab-btn[data-tab=\'base\']')?.click(); return false;">Base</a>.<br>
+        • <strong>Wi-Fi &amp; Network Passwords:</strong> Managed securely in <a class="u-text-accent" href="#" onclick="document.querySelector('.tab-btn[data-tab=\'secrets\']')?.click(); return false;">🔐 Secrets</a>.
       </p>
     </div>
 
     <div class="card" id="card-config-dir">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-6">
         <h2 style="margin:0;">Config Directory</h2>
         <span class="pill" id="config-git-pill">checking…</span>
       </div>
@@ -2569,14 +2569,14 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         Set <code>COCKPIT_CONFIG_DIR</code> to move it. Credentials (<code>secrets.yaml</code>), the access
         token and the generated URDF are ignored by that repo and are never committed.</p>
       <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center;">
-        <code id="config-dir-path" style="flex:1; min-width:220px; word-break:break-all;">…</code>
+        <code class="u-min-w-220" id="config-dir-path" style="flex:1; word-break:break-all;">…</code>
         <input type="text" id="config-commit-message" placeholder="Commit message (optional)"
                style="flex:1; min-width:200px;">
         <button id="btn-config-commit" class="btn btn-primary">Commit config</button>
         <button id="btn-config-git-refresh" class="btn">Refresh</button>
       </div>
       <p class="hint" id="config-git-detail" style="margin:8px 0 0;"></p>
-      <pre id="config-git-changes" style="display:none; margin:8px 0 0; padding:8px; max-height:160px; overflow:auto; background:#0c121e; color:#cbd5e1; border:1px solid var(--border-soft); border-radius:6px; font-size:12px;"></pre>
+      <pre class="u-max-h-160 u-overflow-auto" id="config-git-changes" style="display:none; margin:8px 0 0; padding:8px; background:#0c121e; color:#cbd5e1; border:1px solid var(--border-soft); border-radius:6px; font-size:12px;"></pre>
     </div>
 
     <div class="card" id="card-unified-config-settings">
@@ -2600,7 +2600,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">Container Engine &amp; Image Registry</h2>
         <span class="pill pill-ok">Runtime Environment</span>
       </div>
@@ -2617,7 +2617,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </label>
         <button type="button" class="btn" id="btn-settings-rootless-guide">❓ Rootless Guide</button>
       </div>
-      <div class="row" style="align-items: flex-end; gap: 10px; margin-top: 8px;">
+      <div class="row u-mt-8" style="align-items: flex-end; gap: 10px;">
         <label style="flex: 1;">Container Registry
           <select id="cfg-container-registry">
             <option value="auto" selected>Auto (Cluster probe, fallback to Docker Hub)</option>
@@ -2639,38 +2639,38 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
            from s.agent_busy_console -- but the markup did not, so the only way
            to start or stop the micro-ROS agent was to have some other action
            do it implicitly. -->
-      <div class="row" style="margin-top:12px; align-items:center; gap:8px;">
+      <div class="row u-mt-12" style="align-items:center; gap:8px;">
         <button id="btn-agent-ensure" class="btn btn-primary" title="Start the micro-ROS agent if it is not already running">▶ Start Agent</button>
         <button id="btn-agent-stop" class="btn btn-danger" title="Stop the agent this cockpit started" disabled>■ Stop Agent</button>
         <button id="btn-agent-port-check" class="btn" title="Is the agent's serial port or UDP port already taken?">🔍 Check Port</button>
         <span id="agent-port-status-pill" class="pill pill-unknown" style="display:none;"></span>
       </div>
-      <div class="row" style="margin-top:12px;">
+      <div class="row u-mt-12">
         <button id="btn-save-agent" class="btn">Save Engine Preferences</button>
       </div>
     </div>
     <div class="card" id="card-robot-autostart">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="u-flex u-justify-between u-items-center u-mb-8">
         <h2 style="margin:0;">⚡ Robot Boot Autostart (Headless Daemon)</h2>
         <span class="pill pill-unknown" id="autostart-status-pill">checking...</span>
       </div>
       <p class="hint">Enable automatic unattended startup of micro-ROS Agent, Robot Bringup, and Nav2 Navigation when the robot computer powers on (via Linux user systemd &amp; lingering). Survives reboots and reconnects without requiring SSH login or browser interaction.</p>
       
       <div class="row" style="gap:12px; flex-wrap:wrap;">
-        <label style="flex:1; min-width:220px;">Target Autostart Stack
+        <label class="u-min-w-220" style="flex:1;">Target Autostart Stack
           <select id="autostart-stack-select">
             <option value="full_nav2" selected>Full Autonomous Stack (Agent + Bringup + Nav2)</option>
             <option value="agent_bringup">Sensors &amp; Teleop (micro-ROS Agent + Robot Bringup)</option>
             <option value="agent_only">micro-ROS Agent Only</option>
           </select>
         </label>
-        <label style="flex:1; min-width:220px;">Navigation Map / Mode
+        <label class="u-min-w-220" style="flex:1;">Navigation Map / Mode
           <input type="text" id="autostart-map-path" placeholder="empty = SLAM online mapping mode">
         </label>
         <button type="button" class="btn pick-btn" data-pick="file" data-exts="yaml,yml" data-target="autostart-map-path" style="align-self:flex-end;">&#128193;</button>
       </div>
 
-      <div class="row" style="margin-top:10px; gap:8px; flex-wrap:wrap;">
+      <div class="row u-mt-10" style="gap:8px; flex-wrap:wrap;">
         <button type="button" id="btn-autostart-enable" class="btn btn-primary">⚡ Enable Boot Autostart</button>
         <button type="button" id="btn-autostart-disable" class="btn btn-danger">🛑 Disable Autostart</button>
         <button type="button" id="btn-autostart-status" class="btn">🔍 Check Status</button>
@@ -2679,7 +2679,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <div id="autostart-info-box" style="margin-top:10px; display:none; background:#0c121e; border:1px solid var(--border-soft); border-radius:6px; padding:10px; font-size:12px;">
         <div id="autostart-summary-text" style="color:#38bdf8; font-weight:600; margin-bottom:4px;"></div>
-        <pre id="autostart-details-text" style="margin:0; max-height:160px; overflow-y:auto; color:#94a3b8; font-family:var(--font-mono); font-size:11px;"></pre>
+        <pre class="u-max-h-160 u-overflow-y-auto" id="autostart-details-text" style="margin:0; color:#94a3b8; font-family:var(--font-mono); font-size:11px;"></pre>
       </div>
     </div>
 
@@ -2704,7 +2704,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <button id="btn-save-distro" class="btn">Save</button>
     </div>
   
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-justify-between u-items-center u-mt-20 u-p-14-18 u-bg-card" style="border:1px solid var(--border-soft); border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="secrets">⬅ Step 12: 🔐 Secrets</button>
       <button type="button" class="btn btn-accent btn-workflow-next" data-next="install">Step 14: Containers &amp; System Install ➔</button>
     </div>
@@ -2855,7 +2855,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
     </div>
   
-    <div style="display:flex; justify-content:flex-start; align-items:center; margin-top:20px; padding:14px 18px; background:var(--bg-card); border:1px solid var(--border-soft); border-radius:10px;">
+    <div class="u-flex u-items-center u-mt-20 u-p-14-18 u-bg-card" style="justify-content:flex-start; border:1px solid var(--border-soft); border-radius:10px;">
       <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="settings">⬅ Step 13: Config Studio</button>
     </div>
   </section>
@@ -2901,7 +2901,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
     <div style="padding: 14px;">
       <p id="port-conflict-summary" style="font-weight:600; font-size:14px; margin:0 0 10px 0; color:#fca5a5;"></p>
-      <div id="port-conflict-details" style="font-family:monospace; font-size:12px; background:rgba(0,0,0,0.45); padding:10px; border-radius:6px; margin-bottom:15px; max-height:160px; overflow-y:auto; white-space:pre-wrap; color:#e2e8f0;"></div>
+      <div class="u-max-h-160 u-overflow-y-auto" id="port-conflict-details" style="font-family:monospace; font-size:12px; background:rgba(0,0,0,0.45); padding:10px; border-radius:6px; margin-bottom:15px; white-space:pre-wrap; color:#e2e8f0;"></div>
       <p class="hint" style="margin:0 0 15px 0;">Another process, agent, or container is currently accessing this port. If you proceed without releasing the port, serial connection or agent startup will fail.</p>
       <div class="row" style="gap:10px; justify-content:flex-end;">
         <button type="button" class="btn" id="btn-ignore-port-conflict">Ignore</button>
@@ -2914,12 +2914,12 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
 <!-- Rootless Docker Daemon & Podman Setup Guide Modal -->
 <div id="modal-rootless-docker" class="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(8px);">
-  <div class="modal-card" style="background:var(--bg-card, #111827);border:1px solid #38bdf8;border-radius:14px;padding:26px 30px;min-width:420px;max-width:680px;width:90%;box-shadow:0 25px 65px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;gap:10px;">
+  <div class="modal-card u-overflow-y-auto" style="background:var(--bg-card, #111827); border:1px solid #38bdf8; border-radius:14px; padding:26px 30px; min-width:420px; max-width:680px; width:90%; box-shadow:0 25px 65px rgba(0,0,0,0.7); max-height:90vh;">
+    <div class="u-flex u-justify-between" style="align-items:flex-start; margin-bottom:12px;">
+      <div class="u-flex u-items-center u-gap-10">
         <span style="font-size:1.6rem;">🐳</span>
         <div>
-          <h3 style="margin:0;font-size:1.15rem;color:#f8fafc;">Linux Rootless Container Guide</h3>
+          <h3 class="u-text-slate-50" style="margin:0; font-size:1.15rem;">Linux Rootless Container Guide</h3>
           <p style="margin:2px 0 0 0;font-size:0.8rem;color:#94a3b8;">Prevent root file ownership on bind-mounted directories</p>
         </div>
       </div>
@@ -2927,19 +2927,19 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div style="background:rgba(56, 189, 248, 0.1);border:1px solid rgba(56, 189, 248, 0.3);border-radius:8px;padding:12px 14px;margin-bottom:16px;">
-      <div style="font-weight:600;font-size:0.84rem;color:#38bdf8;margin-bottom:4px;">💡 Why Rootless Docker on Linux?</div>
+      <div class="u-font-600 u-text-sky-400" style="font-size:0.84rem; margin-bottom:4px;">💡 Why Rootless Docker on Linux?</div>
       <p style="margin:0;font-size:0.8rem;color:#cbd5e1;line-height:1.45;">
         When standard (rootful) Docker executes container builds with volume mounts (<code>-v "$(pwd):/workspace"</code>), all generated files (such as <code>.env</code>, <code>devices.generated.yaml</code>, and build artifacts) are written as <strong>root:root</strong>. This causes local Git commit errors and permission denies during local development.
         <strong>Rootless Docker</strong> and <strong>Podman</strong> run completely inside your user namespace, guaranteeing all files stay owned by your normal user account.
       </p>
     </div>
 
-    <div style="margin-bottom:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;">⚡ 1-Click Setup: Ubuntu / Debian / Raspberry Pi OS</span>
+    <div class="u-mb-14">
+      <div class="u-flex u-justify-between u-items-center u-mb-6">
+        <span class="u-text-0-82rem u-font-600" style="color:#e2e8f0;">⚡ 1-Click Setup: Ubuntu / Debian / Raspberry Pi OS</span>
         <button type="button" id="btn-copy-rootless-ubuntu" class="btn btn-sm" style="font-size:0.75rem;">📋 Copy Script</button>
       </div>
-      <pre style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:6px;font-family:var(--font-mono, monospace);font-size:0.75rem;color:#38bdf8;overflow-x:auto;margin:0;"><code id="code-rootless-ubuntu"># 1. Install prerequisites
+      <pre class="u-text-0-75rem u-text-sky-400 u-m-0" style="background:rgba(15,23,42,0.9); border:1px solid rgba(255,255,255,0.1); padding:10px 12px; border-radius:6px; font-family:var(--font-mono, monospace); overflow-x:auto;"><code id="code-rootless-ubuntu"># 1. Install prerequisites
 sudo apt-get update && sudo apt-get install -y uidmap dbus-user-session slirp4netns
 # 2. Run official rootless installer (non-root)
 dockerd-rootless-setuptool.sh install
@@ -2951,26 +2951,26 @@ export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"
 grep -q "DOCKER_HOST" ~/.bashrc || echo 'export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"' >> ~/.bashrc</code></pre>
     </div>
 
-    <div style="margin-bottom:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;">🦭 Alternative: Podman (Rootless by Default — No Daemon!)</span>
+    <div class="u-mb-14">
+      <div class="u-flex u-justify-between u-items-center u-mb-6">
+        <span class="u-text-0-82rem u-font-600" style="color:#e2e8f0;">🦭 Alternative: Podman (Rootless by Default — No Daemon!)</span>
         <button type="button" id="btn-copy-rootless-podman" class="btn btn-sm" style="font-size:0.75rem;">📋 Copy</button>
       </div>
-      <pre style="background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.1);padding:10px 12px;border-radius:6px;font-family:var(--font-mono, monospace);font-size:0.75rem;color:#a78bfa;overflow-x:auto;margin:0;"><code id="code-rootless-podman">sudo apt-get install -y podman  # Fedora: sudo dnf install -y podman
+      <pre class="u-text-0-75rem u-m-0" style="background:rgba(15,23,42,0.9); border:1px solid rgba(255,255,255,0.1); padding:10px 12px; border-radius:6px; font-family:var(--font-mono, monospace); color:#a78bfa; overflow-x:auto;"><code id="code-rootless-podman">sudo apt-get install -y podman  # Fedora: sudo dnf install -y podman
 # Podman works immediately with zero daemon configuration:
 podman run --rm hello-world</code></pre>
     </div>
 
     <div style="margin-bottom:18px;">
-      <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;display:block;margin-bottom:6px;">🖥️ Windows &amp; macOS Note</span>
+      <span class="u-text-0-82rem u-font-600 u-block u-mb-6" style="color:#e2e8f0;">🖥️ Windows &amp; macOS Note</span>
       <p style="margin:0;font-size:0.78rem;color:#94a3b8;line-height:1.4;">
         On Windows (WSL2 / Docker Desktop) and macOS (Docker Desktop / Colima), volume mount permissions are already automatically mapped to the host user by the hypervisor layer. No rootless daemon configuration is required.
       </p>
     </div>
 
-    <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.1);padding-top:14px;">
+    <div class="u-flex u-gap-10 u-justify-between u-items-center u-pt-14" style="border-top:1px solid rgba(255,255,255,0.1);">
       <div id="rootless-status-text" style="font-size:0.78rem;color:#38bdf8;">Status: Ready to test container engine.</div>
-      <div style="display:flex;gap:8px;">
+      <div class="u-flex u-gap-8">
         <button type="button" id="btn-setup-rootless-docker" class="btn btn-sm btn-accent" style="background:#0284c7;color:#fff;">⚡ Setup Rootless Now</button>
         <button type="button" id="btn-test-rootless-daemon" class="btn btn-sm">🔍 Test Daemon</button>
         <button type="button" id="btn-close-rootless-modal-foot" class="btn btn-sm btn-primary">Done</button>
@@ -2981,13 +2981,13 @@ podman run --rm hello-world</code></pre>
 
 <!-- About Cockpit Modal -->
 <div id="modal-about-cockpit" class="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(8px);">
-  <div class="modal-card" style="background:var(--bg-card, #111827);border:1px solid #38bdf8;border-radius:14px;padding:26px 30px;min-width:420px;max-width:640px;width:90%;box-shadow:0 25px 65px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:12px;margin-bottom:16px;">
-      <div style="display:flex;align-items:center;gap:10px;">
+  <div class="modal-card u-overflow-y-auto" style="background:var(--bg-card, #111827); border:1px solid #38bdf8; border-radius:14px; padding:26px 30px; min-width:420px; max-width:640px; width:90%; box-shadow:0 25px 65px rgba(0,0,0,0.7); max-height:90vh;">
+    <div class="u-flex u-justify-between u-items-center" style="border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:12px; margin-bottom:16px;">
+      <div class="u-flex u-items-center u-gap-10">
         <span style="font-size:1.6rem;">🚀</span>
         <div>
-          <h2 style="margin:0;font-size:1.25rem;color:#f8fafc;font-weight:700;">Linorobot2 <span style="color:#38bdf8;">Cockpit</span></h2>
-          <span style="font-size:0.75rem;font-family:var(--font-mono);background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.35);padding:1px 6px;border-radius:4px;font-weight:700;">rc-20260927.3</span>
+          <h2 class="u-text-slate-50" style="margin:0; font-size:1.25rem; font-weight:700;">Linorobot2 <span style="color:#38bdf8;">Cockpit</span></h2>
+          <span class="u-text-0-75rem u-font-700" style="font-family:var(--font-mono); background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.35); padding:1px 6px; border-radius:4px;">rc-20260927.3</span>
         </div>
       </div>
       <button type="button" id="btn-close-about-modal" class="btn btn-sm" style="font-size:1.1rem;padding:2px 8px;">✕</button>
@@ -2996,8 +2996,8 @@ podman run --rm hello-world</code></pre>
     <div style="font-size:0.88rem;color:#cbd5e1;line-height:1.6;margin-bottom:20px;">
       <p style="margin-top:0;"><strong>1-Click Mobile Robot Autonomy</strong> from browser to bare microcontroller: unified micro-ROS firmware, realistic physics simulation, SLAM &amp; Nav2 supervisor.</p>
 
-      <div style="background:rgba(15,23,42,0.6);border:1px solid var(--border-soft);border-radius:8px;padding:12px 14px;margin:12px 0;">
-        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:0.82rem;">
+      <div class="u-bg-slate-900-60" style="border:1px solid var(--border-soft); border-radius:8px; padding:12px 14px; margin:12px 0;">
+        <div class="u-grid u-text-0-82rem" style="grid-template-columns:auto 1fr; gap:6px 12px;">
           <span style="color:var(--text-dim);">Supported MCUs:</span>
           <span style="color:#f1f5f9;">Raspberry Pi Pico 2 / 2 W (RP2350), Pico / Pico W (RP2040), ESP32, ESP32-S3, Sim MCU</span>
           <span style="color:var(--text-dim);">ROS 2 Distros:</span>
@@ -3011,13 +3011,13 @@ podman run --rm hello-world</code></pre>
         </div>
       </div>
 
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;">
-        <a href="https://github.com/hippo5329/linorobot2-cockpit/wiki" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-accent" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">📖 Documentation &amp; Wiki</a>
-        <a href="https://github.com/hippo5329/linorobot2-cockpit" target="_blank" rel="noopener noreferrer" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">⭐ GitHub Repository</a>
+      <div class="u-flex u-gap-12 u-flex-wrap u-mt-14">
+        <a href="https://github.com/hippo5329/linorobot2-cockpit/wiki" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-accent u-items-center u-gap-6" style="text-decoration:none; display:inline-flex;">📖 Documentation &amp; Wiki</a>
+        <a href="https://github.com/hippo5329/linorobot2-cockpit" target="_blank" rel="noopener noreferrer" class="btn btn-sm u-items-center u-gap-6" style="text-decoration:none; display:inline-flex;">⭐ GitHub Repository</a>
       </div>
     </div>
 
-    <div style="display:flex;justify-content:flex-end;border-top:1px solid rgba(255,255,255,0.1);padding-top:14px;">
+    <div class="u-flex u-pt-14" style="justify-content:flex-end; border-top:1px solid rgba(255,255,255,0.1);">
       <button type="button" id="btn-close-about-modal-foot" class="btn btn-sm btn-primary">Close</button>
     </div>
   </div>

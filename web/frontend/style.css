@@ -1491,3 +1491,68 @@ body.console-collapsed {
   color: #f87171;
   border-color: rgba(239, 68, 68, 0.4);
 }
+
+/* ---------------------------------------------------------------------------
+   Utilities: one declaration each, for the combinations index.html repeats.
+   They were inline style attributes. Only declarations no other rule here sets
+   on the same element were moved, so a single-class utility cannot lose to a
+   component rule; show/hide state (display:none) and anything the JS reads or
+   writes through element.style stays inline.
+   --------------------------------------------------------------------------- */
+.u-block { display: block; }
+.u-flex { display: flex; }
+.u-grid { display: grid; }
+.u-inline-block { display: inline-block; }
+.u-items-center { align-items: center; }
+.u-justify-between { justify-content: space-between; }
+.u-gap-10 { gap: 10px; }
+.u-gap-12 { gap: 12px; }
+.u-gap-6 { gap: 6px; }
+.u-gap-8 { gap: 8px; }
+.u-rounded-full { border-radius: 50%; }
+.u-m-0 { margin: 0; }
+.u-mt-10 { margin-top: 10px; }
+.u-mt-12 { margin-top: 12px; }
+.u-mt-14 { margin-top: 14px; }
+.u-mt-20 { margin-top: 20px; }
+.u-mt-6 { margin-top: 6px; }
+.u-mt-8 { margin-top: 8px; }
+.u-mb-14 { margin-bottom: 14px; }
+.u-mb-6 { margin-bottom: 6px; }
+.u-mb-8 { margin-bottom: 8px; }
+.u-p-10 { padding: 10px; }
+.u-p-14-18 { padding: 14px 18px; }
+.u-p-8-12 { padding: 8px 12px; }
+.u-pt-14 { padding-top: 14px; }
+.u-flex-wrap { flex-wrap: wrap; }
+.u-flex-1 { flex: 1; }
+.u-font-600 { font-weight: 600; }
+.u-font-700 { font-weight: 700; }
+.u-font-normal { font-weight: normal; }
+.u-text-accent { color: var(--accent); }
+.u-text-dim { color: var(--text-dim); }
+.u-text-sky-400 { color: #38bdf8; }
+.u-text-slate-50 { color: #f8fafc; }
+.u-bg-black-30 { background: rgba(0,0,0,0.3); }
+.u-bg-card { background: var(--bg-card); }
+.u-bg-slate-900-60 { background: rgba(15,23,42,0.6); }
+.u-text-0-75rem { font-size: 0.75rem; }
+.u-text-0-7rem { font-size: 0.7rem; }
+.u-text-0-82rem { font-size: 0.82rem; }
+.u-text-11-5 { font-size: 11.5px; }
+.u-text-12 { font-size: 12px; }
+.u-cursor-pointer { cursor: pointer; }
+.u-uppercase { text-transform: uppercase; }
+.u-border-t { border-top: 1px solid var(--border-soft); }
+.u-w-9 { width: 9px; }
+.u-min-w-100 { min-width: 100px; }
+.u-min-w-140 { min-width: 140px; }
+.u-min-w-200 { min-width: 200px; }
+.u-min-w-220 { min-width: 220px; }
+.u-h-9 { height: 9px; }
+.u-tracking-half { letter-spacing: 0.5px; }
+.u-overflow-auto { overflow: auto; }
+.u-overflow-hidden { overflow: hidden; }
+.u-overflow-y-auto { overflow-y: auto; }
+.u-max-h-160 { max-height: 160px; }
+.u-max-h-60 { max-height: 60px; }
