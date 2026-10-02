@@ -1031,29 +1031,30 @@ class BNO085IMU: public IMUInterface
     private:
         BNO080 bno085_;
         const int bno085UpdateRateMs = 20;   // 50Hz update rate (standard for ROS IMU messages)
-        const float accel_cov_ = 0.01;
-        const float gyro_cov_ = 0.001;
-        const float ori_xy_cov_ = 0.01;
-        const float ori_z_cov_ = 0.05;
-
 
         geometry_msgs__msg__Vector3 accel_;
         geometry_msgs__msg__Vector3 gyro_;
 
-        // State Machine Enumeration
-        enum IMUState {
-        STATE_DISCONNECTED,
-        STATE_SEND_CONFIG,
-        STATE_CHECK_RESET,
-        STATE_VALIDATE_STREAM,
-        STATE_RUNNING
-        };
+        // The SparkFun library parses ONE packet per getReadings() call, and
+        // dataAvailable() is nothing but getReadings() != 0 -- so calling both
+        // consumes two packets and keeps the second. The state machine this
+        // replaces did exactly that, and treated a single empty poll as a lost
+        // link (begin(), i.e. a chip reset). It never ran -- see readGyroscope()
+        // -- but a standalone sketch doing the same thing on an RP2350 at 400 kHz
+        // (2026-10-03) counted a fraction of what the chip sent: accel ~38 Hz,
+        // gyro ~37 Hz, game rotation ~18 Hz.
+        //
+        // So: one getReadings() per packet, drain what is queued on every call,
+        // keep the last good sample across quiet polls, re-arm the reports when
+        // the chip says it reset, and re-run begin() only after a real silence.
+        static const uint8_t kMaxPacketsPerPoll = 32;
+        static const unsigned long kRearmAfterMs = 1000;    // silent this long: re-send the report config
+        static const unsigned long kRebeginAfterMs = 3000;  // silent this long: the link is gone, begin() again
 
-        // Global State Variables for the IMU State Machine
-        IMUState imuState = STATE_DISCONNECTED;
-        unsigned long stateTimer = 0;
-        int validPacketCount = 0;
-        int configAttempts = 0;
+        bool started_ = false;
+        bool haveSample_ = false;
+        unsigned long lastReportMs_ = 0;
+        unsigned long lastRecoveryMs_ = 0;
 
     public:
         // This part runs its own AHRS: sensor fusion in the chip, with its own
@@ -1070,14 +1071,13 @@ class BNO085IMU: public IMUInterface
             // The bus is initBoard()'s (env pins and clock); a second
             // Wire.begin() here reset an RP2's clock to the core default.
             if (bno085_.begin() == 0){
-                // Serial.println("bno085_init fail");
                 syslog(LOG_ERR, "%s BNO085 IMU init fail %lu", __FUNCTION__, millis());
-                imuState = STATE_DISCONNECTED;
+                started_ = false;
                 return false;
             }
             syslog(LOG_INFO, "%s BNO085 IMU init success %lu", __FUNCTION__, millis());
-            imuState = STATE_SEND_CONFIG;
-
+            started_ = true;
+            enableReports();
             return true;
         }
 
@@ -1089,135 +1089,83 @@ class BNO085IMU: public IMUInterface
             return accel_;
         }
 
+        // IMUInterface::getData() is not virtual: it is what every caller runs,
+        // through an IMUInterface pointer, and it calls this first. So this is
+        // the bus transaction -- and the place the chip's own quaternion goes
+        // into the message, because main.cpp skips the AHRS for a part that
+        // hasFusedOrientation() and publishes whatever orientation it finds.
+        //
+        // This driver used to define its own getData(), which hid the base one
+        // rather than overriding it and so was never called: nothing polled the
+        // chip, the library's values stayed zero, the orientation stayed
+        // identity, and /imu/data was a noiseless (0, 0, -9.807) on a board
+        // whose BNO085 was streaming at ~90 packets/s (RP2350, 2026-10-03).
         geometry_msgs__msg__Vector3 readGyroscope() override
         {
+            pollReports();
+            if (!haveSample_) {
+                logImuDataUnavailable();
+                gyro_.x = gyro_.y = gyro_.z = 0.0;
+                return gyro_;
+            }
+            imu_msg_.orientation.x = bno085_.getQuatI();
+            imu_msg_.orientation.y = bno085_.getQuatJ();
+            imu_msg_.orientation.z = bno085_.getQuatK();
+            imu_msg_.orientation.w = bno085_.getQuatReal();
             gyro_.x = bno085_.getGyroX() * DEG_TO_RAD;
             gyro_.y = bno085_.getGyroY() * DEG_TO_RAD;
             gyro_.z = bno085_.getGyroZ() * DEG_TO_RAD;
             return gyro_;
         }
 
-        sensor_msgs__msg__Imu getData()
+    private:
+        void enableReports()
         {
-            if (!runIMUStateMachine()) {
-                logImuDataUnavailable();
-                return imu_msg_;
-            }
-            imu_msg_.angular_velocity = readGyroscope();
-
-            if(imu_msg_.angular_velocity.x > -0.01 && imu_msg_.angular_velocity.x < 0.01 )
-                imu_msg_.angular_velocity.x = 0;
-
-            if(imu_msg_.angular_velocity.y > -0.01 && imu_msg_.angular_velocity.y < 0.01 )
-                imu_msg_.angular_velocity.y = 0;
-
-            if(imu_msg_.angular_velocity.z > -0.01 && imu_msg_.angular_velocity.z < 0.01 )
-                imu_msg_.angular_velocity.z = 0;
-
-            imu_msg_.angular_velocity_covariance[0] = gyro_cov_;
-            imu_msg_.angular_velocity_covariance[4] = gyro_cov_;
-            imu_msg_.angular_velocity_covariance[8] = gyro_cov_;
-
-            imu_msg_.linear_acceleration = readAccelerometer();
-            imu_msg_.linear_acceleration_covariance[0] = accel_cov_;
-            imu_msg_.linear_acceleration_covariance[4] = accel_cov_;
-            imu_msg_.linear_acceleration_covariance[8] = accel_cov_;
-
-            imu_msg_.orientation.x = bno085_.getQuatI();
-            imu_msg_.orientation.y = bno085_.getQuatJ();
-            imu_msg_.orientation.z = bno085_.getQuatK();
-            imu_msg_.orientation.w = bno085_.getQuatReal();
-
-            imu_msg_.orientation_covariance[0] = ori_xy_cov_;
-            imu_msg_.orientation_covariance[4] = ori_xy_cov_;
-            imu_msg_.orientation_covariance[8] = ori_z_cov_;
-
-            return imu_msg_;
-        }
-
-        // The BNO085 IMU has an I2C interface that doesn't work well with the ESP32.
-        // To work around this, we implement a state machine to manage the IMU's initialization and data streaming.
-        bool runIMUStateMachine()
-        {
-        switch (imuState) {
-
-          case STATE_DISCONNECTED:
-            if (millis() - stateTimer >= 500) {
-                stateTimer = millis();
-                if (bno085_.begin() == true) {
-                syslog(LOG_INFO, "%s [I2C] Link achieved. Moving to configuration step.", __FUNCTION__);
-                imuState = STATE_SEND_CONFIG;
-                }
-            }
-            break;
-
-          case STATE_SEND_CONFIG:
-            configAttempts++;
-            syslog(LOG_INFO, "%s [CONFIG] Transmitting 6-DOF Profile (Try # %d)...", __FUNCTION__, configAttempts);
-
-            bno085_.hasReset(); // Clear historical reset tracking bits
-
+            bno085_.hasReset();   // clear the flag the reset we just caused would leave
             bno085_.enableGameRotationVector(bno085UpdateRateMs);
             bno085_.enableGyro(bno085UpdateRateMs);
             bno085_.enableAccelerometer(bno085UpdateRateMs);
-            bno085_.endCalibration(); // Anchor our saved physical Tare profile
-
-            stateTimer = millis();
-            imuState = STATE_CHECK_RESET;
-            break;
-
-          case STATE_CHECK_RESET:
-            if (millis() - stateTimer >= 400) {
-                if (bno085_.hasReset()) {
-                syslog(LOG_INFO, "%s [WARNING] Reset flag caught during parsing. Cyclical retry...", __FUNCTION__);
-                imuState = STATE_SEND_CONFIG;
-                } else {
-                syslog(LOG_INFO, "%s [VALIDATION] Checking telemetry stream integrity...", __FUNCTION__);
-                validPacketCount = 0;
-                stateTimer = millis();
-                imuState = STATE_VALIDATE_STREAM;
-                }
-            }
-            break;
-
-          case STATE_VALIDATE_STREAM:
-            // Note: myIMU.dataAvailable() internally executes and evaluates getReadings()
-            if (bno085_.dataAvailable() == true) {
-                // 2. Verify the active packet type matches our navigation profile.
-                // This isolates the actual 6-DOF frame and strips out 0.06 diagnostic responses.
-                if (bno085_.getReadings() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-                    float testYaw = bno085_.getYaw();
-                    if (!isnan(testYaw)) {
-                        validPacketCount++;
-                    }
-                }
-            }
-
-            if (validPacketCount >= 10) {
-                syslog(LOG_INFO, "%s [SUCCESS] Navigation data streams verified numeric!", __FUNCTION__);
-                imuState = STATE_RUNNING;
-            }
-            else if (millis() - stateTimer >= 1500) {
-                syslog(LOG_INFO, "%s [TIMEOUT] Stream unpopulated or stuck on NaN. Soft resetting...", __FUNCTION__);
-                bno085_.softReset();
-                stateTimer = millis();
-                imuState = STATE_CHECK_RESET;
-            }
-            break;
-
-          case STATE_RUNNING:
-            if (bno085_.dataAvailable() == true) {
-                // Enforce the layout check in real-time execution to prevent background packets from causing spikes
-                if (bno085_.getReadings() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-                }
-                return true;  // IMU is fully initialized and running and we can use its data
-            } else {
-                syslog(LOG_INFO, "%s [WARNING] Data stream interrupted. Revalidating...", __FUNCTION__);
-                imuState = STATE_DISCONNECTED;
-            }
-            break;
+            lastRecoveryMs_ = millis();
+            syslog(LOG_INFO, "%s BNO085 reports enabled @ %d ms %lu", __FUNCTION__, bno085UpdateRateMs, millis());
         }
-        return false;  // if we don't return true from STATE_RUNNING, we are not fully initialized yet
+
+        void pollReports()
+        {
+            const unsigned long now = millis();
+            if (!started_) {
+                if (now - lastRecoveryMs_ >= kRearmAfterMs) {
+                    lastRecoveryMs_ = now;
+                    startSensor();
+                }
+                return;
+            }
+            // One getReadings() per packet; it returns the report id it parsed, 0 when nothing is queued.
+            for (uint8_t i = 0; i < kMaxPacketsPerPoll; i++) {
+                const uint16_t id = bno085_.getReadings();
+                if (id == 0) break;
+                if (id == SENSOR_REPORTID_ACCELEROMETER || id == SENSOR_REPORTID_GYROSCOPE ||
+                    id == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
+                    lastReportMs_ = now;
+                    haveSample_ = true;
+                }
+            }
+            // The chip resets itself now and then and comes back with every report off.
+            if (bno085_.hasReset()) {
+                syslog(LOG_INFO, "%s BNO085 reported a reset, re-arming reports %lu", __FUNCTION__, now);
+                enableReports();
+                return;
+            }
+            const unsigned long quiet = now - (lastReportMs_ > lastRecoveryMs_ ? lastReportMs_ : lastRecoveryMs_);
+            if (quiet >= kRebeginAfterMs) {
+                syslog(LOG_INFO, "%s BNO085 silent %lu ms, begin() again %lu", __FUNCTION__, quiet, now);
+                started_ = false;
+                haveSample_ = false;   // a frozen last sample would look like a healthy, motionless IMU
+                lastRecoveryMs_ = now - kRearmAfterMs;   // retry begin() on this very poll
+                pollReports();
+            } else if (quiet >= kRearmAfterMs && now - lastRecoveryMs_ >= kRearmAfterMs) {
+                syslog(LOG_INFO, "%s BNO085 silent %lu ms, re-arming reports %lu", __FUNCTION__, quiet, now);
+                enableReports();
+            }
         }
 
         void logImuDataUnavailable()
