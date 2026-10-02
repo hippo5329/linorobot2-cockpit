@@ -925,13 +925,13 @@ function initCockpitDashboard() {
       for (const m of maps) {
         const card = document.createElement("div");
         card.className = "card";
-        card.style.cssText = "background:#0c1220; padding:12px; border-radius:8px; min-width:200px; display:flex; flex-direction:column; gap:8px;";
+        card.style.cssText = "background:#020617; padding:12px; border-radius:8px; min-width:200px; display:flex; flex-direction:column; gap:8px;";
         
         let imgHtml = "";
         if (m.image) {
           imgHtml = `<img src="/api/maps/${encodeURIComponent(m.image)}" style="max-width:180px; max-height:140px; border-radius:4px; background:#000; object-fit:contain;" alt="${m.name}">`;
         } else {
-          imgHtml = `<div style="width:180px; height:120px; background:#161f30; border-radius:4px; display:flex; align-items:center; justify-content:center; color:var(--text-dim); font-size:11px;">No Preview</div>`;
+          imgHtml = `<div style="width:180px; height:120px; background:#0f172a; border-radius:4px; display:flex; align-items:center; justify-content:center; color:var(--text-dim); font-size:11px;">No Preview</div>`;
         }
 
         card.innerHTML = `

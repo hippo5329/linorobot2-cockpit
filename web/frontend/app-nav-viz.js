@@ -382,7 +382,7 @@ const lidarCtx = lidarCanvas.getContext("2d");
 function drawScan(scan) {
   const w = lidarCanvas.width, h = lidarCanvas.height;
   lidarCtx.clearRect(0, 0, w, h);
-  lidarCtx.strokeStyle = "#232b3d";
+  lidarCtx.strokeStyle = "#1e293b";
   lidarCtx.beginPath();
   lidarCtx.arc(w / 2, h / 2, Math.min(w, h) / 2 - 4, 0, Math.PI * 2);
   lidarCtx.stroke();

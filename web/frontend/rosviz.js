@@ -428,7 +428,7 @@
       const ctx = this.ctx;
       const { width: W, height: H } = this.canvas;
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#0b1220";
+      ctx.fillStyle = "#020617";
       ctx.fillRect(0, 0, W, H);
 
       this._drawGrid();
