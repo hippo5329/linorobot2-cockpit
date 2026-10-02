@@ -1329,6 +1329,8 @@ def main():
                              "0.260 m/s, the base tracking at 0.262, and still short. The "
                              "Start 1-Click passed no timeout and inherited 25 s for a leg "
                              "that must arrive: it failed mid-detour, 3.7 m out.")
+    parser.add_argument("--flash-attempt-timeout", type=int, default=90,
+                        help="Seconds allowed for a single upload attempt inside the flasher")
     parser.add_argument("--flash-timeout", type=int, default=600,
                         help="Seconds allowed for the whole flash, including every recovery stage")
     args = parser.parse_args()
