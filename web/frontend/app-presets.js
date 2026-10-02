@@ -242,8 +242,11 @@ const REFERENCE_DESIGNS = {
         encoder3: { a: 4, b: 32 },
         encoder4: { a: 5, b: 12 },
         i2c: { sda: 21, scl: 22 },
-        battery: 36,
-        sonar: { trig: 0, echo: 0 },
+        // Not wired: four 3-pin drivers, eight encoder lines, I2C and the LED take
+        // every ADC1 pin a DevKit breaks out (36 is encoder2's), and ADC2 is the
+        // Wi-Fi's. The sonar was GPIO 0 for both trigger and echo.
+        battery: -1,
+        sonar: { trig: -1, echo: -1 },
       }
     }
   ],
