@@ -47,7 +47,6 @@ CATALOG: Dict[str, dict] = {
         # Every driver here talks to `Wire`, and on arduino-pico `Wire` is ONE
         # block. A pair that is valid on the other block passes the hardware's
         # rules and still halts the core in Wire.setSDA() at boot.
-        "wire": 0,
     },
     "rp2350": {
         "label": "RP2350 (Pico 2)",
@@ -59,7 +58,6 @@ CATALOG: Dict[str, dict] = {
         "adc_wifi_conflict": set(),
         "led": 25,
         "i2c": _RP2_I2C,
-        "wire": 0,
     },
     # SparkFun XRP Controller. The RP2350B's own 48 GPIO, minus what the board
     # has spent: the Radio Module 2 on GP26-29 and the PSRAM chip select on
@@ -82,7 +80,6 @@ CATALOG: Dict[str, dict] = {
         "adc_wifi_conflict": set(),
         "led": CYW43_LED,
         "i2c": _RP2350B_I2C,
-        "wire": 1,
     },
     "esp32": {
         "label": "ESP32 (WROOM)",
@@ -234,13 +231,9 @@ def check_config(params: dict) -> List[Finding]:
             if not ok:
                 findings.append(("error", f"i2c: GP{sda}/GP{scl} is not a valid SDA/SCL pair on one {cat['label']} I2C block "
                                           f"(I2C0 SDA {sorted(i2c[0][0])} SCL {sorted(i2c[0][1])}; I2C1 SDA {sorted(i2c[1][0])} SCL {sorted(i2c[1][1])})"))
-            elif "wire" in cat:
-                block = cat["wire"]
-                s_ok, c_ok = i2c[block]
-                if not (sda in s_ok and scl in c_ok):
-                    findings.append(("error", f"i2c: GP{sda}/GP{scl} is an I2C{1 - block} pair, but the firmware's Wire is "
-                                              f"I2C{block} on the {cat['label']}; setSDA() halts the core at boot "
-                                              f"(I2C{block} SDA {sorted(s_ok)} SCL {sorted(c_ok)})"))
+            # Either controller will do: the firmware builds `Wire` on whichever owns
+            # the pair (board_init.cpp boardI2cPins), so only "one controller's SDA
+            # and SCL" is a rule -- the check above.
     return findings
 
 
