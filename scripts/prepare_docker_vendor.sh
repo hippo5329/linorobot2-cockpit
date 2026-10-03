@@ -401,7 +401,11 @@ fi
 #       strafes or backs up to it and never does. With the rear 150 deg of the scan
 #       masked, the nearest frontier sat 0.3 m BEHIND the robot, within the goal
 #       tolerance: 8636 goals to the same point, each "reached" at once, map stuck
-#       at 3.6 m2 for 900 s. The goal now faces from the robot to the frontier.
+#       at 3.6 m2 for 900 s. A goal within 1 m -- one the robot reaches without
+#       driving, so nothing turns it -- now faces from the robot to the frontier.
+#       Farther goals keep upstream's yaw 0: facing EVERY goal cost an 87 deg depth
+#       camera the sweep that turning to yaw 0 after each frontier gave it, and its
+#       explorations ended 4-9 m2 short (2026-10-03, both distros).
 #    b. That repeat was never blacklisted: fix 3 returns early while a goal is
 #       active, so the no-progress check never ran, and an instantly-reached goal
 #       is never "active" for long. A frontier reached three times running without
@@ -459,12 +463,14 @@ old = """  goal.pose.pose.position = target_position;
   goal.pose.pose.orientation.w = 1.;"""
 new = """  goal.pose.pose.position = target_position;
   {
-    // The goal faces the frontier (prepare_docker_vendor.sh), so a sensor that does
-    // not see all round turns to it -- yaw 0 let a mecanum base back up to a frontier
-    // behind it and never look.
+    // A goal within 1 m faces the frontier (prepare_docker_vendor.sh): reaching it
+    // needs no driving, so nothing else turns a sensor that does not see all round
+    // towards it -- yaw 0 let a mecanum base back up to a frontier behind it and
+    // never look. Farther goals keep upstream's yaw 0.
     auto here = costmap_client_.getRobotPose().position;
     double dx = target_position.x - here.x, dy = target_position.y - here.y;
-    double yaw = (dx * dx + dy * dy > 1e-6) ? std::atan2(dy, dx) : 0.0;
+    double d2 = dx * dx + dy * dy;
+    double yaw = (d2 > 1e-6 && d2 < 1.0) ? std::atan2(dy, dx) : 0.0;
     goal.pose.pose.orientation.z = std::sin(yaw / 2.0);
     goal.pose.pose.orientation.w = std::cos(yaw / 2.0);
   }"""
@@ -482,7 +488,7 @@ h = h.replace(old, old + "  int empty_searches_ = 0;                      // pre
               "  int same_goal_reached_ = 0;                   // prepare_docker_vendor.sh, fix 6b\n")
 open(H, "w").write(h)
 PYFACE
-    echo "[vendor] explore_lite: the goal faces the frontier; blacklist a frontier reached thrice; stop after five empty searches"
+    echo "[vendor] explore_lite: a near goal faces the frontier; blacklist a frontier reached thrice; stop after five empty searches"
 fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
