@@ -409,7 +409,14 @@ fi
 #    b. That repeat was never blacklisted: fix 3 returns early while a goal is
 #       active, so the no-progress check never ran, and an instantly-reached goal
 #       is never "active" for long. A frontier reached three times running without
-#       disappearing is now blacklisted.
+#       disappearing is now blacklisted -- counting only goals within 0.5 m of the
+#       robot when sent, the reached-without-driving case, and only once the
+#       frontier has outlived 15 s since it was first reached. SLAM adds a scan
+#       only after 0.5 m of travel, so at the start a frontier 0.8 m ahead is
+#       still on the map after three quick visits: counting those blacklisted the
+#       depot's only frontier and exploration ended at 5 m2 (its map was 185 m2
+#       by 21 s). The masked-mecanum loop repeats for minutes, so 15 s costs it
+#       nothing.
 #    c. One empty frontier search ended the run. Just after the map first reaches
 #       the robot (fix 4) the costmap can lag SLAM by a cycle: a camera run declared
 #       the world explored 3 s in, at 34.2 m2 of 50. Exploration now ends only after
@@ -447,8 +454,16 @@ new = """  // we don't need to do anything if we still pursuing the same goal
   }
   // A frontier "reached" again and again without disappearing is unreachable to
   // see from here (prepare_docker_vendor.sh): blacklist it after three.
-  same_goal_reached_ = same_goal ? same_goal_reached_ + 1 : 0;
-  if (same_goal_reached_ >= 3) {
+  {
+    auto here = costmap_client_.getRobotPose().position;
+    double ddx = target_position.x - here.x, ddy = target_position.y - here.y;
+    bool near = ddx * ddx + ddy * ddy < 0.25;   // within 0.5 m: reached without driving
+    same_goal_reached_ = (same_goal && near) ? same_goal_reached_ + 1 : 0;
+    if (same_goal_reached_ == 1) {
+      first_reached_ = this->now();
+    }
+  }
+  if (same_goal_reached_ >= 3 && (this->now() - first_reached_).seconds() >= 15.0) {
     RCLCPP_WARN(logger_, "Frontier (%.2f, %.2f) reached 3 times without being explored; blacklisting it",
                 target_position.x, target_position.y);
     frontier_blacklist_.push_back(target_position);
@@ -485,7 +500,8 @@ h = open(H).read()
 old = "  int home_attempts_ = 0;                       // prepare_docker_vendor.sh\n"
 assert h.count(old) == 1, "explore.h: fix 5 member missing"
 h = h.replace(old, old + "  int empty_searches_ = 0;                      // prepare_docker_vendor.sh, fix 6c\n"
-              "  int same_goal_reached_ = 0;                   // prepare_docker_vendor.sh, fix 6b\n")
+              "  int same_goal_reached_ = 0;                   // prepare_docker_vendor.sh, fix 6b\n"
+              "  rclcpp::Time first_reached_{0, 0, RCL_ROS_TIME};  // fix 6b\n")
 open(H, "w").write(h)
 PYFACE
     echo "[vendor] explore_lite: a near goal faces the frontier; blacklist a frontier reached thrice; stop after five empty searches"
