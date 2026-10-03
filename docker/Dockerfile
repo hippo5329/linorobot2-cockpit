@@ -176,6 +176,8 @@ RUN apt-get update \
 # empty while the board itself was running perfectly.
 #
 # rosbridge + rosapi expose the topic graph to the browser canvas on :9090.
+# joy_linux + teleop_twist_joy are the Teleop tab's physical-gamepad card; without
+# them Start teleop printed "Package 'joy_linux' not found" and exited 0.
 # lsof is not optional: the serial-release check reads it to confirm the tty
 # was freed before esptool opens it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -187,6 +189,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-robot-state-publisher \
         ros-${ROS_DISTRO}-joint-state-publisher \
         ros-${ROS_DISTRO}-slam-toolbox \
+        ros-${ROS_DISTRO}-joy-linux \
+        ros-${ROS_DISTRO}-teleop-twist-joy \
         lsof usbutils udev curl ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/*
 

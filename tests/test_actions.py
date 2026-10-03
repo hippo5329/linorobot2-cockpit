@@ -185,3 +185,13 @@ def test_the_rviz_web_viewer_runs_beside_slam_and_navigation():
     js = open(os.path.join(root, "web", "frontend", "app-nav-viz.js")).read()
     block = js[js.index('action: "rviz_novnc"'):]
     assert 'slot: "viewer"' in block[:600] and 'killSlot("viewer")' in js
+
+
+def test_teleop_refuses_when_its_packages_are_missing():
+    """Start teleop with joy_linux / teleop_twist_joy absent printed two "not found"
+    lines and exited 0, so the page took a failure for a clean stop. The check
+    runs first and exits non-zero."""
+    cmd = actions.build("teleop", {"distro": "jazzy"})
+    assert "ros2 pkg prefix $p" in cmd and "exit 1" in cmd
+    assert cmd.index("ros2 pkg prefix") < cmd.index("ros2 run joy_linux"), "check before launching"
+    assert "joy_linux teleop_twist_joy" in cmd

@@ -323,7 +323,12 @@ def _teleop(a: Dict) -> str:
                  f"    axis_angular:\n      yaw: {axis_ang}\n"
                  f"    scale_angular:\n      yaw: {scale_ang}\n")
     write_yaml = f"cat > {tmp} << 'CONSOLE_JOY_EOF'\n{yaml_body}CONSOLE_JOY_EOF"
-    return (f"{ros_setup_shell(distro)}; {write_yaml}\n"
+    # Refuse up front, with a non-zero exit, when a package is missing. The two
+    # nodes run under one shell, so a "Package ... not found" from either used
+    # to end in `exited with code 0` -- the page read a failure as a clean stop.
+    check = ("for p in joy_linux teleop_twist_joy; do ros2 pkg prefix $p >/dev/null 2>&1 || "
+             "{ echo \"Gamepad teleop needs the ROS 2 package '$p', which is not installed here.\"; exit 1; }; done")
+    return (f"{ros_setup_shell(distro)}; {check}; {write_yaml}\n"
             f"(ros2 run joy_linux joy_linux_node & "
             f"ros2 run teleop_twist_joy teleop_node --ros-args --params-file {tmp}; wait)")
 
