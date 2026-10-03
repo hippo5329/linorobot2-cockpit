@@ -233,7 +233,15 @@ slam:
       correlation_search_space_dimension: 0.5
       correlation_search_space_resolution: 0.01
       correlation_search_space_smear_deviation: 0.1
-      loop_search_space_dimension: 8.0
+      # How far one loop closure may move the map: the matcher searches this square
+      # around the candidate (slam_toolbox's 8.0 is +-4 m). The rooms world repeats
+      # every ~2.9 m and closures matched the next room over: 2.4-3.3 m jumps, all
+      # translation, then home sat behind a wall (gate 2026-10-03/04, LiDAR and camera
+      # alike; a 2.0 m candidate radius still let a 2.76 m one through). 3.0 (+-1.5 m)
+      # cannot reach the next room. Replayed: the camera run that jumped 3.04 m held
+      # 0.17 m, as with loop closing off; on the 1280 m2 warehouse LiDAR replay it
+      # matched the default (jazzy 0.21 m worst either way, lyrical 0.33 vs 0.34 m).
+      loop_search_space_dimension: 3.0
       loop_search_space_resolution: 0.05
       loop_search_space_smear_deviation: 0.03
       distance_variance_penalty: 0.5

@@ -70,3 +70,12 @@ def test_the_launcher_never_passes_the_block_to_the_node():
     wrap = src.index('"ros__parameters" not in slam_data.get("slam_toolbox", {})')
     assert pop < wrap, "the block must leave slam_data before it is wrapped for the node"
     assert re.search(r"rp\.update\(overrides\)", src)
+
+
+def test_a_loop_closure_cannot_reach_the_next_room():
+    """loop_search_space_dimension bounds how far one closure moves the map; the rooms
+    world repeats every ~2.9 m, so the window (full width) must stay under twice that."""
+    for name in REFS + ("makerspet_mini",):
+        with open(os.path.join(ROOT, "config", "reference", f"{name}_config.yaml")) as fh:
+            rp = yaml.safe_load(fh)["slam"]["slam_toolbox"]["ros__parameters"]
+        assert rp["loop_search_space_dimension"] / 2 < 2.9 / 2 + 0.1, name
