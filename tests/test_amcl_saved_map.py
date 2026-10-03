@@ -76,3 +76,17 @@ def test_the_pipeline_runs_no_slam_on_a_saved_map():
     i = pipe.index("elif has_lidar and args.map:")
     assert i < pipe.index('print(f"\\n[5/6] [SLAM] Launching SLAM Toolbox'), "the map branch must come first"
     assert '+ (f" map:={os.path.abspath(args.map)}" if args.map else "")' in pipe
+
+
+def test_the_localization_manager_keeps_no_bond():
+    """A missed heartbeat under load shut map_server and amcl down mid-run.
+
+    lifecycle_manager_localization had bond_timeout 20 s; four stacks exploring the
+    Nav2 warehouse map on one host starved one heartbeat, and the manager took
+    localization down -- every goal after that failed to transform to the map frame.
+    The navigation and SLAM managers already run without bonds for the same reason.
+    """
+    src = open(os.path.join(REPO_ROOT, "launchers", "nav2.launch.py")).read()
+    block = src[src.index('name="lifecycle_manager_localization"'):]
+    block = block[:block.index("]),")]
+    assert '"bond_timeout": 0.0' in block and '"bond_heartbeat_period": 0.0' in block, block

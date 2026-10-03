@@ -333,7 +333,15 @@ def localization_actions(params, map_file, pose, ns, tf_remaps, autostart, use_s
         Node(package="nav2_lifecycle_manager", executable="lifecycle_manager",
              name="lifecycle_manager_localization", namespace=ns or None, output="screen",
              parameters=[{"autostart": truthy(autostart), "use_sim_time": truthy(use_sim_time),
-                          "node_names": ["map_server", "amcl"], "bond_timeout": 20.0}]),
+                          "node_names": ["map_server", "amcl"],
+                          # No bond, as for the navigation and SLAM managers below. With
+                          # four stacks on one host exploring the Nav2 warehouse map,
+                          # map_server missed one 20 s heartbeat; the manager then shut
+                          # map_server and amcl down mid-run, the map frame stopped, and
+                          # all 50 goals failed "Failed to transform end pose to global
+                          # frame" (2026-10-03). A heartbeat lost to load is not a dead
+                          # server, and taking localization down is worse than either.
+                          "bond_timeout": 0.0, "bond_heartbeat_period": 0.0}]),
     ]
     return [LogInfo(msg=f"[Linorobot2 Cockpit] Localising on the saved map {map_file} with AMCL "
                         f"(initial pose {pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})")] + nodes
