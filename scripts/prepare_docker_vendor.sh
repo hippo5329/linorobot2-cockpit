@@ -581,6 +581,53 @@ open(H, "w").write(h)
 PYLOOK
     echo "[vendor] explore_lite: look around once (Nav2 spin) before declaring the space explored"
 fi
+# 8. The frontier search starts in the robot's own region. It began at the nearest
+#    cell of cost exactly 0; with this robot's 0.70 m inflation a room a few metres
+#    across has few such cells, and the nearest one can lie across a wall. A camera
+#    run captured on 2026-10-03: robot cell cost 99, nearest cost-0 cell 1.55 m
+#    away in an explored room -> 5408 cells searched, 0 frontiers, "No frontiers
+#    found, stopping" at 49.9 m2; from the nearest NAVIGABLE cell (0.05 m away) the
+#    same costmap has frontiers. Fix 1 already walks navigable cells; the start
+#    now follows the same rule.
+FS="${VENDOR}/m-explore-ros2/explore/src/frontier_search.cpp"
+if [ -f "$FS" ] && ! grep -q "starts in the robot's own region" "$FS"; then
+    python3 - "$FS" <<'PYSTART'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  unsigned int clear, pos = costmap_->getIndex(mx, my);
+  if (nearestCell(clear, pos, FREE_SPACE, *costmap_)) {"""
+new = """  unsigned int clear = 0, pos = costmap_->getIndex(mx, my);
+  // The search starts in the robot's own region (prepare_docker_vendor.sh, fix 8):
+  // the nearest NAVIGABLE cell, not the nearest cost-0 one, which can lie across a wall.
+  bool found_start = false;
+  {
+    std::vector<bool> seen(size_x_ * size_y_, false);
+    std::queue<unsigned int> near;
+    near.push(pos);
+    seen[pos] = true;
+    while (!near.empty()) {
+      unsigned int i = near.front();
+      near.pop();
+      if (map_[i] < INSCRIBED_INFLATED_OBSTACLE) {
+        clear = i;
+        found_start = true;
+        break;
+      }
+      for (unsigned n : nhood4(i, *costmap_)) {
+        if (!seen[n]) {
+          seen[n] = true;
+          near.push(n);
+        }
+      }
+    }
+  }
+  if (found_start) {"""
+assert s.count(old) == 1, "searchFrom() start changed upstream"
+s = s.replace(old, new)
+open(p, "w").write(s)
+PYSTART
+    echo "[vendor] explore_lite: the frontier search starts at the nearest navigable cell"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
