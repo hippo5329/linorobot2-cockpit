@@ -509,6 +509,9 @@ def pulse_1200_baud(port: str) -> bool:
     Returns once the board is in BOOTSEL and reachable, not after a fixed nap.
     """
     if not port or not os.path.exists(port):
+        # Said out loud: this used to return without a word, and a recovery that
+        # skipped its one working step read as a board that refused BOOTSEL.
+        log(f"{port or 'no serial port'} is not present; cannot send the 1200-baud touch")
         return False
     usb_reset_target(port)
     if not os.path.exists(port):
