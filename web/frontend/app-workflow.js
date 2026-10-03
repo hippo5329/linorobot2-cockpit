@@ -614,9 +614,12 @@ if (vgpPad) {
   async function startGamepad() {
     const topic = document.getElementById("vgp-topic").value.trim() || "/cmd_vel";
     vgpState.textContent = "starting...";
-    const r = await vgpPost("/api/gamepad/start", { topic });
+    let r = null;
+    try { r = await vgpPost("/api/gamepad/start", { topic }); } catch (e) { r = null; }
     if (!r || !r.started) {
       vgpState.textContent = "could not start the publisher (is ROS 2 sourced?)";
+      // Whatever half-started must not be left publishing on its own.
+      try { await vgpPost("/api/gamepad/kill", {}); } catch (e) { /* nothing to stop */ }
       return;
     }
     vgpRunning = true;

@@ -6,6 +6,7 @@ helpers come from core.py. See core.py for the split's contract.
 """
 import json
 import queue
+import re
 import threading
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -264,10 +265,23 @@ def api_bringup_health(timeout: float = 4.0):
 # ==============================================================================
 # Gamepad & Virtual Teleop Publisher API
 # ==============================================================================
+# The page posts {topic} and reads `started`. This returned only `running` and
+# ignored the topic, so the Teleop tab's virtual gamepad said "could not start
+# the publisher" on every press, never sent a command, kept Stop disabled -- and
+# the publisher it HAD started went on sending zero twists at 20 Hz, fighting
+# Nav2 for /cmd_vel until the cockpit restarted. Found by driving the tab in a
+# browser on 2026-10-04; tests/test_virtual_gamepad.py holds the contract.
+_ROS_TOPIC = re.compile(r"^/?[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
 @app.post("/api/gamepad/start")
-def api_gamepad_start():
-    started = gamepad_runner.start()
-    return {"status": "ok", "running": started}
+async def api_gamepad_start(request: Request):
+    data = await json_body(request)
+    topic = str(data.get("topic") or "/cmd_vel").strip()
+    if not _ROS_TOPIC.match(topic):
+        raise HTTPException(status_code=400, detail=f"not a ROS topic name: {topic!r}")
+    started = gamepad_runner.start(topic)
+    return {"status": "ok", "started": started, "running": started, "topic": topic}
 
 
 @app.post("/api/gamepad/cmd")
@@ -282,7 +296,8 @@ async def api_gamepad_cmd(request: Request):
     return {"sent": sent, "running": gamepad_runner.is_running()}
 
 
-@app.get("/api/gamepad/stall")
+# POST is what the page sends (app-workflow.js checkStall); GET kept for curl.
+@app.api_route("/api/gamepad/stall", methods=["GET", "POST"])
 def api_gamepad_stall():
     return {"stalled": False, "running": gamepad_runner.is_running()}
 

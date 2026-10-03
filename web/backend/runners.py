@@ -193,6 +193,7 @@ class GamepadRunner:
         self.process: Optional[subprocess.Popen] = None
         self.lock: threading.Lock = threading.Lock()
         self.target: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.topic: Optional[str] = None
 
     def is_running(self) -> bool:
         with self.lock:
@@ -200,8 +201,14 @@ class GamepadRunner:
 
     def start(self, topic: str = "/cmd_vel") -> bool:
         with self.lock:
-            if self.process is not None and self.process.poll() is None:
+            running = self.process is not None and self.process.poll() is None
+            if running and self.topic == topic:
                 return True
+        if running:
+            self.kill()   # asked for another topic: one publisher, on the topic asked for
+        with self.lock:
+            if self.process is not None and self.process.poll() is None:
+                return self.topic == topic   # another request started one meanwhile
             script = os.path.join(self.repo_root, "scripts", "gamepad_publisher.py")
             if not os.path.isfile(script):
                 return False
@@ -220,6 +227,7 @@ class GamepadRunner:
                     env=env,
                     preexec_fn=os.setsid,
                 )
+                self.topic = topic
                 return True
             except Exception:
                 return False
