@@ -55,3 +55,11 @@ def test_the_runner_restarts_on_another_topic():
     a = src.index("    def start(self, topic")
     body = src[a:src.index("    def send(", a)]
     assert "self.topic == topic" in body and "self.kill()" in body and "self.topic = topic" in body
+
+
+def test_one_click_replaces_a_bringup_tab_bringup():
+    """Start 1-Click over a running Bringup-tab bringup launched a second stack beside it."""
+    src = _read("web", "backend", "routes_hardware.py")
+    a = src.index("def stream_one_click_workflow(")
+    body = src[a:src.index("subprocess.Popen(cmd", a)]
+    assert "bringup_runner.is_busy()" in body and "bringup_runner.kill()" in body

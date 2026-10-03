@@ -20,6 +20,7 @@ from core import (
     actions,
     agent_runner,
     app,
+    bringup_runner,
     build_base_install_cmd,
     build_ros2_install_cmd,
     build_sensor_install_cmd,
@@ -566,6 +567,17 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
             yield f"event: output\ndata: {json.dumps({'line': '>>> A 1-Click run is already in progress; Stop it first.'})}\n\n"
             yield f"event: done\ndata: {json.dumps({'exit_code': 1})}\n\n"
             return
+        # A bringup started from the Bringup tab is this backend's own child, and
+        # the pipeline cannot see it (robot_stack records only what a 1-Click run
+        # left). Started over one, the run brought up a second stack beside it:
+        # two micro-ROS agents fighting for the serial port, two rosbridges for
+        # 9090, and the run gone within a minute (browser, 2026-10-04). 1-Click
+        # replaces what is running, so it replaces this too -- and says so.
+        if bringup_runner.is_busy():
+            bringup_runner.kill()
+            msg = (">>> Stopped the bringup started from the Bringup tab: 1-Click starts its own, "
+                   "and two would fight over the board and the rosbridge port.")
+            yield f"event: output\ndata: {json.dumps({'line': msg})}\n\n"
         start_line = (f">>> Starting One-Click Pipeline on robot: {robot or '<resolved from controller>'}, "
                       f"controller: {selected_controller} "
                       f"(distro: {d_str}, mode: {m_str}, explore: {'on' if explore else 'off'}"
