@@ -988,14 +988,22 @@ def _refresh_liveness() -> Dict[str, Any]:
     # shell: this command line contains "[m]icro_ros_agent", which the regex
     # (literal "micro_ros_agent") does not match. Without it every probe finds
     # itself and both pills read "running" forever.
+    #
+    # Zombies are not alive. pgrep matches a defunct process by name, and the
+    # backend is the container's PID 1 without being an init, so a stopped
+    # bringup's children could sit there as <defunct>: the status then said an
+    # agent was running, the next Bringup started with micro_ros:=false, and the
+    # robot came up with no agent -- no odometry, a dead teleop (browser, jazzy,
+    # 2026-10-04). `ps` with the state column, minus state Z, is what is running.
+    live = "ps -eo stat=,args= 2>/dev/null | awk '$1 !~ /^Z/ { $1 = \"\"; sub(/^ /, \"\"); print }'"
     probe = (
         "echo '---AGENT---'; "
-        "pgrep -fa '[m]icro_ros_agent' 2>/dev/null; "
+        f"{live} | grep -E '[m]icro_ros_agent' 2>/dev/null; "
         "{ docker ps --format '{{.Names}}|{{.Image}}|{{.Command}}' 2>/dev/null; "
         "  podman ps --format '{{.Names}}|{{.Image}}|{{.Command}}' 2>/dev/null; } "
         "  | grep -Ei 'micro[-_]ros[-_]agent' 2>/dev/null; "
         "echo '---BRINGUP---'; "
-        "pgrep -fa '[b]ringup\\.launch\\.py|[e]kf_node|[r]obot_state_publisher' 2>/dev/null; "
+        f"{live} | grep -E '[b]ringup\\.launch\\.py|[e]kf_node|[r]obot_state_publisher' 2>/dev/null; "
         "true"
     )
 

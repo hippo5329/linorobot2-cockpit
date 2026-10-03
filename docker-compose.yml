@@ -47,6 +47,10 @@ services:
         APT_PROXY: ${APT_PROXY:-}
     image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-jazzy}}
     container_name: linorobot2-cockpit
+    # An init as PID 1, so a launch's orphaned children are reaped. The backend
+    # was PID 1 and reaps nothing: a stopped bringup left its agent <defunct>,
+    # which the status read as a running agent (web/backend/core.py).
+    init: true
     network_mode: host
     ipc: host
     volumes:
