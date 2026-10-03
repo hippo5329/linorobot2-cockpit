@@ -428,10 +428,16 @@ That file is authoritative; the table below records intent, not a copy to keep i
 | `base_esp32` | `espressif32` | `esp32doit-devkit-v1` | `upload_speed 921600` |
 | `base_esp32s3` | `espressif32` | `esp32-s3-devkitc-1` | `upload_speed 921600` |
 | `base_pico` | `maxgerhardt/platform-raspberrypi` | `rpipico` | `upload_protocol picotool` |
-| `base_pico2` | same | `rpipico2` | `upload_protocol picotool` |
+| `base_pico2` | same | `rpipico2`, variant `rpipico2_lino` | `upload_protocol picotool` |
 | `base_picow` | same | `rpipicow` | + `board_build.filesystem_size 1m` |
-| `base_pico2w` | same | `rpipico2w` | + `board_build.filesystem_size 1m` |
-| `base_xrp` | same | `sparkfun_xrp_controller` | + `board_build.filesystem_size 1m` |
+| `base_pico2w` | same | `rpipico2w`, variant `rpipico2w_lino` | + `board_build.filesystem_size 1m` |
+
+The two Pico 2 bases build against `firmware/variants/rpipico2*_lino`: arduino-pico's own variants
+with `PICO_RP2350A 0`, so one image numbers all 48 GPIO of an RP2350B and runs a Pico 2, a Pico 2 W
+and an RP2350B board such as the SparkFun XRP Controller. What differs by package at run time is
+handled in the firmware: the battery ADC's channel follows the chip's `SYSINFO` package bit (GP26–29
+on QFN-60, GP40–47 on QFN-80), `Wire` is rebuilt on I2C1 when the env's SDA/SCL are an I2C1 pair,
+and the CYW43's pins come from the env's `cyw43_pins` before the radio starts.
 
 Shared `[env]`: `framework = arduino`, `monitor_speed`, `lib_extra_dirs = common/lib`.
 Each env is one `extends` plus its build flags, e.g.:
@@ -477,7 +483,7 @@ reserves for EEPROM emulation. Its builder computes `eeprom_start = 0x10000000 +
 - 4096` and `maximum_sketch_size = flash_size - 4096 - filesystem_size`, so that sector sits
 above **both** the sketch and the filesystem on every RP2 board, whatever the flash size and
 whether or not a filesystem is configured. Addresses: `0x101FF000` (pico/picow, 2 MB),
-`0x103FF000` (pico2/pico2w, 4 MB), `0x10FFF000` (xrp, 16 MB), stated once in
+`0x103FF000` (pico2/pico2w, 4 MB -- also on the 16 MB XRP, which runs the pico2w image), stated once in
 `scripts/mcu_env.py:RP2_ENV_OFFSETS`.
 
 **That placement is what preserves the keys through an update.** `picotool load firmware.uf2`
@@ -542,23 +548,33 @@ That is also why there is one ESP32 *config* — `config/reference/gendrv_config
 udp4 DevKit reference beside it would describe the same silicon and differ only in keys the env
 decides at boot; `-e esp32` builds gendrv, and `transport=` in the env picks the rest.
 
-### The SparkFun XRP Controller is an RP2350B with its own env
+### The SparkFun XRP Controller runs the Pico 2 W image
 `config/reference/xrp_config.yaml` is the SparkFun XRP robot kit: the XRP Controller (RP2350B,
-16 MB flash, 8 MB PSRAM, Raspberry Pi RM2 radio) on the kit's 2WD chassis. It builds `-e xrp`
-(`xrp_lyrical` for Lyrical) and is a prebuilt release profile (`xrp-jazzy`, `xrp-lyrical`). The
-Pico envs do not fit it: the RM2 sits on GP26–29 rather than a Pico 2 W's GP23/24/25/29, the
-flash is four times larger, and its IMU is on GP38/39, an I2C1 pair. So `env:xrp` binds `Wire`
-to I2C1 (`-D__WIRE0_DEVICE=i2c1 -D__WIRE1_DEVICE=i2c0`); the pin catalogue knows that binding.
+16 MB flash, 8 MB PSRAM, Raspberry Pi RM2 radio) on the kit's 2WD chassis. It has no image of its
+own: it runs `pico2-jazzy` / `pico2-lyrical` (`-e pico2w`), with an XRP env block. The image is
+built for the RP2350B's 48 GPIO (see the base table above); what the XRP wires differently from a
+Pico 2 W travels in the env:
+
+| env key | XRP | why |
+|---|---|---|
+| `cyw43_pins` | `26,29,28,27` (REG_ON, DATA, CLOCK, CS) | the RM2 is on GP26–29, not a Pico 2 W's GP23/24/29/25; set before the radio starts |
+| `i2c_sda` / `i2c_scl` | 38 / 39 | an I2C1 pair, so `Wire` is rebuilt on I2C1 |
+| `battery_pin` | 46 | ADC6 on the QFN-80 package |
+
+The env block goes to `0x103FF000`, pico2w's sector, inside the XRP's 16 MB. The pin catalogue's
+`xrp` board allows GP0–47 (less the radio and the PSRAM select on GP47), and `scripts/mcu_identity.py`
+maps the `xrp` controller to `pico2w`. Every pin below agrees across SparkFun's KiCad PCB
+(`SparkFun_XRP_Controller.kicad_pcb`), pico-sdk's `boards/sparkfun_xrp_controller.h` and XRPLib.
 
 | part | wiring |
 |---|---|
 | motors | DRV8411A, two PWM inputs per motor and no enable (`DRV8411A` maps to the dual-PWM scheme): left 34/35, right 32/33 |
 | encoders | left 30/31, right 24/25; 585 counts per wheel revolution. The PIO encoder reads A and A+1, so the mirrored left encoder is `invert: true` rather than swapped pins |
-| IMU | LSM6DSOX at 0x6A/0x6B on SDA 38 / SCL 39 |
-| battery | VIN through 100k/33k into GP46 (ADC6) |
+| IMU | LSM6DSOX on SDA 38 / SCL 39 (I2C1, 2.2k pull-ups via JP5); 0x6B with the ADR jumper JP4 closed as shipped (XRPLib's default), 0x6A open |
+| battery | VIN through R22 100k / R23 33k (jumper JP14) into GP46 (ADC6): 13.3 V full scale; XRPLib rounds it to 14 V |
 | sonar | the kit's HC-SR04 header, trigger GP0 / echo GP1 |
 | LED | on the RM2, pin 64 |
-| USB | application `1b4f:0046`; BOOTSEL `2e8a:000f`, the RP2350's own ROM |
+| USB | SparkFun's own firmware `1b4f:0046`; with the Pico 2 W image `2e8a:f00f`; BOOTSEL `2e8a:000f`, the RP2350's own ROM |
 
 Transport is micro-ROS over USB serial; the radio carries syslog and OTA. The kinematics are the
 kit's (60 mm wheels, 155 mm track, 140 rpm at 4.5 V), not the default chassis, and its Nav2 limits

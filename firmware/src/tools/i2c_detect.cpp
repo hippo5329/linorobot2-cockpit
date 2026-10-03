@@ -117,8 +117,7 @@ void setup_() {
 #if defined(I2C_SDA_OVERRIDE) && defined(I2C_SCL_OVERRIDE)
     // Explicit pins from the Web UI pinout — independent of the board config.
   #if defined(ARDUINO_ARCH_RP2040) || defined(PICO) || defined(PICO2)
-    Wire.setSDA(I2C_SDA_OVERRIDE);
-    Wire.setSCL(I2C_SCL_OVERRIDE);
+    boardI2cPins(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);   // I2C0 or I2C1, by the pins
     Wire.begin();
   #else
     Wire.begin(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);

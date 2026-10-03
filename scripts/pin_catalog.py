@@ -63,13 +63,19 @@ CATALOG: Dict[str, dict] = {
     },
     # SparkFun XRP Controller. The RP2350B's own 48 GPIO, minus what the board
     # has spent: the Radio Module 2 on GP26-29 and the PSRAM chip select on
-    # GP47. ADC is GPIO40-47. Its env [env:xrp] builds `Wire` on I2C1, because
-    # that is where the LSM6DSOX is (GP38/GP39, both PCB and XRPLib agree).
+    # GP47. ADC is GPIO40-47. It runs the Pico 2 W image (built for the RP2350B's
+    # 48 GPIO); the env block carries what differs from a Pico 2 W: the radio's
+    # pins (cyw43, in the order of the cyw43_pins env key), and the IMU bus on
+    # GP38/GP39 -- I2C1, which initBoard() rebuilds `Wire` on. PCB
+    # (SparkFun_XRP_Controller.kicad_pcb: U9 RM2), pico-sdk's board header and
+    # XRPLib agree on every one of these.
     "xrp": {
         "label": "RP2350B (SparkFun XRP Controller)",
         "gpio": set(range(0, 48)),
         "never": {47},
         "radio": {26, 27, 28, 29},
+        # REG_ON, DATA (out/in/host-wake share it), CLOCK, CS
+        "cyw43": (26, 29, 28, 27),
         "input_only": set(),
         "strapping": set(),
         "adc": set(range(40, 48)),

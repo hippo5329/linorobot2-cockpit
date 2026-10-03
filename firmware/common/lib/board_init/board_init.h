@@ -26,6 +26,13 @@
 // Wire.begin() themselves and a parameterless begin() keeps the pins this set.
 void initBoard(void);
 
+#if defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350)
+// Point `Wire` at SDA/SCL before begin(), on whichever controller owns them
+// (I2C0 or I2C1); an invalid pair is reported instead of halting the core.
+// initBoard() uses it, and so does any tool with its own pins.
+void boardI2cPins(int sda, int scl);
+#endif
+
 // Output pins that must not be driven until the stack is up -- a motor-driver
 // enable line, typically, which should stay low while the board is still
 // deciding what its PWM pins are. Call it at the end of setup().

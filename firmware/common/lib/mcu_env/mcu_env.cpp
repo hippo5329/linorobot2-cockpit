@@ -287,6 +287,32 @@ static void warnAboutPreRenameKeys(void)
                       "scripts/mcu_env.py.\n", stale, first);
 }
 
+const char *envPeek(const char *key, const char *fallback)
+{
+#if defined(ARDUINO_ARCH_RP2040)   // arduino-pico defines it for the RP2350 too, as loadEnv() relies on
+    if (!key)
+        return fallback;
+    const uint8_t *base = (const uint8_t *)&_EEPROM_start;
+    uint32_t stored;
+    memcpy(&stored, base, ENV_CRC_LEN);
+    if (stored != crc32_iso(base + ENV_CRC_LEN, ENV_DATA_LEN))
+        return fallback;
+    const char *data = (const char *)(base + ENV_CRC_LEN);
+    const size_t klen = strlen(key);
+    for (size_t pos = 0; pos < ENV_DATA_LEN && data[pos]; ) {
+        const char *entry = &data[pos];
+        size_t elen = strnlen(entry, ENV_DATA_LEN - pos);
+        if (elen > klen && entry[klen] == '=' && strncmp(entry, key, klen) == 0)
+            return entry + klen + 1;
+        pos += elen + 1;
+    }
+    return fallback;
+#else
+    (void)key;
+    return fallback;
+#endif
+}
+
 void initMcuEnv(void)
 {
     if (env_loaded)

@@ -99,8 +99,10 @@ RP2_ENV_OFFSETS = {
     "picow":   0x101FF000,
     "pico2":   0x103FF000,   # 4 MB
     "pico2w":  0x103FF000,
-    "xrp":     0x10FFF000,   # 16 MB (SparkFun XRP Controller)
 }
+# No entry for the SparkFun XRP Controller: it runs the Pico 2 W image, whose
+# reserved sector is at 4 MB whatever the chip holds (16 MB on the XRP), so its
+# env goes where pico2w's does.
 
 
 def env_offset(board: str) -> int:
@@ -566,6 +568,16 @@ def hardware_env(params: dict) -> dict:
     # no LED is wired (the Waveshare GenDrv), and the firmware then touches no pin.
     if "led" in pins:
         env["led"] = pins["led"]
+    # The CYW43's pins, on a board that wires the radio elsewhere than a Pico W /
+    # Pico 2 W (whose wiring is the driver's default and is not written). The
+    # SparkFun XRP Controller runs the Pico 2 W image with its RM2 on GP26-29;
+    # the image reads this before it starts the radio (board_init.cpp,
+    # lino_cyw43_pins). From the board's catalog entry, not the config: it is
+    # copper, not a choice.
+    import pin_catalog
+    cyw43 = pin_catalog.CATALOG.get(pin_catalog.mcu_key(tgt.get("mcu")), {}).get("cyw43")
+    if cyw43:
+        env["cyw43_pins"] = ",".join(str(p) for p in cyw43)
     for key in ("gpio_out", "gpio_out_late"):
         spec = pins.get(key)
         if spec:

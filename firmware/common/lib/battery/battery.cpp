@@ -149,6 +149,35 @@ void InaDataUpdate(){
   loadVoltage_V  = busVoltage_V + (shuntVoltage_mV/1000);
 }
 
+#if defined(PICO_RP2350) && !PICO_RP2350A
+#include <hardware/adc.h>
+#include <hardware/structs/sysinfo.h>
+// The Pico 2 image is built for the RP2350B's 48 GPIO (variants/rpipico2*_lino),
+// so the core's analogRead() takes GP40-47 as the ADC pins -- the B package's --
+// and refuses GP26-29, where a Pico 2 (an RP2350A) has them. The package is a
+// hardware fact, so read it: SYSINFO PACKAGE_SEL is 1 on QFN-60 (A: ADC on
+// GP26-29) and 0 on QFN-80 (B: GP40-47, e.g. the SparkFun XRP's VIN on GP46).
+// 12-bit, the resolution the core is set to below.
+static int rp2AnalogRead(int pin)
+{
+  const bool qfn60 = (sysinfo_hw->package_sel & SYSINFO_PACKAGE_SEL_BITS) != 0;
+  const int first = qfn60 ? 26 : 40;
+  const int count = qfn60 ? 4 : 8;
+  if (pin < first || pin >= first + count)
+    return 0;
+  static bool ready = false;
+  if (!ready) {
+    adc_init();
+    ready = true;
+  }
+  adc_gpio_init(pin);
+  adc_select_input(pin - first);
+  return adc_read();
+}
+#elif !defined(ESP32)
+static int rp2AnalogRead(int pin) { return analogRead(pin); }
+#endif
+
 // Pack voltage through the divider. The ESP32 core converts to millivolts
 // with the chip's own calibration; the RP2 ADC is 12-bit against 3.3 V.
 static double readVoltage(int pin) {
@@ -177,7 +206,7 @@ static double readVoltage(int pin) {
 #ifdef ESP32
       reading += analogReadMilliVolts(pin);
 #else
-      reading += analogRead(pin);
+      reading += rp2AnalogRead(pin);
 #endif
     reading /= i;
 #ifdef ESP32

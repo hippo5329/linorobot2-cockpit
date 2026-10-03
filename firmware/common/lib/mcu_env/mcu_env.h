@@ -35,6 +35,12 @@ bool mcuEnvValid(void);
 // Accessors. Each returns `fallback` when the key is absent or the env is
 // invalid, so a caller never has to check mcuEnvValid() first.
 const char *envGet(const char *key, const char *fallback = "");
+// envGet() without loading anything: checks the CRC and looks the key up, prints
+// nothing and leaves the env unloaded. For the one caller that runs before
+// setup(), when a CRC complaint could only be printed into a USB port nobody has
+// opened yet -- initMcuEnv() keeps that message for setup(). RP2 only; elsewhere
+// it returns `fallback`.
+const char *envPeek(const char *key, const char *fallback = "");
 int         envInt(const char *key, int fallback);   // pins: -1 means not wired
 bool        envFlag(const char *key, bool fallback); // "0"/"false"/"no" are false
 uint16_t    envU16(const char *key, uint16_t fallback);

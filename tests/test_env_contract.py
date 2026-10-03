@@ -112,7 +112,8 @@ def _read_keys(src):
     # envGet("key"), envU16("key", ..), envFlag("key", ..), envPin(i, "suffix", ..)
     # FloatVec reads a diagonal covariance; it is a read like any other, and
     # leaving it out of this pattern made four covariance keys look dead.
-    keys = set(re.findall(r'\benv(?:Get|U16|U32|IP|FloatVec|Float|Flag|FlagMain|Int)\(\s*"([a-z0-9_]+)"', src))
+    # envPeek: the pre-setup reader (cyw43_pins, read before the radio starts)
+    keys = set(re.findall(r'\benv(?:Get|Peek|U16|U32|IP|FloatVec|Float|Flag|FlagMain|Int)\(\s*"([a-z0-9_]+)"', src))
     keys |= {"mN_" + s for s in re.findall(r'\benvPin\(\s*\w+,\s*"([a-z_]+)"', src)}
     keys |= {_norm(k) for k in re.findall(r'"(m%d_[a-z_]+)"', src)}
     keys |= {_norm(k) for k in re.findall(r'"(m%u_[a-z_]+)"', src)}

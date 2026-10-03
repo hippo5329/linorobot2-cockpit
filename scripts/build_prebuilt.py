@@ -83,11 +83,10 @@ BASE_DIR = os.path.join(REPO_ROOT, "firmware")
 # into one. The wired designs are still tested -- they are what the bench
 # flashes for the sonar and real-IMU cases -- but they are not what ships.
 BOARDS = {
-    "pico2":   ("pico2",   "pico2w",  "RP2350, micro-ROS over USB serial (runs on Pico 2 and Pico 2 W)"),
+    "pico2":   ("pico2",   "pico2w",  "RP2350, micro-ROS over USB serial (runs on Pico 2, Pico 2 W and the SparkFun XRP Controller)"),
     "pico":    ("pico",    "picow",   "RP2040, micro-ROS over USB serial (runs on Pico and Pico W)"),
     "esp32":   ("esp32",   "esp32",   "ESP32, serial or udp4 — chosen by the env partition"),
     "esp32s3": ("esp32s3", "esp32s3", "ESP32-S3, native USB CDC, serial or udp4"),
-    "xrp":     ("xrp",     "xrp",     "RP2350B SparkFun XRP Controller, micro-ROS over USB serial"),
 }
 
 # The distro the BARE env names in firmware/platformio.ini are pinned to; the

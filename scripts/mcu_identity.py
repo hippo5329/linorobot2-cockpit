@@ -25,10 +25,13 @@ import os
 _ENV_FAMILY = {
     "pico": "pico", "picow": "pico",
     "pico2": "pico2", "pico2w": "pico2",
-    "xrp": "xrp",                                   # SparkFun XRP Controller: an RP2350B board
+    "xrp": "pico2",                                 # SparkFun XRP Controller: an RP2350B, runs the Pico 2 W image
     "esp32": "esp32", "gendrv": "esp32",
     "esp32s3": "esp32s3", "yb_eet01": "esp32s3",   # Yahboom YB-EET01: an ESP32-S3 board
 }
+
+# Boards whose image is not their family's default one (see pio_env_for).
+_BOARD_ENV = {"xrp": "pico2w"}
 
 # Families that cannot be told apart from the bus alone, so a mismatch between
 # them is not evidence of anything. A CP2102 fronts an ESP32 and an ESP32-S3
@@ -36,7 +39,7 @@ _ENV_FAMILY = {
 _BRIDGE_AMBIGUOUS = {"esp32", "esp32s3", "esp32s2", "gendrv"}
 
 FAMILY_LABEL = {
-    "pico": "RP2040", "pico2": "RP2350", "xrp": "RP2350B (SparkFun XRP Controller)",
+    "pico": "RP2040", "pico2": "RP2350",
     "esp32": "ESP32", "esp32s3": "ESP32-S3", "esp32s2": "ESP32-S2",
     "gendrv": "ESP32",
 }
@@ -65,12 +68,13 @@ def classify_usb(vid: str, pid: str, product: str = "") -> tuple:
         return ("pico2", "Raspberry Pi RP2", False)
 
     if vid == "1b4f" and (pid == "0046" or "xrp" in prod):
-        # The SparkFun XRP Controller's application enumerates under SparkFun's
-        # vid with its own pid (arduino-pico's sparkfun_xrp_controller board).
-        # It is an RP2350B with the radio and the I2C bus on other pins than a
-        # Pico 2 W, so a Pico 2 image does not belong on it. In BOOTSEL it is
-        # the ROM's 2e8a:000f like every RP2350 -- see mismatch().
-        return ("xrp", "SparkFun XRP Controller (RP2350B)", True)
+        # The SparkFun XRP Controller running SparkFun's own firmware (MicroPython,
+        # or arduino-pico's sparkfun_xrp_controller board). It is an RP2350B and
+        # takes the Pico 2 W image -- built for the RP2350B's 48 GPIO, with the
+        # board's radio and I2C pins in the env block -- so it is the pico2
+        # family. Once flashed it enumerates as a Pico 2 W, and in BOOTSEL as
+        # the RP2350 ROM (2e8a:000f), like every RP2350.
+        return ("pico2", "SparkFun XRP Controller (RP2350B)", True)
 
     if vid == "303a":
         if pid in ("1001", "1002") or "esp32-s3" in prod:
@@ -331,12 +335,6 @@ def mismatch(expected_family: str, detected_family: str, decisive: bool) -> bool
     # Anything fronted by a bridge is indistinguishable from its siblings.
     if expected_family in _BRIDGE_AMBIGUOUS and detected_family in _BRIDGE_AMBIGUOUS:
         return False
-    # An XRP Controller in BOOTSEL is the RP2350 ROM, 2e8a:000f, exactly like a
-    # Pico 2 -- and BOOTSEL is precisely when an image is written. So "pico2" on
-    # the bus is not evidence against an xrp env. The converse still stands: an
-    # XRP running its own image says 1b4f:0046, and a Pico 2 image is refused.
-    if expected_family == "xrp" and detected_family == "pico2":
-        return False
     return True
 
 
@@ -369,6 +367,12 @@ def pio_env_for(name: str, default: str = "esp32") -> str:
     envs = _pio_envs()
     if key in envs:
         return key
+    # A board that runs another board's image: the SparkFun XRP Controller takes
+    # the Pico 2 W image (its radio and I2C pins travel in the env block). Its
+    # family alone would give pico2, the image without the radio.
+    board_env = _BOARD_ENV.get(key)
+    if board_env and board_env in envs:
+        return board_env
     family = _ENV_FAMILY.get(key)
     if family and family in envs:
         return family

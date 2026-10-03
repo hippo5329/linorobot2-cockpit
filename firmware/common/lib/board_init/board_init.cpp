@@ -6,6 +6,14 @@
 #include "board_init.h"
 #include "mcu_env.h"
 
+#if defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350)
+#include <new>
+#include <hardware/i2c.h>
+#endif
+#if defined(PICO2W) && defined(CYW43_PIN_WL_DYNAMIC) && CYW43_PIN_WL_DYNAMIC
+#include <cyw43_wrappers.h>
+#endif
+
 // Fallbacks, so this compiles against any generated header. A config without
 // an i2c: block leaves the pins at -1, which means "whatever the core defaults
 // to" -- the same behaviour as the bare Wire.begin() this replaced.
@@ -69,6 +77,87 @@ static void driveOutputs(const char *spec)
     }
 }
 
+#if defined(PICO2W) && defined(CYW43_PIN_WL_DYNAMIC) && CYW43_PIN_WL_DYNAMIC
+// The radio's pins, from the env, before arduino-pico starts the CYW43 driver
+// (variants/rpipico2w_lino/init.cpp calls this from initVariant()). One Pico 2 W
+// image runs a Pico 2 W -- whose wiring is the driver's default -- and the
+// SparkFun XRP Controller, whose RM2 is on GP26/29/28/27:
+//     cyw43_pins = REG_ON,DATA,CLOCK,CS          e.g. 26,29,28,27 on the XRP
+// DATA is the one bidirectional SPI line and also the host-wake IRQ, as on every
+// CYW43 board (pico-sdk boards/sparkfun_xrp_controller.h). Absent or malformed,
+// the defaults stand. Runs before setup(), so it uses envPeek(): nothing is loaded
+// or printed here.
+extern "C" void lino_cyw43_pins(void)
+{
+    const char *spec = envPeek("cyw43_pins", "");
+    int v[4];
+    int n = 0;
+    while (*spec && n < 4)
+    {
+        char *end = NULL;
+        long x = strtol(spec, &end, 10);
+        if (end == spec || x < 0 || x >= NUM_BANK0_GPIOS)
+            return;
+        v[n++] = (int)x;
+        spec = end;
+        while (*spec == ',' || *spec == ' ')
+            spec++;
+    }
+    if (n != 4)
+        return;
+    static uint pins[CYW43_PIN_INDEX_WL_COUNT];
+    pins[CYW43_PIN_INDEX_WL_REG_ON] = (uint)v[0];
+    pins[CYW43_PIN_INDEX_WL_DATA_OUT] = (uint)v[1];
+    pins[CYW43_PIN_INDEX_WL_DATA_IN] = (uint)v[1];
+    pins[CYW43_PIN_INDEX_WL_HOST_WAKE] = (uint)v[1];
+    pins[CYW43_PIN_INDEX_WL_CLOCK] = (uint)v[2];
+    pins[CYW43_PIN_INDEX_WL_CS] = (uint)v[3];
+    cyw43_set_pins_wl(pins);
+}
+#endif
+
+#if defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350)
+// An RP2 pin's I2C controller: GP0/1 I2C0, GP2/3 I2C1, GP4/5 I2C0, ... with SDA
+// on the even pin and SCL on the odd one (RP2040/RP2350 GPIO function tables).
+static int rp2I2cOf(int pin) { return (pin >> 1) & 1; }
+#endif
+
+#if defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350)
+void boardI2cPins(int sda, int scl)
+{
+    // arduino-pico takes the pins before begin(), not as arguments to it -- and
+    // only pins of the controller `Wire` was built on: setSDA() halts the core on
+    // any other. `Wire` is I2C0, so a bus on I2C1 pins (the XRP's IMU on GP38/39,
+    // or GP2/3, GP26/27 on a Pico) rebuilds it on I2C1 first. TwoWire has no
+    // destructor and its constructor only fills fields and allocates the buffer,
+    // so rebuilding it before its first begin() is safe; the first buffer
+    // (WIRE_BUFFER_SIZE) is lost once, at boot. A pair that is not one controller's
+    // SDA and SCL is reported and the core defaults kept, rather than halting.
+    static bool wire_placed = false;
+    if (sda >= 0 && scl >= 0)
+    {
+        const bool pair = (sda % 2 == 0) && (scl % 2 == 1) && rp2I2cOf(sda) == rp2I2cOf(scl)
+                          && sda < NUM_BANK0_GPIOS && scl < NUM_BANK0_GPIOS;
+        if (!pair)
+        {
+            Serial.printf("[i2c] SDA %d / SCL %d is not one RP2 I2C controller's pair -- "
+                          "keeping the core's default pins\n", sda, scl);
+            return;
+        }
+        if (rp2I2cOf(sda) == 1 && !wire_placed)
+            new (&Wire) TwoWire(i2c1, sda, scl);
+        wire_placed = true;
+        Wire.setSDA(sda);
+        Wire.setSCL(scl);
+        return;
+    }
+    if (sda >= 0)
+        Wire.setSDA(sda);
+    if (scl >= 0)
+        Wire.setSCL(scl);
+}
+#endif
+
 void initBoard(void)
 {
     // The env is read here and not in a constructor: the flash partition API is
@@ -86,11 +175,7 @@ void initBoard(void)
     else
         Wire.begin();
 #elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350)
-    // arduino-pico takes the pins before begin(), not as arguments to it.
-    if (sda >= 0)
-        Wire.setSDA(sda);
-    if (scl >= 0)
-        Wire.setSCL(scl);
+    boardI2cPins(sda, scl);
     Wire.begin();
 #else
     (void)sda;
