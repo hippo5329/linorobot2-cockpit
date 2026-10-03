@@ -628,6 +628,71 @@ open(p, "w").write(s)
 PYSTART
     echo "[vendor] explore_lite: the frontier search starts at the nearest navigable cell"
 fi
+# 9. Every frontier blacklisted is "nothing to pursue", like no frontier at all.
+#    Upstream blacklists a frontier for good on any aborted goal (at DEBUG) and,
+#    once all it can see are blacklisted, stops on the spot: no look-around, no
+#    five searches. A camera mecanum run (2026-10-03, lyrical) had its one frontier
+#    left aborted once -- "Resulting plan has 0 poses" while the costmap was still
+#    a wedge -- and stopped 36 s in at 43.7 m2 of 50. That case now takes fix 7's
+#    path, and when the look-around ends the blacklist is retried, at most three
+#    times a run, so a frontier that is really unreachable still ends it. The
+#    abort that blacklists is logged at INFO.
+if [ -f "$EX" ] && ! grep -q "Every frontier is blacklisted" "$EX"; then
+    python3 - "$EX" <<'PYBL'
+import sys
+p = sys.argv[1]; s = open(p).read()
+def ed(old, new):
+    global s
+    assert s.count(old) == 1, old[:60]
+    s = s.replace(old, new)
+ed("""  if (frontiers.empty()) {
+    // Turn once to look around before stopping (prepare_docker_vendor.sh, fix 7).""",
+   """  // fix 9: every frontier blacklisted is nothing to pursue, as no frontier is
+  bool all_blacklisted =
+      !frontiers.empty() &&
+      std::all_of(frontiers.begin(), frontiers.end(),
+                  [this](const frontier_exploration::Frontier& f) {
+                    return goalOnBlacklist(f.centroid);
+                  });
+  if (frontiers.empty() || all_blacklisted) {
+    // Turn once to look around before stopping (prepare_docker_vendor.sh, fix 7).""")
+ed("""      RCLCPP_INFO(logger_, "No frontiers found; turning once to look around before stopping");""",
+   """      RCLCPP_INFO(logger_, "%s; turning once to look around before stopping",
+                  all_blacklisted ? "Every frontier is blacklisted" : "No frontiers found");""")
+ed("""            spinning_ = false;
+            empty_searches_ = 0;
+          };""",
+   """            spinning_ = false;
+            empty_searches_ = 0;
+            // fix 9: the map has changed; give the blacklist another chance
+            if (blacklist_clears_ < 3 && !frontier_blacklist_.empty()) {
+              ++blacklist_clears_;
+              RCLCPP_INFO(logger_, "Looked around; retrying %zu blacklisted frontier(s) (%d of 3)",
+                          frontier_blacklist_.size(), blacklist_clears_);
+              frontier_blacklist_.clear();
+            }
+          };""")
+ed("""      RCLCPP_INFO(logger_, "No frontiers found (%d of 5 before stopping)", empty_searches_);""",
+   """      RCLCPP_INFO(logger_, "%s (%d of 5 before stopping)",
+                  all_blacklisted ? "Every frontier is blacklisted" : "No frontiers found", empty_searches_);""")
+ed("""        RCLCPP_DEBUG(logger_, "Goal aborted with error_code=%d (%s) — blacklisting frontier",
+                     result.result->error_code,
+                     result.result->error_msg.c_str());""",
+   """        RCLCPP_INFO(logger_, "Goal (%.2f, %.2f) aborted with error_code=%d (%s); blacklisting it",
+                    frontier_goal.x, frontier_goal.y, result.result->error_code,
+                    result.result->error_msg.c_str());""")
+if "#include <algorithm>" not in s:
+    ed('#include <thread>\n', '#include <thread>\n#include <algorithm>\n') if '#include <thread>\n' in s else None
+open(p, "w").write(s)
+H = p.replace("src/explore.cpp", "include/explore/explore.h")
+h = open(H).read()
+old = "  bool looked_around_ = false;                  // fix 7\n"
+assert h.count(old) == 1, "fix 7 member missing"
+h = h.replace(old, old + "  int blacklist_clears_ = 0;                    // fix 9\n")
+open(H, "w").write(h)
+PYBL
+    echo "[vendor] explore_lite: an all-blacklisted search looks around and retries the blacklist (3 per run)"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
