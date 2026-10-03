@@ -490,6 +490,81 @@ open(H, "w").write(h)
 PYFACE
     echo "[vendor] explore_lite: a near goal faces the frontier; blacklist a frontier reached thrice; stop after five empty searches"
 fi
+# 7. Look around once before declaring the space explored. A depth camera's first
+#    map is a narrow wedge, and the frontier search -- which only sees unknown cells
+#    inside the costmap, through cells Nav2 can drive -- can come back empty from a
+#    robot standing still: the rooms world was "explored" 31 s in at 34.5 m2 of 50
+#    after five empty searches (2026-10-03; the same 34 m2 stop happened before any
+#    of fix 6). Waiting changes nothing a stationary 87 deg camera can see. On the
+#    first empty search of an episode Nav2's spin behaviour turns the robot a full
+#    circle, and the five empty searches are counted afresh after it; the look-around
+#    is re-armed whenever frontiers reappear.
+if [ -f "$EX" ] && ! grep -q "look around before stopping" "$EX"; then
+    python3 - "$EX" <<'PYLOOK'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  if (goal_active_) {
+    return;
+  }
+"""
+new = """  if (goal_active_ || spinning_) {
+    return;
+  }
+"""
+assert s.count(old) == 1, "makePlan() goal_active_ guard missing"
+s = s.replace(old, new)
+old = """    // One empty search is not "explored" (prepare_docker_vendor.sh): five in a row.
+    if (++empty_searches_ < 5) {"""
+new = """    // Turn once to look around before stopping (prepare_docker_vendor.sh, fix 7).
+    if (!looked_around_ && spin_client_->action_server_is_ready()) {
+      looked_around_ = true;
+      spinning_ = true;
+      RCLCPP_INFO(logger_, "No frontiers found; turning once to look around before stopping");
+      auto spin_goal = nav2_msgs::action::Spin::Goal();
+      spin_goal.target_yaw = 6.2;
+      spin_goal.time_allowance.sec = 60;
+      auto spin_options = rclcpp_action::Client<nav2_msgs::action::Spin>::SendGoalOptions();
+      spin_options.goal_response_callback =
+          [this](const rclcpp_action::ClientGoalHandle<nav2_msgs::action::Spin>::SharedPtr& h) {
+            if (!h) { spinning_ = false; }
+          };
+      spin_options.result_callback =
+          [this](const rclcpp_action::ClientGoalHandle<nav2_msgs::action::Spin>::WrappedResult&) {
+            spinning_ = false;
+            empty_searches_ = 0;
+          };
+      spin_client_->async_send_goal(spin_goal, spin_options);
+      return;
+    }
+    // One empty search is not "explored" (prepare_docker_vendor.sh): five in a row.
+    if (++empty_searches_ < 5) {"""
+assert s.count(old) == 1, "fix 6c empty-search block missing"
+s = s.replace(old, new)
+old = "  empty_searches_ = 0;\n  // publish frontiers as visualization markers\n"
+assert s.count(old) == 1, "fix 6c reset missing"
+s = s.replace(old, "  empty_searches_ = 0;\n  looked_around_ = false;   // fix 7: frontiers again, so look around again next time\n  // publish frontiers as visualization markers\n")
+old = """  move_base_client_ =
+      rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+          this, ACTION_NAME);
+"""
+assert s.count(old) == 1, "constructor action client changed upstream"
+s = s.replace(old, old + """  spin_client_ = rclcpp_action::create_client<nav2_msgs::action::Spin>(this, "spin");  // fix 7
+""")
+open(p, "w").write(s)
+H = p.replace("src/explore.cpp", "include/explore/explore.h")
+h = open(H).read()
+old = '#include "nav2_msgs/action/navigate_to_pose.hpp"\n'
+assert h.count(old) == 1
+h = h.replace(old, old + '#include "nav2_msgs/action/spin.hpp"\n')
+old = "  int same_goal_reached_ = 0;                   // prepare_docker_vendor.sh, fix 6b\n"
+assert h.count(old) == 1, "fix 6b member missing"
+h = h.replace(old, old + "  rclcpp_action::Client<nav2_msgs::action::Spin>::SharedPtr spin_client_;  // fix 7\n"
+              "  bool spinning_ = false;                       // fix 7\n"
+              "  bool looked_around_ = false;                  // fix 7\n")
+open(H, "w").write(h)
+PYLOOK
+    echo "[vendor] explore_lite: look around once (Nav2 spin) before declaring the space explored"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
