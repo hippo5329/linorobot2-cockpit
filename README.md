@@ -59,7 +59,7 @@ For a step-by-step beginner walkthrough and tour of the web interface (Dashboard
 Cockpit includes pre-tuned, production-tested reference configurations for popular commercial integrated robot boards and custom DIY reference chassis (differential drive, skid steer, and omnidirectional 4WD mecanum):
 
 - **Integrated Commercial Boards**: Plug-and-play presets for all-in-one controller boards with built-in motor drivers, IMUs, and serial LiDAR headers.
-- **Robot Kits**: the SparkFun XRP robot kit (2WD, XRP Controller RP2350B), running the Pico 2 W image with an XRP env block, with the kit's own wheel, motor and encoder numbers and Nav2 limits derived from its motors.
+- **Robot Kits**: Presets for complete commercial robot kits, carrying the kit's own wheel, motor and encoder numbers and Nav2 limits derived from its motors.
 - **Reference Custom Builds**: Production-tested reference platforms combining microcontrollers with standalone dual H-bridge motor drivers, high-rate 9-DOF IMUs, sonar safety stops, and battery dividers.
 
 *For complete bills of materials, schematics, motor driver scheme comparisons, and wiring pinouts, see the [Reference Designs Guide](https://github.com/hippo5329/linorobot2-cockpit/wiki/Reference-Designs).*
