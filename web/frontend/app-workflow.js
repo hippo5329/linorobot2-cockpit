@@ -1178,6 +1178,12 @@ function initCockpitDashboard() {
   }
 
   function abortOneClick() {
+    // Stop the RUN, not just this page's view of it: aborting the fetch alone
+    // left the pipeline flashing, bringing up and driving behind an "Aborted" badge.
+    fetch("/api/workflow/one-click/stop", { method: "POST" })
+      .then((r) => r.json())
+      .then((j) => logLine(`[pipeline] Stop: run ${j.pipeline_stopped ? "interrupted" : "was not running"}; stack stopped: ${JSON.stringify(j.stack_stopped || [])}`))
+      .catch((e) => logLine(`[pipeline] Stop request failed: ${e.message}`));
     if (activePipelineAbort) {
       activePipelineAbort.abort();
       activePipelineAbort = null;

@@ -256,3 +256,16 @@ def test_renaming_the_controller_moves_the_chip_with_it():
             f"renamed to gendrv, chip left at {got.get('mcu')!r}"
     finally:
         call("POST", "/api/hardware/config", {"controller": name, "mcu": mcu})
+
+
+def test_one_click_stop_is_a_real_endpoint():
+    """Stop must reach the run, not just the page's fetch.
+
+    The 1-Click Stop button only aborted the browser's stream; the badge said
+    "Aborted" while the pipeline kept flashing, bringing up and driving, and
+    there was no endpoint that could have stopped it. With nothing running it
+    must still answer, and say so.
+    """
+    status, body = call("POST", "/api/workflow/one-click/stop")
+    assert status == 200, body
+    assert isinstance(body, dict) and "pipeline_stopped" in body and "stack_stopped" in body, body

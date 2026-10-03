@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import shlex
+import signal
 import subprocess
 import sys
 import threading
@@ -44,6 +45,7 @@ from core import (
     ros_setup_shell,
     text_field,
 )
+import robot_stack  # noqa: E402  (scripts/, via core's sys.path)
 
 
 @app.post("/api/hardware/test")
@@ -560,21 +562,79 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
         cmd.append("--no-auto-update")
 
     def event_generator():
+        if _one_click_running():
+            yield f"event: output\ndata: {json.dumps({'line': '>>> A 1-Click run is already in progress; Stop it first.'})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'exit_code': 1})}\n\n"
+            return
         start_line = (f">>> Starting One-Click Pipeline on robot: {robot or '<resolved from controller>'}, "
                       f"controller: {selected_controller} "
                       f"(distro: {d_str}, mode: {m_str}, explore: {'on' if explore else 'off'}"
                       + (f", world: {world}" if world else "")
                       + f", auto-update: {'on' if auto_update else 'off'})")
         yield f"event: output\ndata: {json.dumps({'line': start_line})}\n\n"
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        for line in iter(proc.stdout.readline, ""):
-            if not line:
-                break
-            yield f"event: output\ndata: {json.dumps({'line': line.rstrip()})}\n\n"
-        proc.wait()
-        yield f"event: done\ndata: {json.dumps({'exit_code': proc.returncode})}\n\n"
+        # Its own process group, so Stop can signal the run and everything it
+        # started in that group -- and nothing else.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                start_new_session=True)
+        _ONE_CLICK["proc"] = proc
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                if not line:
+                    break
+                yield f"event: output\ndata: {json.dumps({'line': line.rstrip()})}\n\n"
+            proc.wait()
+            yield f"event: done\ndata: {json.dumps({'exit_code': proc.returncode})}\n\n"
+        finally:
+            # The browser went away mid-run (Stop, a closed tab, a dropped link).
+            # Nobody reads the output any more, so the run would block on a full
+            # pipe part-way through -- possibly with Nav2 still driving. A robot
+            # nobody is watching stops.
+            if proc.poll() is None:
+                _stop_one_click()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# The 1-Click run the stream above started, so Stop has something to signal.
+# The page's Stop button used to abort only its own fetch: the badge said
+# "Aborted" while the pipeline went on flashing, bringing up and driving.
+_ONE_CLICK = {"proc": None}
+
+
+def _one_click_running() -> bool:
+    proc = _ONE_CLICK.get("proc")
+    return proc is not None and proc.poll() is None
+
+
+def _stop_one_click(grace_s: float = 20.0) -> dict:
+    """Interrupt the run, then stop whatever stack it left recorded.
+
+    SIGINT first: the pipeline's try/finally then stops the launches it started
+    (they run in their own sessions, so a signal to this group alone would miss
+    them). SIGTERM would skip that cleanup, so it is only the fallback."""
+    proc, signalled = _ONE_CLICK.get("proc"), False
+    if proc is not None and proc.poll() is None:
+        signalled = True
+        for sig, wait_s in ((signal.SIGINT, grace_s), (signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                break
+            try:
+                proc.wait(timeout=wait_s)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    try:
+        stack = robot_stack.stop(None)
+    except Exception as exc:
+        stack = [f"error: {exc}"]
+    return {"pipeline_stopped": signalled, "stack_stopped": stack}
+
+
+@app.post("/api/workflow/one-click/stop")
+def stop_one_click_workflow():
+    return {"status": "ok", **_stop_one_click()}
 
 
 @app.get("/api/topics/verify")

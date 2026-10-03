@@ -2100,4 +2100,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        # Stop (the cockpit's button, or Ctrl-C). main()'s finally has already
+        # stopped what this run started; a traceback here only read as a crash.
+        print("\n⏹ 1-Click run stopped (interrupted).", flush=True)
+        sys.exit(130)
