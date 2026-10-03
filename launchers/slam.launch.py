@@ -99,7 +99,11 @@ def launch_setup(context, *args, **kwargs):
     autostart = context.launch_configurations.get("autostart", "true")
     params = load_yaml(config_file)
 
-    slam_data = params.get("slam", {})
+    slam_data = dict(params.get("slam", {}) or {})
+    # Overrides for a narrow scan (a depth camera, a masked LiDAR), kept beside
+    # slam_toolbox's own block so they are as visible and editable as the rest.
+    # Never passed to the node.
+    slam_data.pop("narrow_fov_overrides", None)
 
     # A ROS 2 params file is <node>: ros__parameters: <keys>, and the robot
     # config stores the slam block flat because that is the readable shape for a
@@ -116,6 +120,19 @@ def launch_setup(context, *args, **kwargs):
     # By default, slam_toolbox shouldProcessScan ignores heading if dist < min_dist,
     # skipping scans during in-place turns. Require precise heading checks.
     rp.setdefault("check_min_dist_and_heading_precisely", True)
+
+    # A narrow view gets the narrow overrides: SLAM held hard to the odometry and
+    # only strong loop closures. With ~90 deg of wall the scan matcher rotated
+    # maps that odometry had right (camera replays: 30-39 deg yaw, 3-4 m); a full
+    # 360 deg LiDAR keeps the template's values, because on a large map the same
+    # prior let a 1 deg rotation through that scan matching would have corrected.
+    import depth_camera  # noqa: E402  (scripts/ is on sys.path above)
+    overrides = depth_camera.narrow_slam_overrides(params)
+    applied = ""
+    if overrides:
+        rp.update(overrides)
+        fov = depth_camera.scan_fov_deg(params.get("base_controller") or {})
+        applied = f" -- narrow scan ({fov:.0f} deg): narrow_fov_overrides applied"
 
     # Multi-robot: prefix SLAM's frames and scan topic so it maps THIS robot's
     # namespace, matching bringup. Unset -> "" -> untouched.
@@ -139,7 +156,7 @@ def launch_setup(context, *args, **kwargs):
     slam_launch_path = os.path.join(slam_pkg, "launch", "online_async_launch.py")
 
     actions = [
-        LogInfo(msg="[Linorobot2 Cockpit] Launching SLAM Toolbox (Lifecycle Online Async)"),
+        LogInfo(msg="[Linorobot2 Cockpit] Launching SLAM Toolbox (Lifecycle Online Async)" + applied),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch_path),
             launch_arguments={

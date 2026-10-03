@@ -140,6 +140,44 @@ def scan_source(controller: dict):
     return None
 
 
+def scan_fov_deg(controller: dict):
+    """How many degrees /scan sees, or None when nothing publishes it.
+
+    A depth camera's horizontal view (HFOV, ~87 deg); a LiDAR's 360 less what its
+    mask blocks (lidar.mask.sectors -- a mower body, a mast). SLAM holds a narrow
+    view to the odometry harder (slam.launch.py, narrow_fov_overrides): a scan
+    matcher with ~90 deg of wall to work from rotates maps that odometry has right.
+    """
+    src = scan_source(controller)
+    if src == "depth":
+        return math.degrees(HFOV)
+    if src == "lidar":
+        import lidar_mask
+        blocked = sum(w for _, w in lidar_mask.mask_config(controller)["sectors"])
+        return max(0.0, 360.0 - blocked)
+    return None
+
+
+# A scan that sees less than this many degrees takes slam.narrow_fov_overrides.
+# A depth camera (~87) and a masked mower LiDAR (the gate's: 210) are narrow; a
+# full LiDAR (360) is not.
+NARROW_FOV_DEG = 270.0
+
+
+def narrow_slam_overrides(params: dict) -> dict:
+    """The slam_toolbox parameters a narrow scan takes over the template's, or {}.
+
+    slam.narrow_fov_overrides sits beside slam.slam_toolbox in the robot config;
+    slam.launch.py applies it when scan_fov_deg() is under NARROW_FOV_DEG. A full
+    360 deg LiDAR keeps slam_toolbox's own values.
+    """
+    narrow = ((params or {}).get("slam") or {}).get("narrow_fov_overrides")
+    fov = scan_fov_deg((params or {}).get("base_controller") or {})
+    if isinstance(narrow, dict) and narrow and fov is not None and fov < NARROW_FOV_DEG:
+        return dict(narrow)
+    return {}
+
+
 def camera_role(controller: dict):
     """What a fitted depth camera is for: "scan" (it IS /scan), "obstacles", or None.
 
