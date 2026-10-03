@@ -263,6 +263,13 @@ jobs:
             design: xrp
           - env: pico2w_lyrical
             design: xrp
+          # The Maker's Pet mini runs the ESP32 image; its reference (BDC-30P on
+          # GPIO 22/23/25/26, encoders on the input-only 36/39, the LD14P's
+          # start command on GPIO27) is compiled the same way.
+          - env: esp32
+            design: makerspet_mini
+          - env: esp32_lyrical
+            design: makerspet_mini
     steps:
       - uses: actions/checkout@v4
       # No actions/setup-python. Ubuntu 24.04 already ships the 3.12 we pin, on
@@ -378,6 +385,7 @@ jobs:
           esac
           # The XRP design job: the Pico 2 W image, from the XRP's reference.
           if [ "${{ matrix.design }}" = xrp ]; then cfg=config/reference/xrp_config.yaml; fi
+          if [ "${{ matrix.design }}" = makerspet_mini ]; then cfg=config/reference/makerspet_mini_config.yaml; fi
           distro=jazzy; case "${{ matrix.env }}" in *_lyrical) distro=lyrical ;; esac
           python3 scripts/gen_firmware_header.py --params "$cfg" --distro "$distro" --no-embed-secrets
       - name: Build (never `pio run -t upload`)

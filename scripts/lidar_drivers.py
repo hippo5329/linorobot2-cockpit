@@ -30,12 +30,19 @@ LDLIDAR_MODELS = {
     "ld19":   ("LDLiDAR_LD19", 456),
     "ld06":   ("LDLiDAR_LD06", 456),
     "stl27l": ("LDLiDAR_STL27L", 2160),
+    # The LD14P sends the LD06/LD19 packet but is a triangulation sensor: the
+    # vendored driver corrects each point's angle for its range and sends the
+    # start command (prepare_docker_vendor.sh, LD14P). 4000 samples/s at 6 Hz.
+    "ld14p":  ("LDLiDAR_LD14P", 666),
 }
-# The LD14 and LD14P were in bringup's table, and the driver refuses both:
-# ldlidar_stl_ros2's node knows LD06, LD19 and STL27L only and exits
-# "input <product_name> is illegal". They are the SL family, read by
-# ldlidar_sl_ros2, which this image does not carry -- refused here by name.
-NOT_CARRIED = {"ld14": "ldlidar_sl_ros2", "ld14p": "ldlidar_sl_ros2"}
+# Bytes a board sends the LiDAR when its UART opens (env lidar_init, hex), for a
+# model that does nothing until told: the LD14P does not spin until it receives
+# its start command. mcu_env.py writes it when the config names the model and a
+# lidar.tx_pin to send it on.
+LIDAR_INIT = {"ld14p": "54A004000000005E"}
+# The LD14 is the SL family, read by ldlidar_sl_ros2, which this image does not
+# carry -- refused here by name. (The LD14P is read: see LDLIDAR_MODELS.)
+NOT_CARRIED = {"ld14": "ldlidar_sl_ros2"}
 
 # sllidar_ros2/launch/sllidar_<model>_launch.py: serial_baudrate, scan_mode
 # ("" = the driver picks the device's typical mode, as sllidar_s1_launch.py does).
@@ -80,7 +87,7 @@ def family(model: str) -> str:
         return "xv11"
     if m in NOT_CARRIED:
         raise ValueError(f"lidar.model {model!r} is read by {NOT_CARRIED[m]}, which this image "
-                         f"does not carry (ldlidar_stl_ros2 knows ld06, ld19 and stl27l only)")
+                         f"does not carry (ldlidar_stl_ros2 here knows ld06, ld19, ld14p and stl27l)")
     known = sorted(list(LDLIDAR_MODELS) + list(SLLIDAR_MODELS) + list(SLLIDAR_ALIASES)
                    + list(YDLIDAR_FILES) + ["xv11"])
     raise ValueError(f"lidar.model {model!r} names no driver this image carries; "

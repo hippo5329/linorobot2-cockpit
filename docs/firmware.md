@@ -582,6 +582,36 @@ are what `drivetrain_report.py` derives for those motors: 0.16 m/s on the path, 
 smoother's ceiling. The wiring is from SparkFun's schematic and XRPLib; motor and encoder
 directions are confirmed by driving a kit, not by the build.
 
+### The Maker's Pet mini runs the ESP32 image
+`config/reference/makerspet_mini_config.yaml` is the Maker's Pet 120 mm build pack: an ESP32 30-pin
+DevKit on the kit's BDC-30P motor board, two 12 V N20 encoder gearmotors, an LDROBOT LD14P and no
+IMU. It runs `esp32-jazzy` / `esp32-lyrical` with its own env block; every pin and constant is the
+vendor's own (`kaiaai/firmware`, `kaiaai-esp32/data/config_mini_bdc_30p.yaml`).
+
+| part | wiring |
+|---|---|
+| motors | BDC-30P, IN1/IN2 with PWM on both and no enable (`BDC30P` maps to the dual-PWM scheme): left 26/25, right 23/22 |
+| encoders | quadrature, left 39/36, right 17/16; 1035 counts per wheel revolution |
+| LiDAR | LD14P: its TX into GPIO35 (`lidar.rx_pin`), its RX from GPIO27 (`lidar.tx_pin`), power enable GPIO32 (`gpio_out: 32=1`), 230400 baud |
+| battery | GPIO33 through a 7:1 divider (60k / 10k here), 7.2–9.9 V (6×AA or 2S) |
+| LED | GPIO2, the DevKit's own |
+
+The LD14P sends the LD19 packet but differs in two ways, and both are handled by name:
+* **It does not spin until told.** With `lidar.model: ld14p` and a `tx_pin`, `mcu_env.py` writes
+  `lidar_tx` and `lidar_init=54A004000000005E`. The firmware sends those bytes (hex, up to 32) three
+  times, a second apart, once the LiDAR UART opens. It knows no models, only the bytes.
+* **It is a triangulation sensor.** Each point's angle shifts with its range: about 1.4° at 0.2 m,
+  4.6° at 0.5 m and 6.2° at 2 m. The vendored `ldlidar_stl_ros2` applies LDROBOT's correction for
+  `LDLiDAR_LD14P` and drops the ToF filter, and on its own serial port it sends the start command
+  too (`scripts/prepare_docker_vendor.sh`).
+
+Transport is micro-ROS over Wi-Fi (`udp4`), and the scan is forwarded beside it (`lidar.comm_mode:
+udp`), as the kit itself runs. The kinematics are the kit's (43 mm wheels, 105 mm track, 180 rpm), not
+the default chassis, and the Nav2 limits are what `drivetrain_report.py` derives for those motors:
+0.12 m/s on the path, 0.14 m/s at the smoother's ceiling. With no IMU, the heading comes from the
+wheels. Motor and encoder directions follow the vendor config and are confirmed by driving a kit,
+not by the build.
+
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
 addresses all reach the firmware through the `env` flash partition (`scripts/mcu_env.py`, read by

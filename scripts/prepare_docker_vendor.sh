@@ -214,6 +214,72 @@ DRIVER_PY
     echo "[vendor] ldlidar_stl_ros2: network Start() now marks the driver started"
 fi
 
+# The LDROBOT LD14P (the Maker's Pet mini's LiDAR). It sends the LD06/LD19 packet
+# (0x54 0x2C, 12 points, 230400 baud) but it is a TRIANGULATION sensor: each
+# point's angle must be shifted by atan((0.11923*d - 18.975571)/(d + 5.9)) deg,
+# d in mm -- ~1.4 deg at 0.2 m, 4.6 at 0.5 m, 6.2 at 2 m -- as LDROBOT's own
+# ldlidar_sl_sdk (sl_transform.cpp) and kaiaai/LDS (LDS_LDROBOT_LD14P.cpp) do.
+# Read as an LD19 every wall would bend by a range-dependent few degrees. It
+# also stays still until told to start (54 A0 04 00 00 00 00 5E): sent here when
+# it is on the robot computer's own serial port, and by the firmware (env
+# lidar_init) when it hangs off the MCU. 4000 samples/s; no ToF filter.
+LD14P_DT="${VENDOR}/ldlidar_stl_ros2/ldlidar_driver/include/core/ldlidar_datatype.h"
+if [ -f "$LD14P_DT" ] && ! grep -q "LD_14P" "$LD14P_DT"; then
+    python3 - "${VENDOR}/ldlidar_stl_ros2" <<'PYLD14P'
+import sys, os
+root = sys.argv[1]
+def edit(rel, pairs):
+    p = os.path.join(root, rel); s = open(p).read()
+    for old, new in pairs:
+        assert s.count(old) == 1, f"{rel}: {old[:50]!r} -- has upstream changed?"
+        s = s.replace(old, new)
+    open(p, "w").write(s)
+edit("ldlidar_driver/include/core/ldlidar_datatype.h",
+     [("  STL_27L,\n};", "  STL_27L,\n  LD_14P,   // triangulation: prepare_docker_vendor.sh, LD14P\n};")])
+edit("src/demo.cpp", [(
+    '  } else if (product_name == "LDLiDAR_STL27L") {\n    type_name = ldlidar::LDType::STL_27L;',
+    '  } else if (product_name == "LDLiDAR_STL27L") {\n    type_name = ldlidar::LDType::STL_27L;\n'
+    '  } else if (product_name == "LDLiDAR_LD14P") {\n    type_name = ldlidar::LDType::LD_14P;')])
+edit("ldlidar_driver/src/dataprocess/lipkg.cpp", [
+  ("    case LDType::STL_27L:\n      measure_point_frequence_ = 21600;\n      break;",
+   "    case LDType::STL_27L:\n      measure_point_frequence_ = 21600;\n      break;\n"
+   "    case LDType::LD_14P:\n      measure_point_frequence_ = 4000;\n      break;"),
+  ("        PointData data;\n        for (int i = 0; i < POINT_PER_PACK; i++) {\n"
+   "          data.distance = pkg_.point[i].distance;\n          data.angle = start + i * step;",
+   "        PointData data;\n"
+   "        float ld14p_shift = 0.0f;   // the last valid point's shift, for a zero range\n"
+   "        for (int i = 0; i < POINT_PER_PACK; i++) {\n"
+   "          data.distance = pkg_.point[i].distance;\n          data.angle = start + i * step;\n"
+   "          if (product_type_ == LDType::LD_14P) {\n"
+   "            // triangulation: the angle depends on the range (ldlidar_sl_sdk sl_transform.cpp)\n"
+   "            if (data.distance > 0) {\n"
+   "              const float x = data.distance + 5.9f;\n"
+   "              const float y = data.distance * 0.11923f - 18.975571f;\n"
+   "              ld14p_shift = static_cast<float>(atan(y / x) * 180.0 / M_PI);\n"
+   "            }\n"
+   "            data.angle -= ld14p_shift;\n"
+   "            if (data.angle < 0.0) {\n"
+   "              data.angle += 360.0;\n"
+   "            }\n"
+   "          }"),
+])
+edit("ldlidar_driver/src/filter/tofbf.cpp", [(
+    '    default:\n      std::cout << "[ldrobot] tofbf input ldlidar type error!" << std::endl;',
+    '    case LDType::LD_14P:   // triangulation, not ToF: no ToF filter\n'
+    '      filter_type_ = FilterType::NO_FILTER;\n      break;\n'
+    '    default:\n      std::cout << "[ldrobot] tofbf input ldlidar type error!" << std::endl;')])
+edit("ldlidar_driver/src/core/ldlidar_driver.cpp", [(
+    '      LD_LOG_ERROR("serial is not open:%s", serial_port_name.c_str());\n      return false;\n    }\n  } else {',
+    '      LD_LOG_ERROR("serial is not open:%s", serial_port_name.c_str());\n      return false;\n    }\n'
+    '    if (LDType::LD_14P == product_name) {\n'
+    '      // The LD14P does not spin until told to (prepare_docker_vendor.sh, LD14P).\n'
+    '      static const uint8_t start_cmd[] = {0x54, 0xA0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5E};\n'
+    '      uint32_t written = 0;\n'
+    '      comm_serial_->WriteToIo(start_cmd, sizeof(start_cmd), &written);\n'
+    '    }\n  } else {')])
+PYLD14P
+    echo "[vendor] ldlidar_stl_ros2: LDLiDAR_LD14P -- triangulation angle correction, start command, no ToF filter"
+fi
 CM="${VENDOR}/ldlidar_stl_ros2/CMakeLists.txt"
 if [ -f "$CM" ] && grep -q "ament_target_dependencies" "$CM"; then
     python3 - "$CM" <<'PY'

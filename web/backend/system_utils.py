@@ -21,7 +21,7 @@ SUPPORTED_DISTROS = ["jazzy", "lyrical", "rolling"]
 
 LASER_SENSORS = {
     "ldlidar": {
-        "label": "LDROBOT (LD06 / LD19 / STL27L)",
+        "label": "LDROBOT (LD06 / LD19 / LD14P / STL27L)",
         "serial": True,
         "symlink": "/dev/ldlidar",
         "default_baud": "230400",
@@ -30,6 +30,7 @@ LASER_SENSORS = {
         "models": [
             {"code": "ld06", "label": "LD06", "product": "LDLiDAR_LD06", "bins": 456, "baud": "230400"},
             {"code": "ld19", "label": "LD19", "product": "LDLiDAR_LD19", "bins": 456, "baud": "230400"},
+            {"code": "ld14p", "label": "LD14P", "product": "LDLiDAR_LD14P", "bins": 666, "baud": "230400"},
             {"code": "stl27l", "label": "STL27L", "product": "LDLiDAR_STL27L", "bins": 2160, "baud": "921600"},
         ],
         "install": [

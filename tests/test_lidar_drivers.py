@@ -27,12 +27,13 @@ def read(*p):
 
 @pytest.mark.parametrize("model,fam", [("ld19", "ldlidar"), ("STL27L", "ldlidar"), ("a1", "sllidar"),
                                        ("a2", "sllidar"), ("s3", "sllidar"), ("ydlidar", "ydlidar"),
-                                       ("ydlidar_x4", "ydlidar"), ("xv11", "xv11")])
+                                       ("ydlidar_x4", "ydlidar"), ("xv11", "xv11"),
+                                       ("ld14p", "ldlidar")])
 def test_each_model_has_its_family(model, fam):
     assert ld.family(model) == fam
 
 
-@pytest.mark.parametrize("model", ["rplidar", "ld19x", "", "ld14", "ld14p"])
+@pytest.mark.parametrize("model", ["rplidar", "ld19x", "", "ld14"])
 def test_a_model_no_driver_reads_is_refused(model):
     with pytest.raises(ValueError, match="lidar.model"):
         ld.family(model)
@@ -117,3 +118,29 @@ def test_bringup_dispatches_and_refuses():
     for exe in ("sllidar_ros2/sllidar_node", "ydlidar_ros2_driver/ydlidar_ros2_driver_node",
                 "xv_11_driver/xv_11_driver"):
         assert f"test -x /opt/lino_ws/lib/{exe}" in docker, exe
+
+
+def test_the_ld14p_is_started_and_corrected():
+    """The LD14P sends LD19 packets but is a triangulation sensor that does not spin until told.
+
+    The board sends its start command (env lidar_init, on lidar_tx) when it hangs
+    off the MCU; the vendored driver sends it on its own serial port and shifts each
+    point's angle by atan((0.11923 d - 18.975571) / (d + 5.9)) -- LDROBOT's
+    ldlidar_sl_sdk sl_transform.cpp, as kaiaai/LDS does.
+    """
+    import math
+    import sys
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import mcu_env
+    assert ld.LIDAR_INIT["ld14p"] == "54A004000000005E"
+    cfg = {"base_controller": {"mcu": "esp32", "lidar": {"model": "ld14p", "rx_pin": 35, "tx_pin": 27,
+                                                         "comm_mode": "udp", "baudrate": 230400}}}
+    env = mcu_env.hardware_env(cfg)
+    assert (env["lidar_tx"], env["lidar_init"]) == (27, "54A004000000005E")
+    del cfg["base_controller"]["lidar"]["tx_pin"]
+    assert "lidar_init" not in mcu_env.hardware_env(cfg)   # nothing to send it on
+    patch = read("scripts", "prepare_docker_vendor.sh")
+    for needle in ("0.11923f", "18.975571f", "5.9f", "0x54, 0xA0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x5E"):
+        assert needle in patch, needle
+    shift = lambda d: math.degrees(math.atan((0.11923 * d - 18.975571) / (d + 5.9)))
+    assert round(shift(500), 1) == 4.6 and round(shift(2000), 1) == 6.2

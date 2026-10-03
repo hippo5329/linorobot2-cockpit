@@ -498,6 +498,18 @@ def hardware_env(params: dict) -> dict:
         if value in ("AUTO", ""):
             continue
         env[key] = 0 if value in ("NONE", "OFF", "DISABLE", "FALSE") else 1
+    # `current: NONE` names the CHIP (no INA219), not the battery: a robot with
+    # a divider on an ADC pin still has one to report, and an explicit 0 here
+    # outranks the firmware's own default, batteryPresent() (main.cpp). The XRP,
+    # the Yahboom and the Maker's Pet all read a divider and published nothing.
+    # Leave the key out and let the board decide from its battery pin.
+    try:
+        divider = int(((pins.get("battery") or {}).get("pin", -1))) >= 0
+    except (TypeError, ValueError, AttributeError):
+        divider = False
+    if divider and env.get("pub_battery") == 0 and \
+            str(sensors.get("current", "")).strip().upper() == "NONE":
+        del env["pub_battery"]
 
     # The simulated magnetometer is a publisher by intent. A bare module says
     # `mag: NONE` -- there is no chip -- and `use_sim_mag: true`, and the rule
@@ -542,6 +554,15 @@ def hardware_env(params: dict) -> dict:
         env["lidar_rx"] = int(lidar_cfg["rx_pin"])
     if lidar_cfg.get("baudrate") is not None:
         env["lidar_baud"] = int(lidar_cfg["baudrate"])
+    # The pin wired to the LiDAR's RX, and the bytes to send on it once the UART
+    # opens -- for a model that does nothing until told (the LD14P's start
+    # command, lidar_drivers.LIDAR_INIT). The firmware knows no model, only bytes.
+    if lidar_cfg.get("tx_pin") is not None:
+        env["lidar_tx"] = int(lidar_cfg["tx_pin"])
+        import lidar_drivers
+        init = lidar_drivers.LIDAR_INIT.get(str(lidar_cfg.get("model", "")).strip().lower())
+        if init and env["lidar_tx"] >= 0:
+            env["lidar_init"] = init
     # Whether the board runs the LiDAR emulator at all. It was a build macro
     # only, so a prebuilt image (built from a simulation-mode reference) raycast its
     # room and streamed it on every robot that flashed it, real LiDAR or not.
@@ -704,6 +725,7 @@ def hardware_env(params: dict) -> dict:
         "BTS7960": "bts7960",
         "AT8236": "bts7960",
         "DRV8411A": "bts7960",
+        "BDC30P": "bts7960",
         "ESC": "esc",
     }.get(driver, "generic2")
     env["sim_wheel"] = _bool(sensors.get("use_sim_wheel", False))

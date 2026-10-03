@@ -156,3 +156,19 @@ def test_every_run_writes_the_env_block():
     # no_flash is --skip-flash, or the simulated MCU (no board to write to).
     assert "no_flash = args.skip_flash or sim_mcu" in src
     assert 'needs_env_write")) and not args.skip_flash' not in src
+
+
+def test_a_divider_battery_is_not_silenced_by_current_none():
+    """`current: NONE` is "no INA219", not "no battery": the board's battery pin decides.
+
+    An explicit pub_battery=0 outranks the firmware's batteryPresent() default, so
+    the XRP, the Yahboom and the Maker's Pet -- dividers, no current chip --
+    published no /battery at all.
+    """
+    for name in ("xrp", "yb_eet01", "makerspet_mini"):
+        env = mcu_env.env_from_config(os.path.join(REF, f"{name}_config.yaml"), SECRETS_EXAMPLE, "192.0.2.1")
+        assert env.get("battery_pin", -1) not in (-1, "-1"), name
+        assert "pub_battery" not in env, f"{name}: pub_battery={env.get('pub_battery')} silences its divider"
+    none_wired = {"base_controller": {"mcu": "esp32", "sensors": {"current": "NONE"},
+                                      "pins": {"battery": {"pin": -1}}}}
+    assert mcu_env.hardware_env(none_wired).get("pub_battery") == 0

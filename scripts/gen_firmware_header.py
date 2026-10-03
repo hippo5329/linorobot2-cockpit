@@ -206,6 +206,7 @@ _DRIVER_ENV_NAMES = {
     "BTS7960": "bts7960",
     "AT8236": "bts7960",
     "DRV8411A": "bts7960",   # IN/IN H-bridge: PWM on both inputs (SparkFun XRP Controller)
+    "BDC30P": "bts7960",     # Maker's Pet BDC-30P: IN1/IN2, PWM on both inputs
     "ESC": "esc",
 }
 

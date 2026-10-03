@@ -35,6 +35,7 @@
 #include <HardwareSerial.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <Ticker.h>
 #define BUFSIZE 512
 
 #ifndef LIDAR_SERIAL
@@ -73,6 +74,44 @@ uint8_t buf[BUFSIZE];
 static int  lidar_rx = -1;
 static int  lidar_poweroff = -1;
 static bool forwarding = false;
+
+// Bytes the board sends the LiDAR once its UART is open (env lidar_init, hex;
+// written for a model that needs telling -- the LDROBOT LD14P does not spin until
+// it receives 54 A0 04 00 00 00 00 5E). Sent three times, a second apart: the
+// LiDAR may still be booting from the gpio_out that powered it, and a start
+// command to a running LiDAR is harmless. Needs lidar_tx, the pin wired to the
+// LiDAR's RX; the firmware knows no model, only the bytes.
+static uint8_t lidar_init_bytes[32];
+static size_t  lidar_init_len = 0;
+static int     lidar_init_sent = 0;
+static Ticker  lidar_init_ticker;
+
+static size_t parseHex(const char *hex, uint8_t *out, size_t max)
+{
+    size_t n = 0;
+    while (hex && *hex && n < max)
+    {
+        while (*hex == ' ' || *hex == ':' || *hex == ',')
+            hex++;
+        if (!hex[0] || !hex[1])
+            break;
+        char pair[3] = {hex[0], hex[1], 0};
+        char *end = NULL;
+        long v = strtol(pair, &end, 16);
+        if (end != pair + 2)
+            return 0;   // not hex: send nothing rather than garbage
+        out[n++] = (uint8_t)v;
+        hex += 2;
+    }
+    return n;
+}
+
+static void sendLidarInit(void)
+{
+    comm.write(lidar_init_bytes, lidar_init_len);
+    if (++lidar_init_sent >= 3)
+        lidar_init_ticker.detach();
+}
 
 
 
@@ -155,8 +194,17 @@ void initLidar(void) {
   comm.setRxBufferSize(LIDAR_RX_BUFFER_SIZE);
   comm.onReceiveError(rx_err_callback);
   comm.onReceive(rx_callback);
-  comm.begin(envU32("lidar_baud", LIDAR_BAUDRATE), SERIAL_8N1, lidar_rx);
+  const int lidar_tx = envInt("lidar_tx", -1);
+  comm.begin(envU32("lidar_baud", LIDAR_BAUDRATE), SERIAL_8N1, lidar_rx, lidar_tx);
   Serial.printf("[lidar] forwarding a real LiDAR from GPIO %d to the UDP server\n", lidar_rx);
+  lidar_init_len = (lidar_tx >= 0) ? parseHex(envGet("lidar_init", ""), lidar_init_bytes, sizeof(lidar_init_bytes)) : 0;
+  if (lidar_init_len)
+  {
+    Serial.printf("[lidar] sending %u init bytes to the LiDAR on GPIO %d (x3, 1 s apart)\n",
+                  (unsigned)lidar_init_len, lidar_tx);
+    sendLidarInit();
+    lidar_init_ticker.attach(1.0f, sendLidarInit);
+  }
 };
 #else
 void initLidar(void) {};

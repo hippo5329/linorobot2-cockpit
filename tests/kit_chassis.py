@@ -21,6 +21,14 @@ KIT_CHASSIS = {
         "inverted": {"encoder1"},
         "simulation": {"robot_mass", "motor_stall_amps"},
     },
+    # Maker's Pet mini (120 mm build pack): 43 mm wheels on a 105 mm track, 12 V
+    # 200 rpm N20 gearmotors run to 180 rpm, 1035-count encoders, 0.34 kg. From
+    # kaiaai/firmware's config_mini_bdc_30p.yaml; no unit is inverted there.
+    # Unverified on a kit until one is on the bench.
+    "makerspet_mini": {
+        "inverted": set(),
+        "simulation": {"robot_mass", "motor_stall_amps"},
+    },
 }
 
 # What a kit's own motors change. These are the keys
