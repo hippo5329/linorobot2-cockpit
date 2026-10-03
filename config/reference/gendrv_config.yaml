@@ -242,6 +242,10 @@ slam:
   #   camera skid    4.06 m / 38.9 deg -> 0.15 m / 2.1 deg
   # A 360 deg LiDAR keeps slam_toolbox's defaults: on the 1280 m2 warehouse the
   # same values cost 1.9 m (lyrical replay) and two live maps came out rotated 1 deg.
+  # Strong closures still let a false one through in the rooms world: a 2.4-3.3 m
+  # jump, all translation, to a look-alike room inside slam_toolbox's 3.0 m loop
+  # search, after which home sat behind a wall (gate, 2026-10-03, three camera
+  # legs). Replayed, a 2.0 m search took the camera skid run from 2.68 m to 0.20 m.
   narrow_fov_overrides:
     angle_variance_penalty: 0.02
     minimum_angle_penalty: 0.3
@@ -250,6 +254,7 @@ slam:
     loop_match_minimum_response_coarse: 0.6
     loop_match_minimum_response_fine: 0.7
     loop_match_minimum_chain_size: 15
+    loop_search_maximum_distance: 2.0
   slam_toolbox:
     ros__parameters:
       solver_plugin: solver_plugins::CeresSolver

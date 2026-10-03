@@ -20,7 +20,8 @@ REFS = ("gendrv", "pico2_mecanum", "xrp", "yb_eet01")
 STRONG = {"angle_variance_penalty": 0.02, "minimum_angle_penalty": 0.3,
           "distance_variance_penalty": 0.1, "minimum_distance_penalty": 0.3,
           "loop_match_minimum_response_coarse": 0.6, "loop_match_minimum_response_fine": 0.7,
-          "loop_match_minimum_chain_size": 15}
+          "loop_match_minimum_chain_size": 15,
+          "loop_search_maximum_distance": 2.0}
 # slam_toolbox's own defaults (mapper_params_online_async.yaml), which a full LiDAR keeps
 UPSTREAM = {"angle_variance_penalty": 1.0, "minimum_angle_penalty": 0.9,
             "distance_variance_penalty": 0.5, "minimum_distance_penalty": 0.5,
