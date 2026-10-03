@@ -386,6 +386,10 @@ def launch_setup(context, *args, **kwargs):
         srv_params = nav2_data.setdefault(server_name, {}).setdefault("ros__parameters", {})
         srv_params["enable_stamped_cmd_vel"] = stamped_cmd_vel
 
+    # Before mecanum_controller(): MPPI's wz_max is derived from the smoother's
+    # yaw ceiling there, so the cap reaches it too.
+    import mapping_limits  # noqa: E402  (scripts/ is on sys.path)
+    mapping_cap = mapping_limits.cap_mapping_turn_rate(nav2_data, params, map_file)
     uses_mppi = mecanum_controller(nav2_data, params)
 
     # Cross-distro adaptation: Lyrical (Nav2 >= 1.5.1 / Kilted) vs Jazzy
@@ -785,6 +789,8 @@ def launch_setup(context, *args, **kwargs):
     actions = [
         SetParameter("bond_timeout", 0.0),
         SetParameter("bond_heartbeat_period", 0.0),
+        *([LogInfo(msg=f"[Linorobot2 Cockpit] Mapping from a narrow scan: yaw rate capped at {mapping_cap} rad/s")]
+          if mapping_cap else []),
         LogInfo(msg=f"[Linorobot2 Cockpit] Launching Nav2 Navigation Stack (distro='{distro}', "
                     f"FollowPath={controller}, composed)"),
     ]
