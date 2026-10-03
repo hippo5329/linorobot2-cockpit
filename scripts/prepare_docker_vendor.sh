@@ -395,6 +395,95 @@ open(H, "w").write(h)
 PYWAIT
     echo "[vendor] explore_lite: wait for the map to reach the robot; retry going home"
 fi
+# 6. Three faults found by the gate's exploration case (2026-10-03, rooms world):
+#    a. Every frontier goal was sent with yaw 0. A base that must turn to reach a
+#       point (differential, skid) looks at the frontier on the way; a mecanum base
+#       strafes or backs up to it and never does. With the rear 150 deg of the scan
+#       masked, the nearest frontier sat 0.3 m BEHIND the robot, within the goal
+#       tolerance: 8636 goals to the same point, each "reached" at once, map stuck
+#       at 3.6 m2 for 900 s. The goal now faces from the robot to the frontier.
+#    b. That repeat was never blacklisted: fix 3 returns early while a goal is
+#       active, so the no-progress check never ran, and an instantly-reached goal
+#       is never "active" for long. A frontier reached three times running without
+#       disappearing is now blacklisted.
+#    c. One empty frontier search ended the run. Just after the map first reaches
+#       the robot (fix 4) the costmap can lag SLAM by a cycle: a camera run declared
+#       the world explored 3 s in, at 34.2 m2 of 50. Exploration now ends only after
+#       five consecutive empty searches (the planner runs at 1 Hz).
+if [ -f "$EX" ] && ! grep -q "faces the frontier" "$EX"; then
+    python3 - "$EX" <<'PYFACE'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = """  if (frontiers.empty()) {
+    RCLCPP_WARN(logger_, "No frontiers found, stopping.");"""
+new = """  if (frontiers.empty()) {
+    // One empty search is not "explored" (prepare_docker_vendor.sh): five in a row.
+    if (++empty_searches_ < 5) {
+      RCLCPP_INFO(logger_, "No frontiers found (%d of 5 before stopping)", empty_searches_);
+      return;
+    }
+    RCLCPP_WARN(logger_, "No frontiers found, stopping.");"""
+assert s.count(old) == 1, "makePlan() empty-frontier branch changed upstream"
+s = s.replace(old, new)
+old = """  // publish frontiers as visualization markers
+  if (visualize_) {"""
+new = """  empty_searches_ = 0;
+  // publish frontiers as visualization markers
+  if (visualize_) {"""
+assert s.count(old) == 1, "makePlan() marker block changed upstream"
+s = s.replace(old, new)
+old = """  // we don't need to do anything if we still pursuing the same goal
+  if (same_goal && goal_active_) {
+    return;
+  }
+"""
+new = """  // we don't need to do anything if we still pursuing the same goal
+  if (same_goal && goal_active_) {
+    return;
+  }
+  // A frontier "reached" again and again without disappearing is unreachable to
+  // see from here (prepare_docker_vendor.sh): blacklist it after three.
+  same_goal_reached_ = same_goal ? same_goal_reached_ + 1 : 0;
+  if (same_goal_reached_ >= 3) {
+    RCLCPP_WARN(logger_, "Frontier (%.2f, %.2f) reached 3 times without being explored; blacklisting it",
+                target_position.x, target_position.y);
+    frontier_blacklist_.push_back(target_position);
+    same_goal_reached_ = 0;
+    makePlan();
+    return;
+  }
+"""
+assert s.count(old) == 1, "makePlan() same-goal check changed upstream"
+s = s.replace(old, new)
+old = """  goal.pose.pose.position = target_position;
+  goal.pose.pose.orientation.w = 1.;"""
+new = """  goal.pose.pose.position = target_position;
+  {
+    // The goal faces the frontier (prepare_docker_vendor.sh), so a sensor that does
+    // not see all round turns to it -- yaw 0 let a mecanum base back up to a frontier
+    // behind it and never look.
+    auto here = costmap_client_.getRobotPose().position;
+    double dx = target_position.x - here.x, dy = target_position.y - here.y;
+    double yaw = (dx * dx + dy * dy > 1e-6) ? std::atan2(dy, dx) : 0.0;
+    goal.pose.pose.orientation.z = std::sin(yaw / 2.0);
+    goal.pose.pose.orientation.w = std::cos(yaw / 2.0);
+  }"""
+assert s.count(old) == 1, "makePlan() goal orientation changed upstream"
+s = s.replace(old, new)
+old = "#include <thread>\n"
+assert s.count(old) == 1
+s = s.replace(old, "#include <cmath>\n#include <thread>\n")
+open(p, "w").write(s)
+H = p.replace("src/explore.cpp", "include/explore/explore.h")
+h = open(H).read()
+old = "  int home_attempts_ = 0;                       // prepare_docker_vendor.sh\n"
+assert h.count(old) == 1, "explore.h: fix 5 member missing"
+h = h.replace(old, old + "  int empty_searches_ = 0;                      // prepare_docker_vendor.sh, fix 6c\n"
+              "  int same_goal_reached_ = 0;                   // prepare_docker_vendor.sh, fix 6b\n")
+open(H, "w").write(h)
+PYFACE
+    echo "[vendor] explore_lite: the goal faces the frontier; blacklist a frontier reached thrice; stop after five empty searches"
+fi
 # map_merge is multi-robot map merging, not exploration; it is not built.
 touch "${VENDOR}/m-explore-ros2/map_merge/COLCON_IGNORE"
 
