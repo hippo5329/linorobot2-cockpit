@@ -61,6 +61,14 @@ def explore_params(params: dict, share_dir=None) -> dict:
         # Home when done, as the package's other config (params.yaml) has it:
         # params_costmap.yaml leaves it out and the code default is false.
         "return_to_init": True,
+        # explore_lite sizes a frontier by its CELL count, so a diagonal one is
+        # undercounted by sqrt(2), and inflation has already narrowed a doorway's
+        # frontier to the door less the robot. A doorway seen at 45 deg -- a masked
+        # LiDAR's usual view of one, its rear blind -- came to 9 cells, 0.45 m (truly
+        # 0.64), under the vendor's 0.5: "No frontiers found" with a room unmapped
+        # (gate, 2026-10-03/04, mask lyrical twice). Specks need no size filter here:
+        # the costmap raytraces them away (above).
+        "min_frontier_size": 0.3,
     })
     rp.update(((params.get("explore") or {}).get("ros__parameters")) or {})
     return rp

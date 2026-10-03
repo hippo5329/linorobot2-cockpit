@@ -37,6 +37,12 @@ def test_the_vendor_values_stand_and_the_clock_is_real(tmp_path):
     assert rp["costmap_topic"] == "global_costmap/costmap", "the costmap, relative for a namespace"
 
 
+def test_a_doorway_seen_at_45_degrees_is_a_frontier(tmp_path):
+    """9 diagonal cells (0.45 m counted) was the masked LiDAR's last doorway; it must pass."""
+    rp = _explore_params()({}, _share(tmp_path))
+    assert rp["min_frontier_size"] <= 9 * 0.05 - 0.1
+
+
 def test_the_robot_decides_its_frame_and_tuning(tmp_path):
     params = {"base_controller": {"topic_prefix": "r1"}, "slam": {"base_frame": "base_link"},
               "explore": {"ros__parameters": {"min_frontier_size": 0.4}}}
