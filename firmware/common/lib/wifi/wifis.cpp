@@ -25,6 +25,9 @@
 #if defined(HAS_WIFI)
 #include <WiFi.h>
 #include <WiFiMulti.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_wifi.h>
+#endif
 // How long setup() waits for the AP before carrying on without it, and how
 // often loop() retries afterwards. The retry interval is not a politeness
 // setting: each attempt on a disconnected radio blocks in scanNetworks().
@@ -56,6 +59,20 @@ WiFiMulti wifiMulti;
 // both ways all the time, so latency wins over the radio's milliwatts. Called on
 // every association, because a reconnect is a new link. Env `wifi_sleep 1` puts
 // power save back, for a battery robot that would rather.
+// The radio's power-save mode as the driver has it, not as we asked: 0 none,
+// 1 min-modem, 2 max-modem on an ESP32; -1 where the core cannot say. Logged
+// because a link that answers in 15 ms with a 300 ms tail reads exactly like a
+// sleeping station, and the only way to know is to ask the driver.
+static int wifiPowerSave(void)
+{
+#if defined(ARDUINO_ARCH_ESP32)
+    wifi_ps_type_t ps;
+    if (esp_wifi_get_ps(&ps) == ESP_OK)
+        return (int)ps;
+#endif
+    return -1;
+}
+
 static void wifiAwake(void)
 {
     if (envFlag("wifi_sleep", false))
@@ -65,6 +82,8 @@ static void wifiAwake(void)
 #elif defined(ARDUINO_ARCH_RP2040)
     WiFi.noLowPowerMode();
 #endif
+    Serial.printf("[wifi] power save %d (0 = off)\n", wifiPowerSave());
+    syslog(LOG_INFO, "%s power save %d (0 = off)", __FUNCTION__, wifiPowerSave());
 }
 
 // Is there anything to connect TO -- from the env, or compiled in?
@@ -201,8 +220,8 @@ void runWifis(void)
     // The link's health to syslog every `wifi_monitor` minutes (env; 0 = off).
     static const uint16_t monitor_min = envU16("wifi_monitor", 2);
     if (monitor_min)
-    EXECUTE_EVERY_N_MS(monitor_min * 60UL * 1000UL, syslog(LOG_INFO, "%s ssid %s rssi %d", \
-							__FUNCTION__, WiFi.SSID(), WiFi.RSSI()));
+    EXECUTE_EVERY_N_MS(monitor_min * 60UL * 1000UL, syslog(LOG_INFO, "%s ssid %s rssi %d ps %d", \
+							__FUNCTION__, WiFi.SSID(), WiFi.RSSI(), wifiPowerSave()));
 #ifdef PICO // WiFi.BSSID api is different
     // when wifi signal is too weak, disconnect current ap and scan for strongest signal
     EXECUTE_EVERY_N_MS(2000, (WiFi.RSSI() < LOW_RSSI && (bssid = WiFi.BSSID(bssidv), memcmp(dis_bssid, bssid, 6))) ? \
