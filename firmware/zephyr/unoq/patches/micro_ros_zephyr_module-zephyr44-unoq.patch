@@ -1,0 +1,37 @@
+diff --git a/modules/libmicroros/CMakeLists.txt b/modules/libmicroros/CMakeLists.txt
+index 4e8c213..227357d 100644
+--- a/modules/libmicroros/CMakeLists.txt
++++ b/modules/libmicroros/CMakeLists.txt
+@@ -22,12 +22,17 @@ zephyr_get_system_include_directories_for_lang_as_string(CXX system_includes_cxx
+ zephyr_get_compile_definitions_for_lang_as_string(       CXX definitions_cxx)
+ zephyr_get_compile_options_for_lang_as_string(           CXX options_cxx)
+ 
++# Zephyr 4.4 + picolibc (SDK 1.0): rcutils asks for C11 Annex K (__STDC_WANT_LIB_EXT1__),
++# picolibc's string.h then names __errno_t / __rsize_t, but the include path finds
++# Zephyr's sys/_types.h, which does not define them. rcutils only asks when the macro
++# is undefined and never uses Annex K here (picolibc has no __STDC_LIB_EXT1__), so say no.
++set(annex_k_types "-D__STDC_WANT_LIB_EXT1__=0 -D_DEFAULT_SOURCE -I/work/compat -include /work/compat/uros_compat.h")
+ set(external_project_cflags
+-    "${includes} ${definitions} ${options} ${system_includes}"
++    "${includes} ${definitions} ${options} ${system_includes} ${annex_k_types}"
+     )
+ 
+ set(external_project_cxxflags
+-    "${includes_cxx} ${definitions_cxx} ${options_cxx} ${system_includes_cxx}"
++    "${includes_cxx} ${definitions_cxx} ${options_cxx} ${system_includes_cxx} ${annex_k_types}"
+     )
+ 
+ include(ExternalProject)
+diff --git a/modules/libmicroros/microros_transports/serial/microros_transports.c b/modules/libmicroros/microros_transports/serial/microros_transports.c
+index e2eea50..d2627dd 100644
+--- a/modules/libmicroros/microros_transports/serial/microros_transports.c
++++ b/modules/libmicroros/microros_transports/serial/microros_transports.c
+@@ -24,7 +24,7 @@
+ #include <stdbool.h>
+ 
+ #define RING_BUF_SIZE 2048
+-#define UART_NODE DT_NODELABEL(usart1)
++#define UART_NODE DT_NODELABEL(lpuart1)  /* UNO Q: lpuart1 <-> Linux /dev/ttyHS1 */
+ 
+ char uart_in_buffer[RING_BUF_SIZE];
+ char uart_out_buffer[RING_BUF_SIZE];

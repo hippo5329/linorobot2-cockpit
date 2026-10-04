@@ -1,0 +1,2 @@
+/* micro-ROS on lpuart1, the internal link to the QRB2210 (/dev/ttyHS1). */
+&lpuart1 { status = "okay"; };
