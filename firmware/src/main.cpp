@@ -467,6 +467,11 @@ static bool imu_is_sim = false;
 // and bringup leaves the IMU out of the EKF, so the heading comes from the wheels.
 // Not the simulated IMU: on real wheels that reported turns nothing measured.
 static bool imu_present = true;
+// The same for the magnetometer: env `mag none` (config `mag: NONE`, simulated
+// field off) creates, reads and publishes nothing -- no /imu/mag. A robot with no
+// IMU usually has no magnetometer either, and a simulated field beside no IMU
+// would describe a robot that does not exist.
+static bool mag_present = true;
 // Which of the two simulated sensors actually ride on the simulated wheels.
 // Simulated wheels used to imply a simulated IMU and a simulated magnetometer, full stop --
 // right for a bare module with nothing on the bus, wrong for a bare custom
@@ -1037,19 +1042,24 @@ void setup()
     // a real MPU6050 on GP0/GP1 and no drivetrain at all. Real sensors are a
     // fact about the BUS; simulated wheels are a fact about the drivetrain.
     // `i2c_scan` in the env forces the answer either way.
+    // `none` counts as simulated here: nothing real on the bus to look for.
     const bool all_sim = wheelsAreSim()
-                          && strcasecmp(imu_name, "sim") == 0
-                          && strcasecmp(mag_name, "sim") == 0;
+                          && (strcasecmp(imu_name, "sim") == 0 || strcasecmp(imu_name, "none") == 0)
+                          && (strcasecmp(mag_name, "sim") == 0 || strcasecmp(mag_name, "none") == 0);
     // `none` is a statement, not a guess: the probe may not adopt a chip for it.
     imu_present = (strcasecmp(imu_name, "none") != 0);
+    mag_present = (strcasecmp(mag_name, "none") != 0);
     if (envFlag("i2c_scan", !all_sim))
-        i2cProbeSelect(imu_present ? &imu_name : nullptr, &mag_name);
+        i2cProbeSelect(imu_present ? &imu_name : nullptr, mag_present ? &mag_name : nullptr);
 
     if (imu_present)
         imu = createIMU(imu_name);
     else
         Serial.println("[imu] none: this robot has no IMU -- /imu/data is not published");
-    mag = createMAG(mag_name);
+    if (mag_present)
+        mag = createMAG(mag_name);
+    else
+        Serial.println("[mag] none: this robot has no magnetometer -- /imu/mag is not published");
     // Which driver was actually built, after the probe has had its say. The
     // simulated IMU has no gyro of its own, so the loop below takes yaw rate
     // from the odometry instead -- that used to be `#ifdef USE_SIM_IMU`, which
@@ -1061,11 +1071,11 @@ void setup()
     // field to calibrate against. Either way there is something to publish; a
     // SimMAG standing in for absent hardware has nothing to say and the topic
     // stays off the wire.
-    publish_mag = envFlag("pub_mag",
+    publish_mag = mag_present && envFlag("pub_mag",
                               (strcasecmp(mag_name, "sim") != 0) || sim_wheels);
 
     imu_from_wheels = sim_wheels && imu_is_sim;
-    mag_from_wheels = sim_wheels && (strcasecmp(mag_name, "sim") == 0);
+    mag_from_wheels = mag_present && sim_wheels && (strcasecmp(mag_name, "sim") == 0);
     if (sim_wheels) {
         // The simulated IMU and magnetometer are computed from the simulated
         // wheels; prepare the two messages whether or not they end up used.
@@ -1094,7 +1104,7 @@ void setup()
             }
         }
     }
-    if (!mag_from_wheels) {
+    if (mag_present && !mag_from_wheels) {
         if (!mag->init())
         {
             if (sim_wheels) {
@@ -2046,7 +2056,9 @@ void publishData()
         if (imu_is_sim)
             imu_msg->angular_velocity.z = odom_msg->twist.twist.angular.z;
     }
-    if (mag_from_wheels) {
+    if (!mag_present) {
+        // No magnetometer: nothing to read (mag_present, above).
+    } else if (mag_from_wheels) {
         // Simulated wheels mean a simulated heading, so a simulated magnetometer
         // follows it; a real one is read as itself.
         sim_imu.applyMag(*mag_msg);

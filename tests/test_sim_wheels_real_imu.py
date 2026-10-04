@@ -24,7 +24,7 @@ def _read(p):
 def test_the_simulation_follows_the_sensor_not_the_wheels():
     m = _read(MAIN)
     assert "imu_from_wheels = sim_wheels && imu_is_sim;" in m
-    assert 'mag_from_wheels = sim_wheels && (strcasecmp(mag_name, "sim") == 0);' in m
+    assert 'mag_from_wheels = mag_present && sim_wheels && (strcasecmp(mag_name, "sim") == 0);' in m
     # the real IMU is initialised and its DATA_RDY attached whenever it is not simulated
     assert re.search(r"if \(imu_present && !imu_from_wheels\) \{\s*if \(!imu->init\(\)\)", m)
 
@@ -38,7 +38,7 @@ def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():
     # slice to the second `if (!imu_from_wheels) {` -- the data-ready attach block --
     # which vanished with the interrupt path on 2026-09-24, and the test then
     # failed inside its own slicing rather than on anything it asserts.
-    blk = blk[:blk.index("if (!mag_from_wheels) {")]
+    blk = blk[:blk.index("if (mag_present && !mag_from_wheels) {")]
     assert "if (sim_wheels) {" in blk and "imu_from_wheels = true;" in blk and "flashLED(3)" in blk
 
 

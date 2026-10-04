@@ -77,7 +77,12 @@ def test_a_robot_with_no_imu_is_a_real_robot_not_a_mixed_one():
     assert mcu_env.robot_has_imu(_ref("gendrv"), "sim") is True
     env_sim = mcu_env.hardware_env(cfg)
     mcu_env.apply_sensor_mode(env_sim, "sim")
-    assert env_sim["imu"] == "none" and env_sim["mag"] == "sim"
+    # ...and no magnetometer either: no IMU, no orientation for a field to anchor.
+    assert env_sim["imu"] == "none" and env_sim["mag"] == "none"
+    # A robot with an IMU keeps both simulated in Sim mode: the default.
+    env_g = mcu_env.hardware_env(_ref("gendrv"))
+    mcu_env.apply_sensor_mode(env_g, "sim")
+    assert env_g["imu"] == "sim" and env_g["mag"] == "sim"
     env = mcu_env.hardware_env(cfg)
     assert env["imu"] == "none"
     assert mcu_env.tool_refusal(dict(env, app="test_sensors"))   # nothing to measure
@@ -96,6 +101,9 @@ def test_every_consumer_of_no_imu_agrees():
     assert 'imu_present = (strcasecmp(imu_name, "none") != 0);' in fw
     assert "if (imu_present)\n        RCSOFTCHECK(rcl_publish(&imu_publisher" in fw
     assert "if (imu_present && !imu_from_wheels)" in fw
+    assert 'mag_present = (strcasecmp(mag_name, "none") != 0);' in fw
+    assert "publish_mag = mag_present && envFlag(" in fw
+    assert "if (mag_present && !mag_from_wheels)" in fw
 
 
 def test_imu_auto_on_a_real_robot_is_the_bus_probe_not_a_simulation():

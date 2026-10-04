@@ -366,8 +366,12 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
         # The IMU and magnetometer are simulated by default -- except on a robot
         # that has no IMU at all (`imu: NONE`): no IMU is an option, and simulating
         # one would test a different robot.
-        env["imu"] = "none" if str(env.get("imu", "")).lower() == "none" else "sim"
-        env["mag"] = "sim"
+        # ...and a robot with no IMU has no magnetometer either: there is no
+        # orientation for a field to anchor, so a simulated one would describe a
+        # robot that does not exist.
+        no_imu = str(env.get("imu", "")).lower() == "none"
+        env["imu"] = "none" if no_imu else "sim"
+        env["mag"] = "none" if no_imu else "sim"
         env["sim_wheel"] = "1"
         env["sim_ld19"] = "1"
         env["sim_env"] = "1"
@@ -677,12 +681,11 @@ def hardware_env(params: dict) -> dict:
         if sensors.get(sim_flag):
             return "sim"
         value = str(sensors.get(field, "sim")).strip()
-        # A robot with NO IMU says so: `none` on the wire, and the firmware creates,
-        # reads and publishes nothing for it (main.cpp, imu_present). It used to be
-        # "sim", which on real wheels ran the simulated IMU -- a gyro reporting turns
-        # nothing measured. The magnetometer keeps "sim": a SimMAG standing in for
-        # an absent one on real wheels publishes nothing already.
-        if field == "imu" and value.upper() in ("NONE", "OFF", "DISABLE"):
+        # A robot with NO IMU (or no magnetometer) says so: `none` on the wire, and
+        # the firmware creates, reads and publishes nothing for it (main.cpp,
+        # imu_present / mag_present). The IMU used to be "sim", which on real wheels
+        # ran the simulated IMU -- a gyro reporting turns nothing measured.
+        if value.upper() in ("NONE", "OFF", "DISABLE"):
             return "none"
         if value.upper() in ("AUTO", "NONE", "OFF", "DISABLE", ""):
             return "sim"
@@ -1140,7 +1143,7 @@ def simulation_parts(params: dict, mode: str = "config", params_path: str = None
         simulated.append("IMU (use_sim_imu)" if sensors.get("use_sim_imu") else
                          f"IMU (imu: {sensors.get('imu', 'NONE')} -- no real IMU named)")
 
-    if str(env.get("mag", "sim")).lower() != "sim":
+    if str(env.get("mag", "sim")).lower() not in ("sim", "none"):
         real.append(f"magnetometer ({env['mag']})")
     elif sensors.get("use_sim_mag") and mode == "config":
         simulated.append("magnetometer (use_sim_mag)")
