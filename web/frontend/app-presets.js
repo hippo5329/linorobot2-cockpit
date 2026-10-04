@@ -470,7 +470,9 @@ async function applyReferenceDesign(designId) {
   }
 
   const mcuTarget = found.mcu || "pico2";
-  const defaultPort = (mcuTarget.includes("pico") || mcuTarget.includes("xrp")) ? "/dev/ttyACM0" : "/dev/ttyUSB0";
+  // Native USB (CDC-ACM) for the RP2s and the ESP32-S3, whose image talks on its own
+  // USB unless `console: uart0` -- the same rule as gen_bare_config.NATIVE_USB_MCUS.
+  const defaultPort = /pico|xrp|esp32s3/.test(mcuTarget) ? "/dev/ttyACM0" : "/dev/ttyUSB0";
   const portToUse = found.serial_port || defaultPort;
   setVal("cfg-serial-port", portToUse);
   setVal("cfg-baudrate", 921600);

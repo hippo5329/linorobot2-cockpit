@@ -75,6 +75,18 @@ def bare_kinematics() -> dict:
     return kin
 
 
+# Which bare MCUs are reached over their OWN USB, a CDC-ACM device (/dev/ttyACM0),
+# rather than a USB-UART bridge (/dev/ttyUSB0). The RP2s have nothing else. The
+# ESP32-S3 has both -- a DevKit's native USB port (USB-Serial/JTAG) and a UART0
+# bridge port -- and its image puts the console and micro-ROS on native USB unless
+# the env key `console` says `uart0`. So the bare S3 defaults to native USB, the way
+# the image does; a board whose only USB is a bridge on UART0 says so in its own
+# config, as the Yahboom YB-EET01 does (`console: uart0`, /dev/ttyUSB0). Until
+# 2026-10-04 only the RP2s were here, and a bare S3 on its native port was opened
+# at /dev/ttyUSB0 while it talked on /dev/ttyACM0.
+NATIVE_USB_MCUS = gen_firmware_header.RP2_MCUS + ("esp32s3",)
+
+
 def _bare_comm_mode(mcu: str) -> str:
     """Which sink a bare board's synthetic scan takes by default.
 
@@ -286,7 +298,7 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
             "board": board,
             "driver_type": "BTS7960",
             "transport": "serial",
-            "serial_port": "/dev/ttyACM0" if key in gen_firmware_header.RP2_MCUS else "/dev/ttyUSB0",
+            "serial_port": "/dev/ttyACM0" if key in NATIVE_USB_MCUS else "/dev/ttyUSB0",
             "baudrate": 921600,
             "lidar": {"model": "ld19", "comm_mode": _bare_comm_mode(key),
                       "raw_scan_topic": "raw_scan"},
@@ -294,6 +306,10 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
             "simulation": bare_simulation(),
             "pins": bare_pins(key),
         }
+        if key == "esp32s3":
+            # Stated, not left to the env default, so the choice is visible where
+            # it is made: `uart0` (with /dev/ttyUSB0) for a board wired like the Yahboom.
+            params["base_controller"]["console"] = "usb"
     params["kinematics"] = bare_kinematics()
     # Put the blocks back in the order every shipped config uses, so a generated
     # file and a hand-written one diff cleanly against each other.

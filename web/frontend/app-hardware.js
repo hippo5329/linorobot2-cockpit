@@ -289,7 +289,8 @@ async function loadHardwareConfig() {
       // `targetMcu` here was never defined: every config without a port (every
       // bare robot, the Sim MCU included) threw, and the rest of this function --
       // pin safety, kinematics HUD, DAC availability, port refresh -- never ran.
-      const portVal = tgt.serial_port || tgt.port || (/pico|xrp/.test(siliconOf(loadedControllerName)) ? "/dev/ttyACM0" : "/dev/ttyUSB0");
+      // Native USB for the RP2s and the ESP32-S3 (gen_bare_config.NATIVE_USB_MCUS).
+      const portVal = tgt.serial_port || tgt.port || (/pico|xrp|esp32s3/.test(siliconOf(loadedControllerName)) ? "/dev/ttyACM0" : "/dev/ttyUSB0");
       elSerialPort.value = portVal;
     }
     syncMcuSerialSettings();
