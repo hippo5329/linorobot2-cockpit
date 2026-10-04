@@ -244,7 +244,13 @@ def api_bringup_stream():
 
 @app.get("/api/bringup/health")
 def api_bringup_health(timeout: float = 4.0):
-    return check_bringup_health(timeout=timeout)
+    # A robot with no IMU (imu: NONE) publishes no /imu/data; its row is "not fitted".
+    try:
+        import mcu_env
+        has_imu = mcu_env.robot_has_imu(load_params() or {})
+    except Exception:
+        has_imu = True
+    return check_bringup_health(timeout=timeout, has_imu=has_imu)
 
 
 # ==============================================================================

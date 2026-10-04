@@ -462,6 +462,11 @@ IMUInterface *imu = nullptr;
 MAGInterface *mag = nullptr;
 // Set in setup() once the name is resolved (config, then env, then the bus).
 static bool imu_is_sim = false;
+// A robot with no IMU at all: env `imu none` (config `imu: NONE`). Nothing is
+// created, initialised, read or published for it -- no /imu/data, no fatal LED --
+// and bringup leaves the IMU out of the EKF, so the heading comes from the wheels.
+// Not the simulated IMU: on real wheels that reported turns nothing measured.
+static bool imu_present = true;
 // Which of the two simulated sensors actually ride on the simulated wheels.
 // Simulated wheels used to imply a simulated IMU and a simulated magnetometer, full stop --
 // right for a bare module with nothing on the bus, wrong for a bare custom
@@ -1035,10 +1040,15 @@ void setup()
     const bool all_sim = wheelsAreSim()
                           && strcasecmp(imu_name, "sim") == 0
                           && strcasecmp(mag_name, "sim") == 0;
+    // `none` is a statement, not a guess: the probe may not adopt a chip for it.
+    imu_present = (strcasecmp(imu_name, "none") != 0);
     if (envFlag("i2c_scan", !all_sim))
-        i2cProbeSelect(&imu_name, &mag_name);
+        i2cProbeSelect(imu_present ? &imu_name : nullptr, &mag_name);
 
-    imu = createIMU(imu_name);
+    if (imu_present)
+        imu = createIMU(imu_name);
+    else
+        Serial.println("[imu] none: this robot has no IMU -- /imu/data is not published");
     mag = createMAG(mag_name);
     // Which driver was actually built, after the probe has had its say. The
     // simulated IMU has no gyro of its own, so the loop below takes yaw rate
@@ -1061,7 +1071,7 @@ void setup()
         // wheels; prepare the two messages whether or not they end up used.
         sim_imu.initMsgs(*imu_msg, *mag_msg);
     }
-    if (!imu_from_wheels) {
+    if (imu_present && !imu_from_wheels) {
         if (!imu->init())
         {
             if (sim_wheels) {
@@ -1546,12 +1556,13 @@ bool createEntities()
     Serial.printf("[imu] publishing %s (%s)\n", imu_topic,
                   publish_mag ? "9-axis: gyro, accel and field fused on the board"
                               : "6-axis: gyro and accel fused on the board, yaw unanchored");
-    RCCHECK(init_fast(
-        &imu_publisher, 
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-        topicName(imu_topic)
-    ));
+    if (imu_present)
+        RCCHECK(init_fast(
+            &imu_publisher,
+            &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+            topicName(imu_topic)
+        ));
     if (publish_mag)
         RCCHECK(init_fast(
             &mag_publisher,
@@ -1724,7 +1735,8 @@ bool destroyEntities()
     (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
     RCSOFTCHECK(rcl_publisher_fini(&odom_publisher, &node));
-    RCSOFTCHECK(rcl_publisher_fini(&imu_publisher, &node));
+    if (imu_present)
+        RCSOFTCHECK(rcl_publisher_fini(&imu_publisher, &node));
     if (publish_mag)
         RCSOFTCHECK(rcl_publisher_fini(&mag_publisher, &node));
     if (publish_battery)
@@ -2022,7 +2034,9 @@ void publishData()
     if (dual_core) portEXIT_CRITICAL(&controlMux);
 #endif
     const uint32_t sens_t0 = micros();
-    if (imu_from_wheels) {
+    if (!imu_present) {
+        // No IMU: nothing to read, fuse or publish (imu_present, above).
+    } else if (imu_from_wheels) {
         // Every field the driver would return is overwritten here, and on a bare
         // module the read is a failing I2C transaction per publish, stalling the
         // loop for the bus timeout. Skip it.
@@ -2105,7 +2119,7 @@ void publishData()
     // `imu` is never null -- createIMU falls back to `new SimIMU()` -- but it is a
     // raw pointer initialised to nullptr and line ~1108 already guards it, so this
     // guards it the same way rather than leaving the reader to go and check.
-    if (!imu || !imu->hasFusedOrientation())
+    if (imu_present && (!imu || !imu->hasFusedOrientation()))
     {
         static bool ahrs_seeded = false;
         static uint32_t ahrs_prev_us = 0;
@@ -2165,6 +2179,7 @@ void publishData()
     // chip's, and subtracts the gravity it implies. Before the estimate has
     // converged the quaternion is identity and this subtracts [0,0,g], which is
     // right for a level robot and self-correcting for any other.
+    if (imu_present)
     {
         float ggx, ggy, ggz;
         AHRS::gravityFrom(imu_msg->orientation.x, imu_msg->orientation.y,
@@ -2195,6 +2210,7 @@ void publishData()
     // driver can read one. It returns 0 when the driver has none, and 0 here
     // means "leave the stamp alone" -- which is the behaviour every board had
     // before this, and the behaviour every board without a counter keeps.
+    if (imu_present)
     {
         const uint32_t imu_age_us = imu->sampleAgeUs();
         imu->noteSampleAge(imu_age_us);
@@ -2211,7 +2227,8 @@ void publishData()
         mag_msg->header.stamp.nanosec = time_stamp.tv_nsec;
     }
 
-    RCSOFTCHECK(rcl_publish(&imu_publisher, imu_msg, NULL));
+    if (imu_present)
+        RCSOFTCHECK(rcl_publish(&imu_publisher, imu_msg, NULL));
     if (publish_mag)
         RCSOFTCHECK(rcl_publish(&mag_publisher, mag_msg, NULL));
     RCSOFTCHECK(rcl_publish(&odom_publisher, odom_msg, NULL));

@@ -426,7 +426,18 @@ def launch_setup(context, *args, **kwargs):
     # nav2.launch.py prunes the collision monitor's `sonar` source when no sonar
     # is fitted: one config per robot, and the launch derives what the hardware
     # implies.
-    if not use_mag:
+    # NO IMU AT ALL (`imu: NONE`): the board publishes no imu/data, so the EKF
+    # fuses the wheels alone and the heading is the wheels' own integral. Every
+    # imu0 key goes, rather than leaving the EKF waiting on a topic nothing sends.
+    has_imu = no_board or __import__("mcu_env").robot_has_imu(
+        params, {"auto": "config", "sim": "sim", "real": "real"}.get(mode_arg, "config"), config_file)
+    if not has_imu:
+        rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
+        for key in [k for k in rp if k.startswith("imu0")]:
+            del rp[key]
+        print("[bringup] no IMU on this robot: imu0 removed from the EKF; "
+              "the heading comes from the wheels.")
+    if has_imu and not use_mag:
         rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
         cfg = rp.get("imu0_config")
         if isinstance(cfg, list) and len(cfg) > 5 and cfg[5]:
@@ -457,7 +468,7 @@ def launch_setup(context, *args, **kwargs):
     # deliberate choice about their own hardware, and the yaw rule above overrides
     # a template value only because the template always says `true`.
     rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
-    if rp.get("imu0_remove_gravitational_acceleration") is None:
+    if has_imu and rp.get("imu0_remove_gravitational_acceleration") is None:
         rp["imu0_remove_gravitational_acceleration"] = False
 
     # rcl matches a params section against the node's FULLY-QUALIFIED name, so

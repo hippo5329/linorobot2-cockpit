@@ -187,11 +187,13 @@ RANGE_CHECKS = {
 
 class TopicVerifier(Node):
     def __init__(self, check_scan: bool = True, min_samples: int = 10, timeout: float = 6.0,
-                 required_aux: Optional[List[str]] = None):
+                 required_aux: Optional[List[str]] = None, check_imu: bool = True):
         super().__init__("linorobot2_topic_verifier")
         self.min_samples = min_samples
         self.timeout = timeout
         self.check_scan = check_scan
+        # A robot with no IMU (`imu: NONE`) publishes no /imu/data: not a fault.
+        self.check_imu = check_imu
         # Auxiliary topics the caller says MUST be there. On a real base the
         # sensors are soldered on, so a missing /battery or /imu/mag is a dead
         # chip or a bus fault, not an absent option -- see --require.
@@ -231,8 +233,12 @@ class TopicVerifier(Node):
         # Create subscribers with dual QoS to ensure discovery regardless of publisher profile
         self.create_subscription(Odometry, "/odom", self._odom_cb, reliable_qos)
         self.create_subscription(Odometry, "/odom", self._odom_cb, sensor_qos)
-        self.create_subscription(Imu, "/imu/data", self._imu_cb, reliable_qos)
-        self.create_subscription(Imu, "/imu/data", self._imu_cb, sensor_qos)
+        if self.check_imu:
+            self.create_subscription(Imu, "/imu/data", self._imu_cb, reliable_qos)
+            self.create_subscription(Imu, "/imu/data", self._imu_cb, sensor_qos)
+        else:
+            for table in (self.timestamps, self.samples, self.thresholds):
+                table.pop("/imu/data", None)
         if self.check_scan:
             self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
 
@@ -346,6 +352,8 @@ def format_scan(msg: LaserScan) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Verify ROS 2 topic echo payload and publish rates (Hz)")
     parser.add_argument("--no-scan", action="store_true", help="Skip /scan topic check")
+    parser.add_argument("--no-imu", action="store_true",
+                        help="Skip /imu/data: the robot has no IMU (imu: NONE)")
     parser.add_argument("--samples", type=int, default=12, help="Message samples to measure frequency")
     parser.add_argument("--timeout", type=float, default=10.0, help="Maximum seconds to collect samples")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
@@ -366,7 +374,8 @@ def main():
     check_ranges = bool(required_aux) and not args.no_range_check
     rclpy.init()
     verifier = TopicVerifier(check_scan=not args.no_scan, min_samples=args.samples,
-                             timeout=args.timeout, required_aux=required_aux)
+                             timeout=args.timeout, required_aux=required_aux,
+                             check_imu=not args.no_imu)
     known = set(verifier.optional_samples) | {"/imu/data"}
     unknown = [t for t in required_aux if t not in known]
     if unknown:

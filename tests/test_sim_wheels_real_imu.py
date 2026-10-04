@@ -26,7 +26,7 @@ def test_the_simulation_follows_the_sensor_not_the_wheels():
     assert "imu_from_wheels = sim_wheels && imu_is_sim;" in m
     assert 'mag_from_wheels = sim_wheels && (strcasecmp(mag_name, "sim") == 0);' in m
     # the real IMU is initialised and its DATA_RDY attached whenever it is not simulated
-    assert re.search(r"if \(!imu_from_wheels\) \{\s*if \(!imu->init\(\)\)", m)
+    assert re.search(r"if \(imu_present && !imu_from_wheels\) \{\s*if \(!imu->init\(\)\)", m)
 
 
 def test_a_bare_board_whose_imu_fails_keeps_running_on_the_simulation():

@@ -1429,6 +1429,11 @@ def main():
         print(f"❌ {exc}")
         return 1
     has_lidar = scan_from is not None
+    # A robot with no IMU (`imu: NONE`) publishes no /imu/data; the gate must not
+    # wait for it (mcu_env.robot_has_imu, the same answer bringup's EKF uses).
+    import mcu_env  # noqa: E402
+    has_imu = mcu_env.robot_has_imu(
+        params, {"auto": "config", "sim": "sim", "real": "real"}.get(args.mode, "config"), params_path)
     # Simulation mode simulates the camera too, like every other sensor: there
     # is no real one to read, and a robot with a camera and no LiDAR would
     # otherwise have no scan at all. `auto` lets the config's use_sim_depth stand.
@@ -1778,6 +1783,8 @@ def main():
 
         print("  [CHECK TOPICS] Verifying ROS 2 topic payloads and publish rates...")
         verify_flag = "" if has_lidar else " --no-scan"
+        if not has_imu:
+            verify_flag += " --no-imu"
         if required_aux:
             verify_flag += " --require " + ",".join(required_aux)
         verify_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'verify_topics.py')}{verify_flag}",

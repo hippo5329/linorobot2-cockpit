@@ -64,11 +64,38 @@ def test_real_wheels_with_a_simulated_lidar_are_refused_unless_real_mode():
     assert mcu_env.mixed_simulation(cfg, "real") is None
 
 
-def test_a_real_robot_with_no_imu_named_runs_a_simulated_one_and_is_refused():
-    # imu: NONE reaches the board as "sim": on real wheels that is a gyro nothing measured.
-    cfg = _sensors(_ref("gendrv"), imu="NONE")
-    why = mcu_env.mixed_simulation(cfg, "real")
-    assert why and "no real IMU named" in why
+def test_a_robot_with_no_imu_is_a_real_robot_not_a_mixed_one():
+    # imu: NONE is "this robot has no IMU": `none` on the wire, nothing published, the
+    # EKF fuses the wheels alone. It used to reach the board as "sim" -- a simulated
+    # IMU on real wheels, reporting turns nothing measured.
+    cfg = _ref("makerspet_mini")
+    for mode in ("config", "real"):
+        assert mcu_env.mixed_simulation(cfg, mode) is None, mode
+        assert mcu_env.robot_has_imu(cfg, mode) is False, mode
+    # No IMU is an option in Sim mode too; the IMU is simulated there only by default.
+    assert mcu_env.robot_has_imu(cfg, "sim") is False
+    assert mcu_env.robot_has_imu(_ref("gendrv"), "sim") is True
+    env_sim = mcu_env.hardware_env(cfg)
+    mcu_env.apply_sensor_mode(env_sim, "sim")
+    assert env_sim["imu"] == "none" and env_sim["mag"] == "sim"
+    env = mcu_env.hardware_env(cfg)
+    assert env["imu"] == "none"
+    assert mcu_env.tool_refusal(dict(env, app="test_sensors"))   # nothing to measure
+
+
+def test_every_consumer_of_no_imu_agrees():
+    launch = open(os.path.join(ROOT, "launchers", "bringup.launch.py")).read()
+    assert "robot_has_imu(" in launch and 'k.startswith("imu0")' in launch
+    pipe = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "robot_has_imu(" in pipe and '" --no-imu"' in pipe
+    verify = open(os.path.join(ROOT, "scripts", "verify_topics.py")).read()
+    assert '"--no-imu"' in verify
+    route = open(os.path.join(ROOT, "web", "backend", "routes_exec.py")).read()
+    assert "robot_has_imu(" in route
+    fw = open(os.path.join(ROOT, "firmware", "src", "main.cpp")).read()
+    assert 'imu_present = (strcasecmp(imu_name, "none") != 0);' in fw
+    assert "if (imu_present)\n        RCSOFTCHECK(rcl_publish(&imu_publisher" in fw
+    assert "if (imu_present && !imu_from_wheels)" in fw
 
 
 def test_imu_auto_on_a_real_robot_is_the_bus_probe_not_a_simulation():

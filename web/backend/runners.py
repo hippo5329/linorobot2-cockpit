@@ -550,7 +550,7 @@ print(json.dumps({t: s for t, s in stamps.items()}))
 """
 
 
-def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
+def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str, Any]:
     """Queries the active ROS 2 graph on this machine.
 
     Rates come from a direct rclpy subscription with the sensor-data QoS, NOT
@@ -591,6 +591,13 @@ def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
         return res
 
     for key, topic, what, min_hz in BRINGUP_HEALTH_TOPICS:
+        if key == "imu" and not has_imu:
+            # imu: NONE -- the board publishes no /imu/data, and that is correct.
+            res["topics"][key] = {
+                "topic": topic, "what": "no IMU on this robot (imu: NONE): not expected",
+                "min_hz": 0.0, "advertised": False, "hz": None, "ok": True, "fitted": False,
+            }
+            continue
         res["topics"][key] = {
             "topic": topic, "what": what, "min_hz": min_hz,
             "advertised": topic in present, "hz": None, "ok": False,
@@ -599,7 +606,8 @@ def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
     # One process, every advertised topic at once, one window: cheaper than a
     # CLI per topic and immune to the graph-lookup failure described above.
     spec = {e["topic"]: BRINGUP_HEALTH_TYPES[k]
-            for k, e in res["topics"].items() if e["advertised"] and k in BRINGUP_HEALTH_TYPES}
+            for k, e in res["topics"].items()
+            if e["advertised"] and k in BRINGUP_HEALTH_TYPES and e.get("fitted", True)}
     if spec:
         # Ceiling, not a duration: the probe returns the moment every topic has
         # rated. 8 s covers the slow micro-ROS match; the card says "up to ~30 s".
@@ -614,6 +622,8 @@ def check_bringup_health(timeout: float = 4.0) -> Dict[str, Any]:
         except Exception:
             stamps = {}
         for key, entry in res["topics"].items():
+            if not entry.get("fitted", True):
+                continue
             hz = rate_from_stamps(stamps.get(entry["topic"], []))
             if hz is not None:
                 entry["hz"] = round(hz, 1)

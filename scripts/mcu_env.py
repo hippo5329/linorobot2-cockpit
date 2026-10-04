@@ -363,7 +363,10 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
         raise ValueError(f"sensor mode must be one of {SENSOR_MODES}, not {mode!r}")
     before = dict(env)
     if mode == "sim":
-        env["imu"] = "sim"
+        # The IMU and magnetometer are simulated by default -- except on a robot
+        # that has no IMU at all (`imu: NONE`): no IMU is an option, and simulating
+        # one would test a different robot.
+        env["imu"] = "none" if str(env.get("imu", "")).lower() == "none" else "sim"
         env["mag"] = "sim"
         env["sim_wheel"] = "1"
         env["sim_ld19"] = "1"
@@ -674,6 +677,13 @@ def hardware_env(params: dict) -> dict:
         if sensors.get(sim_flag):
             return "sim"
         value = str(sensors.get(field, "sim")).strip()
+        # A robot with NO IMU says so: `none` on the wire, and the firmware creates,
+        # reads and publishes nothing for it (main.cpp, imu_present). It used to be
+        # "sim", which on real wheels ran the simulated IMU -- a gyro reporting turns
+        # nothing measured. The magnetometer keeps "sim": a SimMAG standing in for
+        # an absent one on real wheels publishes nothing already.
+        if field == "imu" and value.upper() in ("NONE", "OFF", "DISABLE"):
+            return "none"
         if value.upper() in ("AUTO", "NONE", "OFF", "DISABLE", ""):
             return "sim"
         return value.lower()
@@ -1063,7 +1073,7 @@ def hardware_env(params: dict) -> dict:
 # i2c_detect is not here: scanning the bus is meaningful on any board. The
 # firmware's toolSelect() applies the same table (firmware/src/tools/tools.cpp).
 REAL_ONLY_TOOLS = {
-    "test_sensors":  ("imu", "sim", "the IMU"),
+    "test_sensors":  ("imu", ("sim", "none"), "the IMU"),
     "test_motors":   ("sim_wheel", "1", "the wheels"),
     "test_acc":      ("sim_wheel", "1", "the wheels"),
     "adc_calibrate": ("sim_battery", "1", "the battery"),
@@ -1077,9 +1087,13 @@ def tool_refusal(env: dict):
     if not rule:
         return None
     key, simulated, what = rule
-    if str(env.get(key, "")).strip().lower() == simulated:
+    value = str(env.get(key, "")).strip().lower()
+    if value == "none":
+        return (f"'{app}' tests {what}, and this robot has none ({key}=none). "
+                f"There is nothing for it to measure.")
+    if value in ((simulated,) if isinstance(simulated, str) else simulated):
         return (f"'{app}' tests {what}, and this robot's config simulates {what} "
-                f"({key}={simulated}). The tools run on a real robot only: describe the "
+                f"({key}={value}). The tools run on a real robot only: describe the "
                 f"real hardware in the config (or flash with --sensors real) and try again.")
     return None
 
@@ -1116,7 +1130,9 @@ def simulation_parts(params: dict, mode: str = "config", params_path: str = None
     (simulated if wheels_sim else real).append("wheels (use_sim_wheel)")
 
     imu_cfg = str(sensors.get("imu", "")).strip().upper()
-    if str(env.get("imu", "sim")).lower() != "sim":
+    if str(env.get("imu", "sim")).lower() == "none":
+        pass                                   # no IMU at all: neither (robot_has_imu)
+    elif str(env.get("imu", "sim")).lower() != "sim":
         real.append(f"IMU ({env['imu']})")
     elif imu_cfg == "AUTO" and not sensors.get("use_sim_imu") and not wheels_sim:
         real.append("IMU (AUTO: the board probes its bus)")
@@ -1160,6 +1176,21 @@ def simulation_parts(params: dict, mode: str = "config", params_path: str = None
     elif env_chip not in ("", "NONE", "OFF", "AUTO"):
         real.append(f"environment sensor ({sensors.get('env')})")
     return simulated, real
+
+
+def robot_has_imu(params: dict, mode: str = "config", params_path: str = None) -> bool:
+    """Whether this robot publishes /imu/data at all, once `mode` is applied.
+
+    False only for a robot whose config names no IMU (`imu: NONE`) and does not
+    simulate one: the board then publishes no /imu/data, bringup leaves the IMU out
+    of the EKF (the heading comes from the wheels), and the topic gates stop
+    expecting it. No IMU is an option in Sim mode too (on the Sim MCU as on a
+    board); otherwise the IMU is simulated there by default. One answer for the
+    firmware's env, bringup, the pipeline and the web UI.
+    """
+    env = hardware_env(params)
+    apply_sensor_mode(env, mode, params_path)
+    return str(env.get("imu", "sim")).strip().lower() != "none"
 
 
 def mixed_simulation(params: dict, mode: str = "config", params_path: str = None):

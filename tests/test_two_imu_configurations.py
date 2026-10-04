@@ -165,7 +165,7 @@ def test_use_mag_follows_the_config_when_not_given():
 
 def test_the_ekf_stops_fusing_absolute_yaw_without_a_magnetometer():
     src = _read(LAUNCH)
-    assert "if not use_mag:" in src
+    assert "if has_imu and not use_mag:" in src
     assert "cfg[5] = False" in src, "imu0_config[5] is left fusing an unanchored yaw"
     assert "nothing to" in src and "anchor it" in src, \
         "the log does not say what it prevented"
@@ -180,11 +180,11 @@ def test_the_ekf_does_not_remove_gravity_because_the_board_did():
 def _patch(imu0_config, use_mag):
     """Run the launcher's own EKF patch against a config."""
     src = _read(LAUNCH)
-    start = src.index("    if not use_mag:\n")
+    start = src.index("    if has_imu and not use_mag:\n")
     end = src.index("    # rcl matches a params section", start)
     body = textwrap.dedent(src[start:end])
     ekf_data = {"ekf_filter_node": {"ros__parameters": {"imu0_config": list(imu0_config)}}}
-    ns = {"use_mag": use_mag, "ekf_data": ekf_data, "print": lambda *a, **k: None}
+    ns = {"use_mag": use_mag, "has_imu": True, "ekf_data": ekf_data, "print": lambda *a, **k: None}
     exec(compile(body, "<ekf patch>", "exec"), {}, ns)
     return ekf_data["ekf_filter_node"]["ros__parameters"]
 

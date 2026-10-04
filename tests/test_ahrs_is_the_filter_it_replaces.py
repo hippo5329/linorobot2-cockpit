@@ -258,9 +258,9 @@ def test_an_identity_orientation_puts_all_of_gravity_on_z(ours):
 
 
 def _fusion_branch(src):
-    """The body of `if (!imu || !imu->hasFusedOrientation())`, by brace matching
+    """The body of `if (imu_present && (!imu || !imu->hasFusedOrientation()))`, by brace matching
     rather than by looking for a string that happens to follow it."""
-    i = src.index("if (!imu || !imu->hasFusedOrientation())")
+    i = src.index("if (imu_present && (!imu || !imu->hasFusedOrientation()))")
     open_brace = src.index("{", i)
     depth = 0
     for j in range(open_brace, len(src)):
@@ -300,7 +300,7 @@ def test_the_real_path_does_not_borrow_a_simulation_constant():
     """It used SIM_IMU_GRAVITY -- a constant from sim_wheel.h -- for the gravity
     it removes on a real robot. ahrs.h owns AHRS_GRAVITY instead."""
     src = open(MAIN, encoding="utf-8").read()
-    branch_and_after = src[src.index("if (!imu || !imu->hasFusedOrientation())"):]
+    branch_and_after = src[src.index("if (imu_present && (!imu || !imu->hasFusedOrientation()))"):]
     branch_and_after = branch_and_after[:branch_and_after.index("diagTime(DIAGT_SENSORS")]
     assert "SIM_IMU_GRAVITY" not in branch_and_after, \
         "the real fusion path depends on a simulation constant"
