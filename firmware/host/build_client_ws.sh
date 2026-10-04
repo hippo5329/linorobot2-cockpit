@@ -32,7 +32,7 @@ done
 touch src/uros/rclc/rclc_examples/COLCON_IGNORE 2>/dev/null || true
 touch src/uros/rclc/rclc_lifecycle/COLCON_IGNORE 2>/dev/null || true
 python3 "$HERE/client_meta.py" "$HERE/host.meta" "$HERE/../esp32.meta" > src/colcon.meta
-ARGS=(--metas src --cmake-args -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=ON)
+ARGS=(--metas src --cmake-args -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release)
 colcon build --packages-up-to rosidl_typesupport_microxrcedds_c "${ARGS[@]}"
 colcon build --packages-up-to rosidl_typesupport_microxrcedds_cpp "${ARGS[@]}"
 set +u; . install/local_setup.bash; set -u

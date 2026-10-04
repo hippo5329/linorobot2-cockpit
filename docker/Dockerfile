@@ -75,7 +75,8 @@ RUN mkdir -p /uros_ws/src \
         /uros_ws/src/micro_ros_msgs \
  && . /opt/ros/${ROS_DISTRO}/setup.sh \
  && cd /uros_ws \
- && colcon build --merge-install --packages-up-to micro_ros_agent 2>&1 | tail -20 \
+ && colcon build --merge-install --packages-up-to micro_ros_agent \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -20 \
  && rm -rf /uros_ws/build /uros_ws/log /uros_ws/src
 
 # ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/hosturos_ws/install/local_setup.
         --out /opt/hosturos_ws/gen/lino_host_config.h \
  && cd /tmp/app_ws \
  && colcon build --merge-install --install-base /opt/hosturos_ws/app \
-        --cmake-args -DFIRMWARE_ROOT=/src/firmware -DLINO_LIBDEPS=/tmp/libdeps \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release -DFIRMWARE_ROOT=/src/firmware -DLINO_LIBDEPS=/tmp/libdeps \
                      -DLINO_HOST_HEADER=/opt/hosturos_ws/gen/lino_host_config.h \
                      -DFW_GIT_REV=$(echo "$LINO_GIT_REV" | cut -c1-7) > /tmp/app.log 2>&1 \
     || { grep -E "error|Error" /tmp/app.log | head -40; exit 1; }; \
@@ -273,6 +274,7 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
              --ignore-src -y --rosdistro ${ROS_DISTRO} \
              --skip-keys 'navigation2 nav2_smac_planner microxrcedds_agent' || true) \
      && if ! colcon build --merge-install --packages-select nav2_bringup navigation2 \
+                --cmake-args -DCMAKE_BUILD_TYPE=Release \
                 > /tmp/nav2.log 2>&1; then \
             echo "[build] Nav2 source build FAILED:"; tail -40 /tmp/nav2.log; exit 1; \
         fi \
@@ -393,8 +395,14 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
         cd / && rm -rf /tmp/ydsdk /tmp/ydsdk.log /tmp/cm && ldconfig; \
     fi \
  && bases="/ws"; [ -d /ws/docker/vendor ] && bases="$bases /ws/docker/vendor"; \
+    # Release: without a build type colcon compiles at -O0. Every node built here --
+    # explore_lite, the LD / RPLIDAR / YDLIDAR / XV-11 drivers -- ran unoptimised in
+    # rc-20261004.1 (explore 12.4 MB, no .cold sections; the hand-built Release one is
+    # 2.4 MB), and on a busy bench lyrical exploration starved Nav2 into "Failed to
+    # make progress" on the way home.
     if ! colcon build --base-paths $bases --merge-install \
             --install-base /opt/lino_ws --build-base /tmp/colcon_build \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release \
             > /tmp/colcon.log 2>&1; then \
         echo "[build] colcon build FAILED:"; tail -40 /tmp/colcon.log; exit 1; \
     fi; \
