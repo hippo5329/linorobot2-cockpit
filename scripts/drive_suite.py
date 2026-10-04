@@ -45,8 +45,18 @@ the pose that reads as a base fault; with it, a "near obstacle wall" note says
 what it is. The room's geometry is mirrored here from firmware/common/lib/lidar/
 sim_ld19.h -- if it changes there, change it here.
 
-Exit status 0 when all six pass; the verdict line says how many did.
+Each line also judges how FAR the base went, not only how fast it said it was going:
+the path the board's own odometry travelled during the window, against commanded speed
+x time (a spin: the yaw it turned). The speed is the median of the /odom samples that
+ARRIVED, and a link that drops samples drops the stopped ones too: on 2026-10-04 an m21
+GenDrv on Wi-Fi reported forward at +0.250 m/s and passed while it covered 0.67 m of the
+1.25 m commanded -- its 200 ms command watchdog (main.cpp) stopped it every time Wi-Fi
+stalled. And each line names the longest stretch with no /odom at all, judged against
+GAP_LIMIT_S: a link that silent has left the base uncommanded.
+
+Exit status 0 when all pass; the verdict line says how many did.
 """
+import math
 import os
 import sys
 import time
@@ -66,6 +76,44 @@ ROOM_W, ROOM_H = 10.0, 6.0
 ROBOT_R = 0.30
 WALL_X, WALL_HALF_SPAN = 2.0, 1.5
 NEAR = 0.05          # "against" a surface: within this of where the clamp holds
+
+# Distance and gap. The travel tolerance is the speed check's 45 % (a sign-and-magnitude
+# test, not a performance one); on serial the bench covers ~90 % of the command. The gap
+# limit is 2.5x the firmware's 200 ms cmd_vel watchdog: a link silent that long has left
+# the base uncommanded, whatever the median speed of the samples that did arrive says.
+TRAVEL_TOL = 0.45
+GAP_LIMIT_S = 0.5
+
+
+def _path_length(xs: list, ys: list) -> float:
+    """Distance travelled along the reported poses. Summed segment by segment, so a
+    dropped sample loses no distance: the board's pose integrates through the gap."""
+    return sum(math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]) for i in range(1, len(xs)))
+
+
+def _yaw(qz: float, qw: float) -> float:
+    return 2.0 * math.atan2(qz, qw)
+
+
+def _turned(yaws: list) -> float:
+    """Signed yaw turned, each step wrapped to (-pi, pi]."""
+    total = 0.0
+    for i in range(1, len(yaws)):
+        d = yaws[i] - yaws[i - 1]
+        total += math.atan2(math.sin(d), math.cos(d))
+    return total
+
+
+def _max_gap(stamps: list, t_start: float, t_end: float) -> float:
+    """The longest stretch of the window with no /odom arriving, edges included."""
+    edges = [t_start] + [t for t in stamps if t_start <= t <= t_end] + [t_end]
+    return max(edges[i] - edges[i - 1] for i in range(1, len(edges)))
+
+
+def _travel_ok(want: float, got: float) -> bool:
+    """Covered at least (1 - TRAVEL_TOL) of the command, in its direction."""
+    return want * got > 0 and abs(got) >= abs(want) * (1.0 - TRAVEL_TOL)
+
 
 # Set from the drivetrain before the manoeuvres run. The closures read them, so
 # they are module-level rather than threaded through every call.
@@ -187,7 +235,8 @@ def main() -> int:
               flush=True)
     pub = node.create_publisher(T, cmd_topic, 10)
 
-    seen = {"vx": [], "vy": [], "wz": [], "x": float("nan"), "y": float("nan")}
+    seen = {"vx": [], "vy": [], "wz": [], "x": float("nan"), "y": float("nan"),
+            "t": [], "px": [], "py": [], "yaw": []}
 
     def _odom(m):
         seen["vx"].append(m.twist.twist.linear.x)
@@ -195,6 +244,10 @@ def main() -> int:
         seen["wz"].append(m.twist.twist.angular.z)
         seen["x"] = m.pose.pose.position.x
         seen["y"] = m.pose.pose.position.y
+        seen["t"].append(time.monotonic())
+        seen["px"].append(m.pose.pose.position.x)
+        seen["py"].append(m.pose.pose.position.y)
+        seen["yaw"].append(_yaw(m.pose.pose.orientation.z, m.pose.pose.orientation.w))
 
     node.create_subscription(Odometry, odom_topic, _odom, qos_profile_sensor_data)
 
@@ -220,10 +273,11 @@ def main() -> int:
             lat: float = 0.0) -> bool:
         command(0.0, 0.0, 2.5)
         x0, y0 = seen["x"], seen["y"]
-        seen["vx"].clear()
-        seen["vy"].clear()
-        seen["wz"].clear()
+        for k in ("vx", "vy", "wz", "t", "px", "py", "yaw"):
+            seen[k].clear()
+        t_start = time.monotonic()
         command(lin, ang, secs, lat)
+        t_end = time.monotonic()
         vx = seen["vx"] or [0.0]
         vy = seen["vy"] or [0.0]
         wz = seen["wz"] or [0.0]
@@ -240,6 +294,24 @@ def main() -> int:
         ok_vx = abs(got_vx - lin) < max(0.12, abs(lin) * 0.45)
         ok_vy = abs(got_vy - lat) < max(0.12, abs(lat) * 0.45)
         ok_wz = abs(got_wz - ang) < max(0.45, abs(ang) * 0.45)
+        # How far, and how silent. A move is judged on the path travelled, a spin on
+        # the yaw turned; a zero command has no distance to cover (its speed check
+        # already asks whether it stayed still).
+        gap = _max_gap(seen["t"], t_start, t_end)
+        ok_gap = gap <= GAP_LIMIT_S
+        if lin or lat:
+            want_d = math.hypot(lin, lat) * secs
+            got_d = _path_length(seen["px"], seen["py"])
+            ok_d = _travel_ok(want_d, got_d)
+            dist_col = "   dist %.2f/%.2f m %s" % (got_d, want_d, "ok" if ok_d else "BAD")
+        elif ang:
+            want_d = ang * secs
+            got_d = _turned(seen["yaw"])
+            ok_d = _travel_ok(want_d, got_d)
+            dist_col = "   turn %+.2f/%+.2f rad %s" % (got_d, want_d, "ok" if ok_d else "BAD")
+        else:
+            ok_d, dist_col = True, ""
+        gap_col = "   gap %.2f s %s" % (gap, "ok" if ok_gap else "BAD")
         x1, y1 = seen["x"], seen["y"]
         where = _where(x1, y1)
         # vy is only printed when it is part of the question: on a differential
@@ -252,11 +324,16 @@ def main() -> int:
         lat_col = ("   vy %+.3f (pk %+.3f, want %+.2f) %s"
                    % (got_vy, pk_vy, lat, "ok" if ok_vy else "BAD")) if lat or STRAFES else ""
         print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (pk %+.3f, want %+.2f) %s%s"
-              "   wz %+.3f (pk %+.3f, want %+.2f) %s"
+              "   wz %+.3f (pk %+.3f, want %+.2f) %s%s%s"
               "   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
               % (label, lin, ang, got_vx, pk_vx, lin, "ok" if ok_vx else "BAD", lat_col,
-                 got_wz, pk_wz, ang, "ok" if ok_wz else "BAD", x0, y0, x1, y1, where), flush=True)
-        ok = ok_vx and ok_vy and ok_wz
+                 got_wz, pk_wz, ang, "ok" if ok_wz else "BAD", dist_col, gap_col,
+                 x0, y0, x1, y1, where), flush=True)
+        ok = ok_vx and ok_vy and ok_wz and ok_d and ok_gap
+        if not ok_gap:
+            print("             ^ /odom went silent for %.2f s (limit %.1f s): the link dropped "
+                  "the base; it stops 200 ms after its last cmd_vel." % (gap, GAP_LIMIT_S),
+                  flush=True)
         if not ok and where not in ("clear", "pose unknown"):
             print("             ^ held against %s: the clamp moves the pose every cycle and "
                   "that shows up as a velocity nobody commanded. Not a base fault." % where,

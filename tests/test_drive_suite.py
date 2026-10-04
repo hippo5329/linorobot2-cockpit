@@ -279,3 +279,69 @@ def test_a_zero_commands_peak_column_shows_the_excursion_not_zero():
     spin = [0.15, -0.14, 0.12, -0.13, 0.01]
     assert abs(statistic(spin, 0.0)) < 0.05
     assert peak(spin, 0.0) == 0.15
+
+
+# ---- how far it went, and how long the link was silent (2026-10-04) ----
+def _lift_travel():
+    import ast, math
+    tree = ast.parse(_suite_src())
+    consts = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and \
+                getattr(node.targets[0], "id", None) in ("TRAVEL_TOL", "GAP_LIMIT_S"):
+            consts[node.targets[0].id] = ast.literal_eval(node.value)
+    names = ("_path_length", "_yaw", "_turned", "_max_gap", "_travel_ok")
+    want = {n: None for n in names}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in want:
+            want[node.name] = node
+    assert all(want.values()), [n for n, v in want.items() if v is None]
+    ns = {"math": math, **consts}
+    exec(compile(ast.Module([want[n] for n in names], []), "drive_suite.py", "exec"), ns)
+    return ns
+
+
+T = _lift_travel()
+
+
+def test_a_base_that_covered_half_the_command_fails_even_when_its_median_speed_passes():
+    # m21 GenDrv on Wi-Fi, forward: median +0.250 m/s, but 0.67 m of the 1.25 m commanded.
+    assert not T["_travel_ok"](1.25, 0.67)
+    # backward: 0.20 m of 1.25.
+    assert not T["_travel_ok"](1.25, 0.20)
+    # the same board on serial: ~1.12 m of 1.25.
+    assert T["_travel_ok"](1.25, 1.12)
+
+
+def test_the_path_survives_a_dropped_sample():
+    # 1.0 m in a straight line, the middle samples lost: the pose integrated through.
+    xs, ys = [0.0, 0.1, 0.9, 1.0], [0.0] * 4
+    assert abs(T["_path_length"](xs, ys) - 1.0) < 1e-9
+
+
+def test_a_spin_is_judged_on_the_yaw_turned_across_the_wrap():
+    import math
+    # 1.5 rad/s for 5 s = 7.5 rad, sampled every 0.6 rad: wraps past pi twice.
+    yaws = [math.atan2(math.sin(0.6 * i), math.cos(0.6 * i)) for i in range(13)]
+    turned = T["_turned"](yaws)
+    assert abs(turned - 7.2) < 1e-6
+    assert T["_travel_ok"](7.5, turned)
+    assert not T["_travel_ok"](7.5, -turned)          # the wrong way round fails
+
+
+def test_a_silent_link_fails_and_a_steady_one_passes():
+    steady = [i * 0.03 for i in range(167)]           # 33 Hz over 5 s
+    assert T["_max_gap"](steady, 0.0, 5.0) < 0.05
+    dropped = [t for t in steady if not 2.0 < t < 2.8]
+    g = T["_max_gap"](dropped, 0.0, 5.0)
+    assert 0.8 < g < 0.9 and g > T["GAP_LIMIT_S"]
+    # nothing at the start of the window counts too
+    assert T["_max_gap"]([t for t in steady if t > 1.0], 0.0, 5.0) > 1.0
+
+
+def test_the_gap_limit_sits_past_the_firmware_command_watchdog():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fw = open(os.path.join(root, "firmware", "src", "main.cpp")).read()
+    assert "(millis() - prev_cmd_time) >= 200" in fw
+    assert T["GAP_LIMIT_S"] > 0.2
