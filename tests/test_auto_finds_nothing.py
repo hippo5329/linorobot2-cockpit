@@ -77,3 +77,26 @@ def test_the_gate_and_the_ekf_both_read_it():
     launch = open(os.path.join(ROOT, "launchers", "bringup.launch.py")).read()
     assert 'sensors_absent(serial_port)' in launch
     assert 'if has_imu and "imu" in absent:' in launch and '"mag" in absent' in launch
+
+
+def test_auto_goes_to_the_board_as_auto_not_sim():
+    """The host wrote AUTO as "sim": the board never saw AUTO, and a real robot with
+    an empty bus ran a SimIMU. The bus decides; an empty bus is `none` there."""
+    import copy, yaml
+    import mcu_env
+    cfg = yaml.safe_load(open(os.path.join(ROOT, "config", "reference", "gendrv_config.yaml")))
+    c = copy.deepcopy(cfg)
+    c["base_controller"]["sensors"].update({"imu": "AUTO", "mag": "AUTO"})
+    env = mcu_env.hardware_env(c)
+    assert env["imu"] == "auto" and env["mag"] == "auto"
+    assert mcu_env.robot_has_imu(c, "config")          # the board's report decides later
+    assert mcu_env.mixed_simulation(c, "config") is None
+    # Sim mode still simulates both, whatever the config says.
+    mcu_env.apply_sensor_mode(env, "sim")
+    assert env["imu"] == "sim" and env["mag"] == "sim"
+
+
+def test_an_unresolved_auto_on_the_board_is_none_not_a_simulation():
+    assert 'if (strcasecmp(imu_name, "auto") == 0) imu_name = "none";' in MAIN
+    assert 'if (strcasecmp(mag_name, "auto") == 0) mag_name = "none";' in MAIN
+    assert MAIN.index('imu_name = "none";') < MAIN.index('imu_present = (strcasecmp(imu_name, "none") != 0);')

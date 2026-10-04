@@ -1052,6 +1052,11 @@ void setup()
     if (envFlag("i2c_scan", !all_sim))
         i2cProbeSelect(strcasecmp(imu_name, "none") != 0 ? &imu_name : nullptr,
                        strcasecmp(mag_name, "none") != 0 ? &mag_name : nullptr);
+    // AUTO that nobody resolved -- the probe switched off (`i2c_scan 0`) -- is not
+    // a licence to simulate: createIMU() would make a SimIMU of a name it does not
+    // know. Nothing decided means nothing there.
+    if (strcasecmp(imu_name, "auto") == 0) imu_name = "none";
+    if (strcasecmp(mag_name, "auto") == 0) mag_name = "none";
     imu_present = (strcasecmp(imu_name, "none") != 0);
     mag_present = (strcasecmp(mag_name, "none") != 0);
 

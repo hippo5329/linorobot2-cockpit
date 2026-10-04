@@ -695,8 +695,12 @@ def hardware_env(params: dict) -> dict:
         # ran the simulated IMU -- a gyro reporting turns nothing measured.
         if value.upper() in ("NONE", "OFF", "DISABLE"):
             return "none"
-        if value.upper() in ("AUTO", "NONE", "OFF", "DISABLE", ""):
-            return "sim"
+        # AUTO goes to the board as `auto`: the bus decides, and an empty bus is
+        # `none` there (i2c_probe.cpp). It used to go as "sim", so a real robot with
+        # nothing on its bus ran a simulated IMU beside its real wheels (user,
+        # 2026-10-04: "no sim imu on real robot. auto no detect mean no imu no mag").
+        if value.upper() in ("AUTO", ""):
+            return "auto"
         return value.lower()
 
     env["imu"] = _driver_name("imu", "use_sim_imu")
