@@ -1434,6 +1434,10 @@ def main():
     import mcu_env  # noqa: E402
     has_imu = mcu_env.robot_has_imu(
         params, {"auto": "config", "sim": "sim", "real": "real"}.get(args.mode, "config"), params_path)
+    # imu: AUTO on a real base: whether there is an IMU is the bus's answer, not the
+    # config's (i2c_probe.cpp: nothing found is `none`). The topic gate asks the graph.
+    imu_auto = has_imu and not sim_mcu and args.mode != "sim" and str(
+        (controller_cfg.get("sensors") or {}).get("imu", "AUTO")).strip().upper() in ("AUTO", "")
     # Simulation mode simulates the camera too, like every other sensor: there
     # is no real one to read, and a robot with a camera and no LiDAR would
     # otherwise have no scan at all. `auto` lets the config's use_sim_depth stand.
@@ -1781,18 +1785,14 @@ def main():
             else:
                 print(f"  ⚠️ no /scan within {scan_wait} s — the audit below will say what is missing.")
 
-        # The board's own word at its last boot: an I2C probe that found no IMU
-        # makes it `none` there (i2c_probe.cpp). A robot without one, not a fault.
-        if has_imu and not sim_mcu:
-            import mcu_probe  # noqa: E402
-            if "imu" in mcu_probe.sensors_absent(serial_port):
-                has_imu = False
-                print("  ℹ️  the board found no IMU on its bus at boot: /imu/data is not "
-                      "expected (a robot without one, not an error).")
         print("  [CHECK TOPICS] Verifying ROS 2 topic payloads and publish rates...")
         verify_flag = "" if has_lidar else " --no-scan"
         if not has_imu:
             verify_flag += " --no-imu"
+        elif imu_auto:
+            # AUTO: the board's probe decides. It creates /imu/data only for an IMU
+            # it found, so no publisher at all is a robot without one -- not a fault.
+            verify_flag += " --imu-auto"
         if required_aux:
             verify_flag += " --require " + ",".join(required_aux)
         verify_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'verify_topics.py')}{verify_flag}",

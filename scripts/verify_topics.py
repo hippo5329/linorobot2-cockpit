@@ -286,6 +286,8 @@ class TopicVerifier(Node):
             self.samples["/odom"] = msg
 
     def _imu_cb(self, msg: Imu):
+        if "/imu/data" not in self.timestamps:      # dropped: AUTO found no IMU
+            return
         now = time.time()
         if self.timestamps["/imu/data"] and (now - self.timestamps["/imu/data"][-1]) < 0.005:
             return
@@ -354,6 +356,10 @@ def main():
     parser.add_argument("--no-scan", action="store_true", help="Skip /scan topic check")
     parser.add_argument("--no-imu", action="store_true",
                         help="Skip /imu/data: the robot has no IMU (imu: NONE)")
+    parser.add_argument("--imu-auto", action="store_true",
+                        help="imu: AUTO -- the board's probe decides. It creates /imu/data "
+                             "only for an IMU it found, so no publisher at all is a robot "
+                             "without one (not a fault); a publisher is judged as usual.")
     parser.add_argument("--samples", type=int, default=12, help="Message samples to measure frequency")
     parser.add_argument("--timeout", type=float, default=10.0, help="Maximum seconds to collect samples")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
@@ -384,6 +390,21 @@ def main():
         print(f"  known: {', '.join(sorted(known))}", file=sys.stderr)
         sys.exit(2)
 
+    imu_absent_note = ""
+    if args.imu_auto and not args.no_imu:
+        # Wait for the board itself (its /odom), then ask whether it made an IMU
+        # publisher at all. Both are created in the same createEntities() call.
+        t0 = time.time()
+        while time.time() - t0 < 5.0 and verifier.count_publishers("/odom") == 0:
+            rclpy.spin_once(verifier, timeout_sec=0.1)
+        for _ in range(10):
+            rclpy.spin_once(verifier, timeout_sec=0.1)
+        if verifier.count_publishers("/odom") and verifier.count_publishers("/imu/data") == 0:
+            for table in (verifier.timestamps, verifier.samples, verifier.thresholds):
+                table.pop("/imu/data", None)
+            imu_absent_note = ("ℹ️  /imu/data    : no publisher -- imu is AUTO and the board found "
+                               "no IMU on its bus: a robot without one, not a fault")
+
     if not args.json:
         print("==================================================================")
         print("🔍 Inspecting ROS 2 Topics: Payload Echo & Publishing Rates (Hz)")
@@ -403,6 +424,10 @@ def main():
 
     if not args.json:
         print("\n--- Topic Verification Results ---")
+        if imu_absent_note:
+            print(imu_absent_note)
+    if imu_absent_note:
+        json_results["imu"] = "absent (AUTO, nothing found)"
 
     for topic, ts_list in verifier.timestamps.items():
         sample = verifier.samples[topic]

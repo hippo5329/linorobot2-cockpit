@@ -138,25 +138,6 @@ def read_stamp(env: str, port: str) -> dict:
         return {}
 
 
-def sensors_absent(port: str) -> set:
-    """What the board on `port` said, at its last flash, that it found nothing for on
-    its bus ({"imu", "mag"}). From the newest stamp for the port whose banner was
-    actually heard; otherwise nothing is known and the config stands."""
-    import glob
-    best = {}
-    for path in glob.glob(os.path.join(STAMP_DIR, f"*_{os.path.basename(port)}.json")):
-        try:
-            with open(path) as fh:
-                st = json.load(fh)
-        except Exception:
-            continue
-        if st.get("flashed_at", "") > best.get("flashed_at", ""):
-            best = st
-    if not best.get("banner_confirmed"):
-        return set()
-    return {str(s).lower() for s in best.get("sensors_absent", [])}
-
-
 def write_stamp(env: str, port: str, data: dict) -> bool:
     """Record what was flashed. A RECORD -- failing to write it must not fail a flash.
 
