@@ -63,7 +63,13 @@ ignored, exactly as in U-Boot.
 Usage:
     python3 scripts/mcu_env.py build [--params <config dir>/<robot>_config.yaml] [--out env.bin]
     python3 scripts/mcu_env.py print env.bin
-    python3 scripts/mcu_env.py set env.bin wifi_ssid=other-ap agent_ip=192.168.1.10
+    python3 scripts/mcu_env.py build --params <config> --set agent_ip=192.168.1.10 --out env.bin
+
+Every env is built whole, from the config, and written whole. There is no editing
+of an existing image: a block patched in place carries whatever the last writer
+left in it -- another config, another run, another board's settings -- and a
+board booted on such a block is running an env nobody chose. `--set` overrides a
+value in a NEW block.
 """
 import argparse
 import os
@@ -1260,10 +1266,6 @@ def main():
     p.add_argument("image")
     p.add_argument("--show-secrets", action="store_true")
 
-    s = sub.add_parser("set", help="edit variables in an existing image, in place")
-    s.add_argument("image")
-    s.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
-
     a = ap.parse_args()
 
     if a.cmd == "build":
@@ -1298,17 +1300,6 @@ def main():
         for key, value in sorted(shown.items()):
             print(f"{key}={value}")
 
-    elif a.cmd == "set":
-        with open(a.image, "rb") as fh:
-            env = decode(fh.read())
-        for item in a.assignments:
-            key, _, value = item.partition("=")
-            env[key] = value
-        with open(a.image, "wb") as fh:
-            fh.write(encode(env))
-        print(f"[mcu_env] updated {a.image}")
-        for key, value in sorted(redact(env).items()):
-            print(f"    {key:12} {value}")
 
 
 if __name__ == "__main__":

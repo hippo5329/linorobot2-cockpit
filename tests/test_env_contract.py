@@ -17,7 +17,7 @@ REF = os.path.join(REPO_ROOT, "config", "reference")
 SECRETS_EXAMPLE = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 
 # Keys the firmware reads that no config produces: bench tools set them with
-# `mcu_env.py set`, the flasher writes them, or a tool application
+# `mcu_env.py build --set`, the flasher writes them, or a tool application
 # (adc_calibrate: dac_pin) takes them from the operator.
 BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait",
               "banner_hold"}
@@ -174,3 +174,16 @@ def test_a_divider_battery_is_not_silenced_by_current_none():
     none_wired = {"base_controller": {"mcu": "esp32", "sensors": {"current": "NONE"},
                                       "pins": {"battery": {"pin": -1}}}}
     assert mcu_env.hardware_env(none_wired).get("pub_battery") == 0
+
+
+def test_an_env_is_always_built_whole_never_patched():
+    """No in-place editing of an env image (user, 2026-10-04: "always write new env
+    instead of patch"). A patched block carries whatever its last writer left; a
+    one-off value goes through `build --set`, into a new block built from the config."""
+    import subprocess, sys as _sys
+    script = os.path.join(REPO_ROOT, "scripts", "mcu_env.py")
+    res = subprocess.run([_sys.executable, script, "set", "env.bin", "agent_ip=1.2.3.4"],
+                         capture_output=True, text=True)
+    assert res.returncode != 0 and "invalid choice: 'set'" in res.stderr
+    src = open(script).read()
+    assert 'add_argument("--set"' in src     # the override stays, on a NEW block

@@ -76,8 +76,8 @@ to fill in.
 To re-key or rewire a robot later, without touching the application:
 
 ```bash
-python3 scripts/mcu_env.py build --params ~/linorobot2-config/gendrv_config.yaml --out env.bin
-python3 scripts/mcu_env.py set env.bin wifi_ssid=other-ap agent_ip=192.168.1.10
+python3 scripts/mcu_env.py build --params ~/linorobot2-config/gendrv_config.yaml \
+    --set wifi_ssid=other-ap --set agent_ip=192.168.1.10 --out env.bin
 esptool write_flash 0x3ff000 env.bin
 ```
 
