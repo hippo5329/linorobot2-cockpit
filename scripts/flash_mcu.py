@@ -104,7 +104,8 @@ def terminate_group(proc: subprocess.Popen):
 PORT_RETURN_WAIT_S = 15.0
 
 
-def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "    | ") -> subprocess.CompletedProcess:
+def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "    | ",
+             watch=None) -> subprocess.CompletedProcess:
     """Run a flashing tool, streaming its output live and never hanging.
 
     Output is echoed as it arrives instead of being captured, so a slow upload
@@ -124,6 +125,7 @@ def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "   
         return subprocess.CompletedProcess(cmd, 127, "", str(exc))
 
     lines: List[str] = []
+    stopped = []          # why `watch` stopped the tool, if it did
 
     def pump():
         try:
@@ -132,6 +134,13 @@ def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "   
                 if echo:
                     sys.stdout.write(prefix + line)
                     sys.stdout.flush()
+                # `watch` sees each line as it arrives and may stop the tool
+                # before it gets further -- before esptool writes, say.
+                if watch and not stopped:
+                    why = watch(line)
+                    if why:
+                        stopped.append(why)
+                        terminate_group(proc)
         except Exception:
             pass
 
@@ -152,6 +161,9 @@ def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "   
         pass
 
     rc = 124 if timed_out else (proc.returncode if proc.returncode is not None else 1)
+    if stopped:
+        log(stopped[0])
+        rc = 3
     return subprocess.CompletedProcess(cmd, rc, "".join(lines), "")
 
 
@@ -334,7 +346,8 @@ def usb_path_for_tty(port: str) -> Optional[str]:
     return None
 
 
-def remember_usb_path(port: str, stamp_path: Optional[str] = None) -> Optional[str]:
+def remember_usb_path(port: str, stamp_path: Optional[str] = None,
+                      stamp: Optional[dict] = None) -> Optional[str]:
     """Pin the flash to ONE board, before anything can make the tty disappear.
 
     Two RP-series boards on one host is not an exotic setup -- this bench has a
@@ -363,7 +376,107 @@ def remember_usb_path(port: str, stamp_path: Optional[str] = None) -> Optional[s
     _TARGET_USB_PATH = path
     if path:
         log(f"target board: USB port {path}")
+    remember_board_identity(path, from_tty=usb_path_for_tty(port) is not None if port else False,
+                            stamp=stamp or {})
     return path
+
+
+# Which BOARD we mean, not only which port: the identity the board had while it
+# was running, checked again once it is in BOOTSEL and before anything is written.
+# A port is a place; on 2026-10-04 (a20, gate g4) the port's device was missing for
+# a moment mid-re-enumeration, the target fell back to "any board in BOOTSEL", and
+# the env block meant for one cell's Pico was written into the other cell's Pico,
+# which was in BOOTSEL at that instant. Its own board then booted the new app on
+# its old env. Upper-case hex strings.
+_EXPECTED_IDS: set = set()
+_APP_USB_SERIAL: Optional[str] = None
+_IDENTITY_CONFIRMED: Optional[tuple] = None   # the (bus, address) already checked
+
+
+def _sysfs_serial(path: Optional[str], root: str = "/sys/bus/usb/devices") -> Optional[str]:
+    if not path:
+        return None
+    try:
+        with open(os.path.join(root, path, "serial")) as fh:
+            v = fh.read().strip()
+        return v.upper() or None
+    except OSError:
+        return None
+
+
+def remember_board_identity(path: Optional[str], from_tty: bool, stamp: dict,
+                            root: str = "/sys/bus/usb/devices") -> set:
+    """What the board on `path` is. An RP-series board running our firmware
+    (arduino-pico) reports its flash unique id as its USB serial; in BOOTSEL an
+    RP2350 keeps that serial and an RP2040's bootrom reports another one, whose
+    flash id picotool still reads. So: the running board's USB serial, read now
+    if it is running, else the one the last flash wrote down, plus the banner's
+    `flashid` (the same number) when the board printed one."""
+    global _EXPECTED_IDS, _APP_USB_SERIAL, _IDENTITY_CONFIRMED
+    ids = set()
+    _APP_USB_SERIAL = _sysfs_serial(path, root) if from_tty else None
+    if _APP_USB_SERIAL:
+        ids.add(_APP_USB_SERIAL)
+    elif stamp.get("usb_serial"):
+        ids.add(str(stamp["usb_serial"]).upper())
+    if stamp.get("id_kind") == "flashid" and stamp.get("board_id") and not from_tty:
+        ids.add(str(stamp["board_id"]).upper())
+    _EXPECTED_IDS = ids
+    _IDENTITY_CONFIRMED = None
+    if ids:
+        log(f"board identity on record: {', '.join(sorted(ids))}")
+    return ids
+
+
+def bootsel_identity(target: List[str], pts: Optional[List[str]] = None,
+                     root: str = "/sys/bus/usb/devices") -> set:
+    """The ids the board at `target` answers to in BOOTSEL: its USB serial and the
+    flash id `picotool info -d` reads."""
+    ids = set()
+    s = _sysfs_serial(_TARGET_USB_PATH, root)
+    if s:
+        ids.add(s)
+    for pt in (pts if pts is not None else find_picotool_binaries()):
+        for cmd in ([pt, "info", "-d"] + target, ["sudo", "-n", pt, "info", "-d"] + target):
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            except Exception:
+                continue
+            m = re.search(r"flash id:\s*0x([0-9A-Fa-f]+)", res.stdout or "")
+            if m:
+                ids.add(m.group(1).upper())
+                return ids
+    return ids
+
+
+def verify_board_identity(target: List[str], pts: Optional[List[str]] = None) -> bool:
+    """Write nothing to a board that is not the one this run was asked to flash."""
+    global _IDENTITY_CONFIRMED
+    if not _EXPECTED_IDS:
+        return True                    # nothing on record: the port is all we have
+    key = tuple(target)
+    if _IDENTITY_CONFIRMED == key:
+        return True
+    got = bootsel_identity(target, pts)
+    if got & _EXPECTED_IDS:
+        log(f"✅ board identity confirmed at USB port {_TARGET_USB_PATH}: "
+            f"{', '.join(sorted(got & _EXPECTED_IDS))}")
+        _IDENTITY_CONFIRMED = key
+        return True
+    log(f"❌ [BOARD MISMATCH] the board in BOOTSEL at USB port {_TARGET_USB_PATH} "
+        f"({' '.join(target)}) answers {', '.join(sorted(got)) or 'nothing readable'}, "
+        f"but this run is flashing {', '.join(sorted(_EXPECTED_IDS))}. Nothing was written.")
+    return False
+
+
+def stamp_for(env: str, port: str) -> dict:
+    """The last flash's stamp for this port, or {}."""
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import mcu_probe
+        return mcu_probe.read_stamp(env, port) or {}
+    except Exception:
+        return {}
 
 
 def stamped_usb_path(env: str, port: str) -> Optional[str]:
@@ -376,23 +489,44 @@ def stamped_usb_path(env: str, port: str) -> Optional[str]:
         return None
 
 
-def picotool_target(root: str = "/sys/bus/usb/devices") -> List[str]:
-    """`--bus`/`--address` for the remembered port, or nothing.
+def picotool_target(root: str = "/sys/bus/usb/devices", wait_s: float = 0.0):
+    """`--bus`/`--address` for the remembered port; [] when no port is remembered;
+    None when one IS remembered but its device is not there right now.
 
     Read fresh on every call: BOOTSEL is a re-enumeration, so the address
-    changes underneath us between the touch and the load.
+    changes underneath us between the touch and the load -- and for a moment the
+    port has no device at all. That moment used to return [] too, which every
+    caller reads as "no target": an untargeted picotool call, which with another
+    board in BOOTSEL writes THAT board (a20, gate g4). None is not [].
     """
     if not _TARGET_USB_PATH:
         return []
     dev = os.path.join(root, _TARGET_USB_PATH)
-    try:
-        with open(os.path.join(dev, "busnum")) as fh:
-            bus = fh.read().strip()
-        with open(os.path.join(dev, "devnum")) as fh:
-            addr = fh.read().strip()
-    except OSError:
-        return []
-    return ["--bus", bus, "--address", addr]
+    deadline = time.time() + wait_s
+    while True:
+        try:
+            with open(os.path.join(dev, "busnum")) as fh:
+                bus = fh.read().strip()
+            with open(os.path.join(dev, "devnum")) as fh:
+                addr = fh.read().strip()
+            return ["--bus", bus, "--address", addr]
+        except OSError:
+            if time.time() >= deadline:
+                return None
+            time.sleep(0.25)
+
+
+# How long a write waits for its board's port to come back before refusing.
+TARGET_WAIT_S = 10.0
+
+
+def write_target(what: str):
+    """The target for a write, after waiting for the port; None means refuse."""
+    target = picotool_target(wait_s=TARGET_WAIT_S)
+    if target is None:
+        log(f"❌ no device at USB port {_TARGET_USB_PATH} after {TARGET_WAIT_S:.0f}s; "
+            f"not writing the {what} to whatever else is in BOOTSEL")
+    return target
 
 
 # How long to keep looking for the bootloader after the touch. The board itself
@@ -421,9 +555,13 @@ def wait_for_bootsel(timeout_s: float = BOOTSEL_WAIT_S) -> bool:
     binaries = find_picotool_binaries()
     started = time.time()
     while time.time() < deadline:
+        target = picotool_target()
+        if target is None:             # our port is mid-re-enumeration: not visible yet
+            time.sleep(0.5)
+            continue
         for pt in binaries:
             try:
-                res = subprocess.run([pt, "info"] + picotool_target(),
+                res = subprocess.run([pt, "info"] + target,
                                      capture_output=True, timeout=10)
             except Exception:
                 continue
@@ -459,7 +597,7 @@ def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
     is knowledge the product does not have.
     """
     sel = picotool_target()
-    if len(sel) != 4:
+    if not sel or len(sel) != 4:
         return False
     bus, addr = int(sel[1]), int(sel[3])
     node = "/dev/bus/usb/%03d/%03d" % (bus, addr)
@@ -884,7 +1022,11 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
     # Which board. The family only says which CHIP; with two RP2350s, or with a
     # Pico and a Pico 2 both in BOOTSEL, picotool still has a choice to make and
     # refuses to make it. See remember_usb_path().
-    target = picotool_target()
+    target = write_target("firmware")
+    if target is None:
+        return False
+    if target and not verify_board_identity(target, pts):
+        return False
     # `-f` (force a RUNNING board to reset) is picotool's OWN way of choosing a
     # device, and it refuses to combine with an explicit one:
     #     ERROR: unexpected option: --bus
@@ -1001,7 +1143,11 @@ def flash_env_via_picotool(env_bin: str, env: str = "pico2") -> bool:
         # whole flash still reported success while the board kept whatever env it
         # already had. Found on a 2026-09-16 rig run: a board flashed on a
         # fresh box had no env block at all and fell back to the header.
-        target = picotool_target()
+        target = write_target("env block")
+        if target is None:
+            return False
+        if target and not verify_board_identity(target, [pt]):
+            return False
         base = ([pt, "load"] + family_flag + ["-v", env_bin, "-t", "bin",
                 "-o", hex(offset)] + target)
         forms = [base, ["sudo", "-n"] + base]
@@ -1199,6 +1345,32 @@ def refuse_simulated_tool(env_bin: str) -> None:
         sys.exit(2)
 
 
+# The ESP32 this port held at its last flash, as its banner said it (`uid`, the
+# eFuse MAC with its bytes reversed: MAC a0:f2:62:f4:49:e0 prints uid=E049F462F2A0).
+# esptool prints the chip's MAC right after connecting, before it uploads its stub
+# or touches the flash, so a different chip is stopped there and nothing is written.
+_ESP_EXPECTED_UID: Optional[str] = None
+
+
+def uid_from_mac(mac: str) -> str:
+    return "".join(reversed(mac.strip().split(":"))).upper()
+
+
+def esp_identity_watch(line: str) -> Optional[str]:
+    if not _ESP_EXPECTED_UID:
+        return None
+    m = re.search(r"\bMAC:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})", line)
+    if not m:
+        return None
+    got = uid_from_mac(m.group(1))
+    if got == _ESP_EXPECTED_UID:
+        return None
+    return (f"❌ [BOARD MISMATCH] the ESP32 on this port is uid={got} (MAC {m.group(1)}), "
+            f"but this port's last flash was uid={_ESP_EXPECTED_UID}. esptool was stopped "
+            f"before writing anything. If the board was replaced on purpose, flash again "
+            f"with --new-board.")
+
+
 def flash_via_esptool(build_dir: str, env: str, port: str, baud: int, timeout: int = 300,
                       env_bin: Optional[str] = None) -> bool:
     """Write an ESP32 build with esptool. The only way this script touches an ESP32."""
@@ -1218,7 +1390,7 @@ def flash_via_esptool(build_dir: str, env: str, port: str, baud: int, timeout: i
     for offset, path in plan:
         cmd += [offset, path]
         log(f"    {offset} <- {os.path.basename(path)}")
-    res = run_tool(cmd, timeout=timeout)
+    res = run_tool(cmd, timeout=timeout, watch=esp_identity_watch)
     return res.returncode == 0
 
 
@@ -1242,7 +1414,9 @@ def rp2_reboot_into_app(env: str) -> bool:
     # write ended with two `ERROR: unexpected option` blocks before the plain
     # form succeeded. The family filter belongs to `load`, where it stops an
     # image built for one RP2 landing on the other.
-    target = picotool_target()
+    target = write_target("reboot")
+    if target is None:
+        return False
     forced = [] if target else ["-f"]
     for pt in find_picotool_binaries():
         for cmd in ([pt, "reboot"] + forced + target,
@@ -1294,7 +1468,7 @@ def flash_env_via_esptool(env_bin: str, env: str, port: str, baud: int,
     cmd = esptool_argv + ["--port", port, "--baud", str(baud), "write_flash", "-z",
                           ENV_PARTITION_OFFSET, env_bin]
     log(f"    {ENV_PARTITION_OFFSET} <- {os.path.basename(env_bin)} (env partition only)")
-    return run_tool(cmd, timeout=timeout).returncode == 0
+    return run_tool(cmd, timeout=timeout, watch=esp_identity_watch).returncode == 0
 
 
 def print_failure_troubleshooting(target_name: str, env: str, port: str, uf2_path: str):
@@ -1434,6 +1608,8 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
     # board is sitting in BOOTSEL and has no tty to be resolved through.
     if _TARGET_USB_PATH:
         stamp["usb_path"] = _TARGET_USB_PATH
+    if _APP_USB_SERIAL:
+        stamp["usb_serial"] = _APP_USB_SERIAL
     if env_bin and os.path.isfile(env_bin):
         stamp["env_sha256"] = hashlib.sha256(open(env_bin, "rb").read()).hexdigest()
     elif params:
@@ -1536,6 +1712,9 @@ def main() -> int:
                         help="Path to the firmware project (there is one: `firmware`)")
     parser.add_argument("--env", default="pico2", help="PlatformIO environment (e.g. pico2, esp32)")
     parser.add_argument("--port", default="/dev/ttyACM0", help="Serial port of the base controller")
+    parser.add_argument("--new-board", action="store_true",
+                        help="the board on this port was replaced on purpose: do not hold it to "
+                             "the identity the port's last flash recorded")
     parser.add_argument("--baud", type=int, default=921600, help="Upload baudrate")
     parser.add_argument("--sensors", choices=("config", "sim", "real"), default=None,
                         help="force the env's sensor flags: sim simulates everything "
@@ -1608,10 +1787,6 @@ def main() -> int:
         log(f"port {args.port} -> {_real_port}")
         args.port = _real_port
 
-    # Pin the flash to one physical board while the tty still exists to say
-    # which one it is. Must happen before anything touches the port.
-    if is_pico_family(args.env):
-        remember_usb_path(args.port, stamp_path=stamped_usb_path(args.env, args.port))
 
 
     firmware_dir = os.path.abspath(os.path.join(REPO_ROOT, args.firmware_dir) if not os.path.isabs(args.firmware_dir) else args.firmware_dir)
@@ -1649,6 +1824,21 @@ def main() -> int:
                 log(f"❌ {entry['name']} does not match its manifest checksum.")
                 return 1
         log(f"   ✅ {len(manifest['files'])} artifacts match their checksums")
+
+    # Pin the flash to one physical board -- its port, and its identity -- while
+    # the tty still exists to say which one it is. Must happen before anything
+    # touches the port, and after a prebuilt's manifest has named the env: the
+    # stamp is filed under the env, and before the manifest args.env is still
+    # the default ("pico2"), so a prebuilt flash read some other env's stamp.
+    global _ESP_EXPECTED_UID
+    if is_pico_family(args.env):
+        remember_usb_path(args.port, stamp_path=stamped_usb_path(args.env, args.port),
+                          stamp={} if args.new_board else stamp_for(args.env, args.port))
+    if is_esp_family(args.env) and not args.new_board:
+        st = stamp_for(args.env, args.port)
+        if st.get("id_kind") == "uid" and st.get("board_id"):
+            _ESP_EXPECTED_UID = str(st["board_id"]).upper()
+            log(f"board identity on record: uid={_ESP_EXPECTED_UID}")
 
     # Nothing is written to a board the USB bus says is different silicon.
     #

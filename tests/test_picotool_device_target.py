@@ -58,8 +58,17 @@ def test_no_target_means_no_flags_not_a_crash(monkeypatch):
     """Everything still works on a host with one board and no sysfs to read."""
     monkeypatch.setattr(flash_mcu, "_TARGET_USB_PATH", None)
     assert flash_mcu.picotool_target() == []
+
+
+def test_a_remembered_port_with_no_device_is_not_no_target(monkeypatch):
+    """Mid-re-enumeration the port has no device for a moment. That used to read
+    as [] -- "no target" -- and the untargeted picotool call that followed wrote
+    whichever board was in BOOTSEL: on a20 (gate g4) another cell's Pico got this
+    cell's env block. Absent is None, and a write refuses it."""
     monkeypatch.setattr(flash_mcu, "_TARGET_USB_PATH", "no-such-port")
-    assert flash_mcu.picotool_target() == []
+    assert flash_mcu.picotool_target() is None
+    monkeypatch.setattr(flash_mcu, "TARGET_WAIT_S", 0.3)
+    assert flash_mcu.write_target("env block") is None
 
 
 def test_the_tty_is_resolved_by_device_number_not_by_name(monkeypatch):
@@ -116,7 +125,7 @@ def test_the_load_carries_the_target(tmp_path, monkeypatch):
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
     monkeypatch.setattr(flash_mcu, "picotool_target",
-                        lambda: ["--bus", "7", "--address", "57"])
+                        lambda **k: ["--bus", "7", "--address", "57"])
     monkeypatch.setattr(flash_mcu, "run_tool", stub_run)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
 
@@ -142,7 +151,7 @@ def test_the_env_write_targets_the_same_board(tmp_path, monkeypatch):
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
     monkeypatch.setattr(flash_mcu, "picotool_target",
-                        lambda: ["--bus", "3", "--address", "34"])
+                        lambda **k: ["--bus", "3", "--address", "34"])
     monkeypatch.setattr(flash_mcu, "run_tool",
                         lambda cmd, **kw: (cmds.append(cmd), _Res())[1])
 
@@ -163,7 +172,7 @@ def test_the_bootsel_wait_asks_about_our_board(monkeypatch):
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
     monkeypatch.setattr(flash_mcu, "picotool_target",
-                        lambda: ["--bus", "7", "--address", "57"])
+                        lambda **k: ["--bus", "7", "--address", "57"])
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **kw: (seen.append(cmd), _Res())[1])
     assert flash_mcu.wait_for_bootsel(timeout_s=2.0) is True
@@ -193,7 +202,7 @@ def test_force_is_never_combined_with_an_explicit_device(tmp_path, monkeypatch):
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
     monkeypatch.setattr(flash_mcu, "picotool_target",
-                        lambda: ["--bus", "7", "--address", "57"])
+                        lambda **k: ["--bus", "7", "--address", "57"])
     monkeypatch.setattr(flash_mcu, "run_tool",
                         lambda cmd, **kw: (cmds.append(cmd), _Res())[1])
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
@@ -217,7 +226,7 @@ def test_force_is_still_used_when_there_is_no_target(tmp_path, monkeypatch):
         stderr = ""
 
     monkeypatch.setattr(flash_mcu, "find_picotool_binaries", lambda: ["/usr/bin/picotool"])
-    monkeypatch.setattr(flash_mcu, "picotool_target", lambda: [])
+    monkeypatch.setattr(flash_mcu, "picotool_target", lambda **k: [])
     monkeypatch.setattr(flash_mcu, "run_tool",
                         lambda cmd, **kw: (cmds.append(cmd), _Res())[1])
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Res())
