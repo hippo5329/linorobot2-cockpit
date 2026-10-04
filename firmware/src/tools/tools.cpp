@@ -47,6 +47,28 @@ static const ToolEntry *findByMode(AppMode mode)
     return &TOOLS[0];
 }
 
+// The tools that exercise real hardware, refused when that hardware is simulated
+// (user, 2026-10-04: per tool, by what it tests). A simulated subsystem has nothing
+// to measure -- test_sensors on a simulated IMU printed uninitialised floats and
+// "[+] IMU initialized successfully" on a board with no IMU. Same table as
+// scripts/mcu_env.py REAL_ONLY_TOOLS, which refuses on the host before the write;
+// this is for an env written any other way. i2c_detect is meaningful anywhere.
+static const char *simulatedFor(AppMode mode)
+{
+    switch (mode)
+    {
+    case APP_TEST_SENSORS:
+        return strcmp(envGet("imu", ""), "sim") == 0 ? "the IMU" : NULL;
+    case APP_TEST_MOTORS:
+    case APP_TEST_ACC:
+        return envInt("sim_wheel", 0) == 1 ? "the wheels" : NULL;
+    case APP_ADC_CALIBRATE:
+        return envInt("sim_battery", 0) == 1 ? "the battery" : NULL;
+    default:
+        return NULL;
+    }
+}
+
 AppMode toolSelect(void)
 {
     initMcuEnv();
@@ -56,7 +78,17 @@ AppMode toolSelect(void)
 
     for (size_t i = 0; i < TOOL_COUNT; i++)
         if (strcmp(TOOLS[i].name, want) == 0)
+        {
+            const char *why = simulatedFor(TOOLS[i].mode);
+            if (why)
+            {
+                Serial.printf("[app] '%s' tests %s, and this board's env simulates it - "
+                              "the tools run on a real robot only. Starting the robot "
+                              "firmware instead.\n", want, why);
+                return APP_BASE;
+            }
             return TOOLS[i].mode;
+        }
 
     Serial.printf("[app] '%s' is not an application this image carries - "
                   "starting the robot firmware instead.\n", want);

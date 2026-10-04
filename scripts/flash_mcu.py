@@ -1113,6 +1113,7 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     so this generates the 4 KB block from the config directory's secrets.yaml at flash time.
     """
     if args.env_bin:
+        refuse_simulated_tool(args.env_bin)
         return args.env_bin
     params = getattr(args, "params", None)
     if not prebuilt_dir and not params:
@@ -1149,7 +1150,30 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
         log("⚠️  could not build the env block; flashing the application only.")
         log("    The board will report a missing env partition over serial.")
         return None
+    refuse_simulated_tool(out)
     return out
+
+
+def refuse_simulated_tool(env_bin: str) -> None:
+    """Stop before writing anything when the env selects a tool whose subsystem is simulated.
+
+    The firmware refuses too (toolSelect() boots `base` instead), but its only
+    trace is a line on serial at boot; here the user is watching. Rule and
+    reasons: mcu_env.REAL_ONLY_TOOLS.
+    """
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import mcu_env
+        with open(env_bin, "rb") as fh:
+            env = mcu_env.decode(fh.read())
+    except (Exception, SystemExit) as exc:   # an unreadable block is the writer's problem, not this check's
+        log(f"(could not read back the env block to check the application: {exc})")
+        return
+    why = mcu_env.tool_refusal(env)
+    if why:
+        log(f"❌ [TOOL REFUSED] {why}")
+        log("NEXT ACTION: run this tool on a robot whose config describes that hardware as real.")
+        sys.exit(2)
 
 
 def flash_via_esptool(build_dir: str, env: str, port: str, baud: int, timeout: int = 300,

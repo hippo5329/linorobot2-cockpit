@@ -1054,6 +1054,36 @@ def hardware_env(params: dict) -> dict:
     return env
 
 
+# Diagnostic applications that exercise real hardware, and the env key that says
+# the hardware they exercise is simulated (user, 2026-10-04: "sim mode devices
+# should not run the tools ... only real robot can run them", per tool, by what it
+# tests). A simulated subsystem has nothing for the tool to measure: test_sensors
+# on a simulated IMU printed uninitialised floats -- ACC Y / GYR Z of 90-180
+# digits -- and claimed "[+] IMU initialized successfully" on a board with no IMU.
+# i2c_detect is not here: scanning the bus is meaningful on any board. The
+# firmware's toolSelect() applies the same table (firmware/src/tools/tools.cpp).
+REAL_ONLY_TOOLS = {
+    "test_sensors":  ("imu", "sim", "the IMU"),
+    "test_motors":   ("sim_wheel", "1", "the wheels"),
+    "test_acc":      ("sim_wheel", "1", "the wheels"),
+    "adc_calibrate": ("sim_battery", "1", "the battery"),
+}
+
+
+def tool_refusal(env: dict):
+    """Why this env's `app` may not run, or None. Only the tools above are judged."""
+    app = str(env.get("app", "base") or "base")
+    rule = REAL_ONLY_TOOLS.get(app)
+    if not rule:
+        return None
+    key, simulated, what = rule
+    if str(env.get(key, "")).strip().lower() == simulated:
+        return (f"'{app}' tests {what}, and this robot's config simulates {what} "
+                f"({key}={simulated}). The tools run on a real robot only: describe the "
+                f"real hardware in the config (or flash with --sensors real) and try again.")
+    return None
+
+
 def redact(env: dict) -> dict:
     out = dict(env)
     if out.get("wifi_psk"):
