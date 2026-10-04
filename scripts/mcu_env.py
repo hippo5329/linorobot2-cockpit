@@ -1106,6 +1106,8 @@ def tool_refusal(env: dict):
     if not rule:
         return None
     key, simulated, what = rule
+    if app == "test_sensors":
+        return _sensors_refusal(env)
     value = str(env.get(key, "")).strip().lower()
     if value == "none":
         return (f"'{app}' tests {what}, and this robot has none ({key}=none). "
@@ -1115,6 +1117,25 @@ def tool_refusal(env: dict):
                 f"({key}={value}). The tools run on a real robot only: describe the "
                 f"real hardware in the config (or flash with --sensors real) and try again.")
     return None
+
+
+def _sensors_refusal(env: dict):
+    """test_sensors reads every I2C sensor -- IMU, magnetometer, barometer -- so it may
+    run when ANY of them is real. Judging it by the IMU alone refused an ESP32-S3 whose
+    one real part is its BMP280 (imu none): the tool that exists to read it."""
+    def real(name):
+        return str(env.get(name, "")).strip().lower() not in ("", "sim", "none")
+    env_real = str(env.get("pub_env", "0")) == "1" and str(env.get("sim_env", "0")) != "1"
+    if real("imu") or real("mag") or env_real:
+        return None
+    imu = str(env.get("imu", "")).strip().lower()
+    if imu == "sim":
+        return ("'test_sensors' tests the robot's sensors, and this robot's config simulates "
+                "them (imu=sim, no real magnetometer or barometer). The tools run on a real "
+                "robot only: describe the real hardware in the config (or flash with "
+                "--sensors real) and try again.")
+    return ("'test_sensors' tests the robot's sensors, and this robot has none (imu=none, no "
+            "magnetometer, no barometer). There is nothing for it to measure.")
 
 
 # Sim and real cannot mix; the result of a mix is useless. The simulated wheels drive a pose

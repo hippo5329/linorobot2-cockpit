@@ -79,3 +79,14 @@ def test_firmware_and_host_refuse_the_same_tools():
         assert case in fn, f"{tool} is refused on the host but not in toolSelect()"
         assert f'"{key}"' in fn, f"toolSelect() does not read {key} for {tool}"
     assert "APP_I2C_DETECT" not in fn
+
+
+def test_test_sensors_runs_on_any_real_sensor_not_only_an_imu():
+    """rc-20261004.1: the ESP32-S3 whose one real part is a BMP280 (imu none) was refused
+    'nothing to measure' by the tool that exists to read it."""
+    base = {"app": "test_sensors", "imu": "none", "mag": "none", "pub_env": 1, "sim_env": "0"}
+    assert mcu_env.tool_refusal(base) is None                         # a real barometer
+    assert mcu_env.tool_refusal({**base, "pub_env": 0}) is not None   # nothing at all
+    assert mcu_env.tool_refusal({**base, "sim_env": "1"}) is not None  # only a simulated one
+    assert mcu_env.tool_refusal({**base, "pub_env": 0, "mag": "ak09918"}) is None
+    assert mcu_env.tool_refusal({**base, "pub_env": 0, "imu": "auto"}) is None
