@@ -242,12 +242,7 @@ void runWifis(void)
         if (!was_connected)
             wifiAwake();                // a reconnect is a new link
         was_connected = true;
-        // Not every loop. Connected, run() only checks that the SSID is still one
-        // of ours -- a call into the Wi-Fi driver, which on every pass of a fast
-        // loop() contended with the radio's own task: the GenDrv answered pings in
-        // 16 ms median with a 240-300 ms tail at -39 dBm, power save off (ps 0),
-        // idle and loaded alike, while another client on the same AP took 5 ms.
-        EXECUTE_EVERY_N_MS(2000, wifiMulti.run());
+        wifiMulti.run();
     } else {
         was_connected = false;
         EXECUTE_EVERY_N_MS(WIFI_RETRY_INTERVAL_MS, wifiMulti.run());
