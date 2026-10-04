@@ -280,6 +280,59 @@ edit("ldlidar_driver/src/core/ldlidar_driver.cpp", [(
 PYLD14P
     echo "[vendor] ldlidar_stl_ros2: LDLiDAR_LD14P -- triangulation angle correction, start command, no ToF filter"
 fi
+# The Oradar MS200 (the Yahboom YB-EET01's LiDAR). Oradar's manual (PD-P2117008)
+# gives it the LD19's packet: 0x54 header, 12 points of (distance mm, intensity),
+# start/end angle in 0.01 deg, a ms timestamp and the same CRC-8 table, 230400 8N1,
+# clockwise, 4500 points/s, 10 Hz -- a ToF sensor, so no angle correction. Two
+# differences. The second byte is "high three bits reserved, low five = point
+# count (12)", where the LD parser insists on 0x2C, so for this model it accepts
+# any byte whose low five bits are 12. And intensities 0-15 are reserved codes
+# (0 invalid, 2 high reflectivity, 3 low SNR), not echoes: those points are
+# dropped (distance and intensity 0, which the node publishes as NaN), and the
+# LD19-tuned near filter is not applied. Its serial-number frame at power-up
+# (0x55 0xAA ...) never matches the 0x54 header and is skipped.
+MS200_DT="${VENDOR}/ldlidar_stl_ros2/ldlidar_driver/include/core/ldlidar_datatype.h"
+if [ -f "$MS200_DT" ] && ! grep -q "MS_200" "$MS200_DT"; then
+    python3 - "${VENDOR}/ldlidar_stl_ros2" <<'PYMS200'
+import sys, os
+root = sys.argv[1]
+def edit(rel, pairs):
+    p = os.path.join(root, rel); s = open(p).read()
+    for old, new in pairs:
+        assert s.count(old) == 1, f"{rel}: {old[:50]!r} -- has upstream changed?"
+        s = s.replace(old, new)
+    open(p, "w").write(s)
+edit("ldlidar_driver/include/core/ldlidar_datatype.h",
+     [("  LD_14P,   // triangulation: prepare_docker_vendor.sh, LD14P\n};",
+       "  LD_14P,   // triangulation: prepare_docker_vendor.sh, LD14P\n"
+       "  MS_200,   // Oradar MS200: prepare_docker_vendor.sh, MS200\n};")])
+edit("src/demo.cpp", [(
+    '  } else if (product_name == "LDLiDAR_LD14P") {\n    type_name = ldlidar::LDType::LD_14P;',
+    '  } else if (product_name == "LDLiDAR_LD14P") {\n    type_name = ldlidar::LDType::LD_14P;\n'
+    '  } else if (product_name == "LDLiDAR_MS200") {\n    type_name = ldlidar::LDType::MS_200;')])
+edit("ldlidar_driver/src/dataprocess/lipkg.cpp", [
+  ("    case LDType::LD_14P:\n      measure_point_frequence_ = 4000;\n      break;",
+   "    case LDType::LD_14P:\n      measure_point_frequence_ = 4000;\n      break;\n"
+   "    case LDType::MS_200:\n      measure_point_frequence_ = 4500;\n      break;"),
+  ("      if (byte == PKG_VER_LEN) {",
+   "      // The MS200 reserves the top three bits; only the point count is fixed.\n"
+   "      if (byte == PKG_VER_LEN ||\n"
+   "          (product_type_ == LDType::MS_200 && (byte & 0x1F) == POINT_PER_PACK)) {"),
+  ("          data.intensity = pkg_.point[i].intensity;\n",
+   "          data.intensity = pkg_.point[i].intensity;\n"
+   "          if (product_type_ == LDType::MS_200 && data.intensity < 16) {\n"
+   "            // 0-15 are the MS200's reserved codes, not echoes: no return here.\n"
+   "            data.distance = 0;\n"
+   "            data.intensity = 0;\n"
+   "          }\n"),
+])
+edit("ldlidar_driver/src/filter/tofbf.cpp", [(
+    '    case LDType::LD_14P:   // triangulation, not ToF: no ToF filter\n',
+    '    case LDType::MS_200:   // its own reserved-intensity rule in lipkg.cpp\n'
+    '    case LDType::LD_14P:   // triangulation, not ToF: no ToF filter\n')])
+PYMS200
+    echo "[vendor] ldlidar_stl_ros2: LDLiDAR_MS200 -- point-count byte, reserved intensities dropped, no near filter"
+fi
 CM="${VENDOR}/ldlidar_stl_ros2/CMakeLists.txt"
 if [ -f "$CM" ] && grep -q "ament_target_dependencies" "$CM"; then
     python3 - "$CM" <<'PY'

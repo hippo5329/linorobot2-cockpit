@@ -22,8 +22,8 @@
 # user key GPIO 42; boot key GPIO 0; buzzer GPIO 46; expansion I2C on the
 # IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
 # inspector will say so if you use them). The LiDAR header is UART1, TX GPIO 17
-# / RX GPIO 18, sold with an MS200, which the shipped LD-series driver does not
-# speak: fit an LD19 there.
+# / RX GPIO 18, where the Oradar MS200 the board is sold with plugs in; an LD19
+# fits the same header (lidar.model ld19).
 #
 # Kinematics below are the default-chassis placeholders every config starts
 # from -- set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
@@ -53,7 +53,8 @@ base_controller:
   console: uart0
   use_dual_core: true
   lidar:
-    model: ld19
+    # The Oradar MS200 sends the LD19's packet (lidar_drivers.py); the LD driver reads it.
+    model: ms200
     # Not `topic`: this board reaches the PC through a 921600-baud bridge, and a
     # scan on the same wire as the 50 Hz control topics pulls every rate down
     # (46.5 Hz measured). The LiDAR is on the LiDAR header (UART1: TX 17, RX 18

@@ -7,7 +7,7 @@ takes its driver's defaults. The robot's config names the model and, when it
 must, the port and a baud rate; nothing else is kept here to drift.
 
     family    package               models (lidar.model)
-    ldlidar   ldlidar_stl_ros2      ld19 ld06 stl27l
+    ldlidar   ldlidar_stl_ros2      ld19 ld06 ld14p stl27l, and the Oradar ms200
     sllidar   sllidar_ros2          a1 a2 (= a2m8) a2m7 a2m8 a2m12 a3 c1 s1 s2 s3
     ydlidar   ydlidar_ros2_driver   ydlidar (the driver's generic ydlidar.yaml),
                                     ydlidar_<model> for each params/<Model>.yaml
@@ -34,6 +34,11 @@ LDLIDAR_MODELS = {
     # vendored driver corrects each point's angle for its range and sends the
     # start command (prepare_docker_vendor.sh, LD14P). 4000 samples/s at 6 Hz.
     "ld14p":  ("LDLiDAR_LD14P", 666),
+    # The Oradar MS200 (Yahboom's bundled LiDAR) sends the LD19 packet too, with
+    # a reserved top three bits in the point-count byte and intensities 0-15 as
+    # error codes: the vendored driver accepts the one and drops the other
+    # (prepare_docker_vendor.sh, MS200). ToF, 4500 samples/s at 10 Hz, as an LD19.
+    "ms200":  ("LDLiDAR_MS200", 456),
 }
 # Bytes a board sends the LiDAR when its UART opens (env lidar_init, hex), for a
 # model that does nothing until told: the LD14P does not spin until it receives
@@ -87,7 +92,7 @@ def family(model: str) -> str:
         return "xv11"
     if m in NOT_CARRIED:
         raise ValueError(f"lidar.model {model!r} is read by {NOT_CARRIED[m]}, which this image "
-                         f"does not carry (ldlidar_stl_ros2 here knows ld06, ld19, ld14p and stl27l)")
+                         f"does not carry (ldlidar_stl_ros2 here knows ld06, ld19, ld14p, stl27l and ms200)")
     known = sorted(list(LDLIDAR_MODELS) + list(SLLIDAR_MODELS) + list(SLLIDAR_ALIASES)
                    + list(YDLIDAR_FILES) + ["xv11"])
     raise ValueError(f"lidar.model {model!r} names no driver this image carries; "
