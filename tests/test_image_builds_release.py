@@ -24,12 +24,17 @@ def test_the_lino_ws_build_is_release():
     assert all("CMAKE_BUILD_TYPE=Release" in b for b in lino), lino
 
 
-def test_every_colcon_build_is_release():
-    """Not just lino_ws: the micro-ROS agent every board talks through, the Sim MCU
-    firmware built for the host, and Nav2's source packages were all -O0 too."""
+def test_every_colcon_build_is_release_except_the_agent():
+    """lino_ws, the Sim MCU firmware built for the host and Nav2's source packages are
+    Release. The micro-ROS agent is the one deliberate exception: built Release in
+    rc-20261004.2 the ESP32-S3 lyrical legs failed 3 of 7 against 0 of 7 on the
+    default build (same board and tree), so it keeps the build rc-20261004.1 had."""
     builds = [b for b in _colcon_builds() if "FAILED" not in b]
-    assert len(builds) >= 4, builds
-    missing = [b[:90] for b in builds if "CMAKE_BUILD_TYPE=Release" not in b]
+    agent = [b for b in builds if "micro_ros_agent" in b]
+    assert len(agent) == 1 and "CMAKE_BUILD_TYPE" not in agent[0], agent
+    rest = [b for b in builds if "micro_ros_agent" not in b]
+    assert len(rest) >= 3, rest
+    missing = [b[:90] for b in rest if "CMAKE_BUILD_TYPE=Release" not in b]
     assert not missing, missing
 
 

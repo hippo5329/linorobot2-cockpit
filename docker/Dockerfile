@@ -68,6 +68,11 @@ RUN if [ -n "$APT_PROXY" ]; then echo "Acquire::http::Proxy \"$APT_PROXY\";" > /
         git build-essential cmake python3-colcon-common-extensions \
         libasio-dev libtinyxml2-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+# The micro-ROS agent keeps the default build type (no CMAKE_BUILD_TYPE), as in
+# rc-20261004.1. Built Release in rc-20261004.2, the ESP32-S3 lyrical legs failed 3 of 7
+# (transforms half a second behind, /imu/data never arriving, a drift off course)
+# against 0 of 7 on the default build, same board and tree. Not proven, but the
+# exploration fix never needed it; tests/test_image_builds_release.py names it.
 RUN mkdir -p /uros_ws/src \
  && git clone --depth 1 -b ${ROS_DISTRO} https://github.com/micro-ROS/micro-ROS-Agent.git \
         /uros_ws/src/micro-ROS-Agent \
@@ -75,8 +80,7 @@ RUN mkdir -p /uros_ws/src \
         /uros_ws/src/micro_ros_msgs \
  && . /opt/ros/${ROS_DISTRO}/setup.sh \
  && cd /uros_ws \
- && colcon build --merge-install --packages-up-to micro_ros_agent \
-        --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -20 \
+ && colcon build --merge-install --packages-up-to micro_ros_agent 2>&1 | tail -20 \
  && rm -rf /uros_ws/build /uros_ws/log /uros_ws/src
 
 # ---------------------------------------------------------------------------
