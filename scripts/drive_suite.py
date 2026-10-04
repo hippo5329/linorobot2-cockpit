@@ -104,10 +104,16 @@ def _turned(yaws: list) -> float:
     return total
 
 
-def _max_gap(stamps: list, t_start: float, t_end: float) -> float:
-    """The longest stretch of the window with no /odom arriving, edges included."""
-    edges = [t_start] + [t for t in stamps if t_start <= t <= t_end] + [t_end]
-    return max(edges[i] - edges[i - 1] for i in range(1, len(edges)))
+def _max_gap(stamps: list) -> float:
+    """The longest hole between consecutive /odom samples, by the samples' OWN header
+    stamps (the board's clock). Timing the callbacks instead measured this process:
+    on a loaded bench the suite's own loop stalled ~1 s while a serial base drove
+    1.13 of 1.25 m without a pause (rc-20261004.2 campaign). A link that drops
+    samples still leaves a hole in the board's stamps."""
+    ts = sorted(stamps)
+    if len(ts) < 2:
+        return float("inf")
+    return max(ts[i] - ts[i - 1] for i in range(1, len(ts)))
 
 
 def _travel_ok(want: float, got: float) -> bool:
@@ -244,7 +250,8 @@ def main() -> int:
         seen["wz"].append(m.twist.twist.angular.z)
         seen["x"] = m.pose.pose.position.x
         seen["y"] = m.pose.pose.position.y
-        seen["t"].append(time.monotonic())
+        st = m.header.stamp
+        seen["t"].append(st.sec + st.nanosec * 1e-9)
         seen["px"].append(m.pose.pose.position.x)
         seen["py"].append(m.pose.pose.position.y)
         seen["yaw"].append(_yaw(m.pose.pose.orientation.z, m.pose.pose.orientation.w))
@@ -275,9 +282,7 @@ def main() -> int:
         x0, y0 = seen["x"], seen["y"]
         for k in ("vx", "vy", "wz", "t", "px", "py", "yaw"):
             seen[k].clear()
-        t_start = time.monotonic()
         command(lin, ang, secs, lat)
-        t_end = time.monotonic()
         vx = seen["vx"] or [0.0]
         vy = seen["vy"] or [0.0]
         wz = seen["wz"] or [0.0]
@@ -297,7 +302,7 @@ def main() -> int:
         # How far, and how silent. A move is judged on the path travelled, a spin on
         # the yaw turned; a zero command has no distance to cover (its speed check
         # already asks whether it stayed still).
-        gap = _max_gap(seen["t"], t_start, t_end)
+        gap = _max_gap(seen["t"])
         ok_gap = gap <= GAP_LIMIT_S
         if lin or lat:
             want_d = math.hypot(lin, lat) * secs

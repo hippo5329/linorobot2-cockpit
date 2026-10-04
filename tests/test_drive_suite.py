@@ -330,13 +330,18 @@ def test_a_spin_is_judged_on_the_yaw_turned_across_the_wrap():
 
 
 def test_a_silent_link_fails_and_a_steady_one_passes():
-    steady = [i * 0.03 for i in range(167)]           # 33 Hz over 5 s
-    assert T["_max_gap"](steady, 0.0, 5.0) < 0.05
-    dropped = [t for t in steady if not 2.0 < t < 2.8]
-    g = T["_max_gap"](dropped, 0.0, 5.0)
+    # Board stamps: a steady 33 Hz stream, then the same with 0.8 s of it lost.
+    steady = [100.0 + i * 0.03 for i in range(167)]
+    assert T["_max_gap"](steady) < 0.05
+    dropped = [t for t in steady if not 102.0 < t < 102.8]
+    g = T["_max_gap"](dropped)
     assert 0.8 < g < 0.9 and g > T["GAP_LIMIT_S"]
-    # nothing at the start of the window counts too
-    assert T["_max_gap"]([t for t in steady if t > 1.0], 0.0, 5.0) > 1.0
+    assert T["_max_gap"]([100.0]) == float("inf")       # one sample: no evidence of a stream
+
+
+def test_the_gap_is_read_from_the_board_stamps_not_this_process():
+    src = _suite_src()
+    assert "st.sec + st.nanosec * 1e-9" in src and 'seen["t"].append(time.monotonic())' not in src
 
 
 def test_the_gap_limit_sits_past_the_firmware_command_watchdog():
