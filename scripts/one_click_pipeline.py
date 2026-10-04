@@ -1147,6 +1147,8 @@ def firmware_source(mode: str, pio_env: str, distro: str) -> tuple:
     try:
         return "prebuilt", fetch_prebuilt.fetch(profile)
     except SystemExit as exc:
+        if "DOWNLOAD TIMEOUT" in str(exc):
+            raise              # a slow link: stop, and do not point at a build
         raise SystemExit(f"{exc}\n   (no PlatformIO here either; install it or use the pio build image)")
 
 

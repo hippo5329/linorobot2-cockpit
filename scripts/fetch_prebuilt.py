@@ -27,6 +27,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import sys
 import tarfile
 import urllib.error
@@ -107,6 +108,32 @@ def is_floating(version: str) -> bool:
     return not version or version.endswith("-dev") or version in ("dev", "latest")
 
 
+# How long one network read may stall. A slow link that keeps delivering bytes never
+# hits it; one that stalls this long is treated as a TIMEOUT, below.
+API_TIMEOUT_S = 60
+DOWNLOAD_TIMEOUT_S = 120
+
+
+def is_timeout(exc: BaseException) -> bool:
+    """A stalled connection, as opposed to no network at all (DNS, refused, 404)."""
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return True
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, (socket.timeout, TimeoutError))
+
+
+def download_timeout(what: str, seconds: int) -> SystemExit:
+    """Stop, and say so. A timeout is a slow or stalled link, not a missing release:
+    falling back would flash something other than what was asked for -- the cached
+    image of an older release, or a local build of whatever tree is checked out --
+    and a slow link is exactly where nobody notices (user, 2026-10-04: "it should
+    not fall-back to build. It should stop and say download timeout")."""
+    return SystemExit(
+        f"fetch_prebuilt: DOWNLOAD TIMEOUT -- {what} stalled for {seconds} s.\n"
+        f"  The network is slow or interrupted. Nothing was flashed and nothing else was\n"
+        f"  used in its place. Retry when the link is better.")
+
+
 def newest_release_tag(repo: str) -> str:
     """
     The newest published release, prereleases included.
@@ -117,8 +144,13 @@ def newest_release_tag(repo: str) -> str:
     """
     url = f"https://api.github.com/repos/{repo}/releases?per_page=20"
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        releases = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT_S) as resp:
+            releases = json.load(resp)
+    except Exception as exc:
+        if is_timeout(exc):
+            raise download_timeout(f"the release list ({url})", API_TIMEOUT_S)
+        raise
     for rel in releases:
         if not rel.get("draft"):
             return rel["tag_name"]
@@ -202,7 +234,9 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
     if is_floating(version):
         try:
             resolved = newest_release_tag(repo)
-        except SystemExit:
+        except SystemExit as exc:
+            if "DOWNLOAD TIMEOUT" in str(exc):
+                raise
             if have_cache:
                 return use_local()
             raise
@@ -229,7 +263,7 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
         if not quiet:
             print(f"[fetch_prebuilt] {url}")
         try:
-            with urllib.request.urlopen(url, timeout=120) as resp:
+            with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_S) as resp:
                 blob = resp.read()
             break
         except urllib.error.HTTPError as exc:
@@ -237,6 +271,8 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
                 raise SystemExit(f"fetch_prebuilt: could not download {url}: {exc}")
             last = exc
         except Exception as exc:
+            if is_timeout(exc):
+                raise download_timeout(url, DOWNLOAD_TIMEOUT_S)
             return fall_back(f"{url}: {exc}")
     if blob is None:
         raise SystemExit(
