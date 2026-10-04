@@ -48,6 +48,25 @@
 const char *wifi_ap_list[][2] = WIFI_AP_LIST;
 WiFiMulti wifiMulti;
 
+// Keep the radio awake. Both cores default to a power-save mode in which the
+// station sleeps between beacons, so every packet to it waits for the next
+// wake-up: on a weak link that was 148 ms average round trip with 25% loss idle,
+// and 481 ms (1.4 s worst) under load -- /scan and /imu/data starved and drive
+// commands arrived in bursts (GenDrv on Wi-Fi, 2026-10-04). A robot streams
+// both ways all the time, so latency wins over the radio's milliwatts. Called on
+// every association, because a reconnect is a new link. Env `wifi_sleep 1` puts
+// power save back, for a battery robot that would rather.
+static void wifiAwake(void)
+{
+    if (envFlag("wifi_sleep", false))
+        return;
+#if defined(ARDUINO_ARCH_ESP32)
+    WiFi.setSleep(false);
+#elif defined(ARDUINO_ARCH_RP2040)
+    WiFi.noLowPowerMode();
+#endif
+}
+
 // Is there anything to connect TO -- from the env, or compiled in?
 static bool haveApList(void)
 {
@@ -152,6 +171,7 @@ void initWifis(void)
         delay(500);
     }
     Serial.println("WIFI connected");
+    wifiAwake();
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
     syslog(LOG_INFO, "%s ssid %s rssi %d ip %s", __FUNCTION__, WiFi.SSID(), WiFi.RSSI(),
@@ -198,9 +218,14 @@ void runWifis(void)
     // is gone, so only the disconnected case is rate-limited -- and now that
     // initWifis() can return without a link, the disconnected case is reachable
     // for the whole life of the robot, not just between AP dropouts.
+    static bool was_connected = true;   // initWifis() already woke the first link
     if (WiFi.status() == WL_CONNECTED) {
+        if (!was_connected)
+            wifiAwake();                // a reconnect is a new link
+        was_connected = true;
         wifiMulti.run();
     } else {
+        was_connected = false;
         EXECUTE_EVERY_N_MS(WIFI_RETRY_INTERVAL_MS, wifiMulti.run());
     }
 }

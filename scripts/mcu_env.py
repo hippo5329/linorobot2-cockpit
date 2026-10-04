@@ -36,6 +36,8 @@ one of them a particular robot is here:
                 sim_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
                 ota_port
+                wifi_sleep  (1 = let the radio power-save; it is kept awake
+                             by default -- latency over milliwatts)
                 diag_tx  diag_baud   (a second UART that prints the loop's
                                       counters once a second; a bench tool,
                                       set with --set, never from the config)
@@ -710,6 +712,10 @@ def hardware_env(params: dict) -> dict:
             raise ValueError(f"base_controller.console must be 'usb' or 'uart0', not {console!r}")
         env["console"] = console
     env["wifi"] = _bool((tgt.get("wifi", {}) or {}).get("enabled", False))
+    # The radio is kept awake by default (firmware wifis.cpp, wifiAwake); a robot
+    # that would rather save power says `wifi: {sleep: true}`. Written only when set.
+    if (tgt.get("wifi", {}) or {}).get("sleep") is not None:
+        env["wifi_sleep"] = _bool((tgt.get("wifi", {}) or {})["sleep"])
 
     # --- drivetrain
     for n in range(1, 5):
