@@ -23,7 +23,9 @@
 # IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
 # inspector will say so if you use them). The LiDAR header is UART1, TX GPIO 17
 # / RX GPIO 18, sold with an MS200, which the shipped LD-series driver does not
-# speak; the scan below is the sim one until a supported LiDAR is attached.
+# speak: fit an LD19 there. A real robot never runs on a simulated scan --
+# sim and real cannot mix -- so with no supported LiDAR fitted it does not run
+# SLAM or Nav2; Sim mode simulates the whole robot instead.
 #
 # Kinematics below are the default-chassis placeholders every config starts
 # from -- set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
