@@ -384,10 +384,12 @@ removed, which is older than this driver and applies to every IMU.
 
 **The Yahboom microROS control board** (`config/reference/yb_eet01_config.yaml`,
 YB-EET01 V2.0, ESP32-S3) is the first reference design with the line wired: ICM-42670-P at 0x68 on
-SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on M1 4/5 and M2 15/16 (the `pwm` enable
-is `-1`, tied high on the board), encoders 6/7 and 47/48, battery ADC on GPIO 3 for a 2S pack,
-LED on 45 -- a strapping pin, which the inspector warns about and nothing else. The board's own
-firmware inverts the right motor; so does the config.
+SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on all four channels as a 4WD skid steer
+(M1 4/5, M2 15/16, M3 9/10, M4 13/14; the `pwm` enable is `-1`, tied high on the board), encoders
+6/7, 47/48, 11/12 and 1/2, battery ADC on GPIO 3 for a 2S pack, LED on 45 -- a strapping pin, which
+the inspector warns about and nothing else. The board's own 2WD firmware inverts channel 1; the
+config inverts nothing (every `invert: false`) -- a motor's direction is measured on its chassis with
+`test_motors` and set there, because the firmware inverts a motor only when its own flag says so.
 
 ### A diagnostic must read the env, not the macro it was compiled with
 `initBoard()` opens the bus with `envInt("i2c_sda", SDA_PIN)` — the env partition first, the header
