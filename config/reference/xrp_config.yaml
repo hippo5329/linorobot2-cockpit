@@ -34,9 +34,8 @@
 # Not yet run on hardware: the motor/encoder directions above follow XRPLib and
 # must be confirmed with test_motors on the first board (expected 2026-10).
 robot:
-  name: bare_xrp
-  description: SparkFun XRP Controller (RP2350B + RM2) bare module -- all pins N/C,
-    simulated sensors
+  name: xrp
+  description: SparkFun XRP Kit -- XRP Controller (RP2350B + RM2), 2WD, LSM6DSOX
 base_controller:
   name: xrp
   description: 'SparkFun XRP Kit: XRP Controller (RP2350B + RM2), 2WD, LSM6DSOX'
