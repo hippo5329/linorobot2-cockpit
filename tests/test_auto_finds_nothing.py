@@ -39,7 +39,7 @@ def test_presence_is_decided_after_the_probe_has_spoken():
 
 
 def test_the_gate_asks_the_graph_not_the_boot_text():
-    """The probe's boot lines print before the host has the port open (a20, the
+    """The probe's boot lines print before the host has the port open (the bench, the
     capture held the banner, [uros] and [wdt], and no [i2c]), so they are no
     witness. The firmware makes /imu/data only for an IMU it found: with AUTO,
     no publisher at all is a robot without one."""

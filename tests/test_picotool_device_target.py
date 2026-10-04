@@ -63,7 +63,7 @@ def test_no_target_means_no_flags_not_a_crash(monkeypatch):
 def test_a_remembered_port_with_no_device_is_not_no_target(monkeypatch):
     """Mid-re-enumeration the port has no device for a moment. That used to read
     as [] -- "no target" -- and the untargeted picotool call that followed wrote
-    whichever board was in BOOTSEL: on a20 (gate g4) another cell's Pico got this
+    whichever board was in BOOTSEL: on the bench (gate g4) another cell's Pico got this
     cell's env block. Absent is None, and a write refuses it."""
     monkeypatch.setattr(flash_mcu, "_TARGET_USB_PATH", "no-such-port")
     assert flash_mcu.picotool_target() is None

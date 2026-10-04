@@ -1,6 +1,6 @@
 """Flash THIS board, not whichever one is in BOOTSEL.
 
-On a20 (gate g4, 2026-10-04) two cells flashed their Picos at once, and both cells
+On the bench (gate g4, 2026-10-04) two cells flashed their Picos at once, and both cells
 see both boards (the passthrough is by vendor). While one board re-enumerated into
 BOOTSEL its port had no device for a moment; the flasher's target came back empty,
 the "is it in BOOTSEL yet" question went out untargeted and was answered at 0.0 s

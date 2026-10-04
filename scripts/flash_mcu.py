@@ -383,7 +383,7 @@ def remember_usb_path(port: str, stamp_path: Optional[str] = None,
 
 # Which BOARD we mean, not only which port: the identity the board had while it
 # was running, checked again once it is in BOOTSEL and before anything is written.
-# A port is a place; on 2026-10-04 (a20, gate g4) the port's device was missing for
+# A port is a place; on 2026-10-04 (the bench, gate g4) the port's device was missing for
 # a moment mid-re-enumeration, the target fell back to "any board in BOOTSEL", and
 # the env block meant for one cell's Pico was written into the other cell's Pico,
 # which was in BOOTSEL at that instant. Its own board then booted the new app on
@@ -497,7 +497,7 @@ def picotool_target(root: str = "/sys/bus/usb/devices", wait_s: float = 0.0):
     changes underneath us between the touch and the load -- and for a moment the
     port has no device at all. That moment used to return [] too, which every
     caller reads as "no target": an untargeted picotool call, which with another
-    board in BOOTSEL writes THAT board (a20, gate g4). None is not [].
+    board in BOOTSEL writes THAT board (the bench, gate g4). None is not [].
     """
     if not _TARGET_USB_PATH:
         return []
