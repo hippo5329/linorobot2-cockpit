@@ -135,6 +135,16 @@ def launch_setup(context, *args, **kwargs):
     host_fw_bin = host_firmware.binary() if (controller_name == "sim" and not sim_base_arg) else None
     no_board = sim_base_arg or (controller_name == "sim" and host_fw_bin is None)
 
+    # Sim and real cannot mix; the result of a mix is useless. Checked here as well
+    # as where the env is written (mcu_env.py build), because a board flashed before
+    # that check, or by hand, still carries whatever env it was given.
+    if not no_board and controller_name != "sim":
+        import mcu_env  # noqa: E402
+        why = mcu_env.mixed_simulation(
+            params, {"auto": "config", "sim": "sim", "real": "real"}.get(mode_arg, "config"), config_file)
+        if why:
+            raise RuntimeError(f"[{mcu_env.MIXED_SIM_TAG}] {why}")
+
     is_real = (mode_arg == "real") or (
         mode_arg != "sim"
         and not no_board

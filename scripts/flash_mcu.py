@@ -1146,6 +1146,12 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
         cmd += ["--sensors", sensors]
     log("Building the env block (Wi-Fi keys + agent/syslog/lidar addresses)...")
     res = run_tool(cmd, timeout=30)
+    if res.returncode == 3:      # mcu_env.MIXED_SIM_EXIT: refused, and said why above
+        # Fatal, not "flash without an env": that would leave the board running the
+        # previous robot's env, which is worse than not flashing at all.
+        log("NEXT ACTION: a real robot simulates nothing -- turn every simulation toggle off "
+            "(Sensors tab) and use Real mode; or run the whole robot in Sim mode. Nothing was written.")
+        sys.exit(2)
     if res.returncode != 0 or not os.path.isfile(out):
         log("⚠️  could not build the env block; flashing the application only.")
         log("    The board will report a missing env partition over serial.")

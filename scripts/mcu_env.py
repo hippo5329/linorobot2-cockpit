@@ -1084,6 +1084,105 @@ def tool_refusal(env: dict):
     return None
 
 
+# Sim and real cannot mix; the result of a mix is useless. The simulated wheels drive a pose
+# the real IMU never feels; a simulated LiDAR scans a virtual room the robot is not
+# in; a simulated IMU on real wheels reports a rotation nothing measured -- so the
+# odometry, the EKF and SLAM are each told about a different robot, and it does not
+# run. A bare module simulates everything, a real robot nothing. The diagnostic tools
+# are the exception by design: each tests one real subsystem on a half-built robot,
+# which is how a robot gets built (REAL_ONLY_TOOLS, tool_refusal).
+MIXED_SIM_TAG = "MIXED SIMULATION REFUSED"
+MIXED_SIM_EXIT = 3   # flash_mcu stops on it rather than flashing without an env
+
+
+def simulation_parts(params: dict, mode: str = "config", params_path: str = None):
+    """(simulated, real): what this config runs as each, once `mode` is applied.
+
+    Judged on the env the board would get, plus the two things only the config
+    knows: an IMU named AUTO is the bus probe (real on a real-wheel board), and a
+    magnetometer or depth camera asked to be simulated. Parts the robot does not
+    have are neither. The simulated sonar is left out: the firmware uses it only
+    while the LiDAR emulator runs, so on a real robot it is inert.
+    """
+    import depth_camera
+    controller = (params or {}).get("base_controller") or {}
+    sensors = controller.get("sensors") or {}
+    pins = controller.get("pins") or {}
+    env = hardware_env(params)
+    apply_sensor_mode(env, mode, params_path)
+    simulated, real = [], []
+
+    wheels_sim = _truthy(env.get("sim_wheel"))
+    (simulated if wheels_sim else real).append("wheels (use_sim_wheel)")
+
+    imu_cfg = str(sensors.get("imu", "")).strip().upper()
+    if str(env.get("imu", "sim")).lower() != "sim":
+        real.append(f"IMU ({env['imu']})")
+    elif imu_cfg == "AUTO" and not sensors.get("use_sim_imu") and not wheels_sim:
+        real.append("IMU (AUTO: the board probes its bus)")
+    else:
+        simulated.append("IMU (use_sim_imu)" if sensors.get("use_sim_imu") else
+                         f"IMU (imu: {sensors.get('imu', 'NONE')} -- no real IMU named)")
+
+    if str(env.get("mag", "sim")).lower() != "sim":
+        real.append(f"magnetometer ({env['mag']})")
+    elif sensors.get("use_sim_mag") and mode == "config":
+        simulated.append("magnetometer (use_sim_mag)")
+
+    lidar = controller.get("lidar") or {}
+    model = str((lidar.get("model") if isinstance(lidar, dict) else "") or "").strip().upper()
+    if _truthy(env.get("sim_ld19")):
+        simulated.append("LiDAR (use_sim_ld19)")
+    elif model not in ("", "NONE", "OFF"):
+        try:
+            map_world = depth_camera.sim_world(params) == "map"
+        except ValueError:
+            map_world = False
+        if not map_world:
+            real.append(f"LiDAR ({lidar.get('model')})")
+
+    if depth_camera.use_sim_depth(controller) and mode == "config":
+        simulated.append("depth camera (use_sim_depth)")
+
+    try:
+        battery_pin = int(((pins.get("battery") or {}).get("pin", -1)))
+    except (TypeError, ValueError, AttributeError):
+        battery_pin = -1
+    current = str(sensors.get("current", "NONE")).strip().upper()
+    if _truthy(env.get("sim_battery")):
+        simulated.append("battery (use_sim_battery)")
+    elif battery_pin >= 0 or current not in ("", "NONE", "OFF"):
+        real.append("battery sense")
+
+    env_chip = str(sensors.get("env", "NONE")).strip().upper()
+    if _truthy(env.get("sim_env")):
+        simulated.append("environment sensor (use_sim_env)")
+    elif env_chip not in ("", "NONE", "OFF", "AUTO"):
+        real.append(f"environment sensor ({sensors.get('env')})")
+    return simulated, real
+
+
+def mixed_simulation(params: dict, mode: str = "config", params_path: str = None):
+    """Why this robot may not run (part real, part simulated), or None.
+
+    The Sim MCU (mcu: host) is simulated by construction and never mixed; --mode
+    sim simulates everything and --mode real nothing, so in practice this catches
+    --mode auto (the config's own toggles) and a config that names no real IMU.
+    """
+    controller = (params or {}).get("base_controller") or {}
+    if str(controller.get("mcu", "")).strip().lower() == "host" or mode == "sim":
+        return None
+    simulated, real = simulation_parts(params, mode, params_path)
+    if not simulated or not real:
+        return None
+    return (f"Sim and real cannot mix. This robot would run real {', '.join(real)} "
+            f"with simulated {', '.join(simulated)}, and the result of a mix is useless: each "
+            "part tells the odometry, the EKF and SLAM about a different robot, so nothing it "
+            "measures or maps means anything. A real robot simulates nothing: turn every "
+            "simulation toggle off (Sensors tab) and run it in Real mode. Or run the whole "
+            "robot in Sim mode.")
+
+
 def redact(env: dict) -> dict:
     out = dict(env)
     if out.get("wifi_psk"):
@@ -1135,6 +1234,16 @@ def main():
         for item in a.set:
             key, _, value = item.partition("=")
             env[key] = value
+        # The robot firmware only: the diagnostic tools test one real part of a
+        # half-built robot by design (tool_refusal judges them).
+        if str(env.get("app", "base") or "base") == "base":
+            import yaml
+            with open(a.params) as fh:
+                whole = yaml.safe_load(fh) or {}
+            why = mixed_simulation(whole, a.sensors, a.params)
+            if why:
+                print(f"❌ [{MIXED_SIM_TAG}] {why}")
+                sys.exit(MIXED_SIM_EXIT)
         with open(a.out, "wb") as fh:
             fh.write(encode(env))
         offset = env_offset(a.board) if a.board else ENV_OFFSET
