@@ -100,6 +100,10 @@ def terminate_group(proc: subprocess.Popen):
             continue
 
 
+# How long the 1200-baud touch waits for a serial port that a reset took away.
+PORT_RETURN_WAIT_S = 15.0
+
+
 def run_tool(cmd: List[str], timeout: int, echo: bool = True, prefix: str = "    | ") -> subprocess.CompletedProcess:
     """Run a flashing tool, streaming its output live and never hanging.
 
@@ -508,6 +512,19 @@ def pulse_1200_baud(port: str) -> bool:
 
     Returns once the board is in BOOTSEL and reachable, not after a fixed nap.
     """
+    if port and not os.path.exists(port):
+        # Wait for it rather than give up at once. Inside a container the node comes
+        # back only when something re-attaches it after the board re-enumerated --
+        # a few seconds after a reset -- and an immediate check skipped the one step
+        # that works, three legs running (Pico, 2026-10-04: the port was back in the
+        # container a few seconds after each failure).
+        deadline = time.time() + PORT_RETURN_WAIT_S
+        log(f"{port} is not present; waiting up to {PORT_RETURN_WAIT_S:.0f}s for it to come back...")
+        while time.time() < deadline and not os.path.exists(port):
+            time.sleep(0.5)
+        if os.path.exists(port):
+            log(f"{port} is back; sending the 1200-baud touch")
+            time.sleep(0.5)              # let the CDC driver finish its line setup
     if not port or not os.path.exists(port):
         # Said out loud: this used to return without a word, and a recovery that
         # skipped its one working step read as a board that refused BOOTSEL.
