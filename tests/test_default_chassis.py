@@ -273,6 +273,12 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         for sec in ("ekf", "slam", "nav2"):
             walk(base.get(sec), d.get(sec), (sec,), diffs)
         allowed = set(lateral) | set(angular) if name == "pico2_mecanum" else set()
+        # A skid steer turns on both axles, (lr + fr)/2 like the mecanum, so its
+        # derived yaw limits differ by the same geometry -- and so does the yaw
+        # entry of the smoother vectors. It does not strafe: no odom vy, no y
+        # threshold. (yb_eet01 is the 4WD skid steer reference, 2026-10-04.)
+        if (d.get("kinematics") or {}).get("base_type") in ("skid_steer", "skid", "4wd"):
+            allowed |= set(angular) | {k for k in lateral if k[1] == "velocity_smoother"}
         if kit(name):
             allowed |= DERIVED_NAV2_KEYS   # its own motors set its speed limits
         if _sonar_fitted(d) and not _sonar_fitted(base):

@@ -8,10 +8,16 @@
 # with its INT line broken out, a battery divider on an ADC pin, a status LED,
 # and a UART header for a LiDAR / host.
 #
-# Wired as 2WD on channels 1 (right) and 2 (left); channels 3 and 4 are listed
-# at -1 so a 4WD variant is a copy and four pin edits:
-#   M3  PWM 9/10   ENC 11/12
-#   M4  PWM 13/14  ENC 1/2
+# Wired as a 4WD SKID STEER on all four channels, so the references cover the three
+# drivetrains between them: gendrv is 2wd, this is skid_steer, pico2_mecanum is
+# mecanum. Changing it is the Base tab's drivetrain (or kinematics.base_type) --
+# for 2wd, the motor3/motor4 and encoder3/encoder4 pins go back to -1.
+#   M1  PWM 4/5    ENC 6/7     front-left
+#   M2  PWM 15/16  ENC 47/48   front-right
+#   M3  PWM 9/10   ENC 11/12   rear-left
+#   M4  PWM 13/14  ENC 1/2     rear-right
+# Channel n drives wheel n in the cockpit's order (1 FL, 2 FR, 3 RL, 4 RR), so wire
+# each wheel to the channel of its number.
 # Also on the board and not in this config: servos S1 GPIO 8, S2 GPIO 21;
 # user key GPIO 42; boot key GPIO 0; buzzer GPIO 46; expansion I2C on the
 # IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
@@ -25,7 +31,7 @@
 # the board's own 10 k/3.3 k, taken from Yahboom's battery-detection source.
 robot:
   name: yb_eet01
-  description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), 2WD
+  description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), 4WD skid steer
 base_controller:
   name: yb_eet01
   description: Yahboom microROS Control Board YB-EET01-V2.0 (ESP32-S3)
@@ -97,27 +103,28 @@ base_controller:
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
   pins:
-    motor1:            # channel 1, right
+    motor1:            # channel 1, front-left
       pwm: -1
       in_a: 4          # PWM-M1A
       in_b: 5          # PWM-M1B
-      # Default is forward. Yahboom's own firmware inverts this motor; measure it on
-      # the real chassis in October and set it there, not in a default.
+      # Default is forward. Yahboom's own (2WD) firmware inverts channel 1, its right
+      # wheel there; measure every wheel's direction on the real chassis (test_motors)
+      # and set it there, not in a default.
       invert: false
-    motor2:            # channel 2, left
+    motor2:            # channel 2, front-right
       pwm: -1
       in_a: 15         # PWM-M2A
       in_b: 16         # PWM-M2B
       invert: false
-    motor3:
+    motor3:            # channel 3, rear-left
       pwm: -1
-      in_a: -1
-      in_b: -1
+      in_a: 9          # PWM-M3A
+      in_b: 10         # PWM-M3B
       invert: false
-    motor4:
+    motor4:            # channel 4, rear-right
       pwm: -1
-      in_a: -1
-      in_b: -1
+      in_a: 13         # PWM-M4A
+      in_b: 14         # PWM-M4B
       invert: false
     encoder1:
       pin_a: 6         # Encoder-H1A
@@ -128,12 +135,12 @@ base_controller:
       pin_b: 48        # Encoder-H2B
       invert: false
     encoder3:
-      pin_a: -1
-      pin_b: -1
+      pin_a: 11        # Encoder-H3A
+      pin_b: 12        # Encoder-H3B
       invert: false
     encoder4:
-      pin_a: -1
-      pin_b: -1
+      pin_a: 1         # Encoder-H4A
+      pin_b: 2         # Encoder-H4B
       invert: false
     i2c:               # the onboard IMU's bus, 400 kHz
       sda: 40
@@ -169,11 +176,11 @@ base_controller:
       trigger: -1
       echo: -1
 kinematics:
-  base_type: 2wd
+  base_type: skid_steer
   stamped_cmd_vel: auto
   wheel_diameter: 0.1
   lr_wheels_distance: 0.271
-  fr_wheels_distance: 0
+  fr_wheels_distance: 0.18   # front-to-rear axle distance; skid steer turns on both axles
   max_rpm: 140
   # DERIVED -- the driver margin, not a hand-picked derating.
   #
@@ -423,13 +430,13 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 1.0
-        max_angular_accel: 1.5
+        rotate_to_heading_angular_vel: 0.95
+        max_angular_accel: 1.44
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
         use_path_orientations: false
-        desired_linear_vel: 0.25
+        desired_linear_vel: 0.24
         lookahead_dist: 0.6
         min_lookahead_dist: 0.3
         max_lookahead_dist: 0.9
@@ -479,9 +486,9 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 0.8
-      min_rotational_vel: 0.4
-      rotational_acc_lim: 3.0
+      max_rotational_vel: 0.77
+      min_rotational_vel: 0.38
+      rotational_acc_lim: 2.88
   velocity_smoother:
     ros__parameters:
       enable_stamped_cmd_vel: false
@@ -514,21 +521,21 @@ nav2:
       # 0.1355 m, so the same yaw rate costs it 66% more wheel speed and it is
       # given a correspondingly lower ceiling.
       max_velocity:
-      - 0.3
+      - 0.29
       - 0.0
-      - 1.2
+      - 1.15
       min_velocity:
-      - -0.3
+      - -0.29
       - 0.0
-      - -1.2
+      - -1.15
       max_accel:
       - 0.8
       - 0.0
-      - 1.5
+      - 1.44
       max_decel:
       - -0.8
       - 0.0
-      - -1.5
+      - -1.44
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:

@@ -116,7 +116,7 @@ def test_the_firmware_reads_the_flashers_image(reader, tmp_path):
     # envIP goes through IPAddress::fromString, the path uros_transport.cpp uses.
     assert got["envIP"] == "10.11.12.13"
     # A value from the config rather than the CLI, so the config path is covered too.
-    assert got["base"] == "2wd"
+    assert got["base"] == "skid_steer"   # yb_eet01 is the 4WD skid steer reference
     # Typed accessors, not just envGet: a float and a flag.
     assert abs(float(got["wheel_d"]) - 0.1) < 1e-6
     assert got["sim_wheel"] in ("0", "1")
