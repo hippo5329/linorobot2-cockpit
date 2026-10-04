@@ -469,6 +469,13 @@ def verify_board_identity(target: List[str], pts: Optional[List[str]] = None) ->
     return False
 
 
+def sensors_absent_from_boot(captured: str) -> List[str]:
+    """The sensors a board's boot said it found nothing for: an AUTO IMU or
+    magnetometer with nothing on the bus is `none` there (i2c_probe.cpp)."""
+    return sorted({m.group(1).lower() for m in re.finditer(
+        r"\[i2c\] (IMU|MAG): nothing answered", captured or "")})
+
+
 def stamp_for(env: str, port: str) -> dict:
     """The last flash's stamp for this port, or {}."""
     try:
@@ -1683,6 +1690,10 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
             if line.startswith("[i2c]") or line.startswith("[boot]") \
                     or line.startswith("[sensors]"):
                 log(f"  | {line}")
+        # What the board found nothing for on its bus. Not an error: a robot
+        # without that sensor (i2c_probe.cpp turns the name into `none`), and the
+        # gate and the EKF read this so they stop expecting it (mcu_probe.sensors_absent).
+        stamp["sensors_absent"] = sensors_absent_from_boot(captured)
         stamp.update({"git": banner["git"], "built": banner["built"],
                       "app": banner["app"], "banner_confirmed": True})
         # Only if the board stated one. A board running an image older than the

@@ -1047,10 +1047,13 @@ void setup()
                           && (strcasecmp(imu_name, "sim") == 0 || strcasecmp(imu_name, "none") == 0)
                           && (strcasecmp(mag_name, "sim") == 0 || strcasecmp(mag_name, "none") == 0);
     // `none` is a statement, not a guess: the probe may not adopt a chip for it.
+    // And a probe that finds nothing turns the name into `none` (i2c_probe.cpp):
+    // an empty bus is a robot without an IMU or magnetometer, not an error.
+    if (envFlag("i2c_scan", !all_sim))
+        i2cProbeSelect(strcasecmp(imu_name, "none") != 0 ? &imu_name : nullptr,
+                       strcasecmp(mag_name, "none") != 0 ? &mag_name : nullptr);
     imu_present = (strcasecmp(imu_name, "none") != 0);
     mag_present = (strcasecmp(mag_name, "none") != 0);
-    if (envFlag("i2c_scan", !all_sim))
-        i2cProbeSelect(imu_present ? &imu_name : nullptr, mag_present ? &mag_name : nullptr);
 
     if (imu_present)
         imu = createIMU(imu_name);

@@ -1781,6 +1781,14 @@ def main():
             else:
                 print(f"  ⚠️ no /scan within {scan_wait} s — the audit below will say what is missing.")
 
+        # The board's own word at its last boot: an I2C probe that found no IMU
+        # makes it `none` there (i2c_probe.cpp). A robot without one, not a fault.
+        if has_imu and not sim_mcu:
+            import mcu_probe  # noqa: E402
+            if "imu" in mcu_probe.sensors_absent(serial_port):
+                has_imu = False
+                print("  ℹ️  the board found no IMU on its bus at boot: /imu/data is not "
+                      "expected (a robot without one, not an error).")
         print("  [CHECK TOPICS] Verifying ROS 2 topic payloads and publish rates...")
         verify_flag = "" if has_lidar else " --no-scan"
         if not has_imu:

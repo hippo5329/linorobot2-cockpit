@@ -277,6 +277,30 @@ void i2cProbePrint(const I2CDevice *devs, int count)
 // nothing answered (keep the configured name and let init() report it), or
 // something answered that this image cannot drive -- a BNO055, say, where the
 // table leaves `driver` empty rather than handing back a plausible wrong one.
+// The 9-axis parts whose magnetometer is reached through the IMU itself, and the
+// magnetometer driver for it -- or NULL for an IMU that carries none.
+static const char *imuHiddenMag(const char *imu)
+{
+    if (!imu) return NULL;
+    if (strcasecmp(imu, "icm20948") == 0) return "icm20948";
+    if (strcasecmp(imu, "mpu9250") == 0)  return "ak8963";
+    if (strcasecmp(imu, "mpu9150") == 0)  return "ak8975";
+    return NULL;
+}
+
+static const char *adopt(const char *what, const I2CDevice *dev, const char *configured);
+
+// adopt(), except that AUTO with nothing answering means this robot has none.
+static const char *adoptOrNone(const char *what, const I2CDevice *dev, const char *configured)
+{
+    const bool is_auto = !configured || !*configured || strcasecmp(configured, "auto") == 0;
+    if (!dev && is_auto) {
+        Serial.printf("[i2c] %s: nothing answered - this robot has none (AUTO)\n", what);
+        return "none";
+    }
+    return adopt(what, dev, configured);
+}
+
 static const char *adopt(const char *what, const I2CDevice *dev, const char *configured)
 {
     if (!dev)
@@ -307,10 +331,32 @@ void i2cProbeSelect(const char **imu_name, const char **mag_name)
     Serial.printf("[i2c] %d device(s) on the bus\n", n);
     i2cProbePrint(devs, n);
 
+    // AUTO asks the bus, and an empty answer is the answer: this robot has no IMU
+    // (or no magnetometer), and it publishes none. The AUTO name used to be kept,
+    // and createIMU() turns a name it does not know into a SimIMU -- a real robot
+    // publishing a simulated IMU beside its real wheels, the one mix the cockpit
+    // refuses everywhere else (user, 2026-10-04: "no sim imu on real robot. auto no
+    // detect mean no imu no mag"). A chip NAMED in the config that does not answer
+    // is still kept, and its driver's failed init is the fatal error it always was.
+    // A 9-axis IMU's magnetometer can sit behind the IMU's own aux bus, invisible
+    // until the IMU driver opens it, so it is not declared absent.
     if (imu_name)
-        *imu_name = adopt("IMU", i2cProbeFind(devs, n, "imu"), *imu_name);
-    if (mag_name)
-        *mag_name = adopt("MAG", i2cProbeFind(devs, n, "mag"), *mag_name);
+        *imu_name = adoptOrNone("IMU", i2cProbeFind(devs, n, "imu"), *imu_name);
+    if (mag_name) {
+        const I2CDevice *mag = i2cProbeFind(devs, n, "mag");
+        const char *hidden = imu_name ? imuHiddenMag(*imu_name) : NULL;
+        if (!mag && hidden) {
+            // Behind the IMU's aux bus: AUTO takes the IMU's own magnetometer driver,
+            // a named one is kept (never a SimMAG for an unknown name).
+            const bool is_auto = !*mag_name || !**mag_name || strcasecmp(*mag_name, "auto") == 0;
+            Serial.printf("[i2c] MAG: none on the bus; %s carries its own - using %s\n",
+                          *imu_name, is_auto ? hidden : *mag_name);
+            if (is_auto)
+                *mag_name = hidden;
+        } else {
+            *mag_name = adoptOrNone("MAG", mag, *mag_name);
+        }
+    }
 
     const I2CDevice *cur = i2cProbeFind(devs, n, "current");
     if (cur)

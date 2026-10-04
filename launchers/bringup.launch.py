@@ -431,6 +431,17 @@ def launch_setup(context, *args, **kwargs):
     # imu0 key goes, rather than leaving the EKF waiting on a topic nothing sends.
     has_imu = no_board or __import__("mcu_env").robot_has_imu(
         params, {"auto": "config", "sim": "sim", "real": "real"}.get(mode_arg, "config"), config_file)
+    # And what the board itself said at its last boot: an I2C probe that found no
+    # IMU or no magnetometer makes it `none` there (i2c_probe.cpp). Not an error --
+    # a robot without that sensor -- so the EKF stops expecting it here too.
+    absent = set() if no_board else __import__("mcu_probe").sensors_absent(serial_port)
+    if has_imu and "imu" in absent:
+        has_imu = False
+        print("[bringup] the board found no IMU on its bus at boot: running without one.")
+    if use_mag and "mag" in absent and use_mag_arg == "" and not use_sim_mag:
+        use_mag = False
+        print("[bringup] the board found no magnetometer on its bus at boot: "
+              "no absolute yaw is fused.")
     if not has_imu:
         rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
         for key in [k for k in rp if k.startswith("imu0")]:
