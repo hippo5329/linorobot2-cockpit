@@ -1,5 +1,5 @@
 diff --git a/modules/libmicroros/CMakeLists.txt b/modules/libmicroros/CMakeLists.txt
-index 4e8c213..227357d 100644
+index 4e8c213..887d171 100644
 --- a/modules/libmicroros/CMakeLists.txt
 +++ b/modules/libmicroros/CMakeLists.txt
 @@ -22,12 +22,17 @@ zephyr_get_system_include_directories_for_lang_as_string(CXX system_includes_cxx
@@ -22,6 +22,18 @@ index 4e8c213..227357d 100644
      )
  
  include(ExternalProject)
+@@ -56,6 +61,11 @@ zephyr_link_libraries(${MICROROS_DIR}/libmicroros.a)
+ 
+ zephyr_interface_library_named(microros)
+ add_dependencies(microros libmicroros_project)
++# The external build compiles rcutils against the POSIX headers Zephyr provides
++# (filesystem.c: sys/stat.h, dirent.h, unistd.h). They include zephyr/syscall.h and so
++# the GENERATED syscall_list.h, and nothing made this build wait for it: ninja ran the
++# two side by side, and a loaded build failed "zephyr/syscall_list.h: No such file".
++add_dependencies(libmicroros_project zephyr_generated_headers ${SYSCALL_LIST_H_TARGET})
+ target_include_directories(microros INTERFACE ${MICROROS_DIR}/include)
+ 
+ execute_process(
 diff --git a/modules/libmicroros/microros_transports/serial/microros_transports.c b/modules/libmicroros/microros_transports/serial/microros_transports.c
 index e2eea50..d2627dd 100644
 --- a/modules/libmicroros/microros_transports/serial/microros_transports.c
