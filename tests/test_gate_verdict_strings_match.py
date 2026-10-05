@@ -68,15 +68,15 @@ def test_the_trigger_greps_a_sentence_the_gate_actually_prints():
 
 
 def test_the_trigger_asks_for_the_whole_matrix_not_one_slice():
-    """The whole matrix: 12 legs since 2026-10-05, when the bench's third-host cases (one
-    GenDrv, one Yahboom) left the suite with that host's USB controller; 30 before."""
+    """The whole matrix is 30 legs. (For a few hours on 2026-10-05 it was 12, while the
+    third bench host's cases were out with its USB controller; they came back.)"""
     src = _read("cut_and_soak.sh")
     assert "gate_all.sh" in src, \
         "cut_and_soak.sh must take its verdict from gate_all.sh (the whole matrix)"
-    assert "all twelve" in " ".join(_grepped_sentences(src)), \
+    assert "all thirty" in " ".join(_grepped_sentences(src)), \
         "the sentence it waits for is not the whole-matrix one"
     assert not re.search(r'\$HERE/gate_check\.sh', src), \
-        "cut_and_soak.sh is judging a single drivetrain slice again -- that is 4 of 12"
+        "cut_and_soak.sh is judging a single drivetrain slice again -- that is 10 of 30"
 
 
 def test_release_mode_still_proves_which_firmware_ran():
