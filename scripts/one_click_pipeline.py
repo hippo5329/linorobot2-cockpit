@@ -16,6 +16,7 @@
 
 import argparse
 import json
+import tempfile
 import math
 import os
 import re
@@ -369,6 +370,11 @@ def sensor_topics(controller_cfg: dict) -> list:
     return topics
 
 
+def is_unoq_env(pio_env: str) -> bool:
+    """The Arduino UNO Q's STM32U585: flashed over SWD (unoq_swd.py), not over USB."""
+    return mcu_identity.env_family(pio_env) == "unoq"
+
+
 def resolve_pio_env(pio_env: str, distro: str) -> str:
     """The PlatformIO env that matches the ROS 2 distro of the run.
 
@@ -380,6 +386,8 @@ def resolve_pio_env(pio_env: str, distro: str) -> str:
     if not distro or distro == "jazzy" or pio_env.endswith(f"_{distro}"):
         return pio_env
     candidate = f"{pio_env}_{distro}"
+    if is_unoq_env(pio_env):
+        return candidate     # Zephyr, not PlatformIO: release profile unoq-<distro>
     ini = os.path.join(REPO_ROOT, "firmware", "platformio.ini")
     try:
         declared = f"[env:{candidate}]" in open(ini).read()
@@ -1147,6 +1155,20 @@ def firmware_source(mode: str, pio_env: str, distro: str) -> tuple:
     Pi can, through `docker compose run --rm pio pio run -e <env>`, but most
     users never need to.
     """
+    if is_unoq_env(pio_env):
+        if mode == "build":
+            raise SystemExit("❌ The UNO Q's firmware is built with Zephyr (firmware/zephyr/unoq/build.sh), "
+                             "not here. Use the release image (--firmware prebuilt) or package your own "
+                             "build into firmware/prebuilt/ with scripts/package_unoq.py.")
+        profile = fetch_prebuilt.profile_for_env(pio_env)
+        local = os.path.join(REPO_ROOT, "firmware", "prebuilt", profile)
+        try:
+            return "prebuilt", fetch_prebuilt.fetch(profile)
+        except SystemExit:
+            if os.path.isfile(os.path.join(local, "firmware.elf")):
+                print(f"  ⚠️  no {profile} in the release; using the image in {local}")
+                return "prebuilt", local
+            raise
     if mode == "build":
         return "build", None
     if mode == "auto" and pio_available(distro):
@@ -1209,6 +1231,62 @@ def write_env_only(pio_env: str, port: str, baud: int, params_path: str,
     if sensors:
         argv += ["--sensors", sensors]
     return run_streamed(argv, timeout=timeout + 60, log_tag="flash", prefix="    | ").returncode == 0
+
+
+def probe_unoq(prebuilt_dir: str) -> dict:
+    """The UNO Q's probe: the MCU over SWD, and whether its flash holds this release image.
+
+    There is no banner to ask for -- the micro-ROS link is the MCU's only line to Linux and
+    the firmware's console is a RAM buffer -- so the question is put to the flash itself:
+    OpenOCD's verify_image against the image this run would install.
+    """
+    import unoq_swd
+    elf = os.path.join(prebuilt_dir, "firmware.elf")
+    try:
+        dev, uid = unoq_swd.identify()
+        current = unoq_swd.verify(elf)
+    except unoq_swd.SwdError as exc:
+        return {"verdict": "unknown", "probe_failed": True, "firmware_differs": True,
+                "installed": {}, "local": {}, "_human": f"SWD: {exc}"}
+    try:
+        man = json.load(open(os.path.join(prebuilt_dir, "manifest.json")))
+    except Exception:
+        man = {}
+    local = {"git": man.get("commit", "?"), "distro": man.get("ros_distro", "?")}
+    human = (f"STM32U5 DEV_ID 0x{dev:03x} uid={uid} on SWD\n"
+             + ("flash holds this release image" if current else "flash holds a different image"))
+    return {"verdict": "current" if current else "stale", "firmware_differs": not current,
+            "installed": {"git": local["git"] if current else "a different image"},
+            "local": local, "_human": human}
+
+
+def flash_unoq(prebuilt_dir: str, params_path: str, mode: str, firmware: bool) -> bool:
+    """The env block, built from this config, and the application when asked, over SWD."""
+    import unoq_swd
+    env_bin = os.path.join(tempfile.gettempdir(), f"lino_unoq_env_{os.getpid()}.bin")
+    cmd = [sys.executable, os.path.join(REPO_ROOT, "scripts", "mcu_env.py"), "build",
+           "--params", os.path.abspath(params_path), "--out", env_bin, "--set", "app=base"]
+    sensors = sensors_for_mode(mode)
+    if sensors:
+        cmd += ["--sensors", sensors]
+    res = run_streamed(cmd, timeout=60, log_tag="flash", prefix="    | ")
+    if res.returncode != 0 or not os.path.isfile(env_bin):
+        print("  ❌ could not build the env block (a mixed simulation is refused; see above).")
+        return False
+    elf = os.path.join(prebuilt_dir, "firmware.elf") if firmware else None
+    print(f"  SWD: {'firmware.elf and ' if elf else ''}env block at 0x{unoq_swd.ENV_ADDR:08X}...")
+    try:
+        unoq_swd.flash(env_bin, elf)
+    except unoq_swd.SwdError as exc:
+        print(f"  ❌ {exc}")
+        return False
+    finally:
+        try:
+            os.remove(env_bin)
+        except OSError:
+            pass
+    print("  ✅ written over SWD, the env block read back and matched, the MCU reset into it.")
+    return True
 
 
 def flash_firmware(pio_env: str, port: str, baud: int, params_path: str, controller: str,
@@ -1555,6 +1633,7 @@ def main():
     # env block; different build -> the image (auto-update) or a warning.
     source, prebuilt_dir = "build", None
     board = None
+    unoq = is_unoq_env(pio_env)
     if not no_flash:
         source, prebuilt_dir = firmware_source(args.firmware, pio_env, args.distro)
         print(f"\n[2/6] [FIRMWARE] Image source for {pio_env}: "
@@ -1572,7 +1651,7 @@ def main():
         # a run: an RP2 names its own silicon in its vid/pid, but a classic
         # ESP32 answers through a CP2102/CH340/FTDI that says nothing about the
         # chip behind it, so that case must never block. See scripts/mcu_identity.py.
-        if not args.skip_mcu_check:
+        if not unoq and not args.skip_mcu_check:
             expected = mcu_identity.env_family(pio_env)
             family, chip, decisive = mcu_identity.identify_target(serial_port)
             if mcu_identity.mismatch(expected, family, decisive):
@@ -1599,9 +1678,13 @@ def main():
             if family and decisive:
                 print(f"  ✅ Board on the bus ({chip}) matches '{controller}'.")
 
-        print(f"\n[2/6] [PROBE] Asking {serial_port} what it is already running...")
-        board = probe_board(pio_env, serial_port, flash_baud, params_path, app="base",
-                            prebuilt_dir=prebuilt_dir)
+        if unoq:
+            print("\n[2/6] [PROBE] Asking the UNO Q's STM32 over SWD what its flash holds...")
+            board = probe_unoq(prebuilt_dir)
+        else:
+            print(f"\n[2/6] [PROBE] Asking {serial_port} what it is already running...")
+            board = probe_board(pio_env, serial_port, flash_baud, params_path, app="base",
+                                prebuilt_dir=prebuilt_dir)
         for line in (board.get("_human") or "").splitlines():
             print(f"    {line}")
 
@@ -1683,8 +1766,10 @@ def main():
                    else "requested with --flash")
             print(f"\n[3/6] [FLASH] Updating the firmware on '{controller}' ({serial_port}) — {why}.")
             release_serial_port(serial_port)
-            if not flash_firmware(pio_env, serial_port, flash_baud, params_path, controller,
-                                  source, prebuilt_dir, args):
+            ok = (flash_unoq(prebuilt_dir, params_path, args.mode, firmware=True) if unoq
+                  else flash_firmware(pio_env, serial_port, flash_baud, params_path, controller,
+                                      source, prebuilt_dir, args))
+            if not ok:
                 print("\n==================================================================")
                 print(f"❌ [FLASH FAILED] Microcontroller firmware flash failed for '{controller}'!")
                 print("⛔ HALTING PIPELINE: not proceeding to bringup. See logs/flash.log.")
@@ -1698,8 +1783,10 @@ def main():
                    else "every run writes it, so the board cannot be running an env nobody chose")
             print(f"\n[3/6] [ENV] Writing the env block only — {why}. The firmware is not touched.")
             release_serial_port(serial_port)
-            if not write_env_only(pio_env, serial_port, flash_baud, params_path, controller,
-                                  timeout=args.flash_timeout, sensors=sensors_for_mode(args.mode)):
+            ok = (flash_unoq(prebuilt_dir, params_path, args.mode, firmware=False) if unoq
+                  else write_env_only(pio_env, serial_port, flash_baud, params_path, controller,
+                                      timeout=args.flash_timeout, sensors=sensors_for_mode(args.mode)))
+            if not ok:
                 print("  ⚠️  The env block could not be written; the board keeps the one it has.")
                 failures.append("env block write")
             else:

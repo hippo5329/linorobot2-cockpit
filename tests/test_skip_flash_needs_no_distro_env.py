@@ -22,7 +22,7 @@ SRC = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
 
 def test_the_guard_still_stops_a_lyrical_flash_with_no_env():
     with pytest.raises(SystemExit):
-        ocp.resolve_pio_env("unoq", "lyrical")
+        ocp.resolve_pio_env("nosuchboard", "lyrical")   # (the UNO Q has its own Zephyr variant now)
 
 
 def test_a_declared_lyrical_env_resolves():

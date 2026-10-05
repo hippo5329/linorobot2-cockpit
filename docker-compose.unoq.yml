@@ -1,0 +1,26 @@
+# The Arduino UNO Q: run the stack ON the board, with the 1-Click able to flash its STM32.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.unoq.yml up -d
+#
+# The board's MCU has no USB. Its micro-ROS link is the QRB2210's internal UART
+# (/dev/ttyHS1, char major 239), and its SWD lines are QRB2210 GPIOs (/dev/gpiochip*,
+# major 254) driven by the OpenOCD Arduino ships in /opt/openocd. That OpenOCD is built
+# for the board's Debian and links libgpiod.so.3, which the robot image does not have, so
+# the container runs it through the HOST's loader and libraries, mounted read-only at
+# /host-lib (scripts/unoq_swd.py). Nothing here applies to any other robot computer.
+#
+# Before the first run, free the link from Arduino's router (it owns /dev/ttyHS1):
+#   sudo systemctl disable --now arduino-router
+services:
+  cockpit:
+    volumes:
+      - /opt/openocd:/opt/openocd:ro
+      - /lib/aarch64-linux-gnu:/host-lib:ro
+    # The base file's three classes are repeated so this list is complete on its own,
+    # whether compose appends to the base list or replaces it.
+    device_cgroup_rules:
+      - 'c 166:* rwm'   # /dev/ttyACM*
+      - 'c 188:* rwm'   # /dev/ttyUSB*
+      - 'c 189:* rwm'   # /dev/bus/usb
+      - 'c 239:* rwm'   # /dev/ttyHS1, the MCU's micro-ROS link
+      - 'c 254:* rwm'   # /dev/gpiochip*, the MCU's SWD lines (OpenOCD linuxgpiod)

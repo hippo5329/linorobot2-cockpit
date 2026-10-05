@@ -28,6 +28,7 @@ _ENV_FAMILY = {
     "xrp": "pico2",                                 # SparkFun XRP Controller: an RP2350B, runs the Pico 2 W image
     "esp32": "esp32", "gendrv": "esp32",
     "esp32s3": "esp32s3", "yb_eet01": "esp32s3",   # Yahboom YB-EET01: an ESP32-S3 board
+    "unoq": "unoq",                                 # Arduino UNO Q: STM32U585 on SWD, no USB (unoq_swd.py)
 }
 
 # Boards whose image is not their family's default one (see pio_env_for).
@@ -42,6 +43,7 @@ FAMILY_LABEL = {
     "pico": "RP2040", "pico2": "RP2350",
     "esp32": "ESP32", "esp32s3": "ESP32-S3", "esp32s2": "ESP32-S2",
     "gendrv": "ESP32",
+    "unoq": "STM32U585 (Arduino UNO Q)",
 }
 
 
