@@ -1,23 +1,24 @@
 # unoq — single source of truth for this robot.
 # One robot per file, one base controller per robot.
-# Arduino UNO Q (QRB2210 robot computer + STM32U585 base controller) with a Cytron
-# MDD3A two-PWM motor driver module (wired to the header), 2WD, Arduino Modulino
-# Movement IMU on Qwiic.
+# Arduino UNO Q (QRB2210 robot computer + STM32U585 base controller) with an AT8236
+# dual H-bridge driver (two PWM inputs per motor, wired to the header), 2WD, Arduino
+# Modulino Movement IMU on Qwiic.
 robot:
   name: unoq
   description: Arduino UNO Q 2WD -- the robot computer and the base controller on one board
 base_controller:
   name: unoq
   description: 'Arduino UNO Q: STM32U585 (Zephyr + micro-ROS) as the base controller,
-    QRB2210 Linux as the robot computer; Cytron MDD3A, Modulino Movement'
+    QRB2210 Linux as the robot computer; AT8236 driver, Modulino Movement'
   # The MCU is the board's STM32U585, running this firmware on Zephyr through a shim
   # (firmware/zephyr/unoq/fw) -- the same src/main.cpp and common/lib as every board.
   # It is flashed from the board's own Linux side over SWD (OpenOCD), not over USB.
   mcu: unoq
   board: arduino_uno_q
-  # The MDD3A (a driver module, wired to the header) takes two PWM inputs per motor
-  # (M1A/M1B, M2A/M2B) -- the two-PWM mode, as the GenDrv's TB6612 is driven.
-  driver_type: BTS7960
+  # Two PWM lines per motor (AIN1/AIN2, BIN1/BIN2), no enable pin: the AT8236 dual-PWM
+  # scheme, as on the Yahboom YB-EET01 (whose own driver it is). Check the module takes
+  # 3.3 V logic and the motor voltage before wiring.
+  driver_type: AT8236
   transport: serial
   # Not a cable: lpuart1 on the MCU is wired on the board to the QRB2210's UART,
   # which Linux names /dev/ttyHS1. Arduino's arduino-router owns it by default and
@@ -79,7 +80,7 @@ base_controller:
   # invert: false on both sides as shipped; a mirrored motor or encoder is flipped
   # here once the robot drives (cockpit's Build a Robot -> Test motors).
   pins:
-    motor1:              # left: MDD3A M1A/M1B <- D9/D10 = PB8/PB9, TIM4 CH3/CH4
+    motor1:              # left: AT8236 AIN1/AIN2 <- D9/D10 = PB8/PB9, TIM4 CH3/CH4
       pwm: -1
       in_a: 9
       in_b: 10
@@ -88,7 +89,7 @@ base_controller:
       pin_a: 2
       pin_b: 4
       invert: false
-    motor2:              # right: MDD3A M2A/M2B <- D3/D6 = PB0/PB1, TIM3 CH3/CH4
+    motor2:              # right: AT8236 BIN1/BIN2 <- D3/D6 = PB0/PB1, TIM3 CH3/CH4
       pwm: -1
       in_a: 3
       in_b: 6
