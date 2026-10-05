@@ -233,6 +233,18 @@ def patch_sources(src):
         return c[:start] + "static atomic_int_least64_t g_rcutils_fault_injection_count = {-1};" + c[end:]
     if _rw(os.path.join(src, "rcutils", "src", "testing", "fault_injection.c"), fault):
         changed.append("rcutils fault_injection.c")
+
+    # 5. rcutils logging.c: lyrical colours console output when the stream is a tty,
+    # and Zephyr has no isatty (the only undefined symbol at the link). A build with
+    # no filesystem has no tty either: report "not a tty", i.e. plain output.
+    def tty(c):
+        t = "# define IS_STREAM_A_TTY(stream) (isatty(fileno(stream)) != 0)"
+        if t not in c or "RCUTILS_NO_FILESYSTEM)\n#  define IS_STREAM_A_TTY" in c:
+            return c
+        return c.replace(t, "# if defined(RCUTILS_NO_FILESYSTEM)\n#  define IS_STREAM_A_TTY(stream) (0)\n"
+                            "# else\n#  define IS_STREAM_A_TTY(stream) (isatty(fileno(stream)) != 0)\n# endif")
+    if _rw(os.path.join(src, "rcutils", "src", "logging.c"), tty):
+        changed.append("rcutils logging.c isatty")
     return changed
 
 
