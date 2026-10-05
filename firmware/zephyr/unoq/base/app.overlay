@@ -1,0 +1,64 @@
+/*
+ * UNO Q 2WD pin plan (cockpit/docs/unoq-zephyr.md), checked against Zephyr's
+ * boards/arduino/uno_q/arduino_r3_connector.dtsi:
+ *   motor 1 (left)  IN1/IN2  D9/D10  PB8/PB9  TIM4 CH3/CH4
+ *   motor 2 (right) IN1/IN2  D3/D6   PB0/PB1  TIM3 CH3/CH4
+ *   encoder 1 A/B            D2/D4   PB3/PA12
+ *   encoder 2 A/B            D7/D8   PB2/PB4
+ * A two-PWM bridge (DRV8833 class): forward drives IN1, reverse drives IN2.
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		/* m1 in1, m1 in2, m2 in1, m2 in2; the period is set at run time from pwm_freq */
+		pwms = <&pwm4 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm4 4 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm3 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm3 4 PWM_USEC(50) PWM_POLARITY_NORMAL>;
+		/* m1 A, m1 B, m2 A, m2 B -- EXTI lines 3, 12, 2, 4: all distinct */
+		enc-gpios = <&gpiob 3 GPIO_PULL_UP>, <&gpioa 12 GPIO_PULL_UP>,
+			    <&gpiob 2 GPIO_PULL_UP>, <&gpiob 4 GPIO_PULL_UP>;
+		/* battery sense: A0 = PA4 = ADC1 IN9 (the board defines the channel); not 5 V tolerant */
+		io-channels = <&adc1 9>;
+	};
+};
+
+&timers4 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm4: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim4_ch3_pb8 &tim4_ch4_pb9>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers3 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch3_pb0 &tim3_ch4_pb1>;
+		pinctrl-names = "default";
+	};
+};
+
+/* micro-ROS on lpuart1, the internal link to the QRB2210 (/dev/ttyHS1). */
+&lpuart1 { status = "okay"; };
+
+/*
+ * The robot's env block (firmware/common/lib/mcu_env/mcu_env.h layout: CRC32, then
+ * "key=value\0...\0\0"), in the last 8 KB page of bank 2 -- clear of Arduino's
+ * sketch area (storage, 0xe0000-0xfffff) and of any image this app could grow to.
+ */
+&flash0 {
+	partitions {
+		lino_env_partition: partition@1fe000 {
+			label = "lino-env";
+			reg = <0x001fe000 DT_SIZE_K(8)>;
+			read-only;
+		};
+	};
+};
