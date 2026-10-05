@@ -23,21 +23,22 @@
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/twist_stamped.h>
 #include <nav_msgs/msg/odometry.h>
-extern "C" {
-#include <microros_transports.h>
-}
 
 #include "drive.h"
 #include "env.h"
 #include "kinematics.h"
 #include "pid.h"
 #include "test_sensors.h"
+#include "uart_link.h"
 
 #define NODE_NAME      "linorobot_base_node"
 #define CONTROL_MS     20      // 50 Hz, as every other board
 #define CMD_TIMEOUT_MS 200     // the Arduino firmware's dead-man
 
 #define RCOK(fn) ((fn) == RCL_RET_OK)
+// For calls whose failure there is nothing to do about (teardown, a best-effort
+// publish): rcl marks them warn_unused_result, which a (void) cast does not silence.
+static inline void rcIgnore(rcl_ret_t rc) { (void)rc; }
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 
@@ -124,7 +125,7 @@ static void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
     odom_msg.twist.twist.linear.x = v.linear_x;
     odom_msg.twist.twist.linear.y = 0.0;
     odom_msg.twist.twist.angular.z = v.angular_z;
-    (void)rcl_publish(&odom_pub, &odom_msg, NULL);
+    rcIgnore(rcl_publish(&odom_pub, &odom_msg, NULL));
 }
 
 static void initOdomMsg(void)
@@ -148,9 +149,9 @@ static bool createEntities(void)
     rcl_init_options_t opts = rcl_get_zero_initialized_init_options();
     if (!RCOK(rcl_init_options_init(&opts, allocator)))
         return false;
-    rcl_init_options_set_domain_id(&opts, (size_t)envInt("domain_id", 0));
+    rcIgnore(rcl_init_options_set_domain_id(&opts, (size_t)envInt("domain_id", 0)));
     const rcl_ret_t rc = rclc_support_init_with_options(&support, 0, NULL, &opts, &allocator);
-    (void)rcl_init_options_fini(&opts);
+    rcIgnore(rcl_init_options_fini(&opts));
     if (!RCOK(rc))
         return false;
     if (!RCOK(rclc_node_init_default(&node, envGet("node", NODE_NAME), "", &support)))
@@ -196,14 +197,14 @@ static void destroyEntities(void)
 {
     rmw_context_t *ctx = rcl_context_get_rmw_context(&support.context);
     (void)rmw_uros_set_context_entity_destroy_session_timeout(ctx, 0);
-    (void)rcl_publisher_fini(&odom_pub, &node);
-    (void)rcl_subscription_fini(&twist_sub, &node);
+    rcIgnore(rcl_publisher_fini(&odom_pub, &node));
+    rcIgnore(rcl_subscription_fini(&twist_sub, &node));
     if (stamped_cmd_vel)
-        (void)rcl_subscription_fini(&twist_stamped_sub, &node);
-    (void)rcl_timer_fini(&control_timer);
-    (void)rclc_executor_fini(&executor);
-    (void)rcl_node_fini(&node);
-    (void)rclc_support_fini(&support);
+        rcIgnore(rcl_subscription_fini(&twist_stamped_sub, &node));
+    rcIgnore(rcl_timer_fini(&control_timer));
+    rcIgnore(rclc_executor_fini(&executor));
+    rcIgnore(rcl_node_fini(&node));
+    rcIgnore(rclc_support_fini(&support));
 }
 
 static void stopWheels(void)
@@ -260,9 +261,9 @@ int main(void)
         printk("[base] lpuart1 -> /dev/ttyHS1 at %d baud%s\n", baud, rc ? " FAILED" : "");
     }
 
-    rmw_uros_set_custom_transport(MICRO_ROS_FRAMING_REQUIRED, (void *)&default_params,
-                                  zephyr_transport_open, zephyr_transport_close,
-                                  zephyr_transport_write, zephyr_transport_read);
+    // Our interrupt-driven transport (uart_link.cpp), not the module's polled one.
+    // Framing on: the link is a byte stream, as every serial micro-ROS transport.
+    rmw_uros_set_custom_transport(true, NULL, uartLinkOpen, uartLinkClose, uartLinkWrite, uartLinkRead);
 
     enum { WAITING, CONNECTED } state = WAITING;
     int64_t last_ping = 0;
@@ -294,6 +295,15 @@ int main(void)
             }
             if (!rmw_uros_epoch_synchronized())
                 rmw_uros_sync_session(100);
+        }
+        static int64_t last_stats;
+        if (now - last_stats >= 10000) {
+            last_stats = now;
+            struct UartLinkStats st;
+            uartLinkStats(&st);
+            printk("[link] tx %u rx %u bytes; tx waits %u, tx dropped %u, rx dropped %u, uart errors %u\n",
+                   (unsigned)st.tx_bytes, (unsigned)st.rx_bytes, (unsigned)st.tx_full_waits,
+                   (unsigned)st.tx_dropped, (unsigned)st.rx_dropped, (unsigned)st.uart_errors);
         }
         k_yield();
     }

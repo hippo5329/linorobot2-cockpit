@@ -35,5 +35,8 @@ read from the last flash page (0x081FE000). Keys read: `app` (`base` | `test_sen
 `sim_wheel=1` is a first-order wheel (150 ms) fed the commanded PWM; the full model is phase 4.
 The console is a RAM buffer (`ram_console_buf`), read over SWD; the UART console does not reach Linux.
 
-Not yet: IMU, battery publishing, `topic_prefix`, the boot banner on the link, an
-interrupt-driven transport write (the polled write takes ~10 % of the CPU at 4 Mbaud with 50 Hz odom).
+The link is our own interrupt-driven transport (`base/src/uart_link.cpp`): write() queues the
+frame, the UART interrupt drains it into the 8-byte FIFO; the RAM console prints its counters
+(`[link] tx/rx bytes, waits, drops, uart errors`) every 10 s. The module's polled transport is unused.
+
+Not yet: IMU, battery publishing, `topic_prefix`, the boot banner on the link.
