@@ -49,6 +49,95 @@ LOG_ROOT = os.path.join(REPO_ROOT, "logs")
 LOG_DIR = os.path.join(LOG_ROOT, RUN_ID)
 
 
+class ProgressLog:
+    """logs/<run>/progress.log: where a 1-Click run is, with times, and that it is still moving.
+
+    One timestamped line each time the run enters a stage -- the `[n/6] [STAGE]` lines
+    it prints -- with the seconds since the start; every failure (❌) and the verdict
+    lines; a heartbeat every `beat` seconds while a stage has not changed ("still at
+    [3/6] FLASH for 840 s"); and how the run ended. It reads the run's own output, so
+    a stage added later is tracked without touching this. A UNO Q run sat at
+    "[3/6] [FLASH]" for a quarter of an hour on 2026-10-06 (an `lsof` that did not
+    return) and nothing showed whether it was flashing slowly or not at all.
+    """
+    STAGE = re.compile(r"^\s*\[(\d+(?:\.\d+)?)/6\]\s*\[([A-Z0-9_ -]+)\]\s*(.*)$")
+    EVENT = re.compile(r"(❌|✅ NAV2 GOAL|✅ EXPLORE|EXPLORE:|NOT REACHED|MAP SAVED|FAILED STEP|VERDICT:)")
+
+    def __init__(self, path, beat=60.0):
+        self.path, self.beat = path, beat
+        self.t0 = self.t_stage = time.time()
+        self.stage, self._buf, self._stop = "start", "", False
+        self._lock = threading.Lock()
+        self.write(f"START {' '.join(sys.argv[1:])}")
+        threading.Thread(target=self._heartbeat, daemon=True).start()
+
+    def write(self, msg):
+        line = (f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+                f"+{time.time() - self.t0:7.1f}s  {msg}\n")
+        with self._lock:
+            try:
+                with open(self.path, "a") as fh:
+                    fh.write(line)
+            except OSError:
+                pass
+
+    def feed(self, text):
+        """Each complete output line, as the run prints it."""
+        self._buf += text
+        while "\n" in self._buf:
+            raw, self._buf = self._buf.split("\n", 1)
+            m = self.STAGE.match(raw)
+            if m:
+                self.stage, self.t_stage = f"[{m.group(1)}/6] {m.group(2)}", time.time()
+                self.write(f"{self.stage}  {m.group(3).strip()[:160]}")
+            elif self.EVENT.search(raw):
+                self.write(f"    {raw.strip()[:200]}")
+
+    def _heartbeat(self):
+        while not self._stop:
+            time.sleep(self.beat)
+            if self._stop:
+                break
+            held = time.time() - self.t_stage
+            if held >= self.beat:
+                self.write(f"    still at {self.stage} for {held:.0f} s")
+
+    def end(self, how):
+        self._stop = True
+        self.write(f"END {how} after {time.time() - self.t0:.0f} s")
+
+
+class _Tee:
+    """stdout as it was, with every line also offered to the progress log."""
+    def __init__(self, stream, progress):
+        self._s, self._p = stream, progress
+
+    def write(self, text):
+        try:
+            self._p.feed(text)
+        except Exception:
+            pass
+        return self._s.write(text)
+
+    def flush(self):
+        return self._s.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+PROGRESS = None
+
+
+def start_progress_log():
+    """Open this run's progress.log and route stdout through it (once)."""
+    global PROGRESS
+    if PROGRESS is None:
+        PROGRESS = ProgressLog(run_log_path("progress"))
+        sys.stdout = _Tee(sys.stdout, PROGRESS)
+    return PROGRESS
+
+
 def run_log_path(tag: str) -> str:
     """This run's log for `tag`, with the compatibility symlinks refreshed."""
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -429,6 +518,39 @@ def _immune_pids() -> set:
     return immune
 
 
+def port_holders(path: str, proc: str = "/proc") -> list:
+    """PIDs with `path` open, read straight from /proc/<pid>/fd.
+
+    It was `lsof -t <port>`. On the Arduino UNO Q, inside the cockpit container, one call
+    did not return in 30 s (lsof stats every mount and process first), and the eight
+    calls this loop may make held a 1-Click at "[3/6] [FLASH]" for a quarter of an hour.
+    A /proc walk answers the one question asked, in milliseconds, with no tool to install.
+    """
+    try:
+        target = os.path.realpath(path)
+    except OSError:
+        return []
+    out = []
+    try:
+        pids = [d for d in os.listdir(proc) if d.isdigit()]
+    except OSError:
+        return []
+    for pid in pids:
+        fd_dir = os.path.join(proc, pid, "fd")
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue                     # gone, or not ours to look at
+        for fd in fds:
+            try:
+                if os.readlink(os.path.join(fd_dir, fd)) == target:
+                    out.append(pid)
+                    break
+            except OSError:
+                continue
+    return out
+
+
 def release_serial_port(serial_port: str):
     """Release the serial port from micro_ros_agent or any other holder, by PID."""
     if not serial_port or not os.path.exists(serial_port):
@@ -465,11 +587,11 @@ def release_serial_port(serial_port: str):
 
     try:
         for _ in range(8):
-            res = subprocess.run(["lsof", "-t", serial_port], capture_output=True, text=True)
-            if res.returncode != 0 or not res.stdout.strip():
+            holders = port_holders(serial_port)
+            if not holders:
                 break
             signalled = False
-            for pid in res.stdout.split():
+            for pid in holders:
                 try:
                     pid_i = int(pid)
                 except ValueError:
@@ -2219,10 +2341,20 @@ def main():
 
 
 if __name__ == "__main__":
+    _progress = start_progress_log()
     try:
-        sys.exit(main())
+        _rc = main()
+    except SystemExit as _e:
+        _progress.end(f"exit {_e.code}")
+        raise
     except KeyboardInterrupt:
+        _progress.end("interrupted")
         # Stop (the cockpit's button, or Ctrl-C). main()'s finally has already
         # stopped what this run started; a traceback here only read as a crash.
         print("\n⏹ 1-Click run stopped (interrupted).", flush=True)
         sys.exit(130)
+    except Exception as _e:
+        _progress.end(f"crashed: {type(_e).__name__}: {_e}")
+        raise
+    _progress.end(f"exit {_rc}")
+    sys.exit(_rc)

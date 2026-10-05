@@ -88,3 +88,16 @@ def test_openocd_runs_through_the_host_loader_inside_the_container(tmp_path, mon
     argv = unoq_swd.openocd_argv()
     assert argv[:3] == [str(hl / "ld-linux-aarch64.so.1"), "--library-path", str(hl)]
     assert str(od / "share" / "openocd" / "scripts") in argv
+
+
+def test_port_holders_reads_proc_and_needs_no_lsof(tmp_path):
+    """lsof did not return in 30 s inside the UNO Q's container; /proc answers directly."""
+    dev = tmp_path / "ttyHS1"; dev.write_text("")
+    proc = tmp_path / "proc"
+    for pid, target in (("101", dev), ("202", tmp_path / "other")):
+        (proc / pid / "fd").mkdir(parents=True)
+        os.symlink(str(target), proc / pid / "fd" / "3")
+    (proc / "self").mkdir()                     # not a pid: skipped
+    assert ocp.port_holders(str(dev), proc=str(proc)) == ["101"]
+    src = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert '"lsof"' not in src
