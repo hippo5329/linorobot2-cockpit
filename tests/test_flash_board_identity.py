@@ -170,10 +170,10 @@ def test_new_board_is_a_cli_flag():
     assert '"--new-board"' in src and "if is_esp_family(args.env) and not args.new_board" in src
 
 
-# Gate rc-20261005.1 (a20): lino-pico's own Pico (D664CC...) stopped enumerating as a tty,
-# the cell's /dev/ttyACM0 kept its old source, the host gave that number to
-# lino-pico-bare's Pico (D665C0...), and lino-pico flashed it six times mid-run. The board
-# on the tty was "remembered" as whatever answered there; the stamp said otherwise.
+# A bench with two Picos on one host (2026-10-05): one Pico (D664CC...) stopped enumerating
+# as a tty, its container's /dev/ttyACM0 kept its old source, the host gave that number to
+# the other Pico (D665C0...), and the flasher reflashed it six times mid-run. The board on
+# the tty was "remembered" as whatever answered there; the stamp said otherwise.
 def test_a_tty_leading_to_another_board_than_the_stamp_is_refused(tmp_path):
     root = _sysfs(tmp_path, "1-4", PICO_W)
     with pytest.raises(flash_mcu.BoardSwapped) as e:

@@ -422,12 +422,12 @@ def remember_board_identity(path: Optional[str], from_tty: bool, stamp: dict,
     recorded = str(stamp.get("usb_serial") or "").upper()
     if _APP_USB_SERIAL and recorded and _APP_USB_SERIAL != recorded:
         # The tty leads to a DIFFERENT board from the one this port's last flash
-        # recorded. Gate rc-20261005.1 (2026-10-05, a20): lino-pico's own Pico
-        # stopped enumerating as a tty after a flash, the cell's /dev/ttyACM0 kept
-        # its old source, the host handed that number to lino-pico-bare's Pico --
-        # and lino-pico flashed it six times while the other cell was driving Nav2
-        # on it. Every one of those legs "ran away". A board replaced on purpose
-        # says so with --new-board (which passes no stamp).
+        # recorded. Seen on a bench with two Picos on one host (2026-10-05): one board
+        # stopped enumerating as a tty after a flash, its container kept its old
+        # /dev/ttyACM0, the host gave that number to the OTHER Pico -- and this flasher
+        # reflashed it six times while the other test was driving Nav2 on it. Every one
+        # of those runs "ran away". A board replaced on purpose says so with
+        # --new-board (which passes no stamp).
         raise BoardSwapped(
             f"the board on this port is {_APP_USB_SERIAL}, but this port's last flash "
             f"was board {recorded} -- the port leads to a different board (another "
