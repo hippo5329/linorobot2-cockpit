@@ -69,3 +69,10 @@ def test_the_release_builds_both_distros_and_publishes_only_after_them():
     assert "firmware-unoq" in pub["needs"]
     green = [s for s in pub["steps"] if s.get("name") == "The firmware matrix must have been green"][0]
     assert "needs.firmware-unoq.result" in green["if"]
+
+
+def test_a_missing_unoq_archive_points_at_the_zephyr_build_not_platformio():
+    import fetch_prebuilt
+    assert "firmware/zephyr/unoq/build.sh" in fetch_prebuilt.build_hint("unoq-lyrical")
+    assert "MICROROS_DISTRO=lyrical" in fetch_prebuilt.build_hint("unoq-lyrical")
+    assert fetch_prebuilt.build_hint("pico2-jazzy") == "python3 scripts/build_prebuilt.py pico2-jazzy"

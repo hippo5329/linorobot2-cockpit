@@ -95,6 +95,15 @@ def repo_version() -> str:
         return "dev"
 
 
+def build_hint(profile: str) -> str:
+    """How to build this profile's image locally. The UNO Q's is Zephyr, not PlatformIO."""
+    if profile.startswith("unoq-"):
+        distro = profile.split("-", 1)[1]
+        return (f"MICROROS_DISTRO={distro} firmware/zephyr/unoq/build.sh <workdir> && "
+                f"python3 scripts/package_unoq.py <workdir>/build-fw {distro}")
+    return f"python3 scripts/build_prebuilt.py {profile}"
+
+
 def asset_name(profile: str) -> str:
     return f"linorobot2-firmware-{profile}.tar.gz"
 
@@ -279,7 +288,7 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
             f"fetch_prebuilt: {asset_name(profile)} is in no release of {repo} "
             f"(tried {', '.join(tried)}): {last}\n"
             f"  Check the release name (--version), or build the image yourself:\n"
-            f"    python3 scripts/build_prebuilt.py {profile}")
+            f"    {build_hint(profile)}")
 
     tmp_dir = profile_dir + ".tmp"
     shutil.rmtree(tmp_dir, ignore_errors=True)
