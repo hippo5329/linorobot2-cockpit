@@ -186,7 +186,8 @@ def test_the_generated_bare_config_is_the_default_chassis():
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import gen_bare_config
     leds = {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64, "esp32": 2, "esp32s3": 48,
-            "xrp": 64}   # the XRP's LED is on its RM2 radio, like a Pico W's
+            "xrp": 64,   # the XRP's LED is on its RM2 radio, like a Pico W's
+            "unoq": 21}  # the UNO Q's on-board LED3 green (PH11)
     for mcu in sorted(gen_bare_config.BOARDS):
         cfg = gen_bare_config.bare_config(mcu)
         for key, want in DEFAULT_KINEMATICS.items():

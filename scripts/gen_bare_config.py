@@ -49,6 +49,7 @@ BOARDS = {
     "xrp":     ("sparkfun_xrp_controller", "SparkFun XRP Controller (RP2350B + RM2)"),
     "esp32":   ("esp32dev",     "ESP32 (WROOM)"),
     "esp32s3": ("esp32-s3-devkitc-1", "ESP32-S3"),
+    "unoq":    ("arduino_uno_q", "Arduino UNO Q (STM32U585)"),
 }
 
 # The Sim MCU: no silicon at all. sim_base_node stands in for the board on the
@@ -306,6 +307,14 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
             "simulation": bare_simulation(),
             "pins": bare_pins(key),
         }
+        if key == "unoq":
+            # The UNO Q's STM32 is on the board: its micro-ROS link is the QRB2210's UART
+            # (/dev/ttyHS1, 4 Mbaud), it is flashed over SWD, and no second UART reaches
+            # Linux -- so the synthetic scan travels as a micro-ROS topic. The simulation
+            # robot of the UNO Q; the `unoq` reference design is a real robot and is never
+            # run in Sim mode (user, 2026-10-06).
+            params["base_controller"].update(serial_port="/dev/ttyHS1", baudrate=4000000)
+            params["base_controller"]["lidar"]["comm_mode"] = "topic"
         if key == "esp32s3":
             # Stated, not left to the env default, so the choice is visible where
             # it is made: `uart0` (with /dev/ttyUSB0) for a board wired like the Yahboom.
