@@ -37,10 +37,15 @@ class Encoder
 private:
 	int counts_per_rev_ = -1;
         ESP32Encoder encoder_;
-	unsigned long prev_update_time_;
-        int64_t prev_encoder_ticks_;
+	// Initialised here, not left to the storage: the factory builds encoders with
+	// `new`, and heap memory is not zeroed. The first getRPM() subtracted a garbage
+	// tick count over a garbage interval -- one enormous RPM that the odometry
+	// integrated and kept (a real-wheel Yahboom at x = -4.7e11 m, 2026-10-06).
+	unsigned long prev_update_time_ = 0;
+        int64_t prev_encoder_ticks_ = 0;
 public:
 	Encoder(int pin1, int pin2, int counts_per_rev, bool invert = false) {
+		prev_update_time_ = micros();
 		int temp_pin = pin1;
 		if (pin1 < 0 || pin2 < 0) return; // unused encoder
 		if(invert)
@@ -84,13 +89,15 @@ class Encoder
 {
 private:
     int counts_per_rev_ = -1;
-    unsigned long prev_update_time_;
-    int32_t prev_encoder_ticks_;
+    // Initialised for the same reason as the ESP32 class above (heap, not zeroed).
+    unsigned long prev_update_time_ = 0;
+    int32_t prev_encoder_ticks_ = 0;
     uint offset_;
       PioEncoder pioencoder_;
 public:
     Encoder(int pin1, int pin2, int counts_per_rev, bool invert = false) : \
         pioencoder_(pin1) {
+        prev_update_time_ = micros();
         if (pin1 < 0 || pin2 < 0) return; // unused encoder
         pioencoder_.begin();
         pioencoder_.flip(invert);

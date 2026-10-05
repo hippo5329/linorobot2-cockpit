@@ -129,6 +129,13 @@ def _battery_range(msg):
 # What firmware/common/lib/imu/ahrs.h subtracts; AHRS_GRAVITY there.
 AHRS_GRAVITY = 9.80665
 
+# imu: AUTO. How long to wait for the board's own /odom/unfiltered, and then for its
+# /imu/data publisher to be discovered. The gap was over 1 s on a Yahboom over serial;
+# the grace sits well past it, and a board with an IMU ends the wait the moment the
+# publisher appears, so only a robot without one pays it in full.
+IMU_AUTO_BOARD_WAIT_S = 15.0
+IMU_AUTO_GRACE_S = 8.0
+
 
 def _gravity_from(q, g=AHRS_GRAVITY):
     """AHRS::gravityFrom(): gravity in the body frame, from an orientation."""
@@ -392,14 +399,20 @@ def main():
 
     imu_absent_note = ""
     if args.imu_auto and not args.no_imu:
-        # Wait for the board itself (its /odom), then ask whether it made an IMU
-        # publisher at all. Both are created in the same createEntities() call.
+        # Wait for the BOARD -- its own /odom/unfiltered, not /odom, which is the EKF on
+        # this computer and exists from the moment bringup starts -- then give its IMU
+        # publisher time to be discovered: createEntities() makes odom/unfiltered first
+        # and imu/data after it, each a round trip to the agent. Waiting on /odom and one
+        # second more declared "no IMU" on a Yahboom whose IMU had just reported its gyro
+        # bias (lyrical over serial, 2026-10-06).
         t0 = time.time()
-        while time.time() - t0 < 5.0 and verifier.count_publishers("/odom") == 0:
+        while time.time() - t0 < IMU_AUTO_BOARD_WAIT_S and verifier.count_publishers("/odom/unfiltered") == 0:
             rclpy.spin_once(verifier, timeout_sec=0.1)
-        for _ in range(10):
+        t1 = time.time()
+        while (time.time() - t1 < IMU_AUTO_GRACE_S and verifier.count_publishers("/odom/unfiltered")
+               and verifier.count_publishers("/imu/data") == 0):
             rclpy.spin_once(verifier, timeout_sec=0.1)
-        if verifier.count_publishers("/odom") and verifier.count_publishers("/imu/data") == 0:
+        if verifier.count_publishers("/odom/unfiltered") and verifier.count_publishers("/imu/data") == 0:
             for table in (verifier.timestamps, verifier.samples, verifier.thresholds):
                 table.pop("/imu/data", None)
             imu_absent_note = ("ℹ️  /imu/data    : no publisher -- imu is AUTO and the board found "
