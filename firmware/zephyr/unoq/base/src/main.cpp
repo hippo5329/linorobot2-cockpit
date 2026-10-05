@@ -244,13 +244,15 @@ int main(void)
     initOdomMsg();
     printk("[base] linorobot2 UNO Q base: %s, %s cmd_vel\n", base, stamped_cmd_vel ? "stamped" : "unstamped");
 
-    // The link's speed is the env's `baud`, 921600 by default as the Arduino serial
-    // boards. At the board file's 115200 one Odometry message (~730 bytes) takes 63 ms
-    // to send against a 20 ms control period: the polled transport write then owns the
-    // CPU and odometry never gets out.
+    // The link's speed is the env's `baud`, 1500000 by default. The link never leaves
+    // the board, so it is not held to the 921600 of the Arduino serial boards' cables.
+    // At the board file's 115200 one Odometry message (~730 bytes) takes 63 ms against
+    // a 20 ms control period: the polled transport write owns the CPU and odometry never
+    // gets out. Sampled with 50 Hz odom (2026-10-05): the write took 43 % of the CPU at
+    // 921600 and 23 % at 1500000.
     const struct device *link = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
     struct uart_config link_cfg;
-    const int baud = envInt("baud", 921600);
+    const int baud = envInt("baud", 1500000);
     if (uart_config_get(link, &link_cfg) == 0) {
         link_cfg.baudrate = (uint32_t)baud;
         const int rc = uart_configure(link, &link_cfg);
