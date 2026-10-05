@@ -125,9 +125,39 @@ jobs:
           name: firmware-${{ matrix.profile }}
           path: dist/linorobot2-firmware-${{ matrix.profile }}.tar.gz
 
+  # The Arduino UNO Q's STM32U585 is not a PlatformIO target: its firmware is the same
+  # src/main.cpp built with Zephyr (firmware/zephyr/unoq/build.sh, in Zephyr's CI
+  # container), one image per distro because micro-ROS is fixed at link time.
+  # package_unoq.py gives it the same archive and manifest shape as the profiles above,
+  # after the same /cmd_vel check on its bytes.
+  firmware-unoq:
+    name: Prebuilt firmware unoq-${{ matrix.distro }}
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [jazzy, lyrical]
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --break-system-packages --upgrade platformio pyyaml
+      - name: The Arduino libraries the firmware compiles (from platformio_base.ini)
+        run: python3 firmware/host/fetch_libdeps.py "$RUNNER_TEMP/libdeps"
+      - name: Build the image (Zephyr ${{ matrix.distro }})
+        run: |
+          MICROROS_DISTRO=${{ matrix.distro }} LINO_LIBDEPS="$RUNNER_TEMP/libdeps" \
+          FW_GIT_REV=$(git rev-parse --short=7 HEAD) \
+            bash firmware/zephyr/unoq/build.sh "$RUNNER_TEMP/unoq-work" fw
+      - name: Package it, after the /cmd_vel check on its bytes
+        run: python3 scripts/package_unoq.py "$RUNNER_TEMP/unoq-work/build-fw" ${{ matrix.distro }} --dist dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-unoq-${{ matrix.distro }}
+          path: dist/linorobot2-firmware-unoq-${{ matrix.distro }}.tar.gz
+
   publish-firmware:
     name: Attach firmware to the release
-    needs: firmware
+    needs: [firmware, firmware-unoq]
     # always(), because `needs:` on its own SKIPS this job the moment one
     # profile fails -- and a skipped publish is silent. The run then shows a
     # row of green builds, no release, and nothing saying why; it has already
@@ -203,10 +233,10 @@ jobs:
           prerelease: ${{ startsWith(github.ref_name, 'rc-') }}
           generate_release_notes: true
       - name: The firmware matrix must have been green
-        if: needs.firmware.result != 'success'
+        if: needs.firmware.result != 'success' || needs.firmware-unoq.result != 'success'
         run: |
           echo "::error::a firmware profile failed to build, so the release just \
-          published is missing at least one archive (firmware job: ${{ needs.firmware.result }})"
+          published is missing at least one archive (firmware: ${{ needs.firmware.result }}, firmware-unoq: ${{ needs.firmware-unoq.result }})"
           exit 1
 
   images:
