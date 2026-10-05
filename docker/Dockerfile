@@ -477,6 +477,14 @@ RUN mkdir -p /config /ws/firmware/prebuilt /ws/logs /ws/maps
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# The commit this image was built from, where a tool can read it: the OCI label for the
+# registry, /ws/BUILD_COMMIT inside. `COPY . /ws` carries no .git, so without this an
+# image could not say which tree it holds, and a test could run an older image's backend
+# or Sim MCU beside newer scripts without anything noticing.
+ARG LINO_GIT_REV=unknown
+LABEL org.opencontainers.image.revision=$LINO_GIT_REV
+RUN printf '%s\n' "$LINO_GIT_REV" > /ws/BUILD_COMMIT
+
 ENV COCKPIT_CONFIG_DIR=/config
 EXPOSE 8000 9090
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
