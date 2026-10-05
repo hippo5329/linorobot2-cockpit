@@ -329,6 +329,7 @@ function normalizeMcuFamily(mcu) {
   if (s.includes("pico") || s.includes("rp2040")) return "pico";
   if (s.includes("s3") || s.includes("esp32s3") || s.includes("yb_eet01")) return "esp32s3";
   if (s.includes("esp32") || s.includes("gendrv")) return "esp32";
+  if (s.includes("unoq") || s.includes("stm32")) return "unoq";   // the Arduino UNO Q's on-board STM32U585
   return "pico2";
 }
 
@@ -344,6 +345,7 @@ function updateReferenceDesigns(mcuHint) {
     xrp: "SparkFun XRP Controller (RP2350B)",
     esp32: "ESP32",
     esp32s3: "ESP32-S3",
+    unoq: "Arduino UNO Q (STM32U585)",
   };
 
   // Every design is offered, whatever MCU is detected or selected (user,

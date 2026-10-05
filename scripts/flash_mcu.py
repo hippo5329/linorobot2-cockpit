@@ -178,6 +178,46 @@ def is_esp_family(env: str) -> bool:
     return any(k in env_lower for k in ("esp32", "esp32s3", "espressif", "gendrv"))
 
 
+def is_unoq_family(env: str) -> bool:
+    """The Arduino UNO Q's STM32U585: written over SWD by scripts/unoq_swd.py."""
+    return mcu_identity.env_family(env) == "unoq"
+
+
+def flash_unoq(args, prebuilt_dir: Optional[str]) -> int:
+    """The UNO Q over SWD: the env block (with its `app`) and, unless --env-only, the image.
+
+    The env is built and checked exactly as for the other boards (resolve_env_bin: the
+    mixed-simulation refusal, [TOOL REFUSED]), so switching to a diagnostic tool from the
+    Hardware Tests tab is the same 4 KB write it is everywhere -- here over SWD, which
+    resets the MCU into the selected application. A tool's text goes out the micro-ROS
+    link (/dev/ttyHS1) like any board's serial, and into the firmware's RAM console.
+    """
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import unoq_swd
+    elf = None
+    if not args.env_only:
+        if not prebuilt_dir:
+            log("❌ The UNO Q's firmware is built with Zephyr (firmware/zephyr/unoq/build.sh), not "
+                "PlatformIO: flash a prebuilt profile (--prebuilt unoq-<distro>) or --env-only.")
+            return 1
+        elf = os.path.join(prebuilt_dir, "firmware.elf")
+    env_bin = resolve_env_bin(args, prebuilt_dir)
+    if not env_bin:
+        log("❌ The UNO Q needs an env block: pass --params <robot config> or --env-bin.")
+        return 1
+    try:
+        dev, uid = unoq_swd.identify()
+        log(f"Board on SWD: STM32U5 DEV_ID 0x{dev:03x} uid={uid} (Arduino UNO Q)")
+        log(f"Writing over SWD: {'firmware.elf and ' if elf else ''}the env block "
+            f"(app={getattr(args, 'app', None) or 'base'}) at 0x{unoq_swd.ENV_ADDR:08X}...")
+        unoq_swd.flash(env_bin, elf)
+    except unoq_swd.SwdError as exc:
+        log(f"❌ {exc}")
+        return 1
+    log("✅ written over SWD, the env block read back and matched, the MCU reset into it.")
+    return 0
+
+
 
 def _ancestry() -> set:
     """This process and every ancestor of it, by pid."""
@@ -1882,6 +1922,11 @@ def main() -> int:
                 log(f"❌ {entry['name']} does not match its manifest checksum.")
                 return 1
         log(f"   ✅ {len(manifest['files'])} artifacts match their checksums")
+
+    # The Arduino UNO Q's STM32 has no USB: everything goes over SWD, and none of the
+    # USB identity, BOOTSEL or port handling below applies.
+    if is_unoq_family(args.env):
+        return flash_unoq(args, prebuilt_dir)
 
     # Pin the flash to one physical board -- its port, and its identity -- while
     # the tty still exists to say which one it is. Must happen before anything

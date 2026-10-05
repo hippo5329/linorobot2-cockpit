@@ -31,6 +31,9 @@ _ENV_FAMILY = {
     "unoq": "unoq",                                 # Arduino UNO Q: STM32U585 on SWD, no USB (unoq_swd.py)
 }
 
+# Envs built outside PlatformIO (firmware/zephyr/unoq/build.sh): jazzy is the bare name.
+_ZEPHYR_ENVS = {"unoq", "unoq_lyrical"}
+
 # Boards whose image is not their family's default one (see pio_env_for).
 _BOARD_ENV = {"xrp": "pico2w"}
 
@@ -354,6 +357,50 @@ def _pio_envs() -> set:
         return set()
 
 
+def onboard_controller(dt_root: str = "/proc/device-tree") -> tuple:
+    """(family, chip, port) of a base controller built into THIS computer, or (None, ...).
+
+    The Arduino UNO Q's STM32U585 is on the board, wired to the QRB2210's UART
+    (/dev/ttyHS1) and SWD GPIOs: no USB device, so the bus never shows it, and a UI that
+    reads an empty bus as "no board" switched a UNO Q to the Sim MCU. The board says what
+    it is in its device tree (compatible "arduino,imola").
+    """
+    try:
+        with open(os.path.join(dt_root, "compatible"), "rb") as fh:
+            compatible = fh.read().split(b"\0")
+    except OSError:
+        return None, None, None
+    if b"arduino,imola" in compatible:
+        return "unoq", FAMILY_LABEL["unoq"], "/dev/ttyHS1"
+    return None, None, None
+
+
+def image_distro() -> str:
+    """The ROS 2 distro this computer's stack runs (the robot image carries one)."""
+    for d in ("lyrical", "jazzy"):
+        if os.path.exists(f"/opt/ros/{d}"):
+            return d
+    return os.environ.get("ROS_DISTRO", "jazzy")
+
+
+def env_for_distro(env: str, distro: str) -> str:
+    """The env whose image speaks this distro: `<env>_<distro>` for anything but jazzy.
+
+    micro-ROS is fixed at link time, so a jazzy image never holds a session with a
+    lyrical agent -- silently. Raises ValueError when no such env is declared, rather
+    than hand back the jazzy one. (one_click_pipeline.resolve_pio_env is the pipeline's
+    copy of this rule.)
+    """
+    env = (env or "").strip().lower()
+    if not distro or distro == "jazzy" or env.endswith(f"_{distro}") or env == "sim":
+        return env
+    candidate = f"{env}_{distro}"
+    if candidate in _ZEPHYR_ENVS or candidate in _pio_envs():
+        return candidate
+    raise ValueError(f"no '{distro}' build of '{env}' (no env '{candidate}'): a '{env}' image "
+                     f"links jazzy micro-ROS and would never hold a session with this stack")
+
+
 def pio_env_for(name: str, default: str = "esp32") -> str:
     """Normalise a board/controller/detection name to a PlatformIO env.
 
@@ -366,6 +413,11 @@ def pio_env_for(name: str, default: str = "esp32") -> str:
     the board name only picks which silicon.
     """
     key = (name or "").strip().lower()
+    # The UNO Q's image is built with Zephyr, so it is in no platformio.ini; its names
+    # are still envs (fetch_prebuilt maps them to unoq-<distro>, flash_mcu goes over SWD).
+    # Falling through to the default sent a UNO Q's tool switch off as a Pico 2 flash.
+    if key in _ZEPHYR_ENVS:
+        return key
     envs = _pio_envs()
     if key in envs:
         return key

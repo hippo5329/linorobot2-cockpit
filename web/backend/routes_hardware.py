@@ -123,11 +123,21 @@ async def api_hardware_test(request: Request):
                 f"--baud {baud}"
             )
         else:
-            image = (f"--firmware-dir {firmware_dir} --env {mcu_env} --build"
-                     if pio_present() else
-                     f"--prebuilt {fetch_prebuilt.profile_for_env(mcu_env)}")
-            fetch = ("" if pio_present() else
-                     f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {mcu_env} && ")
+            # The image must speak this stack's distro: micro-ROS is fixed at link time,
+            # and `pico2` alone is the jazzy image -- on a lyrical stack the board
+            # enumerated and never held a session. The pipeline always resolved this;
+            # this button did not.
+            try:
+                flash_env = mcu_identity.env_for_distro(mcu_env, mcu_identity.image_distro())
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if mcu_identity.env_family(flash_env) == "unoq" or not pio_present():
+                # The UNO Q's image is Zephyr-built: never PlatformIO, always the release's.
+                image = f"--prebuilt {fetch_prebuilt.profile_for_env(flash_env)}"
+                fetch = f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {flash_env} && "
+            else:
+                image = f"--firmware-dir {firmware_dir} --env {flash_env} --build"
+                fetch = ""
             cmd = (
                 f"{fetch}python3 {flash_script} {image} "
                 f"--port {port} "
@@ -144,9 +154,13 @@ async def api_hardware_test(request: Request):
         # way to show their output at all. scripts/serial_monitor.py reads the
         # port and writes lines to stdout, which is what the SSE runner
         # forwards.
+        # The port is released by flash_mcu's /proc scan, not lsof: lsof did not return
+        # inside the UNO Q's container, and Monitor hung before it read a byte.
+        release = ("import sys; sys.path.insert(0, %r); import flash_mcu; flash_mcu.release_serial_port(%r)"
+                   % (os.path.join(REPO_ROOT, "scripts"), port))
         cmd = (
             f"echo '=== [1/2] Releasing serial port {port} ===' && "
-            f"lsof -ti {port} 2>/dev/null | xargs -r kill -9 2>/dev/null || true; "
+            f"python3 -c {shlex.quote(release)} || true; "
             f"sleep 0.5; "
             f"echo '=== [2/2] Streaming {port} @ {baud} ===' && "
             f"python3 -u {os.path.join(REPO_ROOT, 'scripts', 'serial_monitor.py')} "

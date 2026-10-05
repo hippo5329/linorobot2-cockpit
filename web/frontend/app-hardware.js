@@ -839,6 +839,41 @@ function autoAssignPins() {
     document.getElementById("pin-enc-1b").value = 31;
     document.getElementById("pin-enc-2a").value = 24;
     document.getElementById("pin-enc-2b").value = 25;
+  } else if (mcu === "unoq") {
+    // The Arduino UNO Q reference (config/reference/unoq_config.yaml), Arduino pin
+    // numbers (A0 = 14): AT8236 drivers on two PWM inputs each, no enable pin. The
+    // eight PWM-capable pins the firmware drives are D3 D6 D9 D10 A2 A3 D11 D12.
+    document.getElementById("pin-led").value = 21;
+    document.getElementById("pin-i2c-sda").value = -1;   // the Qwiic bus is the firmware's default
+    document.getElementById("pin-i2c-scl").value = -1;
+    document.getElementById("pin-battery").value = -1;
+    document.getElementById("pin-sonar-trig").value = -1;
+    document.getElementById("pin-sonar-echo").value = -1;
+
+    document.getElementById("pin-m1-p1").value = -1;
+    document.getElementById("pin-m1-p2").value = 9;
+    document.getElementById("pin-m1-p3").value = 10;
+    document.getElementById("pin-m2-p1").value = -1;
+    document.getElementById("pin-m2-p2").value = 3;
+    document.getElementById("pin-m2-p3").value = 6;
+
+    document.getElementById("pin-enc-1a").value = 2;
+    document.getElementById("pin-enc-1b").value = 4;
+    document.getElementById("pin-enc-2a").value = 7;
+    document.getElementById("pin-enc-2b").value = 8;
+
+    if (is4wd) {
+      document.getElementById("pin-m3-p1").value = -1;
+      document.getElementById("pin-m3-p2").value = 16;
+      document.getElementById("pin-m3-p3").value = 17;
+      document.getElementById("pin-m4-p1").value = -1;
+      document.getElementById("pin-m4-p2").value = 11;
+      document.getElementById("pin-m4-p3").value = 12;
+      document.getElementById("pin-enc-3a").value = 13;
+      document.getElementById("pin-enc-3b").value = 18;
+      document.getElementById("pin-enc-4a").value = 19;
+      document.getElementById("pin-enc-4b").value = 5;
+    }
   } else if (mcu === "esp32" || mcu === "gendrv") {
     document.getElementById("pin-led").value = 2;
     document.getElementById("pin-i2c-sda").value = 21;

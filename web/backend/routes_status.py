@@ -115,6 +115,12 @@ def get_status(controller: Optional[str] = None):
             detected_port = lp.get("path", "") or lp.get("port", "")
             mcu_detected = True
             break
+    # A base controller on this computer's own board (the UNO Q's STM32) is on no bus:
+    # without this the UI read "no board" and switched the robot to the Sim MCU.
+    onboard, onboard_chip, onboard_port = mcu_identity.onboard_controller()
+    if not mcu_detected and onboard:
+        detected_mcu, detected_chip, detected_port = onboard, onboard_chip, onboard_port
+        mcu_detected = True
 
     # Does the bus positively contradict the configured controller? Answered
     # here rather than in the browser so there is one vid/pid table in the
@@ -142,6 +148,14 @@ def get_status(controller: Optional[str] = None):
                         "chip": detected_chip,
                     }
                 break
+        # The board's own device tree is decisive, as a USB VID:PID is.
+        if detected_mcu == onboard and want and want != "sim" and mcu_identity.mismatch(want, onboard, True):
+            mcu_mismatch = {
+                "expected": mcu_identity.FAMILY_LABEL.get(want, want),
+                "detected": onboard_chip,
+                "controller": want_name,
+                "chip": onboard_chip,
+            }
 
     # What the board called ITSELF at its last boot, as recorded by the flasher
     # from the banner. This is not the VID:PID above: that says which kind of
