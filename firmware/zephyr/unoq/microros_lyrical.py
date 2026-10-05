@@ -236,15 +236,21 @@ def patch_sources(src):
     return changed
 
 
+def say(msg):
+    # stderr: the module's CMake takes the clone step's STDOUT as its package list
+    # (get_package_names), and anything printed there became an include path.
+    print(msg, file=sys.stderr)
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--patch-dev":
         for c in patch_dev(sys.argv[2]):
-            print(f"lyrical dev: {c}")
+            say(f"lyrical dev: {c}")
     elif len(sys.argv) == 3 and sys.argv[1] == "--patch-sources":
         for c in patch_sources(sys.argv[2]):
-            print(f"lyrical: {c}")
+            say(f"lyrical: {c}")
     elif len(sys.argv) in (2, 3):
         done = patch_makefile(*sys.argv[1:3])
-        print("lyrical: libmicroros.mk " + ("patched" if done else "already patched"))
+        say("lyrical: libmicroros.mk " + ("patched" if done else "already patched"))
     else:
         sys.exit(__doc__)
