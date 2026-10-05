@@ -18,11 +18,17 @@
 			     <&gpioc 1 0>, <&gpioc 0 0>,
 			     <&gpioh 10 GPIO_ACTIVE_LOW>, <&gpioh 11 GPIO_ACTIVE_LOW>,
 			     <&gpioh 12 GPIO_ACTIVE_LOW>;
-		/* PWM: D3, D6, D9, D10; the period is set at run time (analogWriteFrequency) */
+		/* PWM: D3, D6, D9, D10, then A2, A3, D12, D11 -- eight, two per motor for a 4WD or
+		 * mecanum base on two-PWM drivers. The period is set at run time
+		 * (analogWriteFrequency). The order is pins.cpp pwmIndex(). */
 		pwms = <&pwm3 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
 		       <&pwm3 4 PWM_USEC(50) PWM_POLARITY_NORMAL>,
 		       <&pwm4 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
-		       <&pwm4 4 PWM_USEC(50) PWM_POLARITY_NORMAL>;
+		       <&pwm4 4 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm3 1 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm3 2 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm15 1 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm15 2 PWM_USEC(50) PWM_POLARITY_NORMAL>;
 		/* analogRead: A0-A5 = ADC1 IN9, IN10, IN11, IN12, IN2, IN1 (the board's channels) */
 		io-channels = <&adc1 9>, <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 2>, <&adc1 1>;
 	};
@@ -47,9 +53,28 @@
 	st,prescaler = <0>;
 	pwm3: pwm {
 		status = "okay";
-		pinctrl-0 = <&tim3_ch3_pb0 &tim3_ch4_pb1>;
+		pinctrl-0 = <&tim3_ch1_pa6 &tim3_ch2_pa7 &tim3_ch3_pb0 &tim3_ch4_pb1>;
 		pinctrl-names = "default";
 	};
+};
+
+/* D12 / D11 (PB14 / PB15): TIM15 CH1 / CH2. SPI2, which the board file puts there, is off. */
+&timers15 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm15: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim15_ch1_pb14 &tim15_ch2_pb15>;
+		pinctrl-names = "default";
+	};
+};
+
+/* A2 / A3 (PA6 / PA7) are TIM3 CH1 / CH2 above. The board file also gives them to the ADC,
+ * whose pinctrl would put them back in analog mode if it initialised after the timer:
+ * the ADC keeps A0, A1, A4, A5. (A4/A5 become encoder inputs at run time, after every
+ * driver has initialised, which reconfigures them as GPIO.) */
+&adc1 {
+	pinctrl-0 = <&adc1_in9_pa4 &adc1_in10_pa5 &adc1_in2_pc1 &adc1_in1_pc0>;
 };
 
 /*

@@ -16,11 +16,8 @@ services:
     volumes:
       - /opt/openocd:/opt/openocd:ro
       - /lib/aarch64-linux-gnu:/host-lib:ro
-    # The base file's three classes are repeated so this list is complete on its own,
-    # whether compose appends to the base list or replaces it.
+    # Compose APPENDS this list to the base file's (ttyACM, ttyUSB, raw USB), and an older
+    # compose (2.26, the UNO Q's) rejects a rule given twice -- so only the two new classes.
     device_cgroup_rules:
-      - 'c 166:* rwm'   # /dev/ttyACM*
-      - 'c 188:* rwm'   # /dev/ttyUSB*
-      - 'c 189:* rwm'   # /dev/bus/usb
       - 'c 239:* rwm'   # /dev/ttyHS1, the MCU's micro-ROS link
       - 'c 254:* rwm'   # /dev/gpiochip*, the MCU's SWD lines (OpenOCD linuxgpiod)

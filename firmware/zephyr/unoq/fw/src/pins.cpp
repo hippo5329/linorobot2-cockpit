@@ -29,13 +29,20 @@ static int pwmIndex(int pin)
     case 6: return 1;    // D6  PB1 TIM3 CH4
     case 9: return 2;    // D9  PB8 TIM4 CH3
     case 10: return 3;   // D10 PB9 TIM4 CH4
+    case 16: return 4;   // A2  PA6 TIM3 CH1
+    case 17: return 5;   // A3  PA7 TIM3 CH2
+    case 12: return 6;   // D12 PB14 TIM15 CH1
+    case 11: return 7;   // D11 PB15 TIM15 CH2
     default: return -1;
     }
 }
 
 static int pwm_bits = 8;                        // Arduino's default resolution
-static uint32_t pwm_period_ns[4] = {50000, 50000, 50000, 50000};   // 20 kHz until told
-static bool pwm_ready[4];
+#define NPWM 8
+BUILD_ASSERT(ARRAY_SIZE(pwms) == NPWM, "app.overlay pwms and pwmIndex() must list the same channels");
+static uint32_t pwm_period_ns[NPWM] = {50000, 50000, 50000, 50000,
+                                       50000, 50000, 50000, 50000};   // 20 kHz until told
+static bool pwm_ready[NPWM];
 
 static bool validPin(int pin) { return pin >= 0 && pin < NPINS && gpio_is_ready_dt(&pins[pin]); }
 
@@ -63,7 +70,7 @@ void analogWriteFrequency(int pin, uint32_t hz)
 {
     if (hz == 0) return;
     const int i = pwmIndex(pin);
-    for (int k = 0; k < 4; k++)
+    for (int k = 0; k < NPWM; k++)
         if (i < 0 ? pin < 0 : k == i) pwm_period_ns[k] = 1000000000u / hz;
 }
 

@@ -5,7 +5,7 @@
 # Modulino Movement IMU on Qwiic.
 robot:
   name: unoq
-  description: Arduino UNO Q 2WD -- the robot computer and the base controller on one board
+  description: Arduino UNO Q mecanum -- the robot computer and the base controller on one board
 base_controller:
   name: unoq
   description: 'Arduino UNO Q: STM32U585 (Zephyr + micro-ROS) as the base controller,
@@ -80,7 +80,7 @@ base_controller:
   # invert: false on both sides as shipped; a mirrored motor or encoder is flipped
   # here once the robot drives (cockpit's Build a Robot -> Test motors).
   pins:
-    motor1:              # left: AT8236 AIN1/AIN2 <- D9/D10 = PB8/PB9, TIM4 CH3/CH4
+    motor1:              # front-left: AT8236 #1 AIN1/AIN2 <- D9/D10 = PB8/PB9, TIM4 CH3/CH4
       pwm: -1
       in_a: 9
       in_b: 10
@@ -89,7 +89,7 @@ base_controller:
       pin_a: 2
       pin_b: 4
       invert: false
-    motor2:              # right: AT8236 BIN1/BIN2 <- D3/D6 = PB0/PB1, TIM3 CH3/CH4
+    motor2:              # front-right: AT8236 #1 BIN1/BIN2 <- D3/D6 = PB0/PB1, TIM3 CH3/CH4
       pwm: -1
       in_a: 3
       in_b: 6
@@ -98,10 +98,13 @@ base_controller:
       pin_a: 7
       pin_b: 8
       invert: false
-    motor3: {pwm: -1, in_a: -1, in_b: -1, invert: false}
-    encoder3: {pin_a: -1, pin_b: -1, invert: false}
-    motor4: {pwm: -1, in_a: -1, in_b: -1, invert: false}
-    encoder4: {pin_a: -1, pin_b: -1, invert: false}
+    motor3: {pwm: -1, in_a: 16, in_b: 17, invert: false}    # rear-left: AT8236 #2 AIN1/AIN2 <- A2/A3 = PA6/PA7, TIM3 CH1/CH2
+    encoder3: {pin_a: 13, pin_b: 18, invert: false}         # D13/A4 = PB13/PC1, EXTI 13/1
+    motor4: {pwm: -1, in_a: 11, in_b: 12, invert: false}    # rear-right: AT8236 #2 BIN1/BIN2 <- D11/D12 = PB15/PB14, TIM15 CH2/CH1
+    encoder4: {pin_a: 19, pin_b: 5, invert: false}          # A5/D5 = PC0/PA11, EXTI 0/11
+    # Eight PWM pins (D3 D6 D9 D10 A2 A3 D11 D12) and eight encoder pins on eight different
+    # EXTI lines (3 12 2 4 13 1 0 11): an STM32 has one EXTI line per pin NUMBER, so no two
+    # encoder pins may share one. D0 is the LiDAR, A0 the battery; D1 and A1 are free.
     i2c:                 # the Qwiic connector, the MCU's i2c4 (PD12/PD13)
       sda: -1
       scl: -1
@@ -110,12 +113,18 @@ base_controller:
     # Left unwired until the divider is fitted: set battery_pin 14 and the
     # divider in the battery block then.
 kinematics:
-  base_type: 2wd
+  base_type: mecanum
   stamped_cmd_vel: auto
+  # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
+  # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
+  # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
   wheel_diameter: 0.1
   lr_wheels_distance: 0.271
-  fr_wheels_distance: 0
+  fr_wheels_distance: 0.18   # the shared footprint (robot_radius 0.26) has to contain the body
+                          # AND the wheels, which stick out past it -- see
+                          # gen_robot_description.config_warnings()
   max_rpm: 140
+  counts_per_rev: 4000
   # DERIVED -- the driver margin, not a hand-picked derating.
   #
   # The share of the motor's no-load speed that survives the gearbox, the gear
@@ -124,7 +133,12 @@ kinematics:
   # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
   # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
   max_rpm_ratio: 0.8
-  counts_per_rev: 4000
+  # The parts, not the product: counts_per_rev = encoder_ppr x quadrature x
+  # gear_ratio = 11 x 4 x 30 = 1320, computed by the generators. Give
+  # counts_per_rev directly instead if that is the number you have.
+  encoder_ppr: 11
+  quadrature: 4
+  gear_ratio: 30
   pwm_bits: 10
   pwm_frequency: 20000
   motor_operating_voltage: 12
@@ -338,7 +352,7 @@ nav2:
       controller_frequency: 20.0
       costmap_update_timeout: 0.3
       min_x_velocity_threshold: 0.001
-      min_y_velocity_threshold: 0.5
+      min_y_velocity_threshold: 0.001   # mecanum: lateral velocity is real
       min_theta_velocity_threshold: 0.001
       failure_tolerance: 0.3
       progress_checker_plugins:
@@ -364,13 +378,13 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 1.0
-        max_angular_accel: 1.5
+        rotate_to_heading_angular_vel: 0.57
+        max_angular_accel: 0.87
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
         use_path_orientations: false
-        desired_linear_vel: 0.25
+        desired_linear_vel: 0.24
         lookahead_dist: 0.6
         min_lookahead_dist: 0.3
         max_lookahead_dist: 0.9
@@ -420,9 +434,9 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 0.8
-      min_rotational_vel: 0.4
-      rotational_acc_lim: 3.0
+      max_rotational_vel: 0.46
+      min_rotational_vel: 0.23
+      rotational_acc_lim: 1.74
   velocity_smoother:
     ros__parameters:
       enable_stamped_cmd_vel: false
@@ -455,21 +469,21 @@ nav2:
       # 0.1355 m, so the same yaw rate costs it 66% more wheel speed and it is
       # given a correspondingly lower ceiling.
       max_velocity:
-      - 0.3
-      - 0.0
-      - 1.2
+      - 0.29
+      - 0.29
+      - 0.69
       min_velocity:
-      - -0.3
-      - 0.0
-      - -1.2
+      - -0.29
+      - -0.29
+      - -0.69
       max_accel:
       - 0.8
-      - 0.0
-      - 1.5
+      - 0.8
+      - 0.87
       max_decel:
       - -0.8
-      - 0.0
-      - -1.5
+      - -0.8
+      - -0.87
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:

@@ -272,7 +272,9 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         diffs = []
         for sec in ("ekf", "slam", "nav2"):
             walk(base.get(sec), d.get(sec), (sec,), diffs)
-        allowed = set(lateral) | set(angular) if name == "pico2_mecanum" else set()
+        # Any mecanum reference (pico2_mecanum, and the UNO Q's since 2026-10-05): it strafes.
+        allowed = (set(lateral) | set(angular)
+                   if (d.get("kinematics") or {}).get("base_type") == "mecanum" else set())
         # A skid steer turns on both axles, (lr + fr)/2 like the mecanum, so its
         # derived yaw limits differ by the same geometry -- and so does the yaw
         # entry of the smoother vectors. It does not strafe: no odom vy, no y
