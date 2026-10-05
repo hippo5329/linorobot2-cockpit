@@ -1524,7 +1524,14 @@ def main():
         pio_env = controller
     # A BOARD name (gendrv, yb_eet01) is not a PlatformIO env; its silicon is.
     pio_env = mcu_identity.pio_env_for(pio_env, pio_env)
-    pio_env = SIM_MCU if sim_mcu else resolve_pio_env(pio_env, args.distro)
+    # The distro variant matters only to what this run builds or flashes. --skip-flash
+    # touches neither (it skips the env block too), and a board built outside
+    # PlatformIO -- the UNO Q's Zephyr firmware -- has no `<env>_<distro>` to find:
+    # its distro is chosen where it is built (build.sh MICROROS_DISTRO).
+    if sim_mcu:
+        pio_env = SIM_MCU
+    elif not args.skip_flash:
+        pio_env = resolve_pio_env(pio_env, args.distro)
     no_flash = args.skip_flash or sim_mcu
     # The config may name the board by its udev by-id path, which is the only
     # name that follows it across reboots and plug order -- two Picos on one
