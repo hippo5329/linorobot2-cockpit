@@ -273,8 +273,15 @@ def main() -> int:
             if stamped:
                 m.header.stamp = node.get_clock().now().to_msg()
             pub.publish(m)
-            rclpy.spin_once(node, timeout_sec=0.02)
-            time.sleep(0.03)
+            # Drain every waiting callback until the next command is due, rather than
+            # one spin_once() and a sleep: spin_once runs ONE callback, so the old loop
+            # took ~20 of /odom's 50 messages a second, and the one it took was the
+            # oldest left in the depth-5 queue -- up to ~100 ms stale, and the gap
+            # column measured this loop, not the link. (The same one-take-per-pass
+            # limit halved the LD19 node's /scan on the Arduino UNO Q.)
+            due = time.time() + 0.05
+            while time.time() < due:
+                rclpy.spin_once(node, timeout_sec=max(0.0, due - time.time()))
 
     def run(label: str, lin: float, ang: float, secs: float = 5.0,
             lat: float = 0.0) -> bool:

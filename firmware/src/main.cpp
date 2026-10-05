@@ -1717,9 +1717,15 @@ bool createEntities()
     // publisher is compiled into every image now, so `sim_lidar_on` alone
     // would put an unread raw_scan on the wire for every serial and udp robot,
     // and spend one of RMW_UXRCE_MAX_PUBLISHERS doing it.
+    // Best effort, like the 50 Hz topics: a scan is a stream, where the next packet is
+    // worth more than a retransmitted old one, and a reliable topic costs acknowledgements
+    // and the reliable stream's history slots -- the backlog that sent the UNO Q's scan in
+    // bursts of 6-10 packets a message. The host's LD19 driver subscribes best effort
+    // (ldlidar_stl_ros2 demo.cpp). A best-effort message cannot be fragmented, so the
+    // batch (RAW_SCAN_BATCH_CAP, 512) must fit the transport MTU: 1024 on every board.
     if ((sim_lidar_on && sim_lidar_comm == SimLD19::COMM_TOPIC) || real_lidar)
     {
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(rclc_publisher_init_best_effort(
             &raw_scan_publisher,
             &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),

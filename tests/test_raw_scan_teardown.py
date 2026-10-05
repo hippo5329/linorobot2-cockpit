@@ -26,3 +26,17 @@ def test_the_batch_is_what_the_message_borrows():
     """The premise of the test above: if this changes, revisit the teardown."""
     src = open(MAIN, encoding="utf-8").read()
     assert "raw_scan_msg.data.data = raw_scan_batch;" in src
+
+
+def test_raw_scan_is_best_effort_and_fits_one_message():
+    """raw_scan is published best effort, and a best-effort XRCE message cannot be
+    fragmented: the batch plus headers must fit every board's transport MTU."""
+    src = open(MAIN, encoding="utf-8").read()
+    pub = src.index('topicName("raw_scan")')
+    call = src[src.rindex("RCCHECK(rclc_publisher_init", 0, pub):pub]
+    assert "rclc_publisher_init_best_effort" in call
+    cap = int(re.search(r"#define RAW_SCAN_BATCH_CAP (\d+)", src).group(1))
+    fw = os.path.join(os.path.dirname(MAIN), "..")
+    for meta in ("atomic.meta", "esp32.meta"):
+        mtu = int(re.search(r"UCLIENT_CUSTOM_TRANSPORT_MTU=(\d+)", open(os.path.join(fw, meta)).read()).group(1))
+        assert cap + 64 <= mtu, f"{meta}: a {cap}-byte raw_scan batch does not fit MTU {mtu} unfragmented"
