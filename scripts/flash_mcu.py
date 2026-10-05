@@ -388,6 +388,10 @@ def remember_usb_path(port: str, stamp_path: Optional[str] = None,
 # the env block meant for one cell's Pico was written into the other cell's Pico,
 # which was in BOOTSEL at that instant. Its own board then booted the new app on
 # its old env. Upper-case hex strings.
+class BoardSwapped(RuntimeError):
+    """The port leads to another board than the one recorded for it."""
+
+
 _EXPECTED_IDS: set = set()
 _APP_USB_SERIAL: Optional[str] = None
 _IDENTITY_CONFIRMED: Optional[tuple] = None   # the (bus, address) already checked
@@ -415,6 +419,20 @@ def remember_board_identity(path: Optional[str], from_tty: bool, stamp: dict,
     global _EXPECTED_IDS, _APP_USB_SERIAL, _IDENTITY_CONFIRMED
     ids = set()
     _APP_USB_SERIAL = _sysfs_serial(path, root) if from_tty else None
+    recorded = str(stamp.get("usb_serial") or "").upper()
+    if _APP_USB_SERIAL and recorded and _APP_USB_SERIAL != recorded:
+        # The tty leads to a DIFFERENT board from the one this port's last flash
+        # recorded. Gate rc-20261005.1 (2026-10-05, a20): lino-pico's own Pico
+        # stopped enumerating as a tty after a flash, the cell's /dev/ttyACM0 kept
+        # its old source, the host handed that number to lino-pico-bare's Pico --
+        # and lino-pico flashed it six times while the other cell was driving Nav2
+        # on it. Every one of those legs "ran away". A board replaced on purpose
+        # says so with --new-board (which passes no stamp).
+        raise BoardSwapped(
+            f"the board on this port is {_APP_USB_SERIAL}, but this port's last flash "
+            f"was board {recorded} -- the port leads to a different board (another "
+            f"cell's, or a re-enumeration renumbered the ttys). Nothing was written. "
+            f"If the board was replaced on purpose, flash with --new-board.")
     if _APP_USB_SERIAL:
         ids.add(_APP_USB_SERIAL)
     elif stamp.get("usb_serial"):
@@ -1872,8 +1890,12 @@ def main() -> int:
     # the default ("pico2"), so a prebuilt flash read some other env's stamp.
     global _ESP_EXPECTED_UID
     if is_pico_family(args.env):
-        remember_usb_path(args.port, stamp_path=stamped_usb_path(args.env, args.port),
-                          stamp={} if args.new_board else stamp_for(args.env, args.port))
+        try:
+            remember_usb_path(args.port, stamp_path=stamped_usb_path(args.env, args.port),
+                              stamp={} if args.new_board else stamp_for(args.env, args.port))
+        except BoardSwapped as e:
+            log(f"❌ [WRONG BOARD] {e}")
+            return 1
     if is_esp_family(args.env) and not args.new_board:
         st = stamp_for(args.env, args.port)
         if st.get("id_kind") == "uid" and st.get("board_id"):

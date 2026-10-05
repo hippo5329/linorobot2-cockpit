@@ -168,3 +168,37 @@ def test_the_watch_stops_the_tool_before_it_writes(tmp_path):
 def test_new_board_is_a_cli_flag():
     src = open(os.path.join(ROOT, "scripts", "flash_mcu.py")).read()
     assert '"--new-board"' in src and "if is_esp_family(args.env) and not args.new_board" in src
+
+
+# Gate rc-20261005.1 (a20): lino-pico's own Pico (D664CC...) stopped enumerating as a tty,
+# the cell's /dev/ttyACM0 kept its old source, the host gave that number to
+# lino-pico-bare's Pico (D665C0...), and lino-pico flashed it six times mid-run. The board
+# on the tty was "remembered" as whatever answered there; the stamp said otherwise.
+def test_a_tty_leading_to_another_board_than_the_stamp_is_refused(tmp_path):
+    root = _sysfs(tmp_path, "1-4", PICO_W)
+    with pytest.raises(flash_mcu.BoardSwapped) as e:
+        flash_mcu.remember_board_identity(
+            "1-4", from_tty=True, stamp={"usb_serial": OTHER_PICO_W, "usb_path": "3-2"}, root=root)
+    assert PICO_W in str(e.value) and OTHER_PICO_W in str(e.value) and "--new-board" in str(e.value)
+
+
+def test_the_recorded_board_on_a_new_port_is_still_this_board(tmp_path):
+    root = _sysfs(tmp_path, "1-4", PICO_W)
+    ids = flash_mcu.remember_board_identity(
+        "1-4", from_tty=True, stamp={"usb_serial": PICO_W, "usb_path": "3-2"}, root=root)
+    assert ids == {PICO_W}
+
+
+def test_new_board_passes_no_stamp_and_takes_the_board_it_finds(tmp_path):
+    root = _sysfs(tmp_path, "1-4", PICO_W)
+    assert flash_mcu.remember_board_identity("1-4", from_tty=True, stamp={}, root=root) == {PICO_W}
+
+
+def test_main_turns_a_swapped_board_into_a_refusal_before_any_touch():
+    src = open(os.path.join(ROOT, "scripts", "flash_mcu.py")).read()
+    main = src[src.index("def main() -> int:"):]
+    call = main.index("remember_usb_path(args.port, stamp_path=stamped_usb_path(")
+    handler = main[call:call + 400]
+    assert "except BoardSwapped" in handler and "return 1" in handler
+    # refused before the port is touched: the first 1200-baud pulse comes after it
+    assert call < main.index("pulse_1200_baud(")
