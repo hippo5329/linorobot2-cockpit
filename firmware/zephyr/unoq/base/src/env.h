@@ -13,4 +13,7 @@ bool        envValid(void);
 const char *envGet(const char *key, const char *fallback);
 int         envInt(const char *key, int fallback);
 float       envFloat(const char *key, float fallback);
-bool        envFlag(const char *key, bool fallback);   // "0"/"false"/"no" are false, as mcu_env.cpp
+bool        envFlag(const char *key, bool fallback);
+// Diagonal covariances: one value fills every axis, or give all n ("a,b,c"). False when
+// the key is absent, so the caller keeps its own default -- as mcu_env.h.
+bool        envFloatVec(const char *key, float *out, int n);   // "0"/"false"/"no" are false, as mcu_env.cpp

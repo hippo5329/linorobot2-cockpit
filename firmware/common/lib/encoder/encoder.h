@@ -122,6 +122,43 @@ public:
         pioencoder_.reset();
     }
 };
+#elif defined(LINO_ZEPHYR)
+// The Arduino UNO Q's STM32U585 (firmware/zephyr/unoq/fw): full x4 quadrature from
+// GPIO edge interrupts on both lines, decoded in the Zephyr shim -- `counts_per_rev`
+// is PPR x 4 x gear (scripts/gen_firmware_header.py counts_per_rev). Pins are the
+// board's Arduino header numbers; invert swaps A and B, as the wrappers above.
+extern "C" int linoZephyrQuadAttach(int pin_a, int pin_b);   // handle, or -1
+extern "C" int32_t linoZephyrQuadRead(int handle);
+extern "C" void linoZephyrQuadWrite(int handle, int32_t count);
+class Encoder
+{
+private:
+    int counts_per_rev_ = -1;
+    int handle_ = -1;
+    unsigned long prev_update_time_ = 0;
+    int32_t prev_encoder_ticks_ = 0;
+public:
+    Encoder(int pin1, int pin2, int counts_per_rev, bool invert = false) {
+        if (pin1 < 0 || pin2 < 0) return; // unused encoder
+        if (invert) { const int t = pin1; pin1 = pin2; pin2 = t; }
+        handle_ = linoZephyrQuadAttach(pin1, pin2);
+        if (handle_ < 0) return;
+        counts_per_rev_ = counts_per_rev;
+        prev_update_time_ = micros();
+    }
+    float getRPM() {
+        if (counts_per_rev_ <= 0) return 0.0f;
+        const int32_t ticks = linoZephyrQuadRead(handle_);
+        const unsigned long now = micros();
+        const double dtm = (double)(now - prev_update_time_) / 60000000.0;
+        const int32_t delta = ticks - prev_encoder_ticks_;
+        prev_update_time_ = now;
+        prev_encoder_ticks_ = ticks;
+        return dtm > 0.0 ? (float)(((double)delta / counts_per_rev_) / dtm) : 0.0f;
+    }
+    inline int32_t read() { return counts_per_rev_ < 0 ? 0 : linoZephyrQuadRead(handle_); }
+    inline void write(int32_t p) { if (counts_per_rev_ >= 0) linoZephyrQuadWrite(handle_, p); }
+};
 #elif defined(LINO_HOST)
 // The robot computer as the MCU (firmware/host): no quadrature hardware, so an
 // encoder input with nothing wired -- the count never moves. Like the two

@@ -166,6 +166,31 @@ static void loadEnv(void)
     env_valid = true;
 }
 
+#elif defined(LINO_ZEPHYR)
+
+// The Arduino UNO Q's STM32U585 (firmware/zephyr/unoq/fw): the block sits in the last
+// 8 KB page of the 2 MB flash, a fixed partition in the app's devicetree, clear of
+// the application and of Arduino's own sketch area. Internal flash is memory-mapped,
+// so -- as on the RP2 boards -- the entries are parsed in place.
+extern "C" const uint8_t *linoZephyrEnvBase(void);
+
+static void loadEnv(void)
+{
+    const uint8_t *base = linoZephyrEnvBase();
+    uint32_t stored;
+    memcpy(&stored, base, ENV_CRC_LEN);
+
+    uint32_t actual = crc32_iso(base + ENV_CRC_LEN, ENV_DATA_LEN);
+    if (stored != actual) {
+        Serial.printf("[env] CRC32 mismatch (flash %08x, computed %08x) — the env "
+                      "page at %p is blank or corrupt\n",
+                      (unsigned)stored, (unsigned)actual, (const void *)base);
+        return;
+    }
+    env_data = (const char *)(base + ENV_CRC_LEN);
+    env_valid = true;
+}
+
 #elif defined(LINO_HOST)
 
 #include <cerrno>

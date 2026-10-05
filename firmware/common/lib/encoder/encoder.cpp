@@ -1,7 +1,7 @@
 
 #include "encoder.h"
 
-#if !defined(ESP32) && !defined(PICO) && !defined(LINO_HOST)
+#if !defined(ESP32) && !defined(PICO) && !defined(LINO_HOST) && !defined(LINO_ZEPHYR)
 // Yes, all the code is in the header file, to provide the user
 // configure options with #define (before they include it), and
 // to facilitate some crafty optimizations!

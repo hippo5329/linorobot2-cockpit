@@ -71,3 +71,33 @@ bool envFlag(const char *key, bool fallback)
     return !(strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 ||
              strcasecmp(v, "no") == 0);
 }
+
+bool envFloatVec(const char *key, float *out, int n)
+{
+    const char *v = envGet(key, NULL);
+    if (!v || !*v)
+        return false;
+    float vals[8];
+    int got = 0;
+    const char *p = v;
+    while (*p && got < 8 && got < n) {
+        char *end;
+        vals[got] = strtof(p, &end);
+        if (end == p)
+            break;
+        got++;
+        p = end;
+        while (*p == ',' || *p == ' ' || *p == '[' || *p == ']')
+            p++;
+    }
+    if (got == 1) {
+        for (int i = 0; i < n; i++)
+            out[i] = vals[0];
+        return true;
+    }
+    if (got != n)
+        return false;
+    for (int i = 0; i < n; i++)
+        out[i] = vals[i];
+    return true;
+}

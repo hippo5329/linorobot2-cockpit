@@ -738,6 +738,9 @@ static const char fw_distro_tag[] = "FW_ROS_DISTRO=" FW_ROS_DISTRO;
 // Writes " <key>=<hex>" into `buf`, or an empty string if the board can answer
 // neither. Appending to the banner rather than inserting keeps older parsers
 // working, and a reader can test for the key it actually trusts.
+#if defined(LINO_ZEPHYR)
+extern "C" void linoZephyrUid(char *buf, size_t n);
+#endif
 static void identityField(char *buf, size_t n)
 {
     if (!buf || !n)
@@ -747,6 +750,11 @@ static void identityField(char *buf, size_t n)
     const uint64_t mac = ESP.getEfuseMac();       // 48 bits, factory-burned
     snprintf(buf, n, " uid=%04X%08X",
              (unsigned)((mac >> 32) & 0xFFFF), (unsigned)(mac & 0xFFFFFFFF));
+#elif defined(LINO_ZEPHYR)
+    // The STM32's 96-bit unique device ID (the UNO Q's MCU), via Zephyr's hwinfo.
+    char uid[25];
+    linoZephyrUid(uid, sizeof(uid));
+    snprintf(buf, n, " uid=%s", uid);
 #elif defined(ARDUINO_ARCH_RP2350) || defined(PICO_RP2350)
     snprintf(buf, n, " uid=%s", rp2040.getChipID());      // ROM chip info
 #elif defined(ARDUINO_ARCH_RP2040) || defined(PICO_RP2040)

@@ -40,7 +40,7 @@
 // or the radio, and a bare ESP32 has neither wired, so `serial` is the honest
 // default rather than one that quietly halves the control rate.
 #ifndef LIDAR_COMM_DEFAULT
-#if defined(ARDUINO_ARCH_RP2040)
+#if defined(ARDUINO_ARCH_RP2040) || defined(LINO_ZEPHYR)
 #define LIDAR_COMM_DEFAULT "topic"
 #else
 #define LIDAR_COMM_DEFAULT "serial"

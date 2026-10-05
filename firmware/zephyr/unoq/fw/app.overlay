@@ -1,0 +1,78 @@
+/*
+ * The linorobot2 firmware on the UNO Q: every pin it may be given by the env, as
+ * Arduino header numbers (config/reference/unoq_config.yaml), checked against
+ * Zephyr's boards/arduino/uno_q/arduino_r3_connector.dtsi.
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		/* The Arduino header in pin-number order (D0-D13, A0-A5), then LED3 red, green,
+		 * blue -- the shim's pin numbers are the indexes into this list. */
+		lino-gpios = <&gpiob 7 0>, <&gpiob 6 0>, <&gpiob 3 0>, <&gpiob 0 0>,
+			     <&gpioa 12 0>, <&gpioa 11 0>, <&gpiob 1 0>, <&gpiob 2 0>,
+			     <&gpiob 4 0>, <&gpiob 8 0>, <&gpiob 9 0>, <&gpiob 15 0>,
+			     <&gpiob 14 0>, <&gpiob 13 0>,
+			     <&gpioa 4 0>, <&gpioa 5 0>, <&gpioa 6 0>, <&gpioa 7 0>,
+			     <&gpioc 1 0>, <&gpioc 0 0>,
+			     <&gpioh 10 GPIO_ACTIVE_LOW>, <&gpioh 11 GPIO_ACTIVE_LOW>,
+			     <&gpioh 12 GPIO_ACTIVE_LOW>;
+		/* PWM: D3, D6, D9, D10; the period is set at run time (analogWriteFrequency) */
+		pwms = <&pwm3 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm3 4 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm4 3 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&pwm4 4 PWM_USEC(50) PWM_POLARITY_NORMAL>;
+		/* analogRead: A0-A5 = ADC1 IN9, IN10, IN11, IN12, IN2, IN1 (the board's channels) */
+		io-channels = <&adc1 9>, <&adc1 10>, <&adc1 11>, <&adc1 12>, <&adc1 2>, <&adc1 1>;
+	};
+};
+
+/* The board file gives D10 (PB9) to SPI2 as chip select, which would fight TIM4 CH4
+ * for the pin; nothing in the firmware uses SPI. */
+&spi2 { status = "disabled"; };
+
+&timers4 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm4: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim4_ch3_pb8 &tim4_ch4_pb9>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers3 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch3_pb0 &tim3_ch4_pb1>;
+		pinctrl-names = "default";
+	};
+};
+
+/*
+ * micro-ROS on lpuart1, the internal link to the QRB2210 (/dev/ttyHS1). The LPUART's
+ * 8-byte hardware FIFOs are off unless asked for (CR1.FIFOEN); without them a byte
+ * every 3.3 us at 3 Mbaud overran the per-byte interrupt path (ISR.ORE set).
+ */
+&lpuart1 {
+	status = "okay";
+	fifo-enable;
+};
+
+/*
+ * The robot's env block (firmware/common/lib/mcu_env/mcu_env.h layout: CRC32, then
+ * "key=value\0...\0\0"), in the last 8 KB page of bank 2 -- clear of Arduino's
+ * sketch area (storage, 0xe0000-0xfffff) and of any image this app could grow to.
+ */
+&flash0 {
+	partitions {
+		lino_env_partition: partition@1fe000 {
+			label = "lino-env";
+			reg = <0x001fe000 DT_SIZE_K(8)>;
+			read-only;
+		};
+	};
+};

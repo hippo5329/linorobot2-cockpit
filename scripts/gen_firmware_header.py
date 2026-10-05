@@ -974,7 +974,10 @@ def bare_mcu_params(mcu: str) -> dict:
     # `host`: the robot computer itself as the MCU (firmware/host/app) -- the Sim
     # MCU. Its only transport is udp4 to a local micro_ros_agent, and it has no
     # GPIO, so everything it has is simulated.
-    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w", "xrp", "host")
+    # `unoq`: the Arduino UNO Q's STM32U585 on Zephyr (firmware/zephyr/unoq/fw). Its
+    # micro-ROS link is the board's own UART to the Linux side (/dev/ttyHS1), never a
+    # cable, so its fallback rate is 4 Mbaud rather than the cable boards' 921600.
+    known = ("esp32", "esp32s3", "pico", "pico2", "picow", "pico2w", "xrp", "host", "unoq")
     if mcu not in known:
         print(f"Error: unknown --mcu '{mcu}'. Known: {', '.join(known)}", file=sys.stderr)
         sys.exit(2)
@@ -991,7 +994,7 @@ def bare_mcu_params(mcu: str) -> dict:
             # selected by the env like everything else. The host has no USB
             # device port to be a serial client on: udp4 is all it has.
             "transport": "udp4" if mcu == "host" else "serial",
-            "baudrate": 921600,
+            "baudrate": 4000000 if mcu == "unoq" else 921600,
             # A bare module is the ABSENCE of a robot, and the honest default
             # for a board with nothing wired is to simulate rather than to read
             # chips that are not there: a freshly plugged board then talks,
@@ -1026,7 +1029,9 @@ def bare_mcu_params(mcu: str) -> dict:
                 # GP25, so the W default lights both. (It was 32: no such GPIO.)
                 "led": {"pico": 25, "pico2": 25, "picow": 64, "pico2w": 64,
                         "xrp": 64,  # the XRP's status LED is on the radio module's GPIO0, as on a W
-                        "esp32": 2, "esp32s3": 48}.get(mcu, -1),
+                        "esp32": 2, "esp32s3": 48,
+                        "unoq": 21,  # LED3 green (PH11, active low): the shim's pin 21
+                        }.get(mcu, -1),
             },
         },
         "kinematics": {

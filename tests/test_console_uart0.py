@@ -53,6 +53,12 @@ def test_every_translation_unit_that_prints_reaches_the_wrapper():
         # a real translation unit can never hide behind it.
         if os.path.join("host", "shim") in dirpath:
             continue
+        # The same for the UNO Q's Zephyr shim (firmware/zephyr/unoq/fw/shim and its
+        # runtime in fw/src): there `Serial` IS the on-board lpuart1 link, one port
+        # and no second console to choose. Scoped to those two directories.
+        if (os.path.join("zephyr", "unoq", "fw", "shim") in dirpath
+                or os.path.join("zephyr", "unoq", "fw", "src") in dirpath):
+            continue
         for f in files:
             if not f.endswith((".cpp", ".h", ".ino")):
                 continue
