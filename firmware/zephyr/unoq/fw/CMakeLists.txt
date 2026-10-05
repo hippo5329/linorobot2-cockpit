@@ -36,13 +36,20 @@ if(NOT DEFINED FW_GIT_REV)
   set(FW_GIT_REV "unknown")
 endif()
 string(TIMESTAMP FW_BUILD_DATE "%Y-%m-%d" UTC)
+# The micro-ROS distro this image links (build.sh MICROROS_DISTRO). It sets the banner and
+# the default cmd_vel type (Twist through jazzy, TwistStamped after), so it is never
+# assumed: a lyrical image that said "jazzy" here listened for Twist while lyrical's Nav2
+# sent TwistStamped, and the robot never moved (2026-10-05).
+if(NOT DEFINED FW_ROS_DISTRO)
+  message(FATAL_ERROR "FW_ROS_DISTRO is not set (build.sh passes MICROROS_DISTRO)")
+endif()
 target_compile_definitions(app PRIVATE
   LINO_ZEPHYR=1
   ARDUINO=10819
   CONFIG_PATH="${LINO_HEADER}"
   FW_GIT_REV="${FW_GIT_REV}"
   FW_BUILD_DATE="${FW_BUILD_DATE}"
-  FW_ROS_DISTRO="jazzy"
+  FW_ROS_DISTRO="${FW_ROS_DISTRO}"
   # rcutils headers ask for C11 Annex K; picolibc + Zephyr 4.4 cannot provide it.
   __STDC_WANT_LIB_EXT1__=0)
 # firmware/include first, so its config.h (which includes CONFIG_PATH) is the one found.
