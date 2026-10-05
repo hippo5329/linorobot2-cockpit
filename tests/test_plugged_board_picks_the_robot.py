@@ -68,10 +68,19 @@ def run(robot, controller, polls, tmp_path):
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 
-@pytest.mark.parametrize("design, controller", [
-    ("pico2_mecanum", "pico2"), ("gendrv", "gendrv"), ("yb_eet01", "yb_eet01"),
-    ("xrp", "xrp"), ("unoq", "unoq"), ("makerspet_mini", "esp32"), ("my_robot", "pico2"),
-])
+def _designs():
+    """Every shipped reference design, discovered -- more will come, and a list here would
+    silently skip them -- plus a robot a user saved under their own name."""
+    import glob
+    import yaml
+    out = []
+    for path in sorted(glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml"))):
+        c = yaml.safe_load(open(path))
+        out.append((c["robot"]["name"], c["base_controller"]["name"]))
+    return out + [("my_robot", "pico2")]
+
+
+@pytest.mark.parametrize("design, controller", _designs())
 def test_a_real_robot_is_never_swapped_for_the_sim_mcu(design, controller, tmp_path):
     """A reference design (or a robot the user saved) stays selected with no board at all."""
     res = run(design, controller, [NONE, NONE], tmp_path)
