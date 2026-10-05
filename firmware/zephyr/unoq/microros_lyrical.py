@@ -56,11 +56,78 @@ def patch_makefile(libmicroros, me=None):
             return f"git clone -b {BRANCH.get(d, 'lyrical')} {m.group(1)} src/{d};"
         s = re.sub(r"git clone -b jazzy (\S+) src/(\S+);", branch, s)
         # After the source clone's last `touch`, before colcon: ignore list and patches.
+        dev = "touch src/ament_cmake_ros/rmw_test_fixture/COLCON_IGNORE;"
+        i = s.index(dev) + len(dev)
+        s = s[:i] + f" \\\n\tpython3 {me} --patch-dev $(COMPONENT_PATH)/micro_ros_dev/src;" + s[i:]
         last = s.rindex("touch src/rcl_interfaces/test_msgs/COLCON_IGNORE;")
         end = last + len("touch src/rcl_interfaces/test_msgs/COLCON_IGNORE;")
         hook = f" \\\n\tpython3 {me} --patch-sources $(UROS_DIR)/src; {MARK}"
         return s[:end] + hook + s[end:]
     return _rw(mk, edit)
+
+
+AMENT_TARGET_DEPENDENCIES = """
+# Compatibility ament_target_dependencies macro for micro-ROS
+macro(ament_target_dependencies target)
+  cmake_parse_arguments(_ARG "SYSTEM;INTERFACE;PUBLIC;PRIVATE" "" "" ${ARGN})
+  set(_dependencies ${_ARG_UNPARSED_ARGUMENTS})
+  foreach(_dep ${_dependencies})
+    find_package(${_dep} QUIET)
+    if(TARGET ${_dep})
+      if(_ARG_INTERFACE)
+        target_link_libraries(${target} INTERFACE ${_dep})
+      elseif(_ARG_PUBLIC)
+        target_link_libraries(${target} PUBLIC ${_dep})
+      else()
+        target_link_libraries(${target} PRIVATE ${_dep})
+      endif()
+    elseif(TARGET ${_dep}::${_dep})
+      if(_ARG_INTERFACE)
+        target_link_libraries(${target} INTERFACE ${_dep}::${_dep})
+      elseif(_ARG_PUBLIC)
+        target_link_libraries(${target} PUBLIC ${_dep}::${_dep})
+      else()
+        target_link_libraries(${target} PRIVATE ${_dep}::${_dep})
+      endif()
+    endif()
+    if(${_dep}_INCLUDE_DIRS)
+      if(_ARG_INTERFACE)
+        target_include_directories(${target} INTERFACE ${${_dep}_INCLUDE_DIRS})
+      elseif(_ARG_PUBLIC)
+        target_include_directories(${target} PUBLIC ${${_dep}_INCLUDE_DIRS})
+      else()
+        target_include_directories(${target} PRIVATE ${${_dep}_INCLUDE_DIRS})
+      endif()
+    endif()
+    if(${_dep}_LIBRARIES)
+      if(_ARG_INTERFACE)
+        target_link_libraries(${target} INTERFACE ${${_dep}_LIBRARIES})
+      elseif(_ARG_PUBLIC)
+        target_link_libraries(${target} PUBLIC ${${_dep}_LIBRARIES})
+      else()
+        target_link_libraries(${target} PRIVATE ${${_dep}_LIBRARIES})
+      endif()
+    endif()
+  endforeach()
+endmacro()
+"""
+
+
+def patch_dev(src):
+    """micro_ros_platformio's patch_dev_sources(), for the host-side ament tools."""
+    changed = []
+    for p in ("rmw_test_fixture", "rmw_test_fixture_implementation", "domain_coordinator"):
+        d = os.path.join(src, "ament_cmake_ros", p)
+        if os.path.isdir(d) and not os.path.exists(os.path.join(d, "COLCON_IGNORE")):
+            open(os.path.join(d, "COLCON_IGNORE"), "w").close()
+            changed.append(f"ignore {p}")
+    if _rw(os.path.join(src, "ament_cmake_ros", "ament_cmake_ros_core", "cmake", "ament_ros_defaults.cmake"),
+           lambda c: c.replace("cxx_std_20", "cxx_std_17").replace("c_std_17", "c_std_11")):
+        changed.append("ament_ros_defaults C++17/C11")
+    if _rw(os.path.join(src, "ament_cmake", "ament_cmake_core", "cmake", "core", "all.cmake"),
+           lambda c: c if "macro(ament_target_dependencies" in c else c + "\n" + AMENT_TARGET_DEPENDENCIES):
+        changed.append("ament_target_dependencies macro")
+    return changed
 
 
 def patch_sources(src):
@@ -158,7 +225,10 @@ def patch_sources(src):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--patch-sources":
+    if len(sys.argv) == 3 and sys.argv[1] == "--patch-dev":
+        for c in patch_dev(sys.argv[2]):
+            print(f"lyrical dev: {c}")
+    elif len(sys.argv) == 3 and sys.argv[1] == "--patch-sources":
         for c in patch_sources(sys.argv[2]):
             print(f"lyrical: {c}")
     elif len(sys.argv) in (2, 3):
