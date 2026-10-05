@@ -66,7 +66,15 @@ async function loadHardwareConfig() {
     if (elKine) elKine.value = kine.base_type || "2wd";
 
     const elBaud = document.getElementById("cfg-baudrate");
-    if (elBaud && tgt.baudrate) elBaud.value = String(tgt.baudrate);
+    if (elBaud && tgt.baudrate) {
+      // A rate the list lacks is added, never dropped: a blank select made Save write
+      // 921600 over the UNO Q's 4000000, and its link was silent after the next flash.
+      const want = String(tgt.baudrate);
+      if (!Array.from(elBaud.options).some((o) => o.value === want)) {
+        elBaud.add(new Option(`${Number(want).toLocaleString("en-US")} Baud (from this robot's config)`, want));
+      }
+      elBaud.value = want;
+    }
     const elConsole = document.getElementById("cfg-console");
     if (elConsole) elConsole.value = tgt.console || "usb";
 

@@ -135,3 +135,13 @@ def test_monitor_releases_the_port_without_lsof():
     code = [ln for ln in routes[a:routes.index("    else:", a)].splitlines() if not ln.strip().startswith("#")]
     assert not any("lsof" in ln for ln in code)
     assert any("release_serial_port" in ln for ln in code)
+
+
+def test_the_unoq_baud_survives_a_load_and_a_save():
+    """The config's 4000000 had no option: the select went blank and Save wrote 921600."""
+    html = open(os.path.join(ROOT, "web", "frontend", "index.html")).read()
+    a = html.index('id="cfg-baudrate"')
+    assert '<option value="4000000"' in html[a:html.index("</select>", a)]
+    hw = open(os.path.join(ROOT, "web", "frontend", "app-hardware.js")).read()
+    a = hw.index('const elBaud = document.getElementById("cfg-baudrate");')
+    assert "elBaud.add(new Option(" in hw[a:a + 800]    # any rate the list lacks is added, not dropped
