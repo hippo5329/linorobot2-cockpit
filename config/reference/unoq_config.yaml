@@ -1,21 +1,22 @@
 # unoq — single source of truth for this robot.
 # One robot per file, one base controller per robot.
 # Arduino UNO Q (QRB2210 robot computer + STM32U585 base controller) with a Cytron
-# Shield-MDD3A two-PWM motor shield, 2WD, Arduino Modulino Movement IMU on Qwiic.
+# MDD3A two-PWM motor driver module (wired to the header), 2WD, Arduino Modulino
+# Movement IMU on Qwiic.
 robot:
   name: unoq
   description: Arduino UNO Q 2WD -- the robot computer and the base controller on one board
 base_controller:
   name: unoq
   description: 'Arduino UNO Q: STM32U585 (Zephyr + micro-ROS) as the base controller,
-    QRB2210 Linux as the robot computer; Cytron Shield-MDD3A, Modulino Movement'
+    QRB2210 Linux as the robot computer; Cytron MDD3A, Modulino Movement'
   # The MCU is the board's STM32U585, running this firmware on Zephyr through a shim
   # (firmware/zephyr/unoq/fw) -- the same src/main.cpp and common/lib as every board.
   # It is flashed from the board's own Linux side over SWD (OpenOCD), not over USB.
   mcu: unoq
   board: arduino_uno_q
-  # The MDD3A takes two PWM inputs per motor (M1A/M1B, M2A/M2B): forward drives A,
-  # reverse drives B -- the two-PWM mode, as the GenDrv's TB6612 is driven.
+  # The MDD3A (a driver module, wired to the header) takes two PWM inputs per motor
+  # (M1A/M1B, M2A/M2B) -- the two-PWM mode, as the GenDrv's TB6612 is driven.
   driver_type: BTS7960
   transport: serial
   # Not a cable: lpuart1 on the MCU is wired on the board to the QRB2210's UART,
