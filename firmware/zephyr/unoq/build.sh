@@ -18,6 +18,8 @@ WORK=$(mkdir -p "${1:-$PWD/zephyr-work}" && cd "${1:-$PWD/zephyr-work}" && pwd)
 IMAGE=zephyrprojectrtos/ci:v0.29.4
 ZEPHYR_REV=v4.4.2                 # first releases with boards/arduino/uno_q
 MODULE_REV=87dbe3a                # micro_ros_zephyr_module, jazzy branch (tested upstream on Zephyr 4.0/4.1 only)
+DISTRO=${MICROROS_DISTRO:-jazzy}  # jazzy | lyrical: must match the agent's image (fixed at link time)
+case $DISTRO in jazzy|lyrical) ;; *) echo "MICROROS_DISTRO must be jazzy or lyrical" >&2; exit 2;; esac
 
 APP=${2:-fw}
 [ -d "$HERE/$APP" ] || { echo "no app '$APP' in $HERE" >&2; exit 2; }
@@ -49,6 +51,16 @@ fi
   && git apply "$HERE/patches/micro_ros_zephyr_module-zephyr44-unoq.patch" \
   && rm -rf modules/libmicroros/micro_ros_src/build modules/libmicroros/micro_ros_src/install modules/libmicroros/micro_ros_src/log \
   && rm -rf modules/libmicroros/include modules/libmicroros/libmicroros.a )
+# The cloned sources are untracked and survive the checkout: a distro change refetches them.
+LIBUROS="$WORK/micro_ros_zephyr_module/modules/libmicroros"
+if [ "$(cat "$LIBUROS/.lino_distro" 2>/dev/null)" != "$DISTRO" ]; then
+  rm -rf "$LIBUROS/micro_ros_src" "$LIBUROS/micro_ros_dev"; echo "$DISTRO" > "$LIBUROS/.lino_distro"
+fi
+PREP=""
+if [ "$DISTRO" = lyrical ]; then
+  cp "$HERE/microros_lyrical.py" "$WORK/microros_lyrical.py"
+  PREP="python3 /work/microros_lyrical.py /work/micro_ros_zephyr_module/modules/libmicroros /work/microros_lyrical.py"
+fi
 # ^ include/ too: libmicroros.mk does `cp -R install/include include`, which copies INTO an
 #   existing include/ (as include/include) and leaves the previous build's headers in force.
 #   With the MTU changed that is a layout mismatch -- uxrCustomTransport embeds an MTU-sized
@@ -66,6 +78,7 @@ west update --narrow -o=--depth=1 >/dev/null
 [ -d /work/pyvenv ] || python3 -m venv --system-site-packages /work/pyvenv
 . /work/pyvenv/bin/activate
 pip install -q catkin_pkg lark empy==3.3.4 colcon-common-extensions
+$PREP
 west build -p always -b arduino_uno_q -d /work/build-$APP /work/unoq_$APP -- $EXTRA_CMAKE
 "
 ls -la "$WORK/build-$APP/zephyr/zephyr.bin" "$WORK/build-$APP/zephyr/zephyr.elf"
