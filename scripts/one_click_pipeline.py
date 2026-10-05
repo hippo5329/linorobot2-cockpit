@@ -994,14 +994,22 @@ def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bo
     stopped; the map frame never existed, and Nav2 failed thirty seconds later
     with planner_server unable to transform base_link to map. The gate named
     the wrong step, which is worse than no gate.
+
+    Each echo gets 15 s, not 5: on the UNO Q's Cortex-A53 a cold `ros2 topic
+    echo --once` of a latched topic took 3.5-5.1 s on an IDLE board (CLI start
+    plus discovery). Under Nav2 load the 5 s bound timed out on a slam_toolbox
+    that was active and publishing, and the leg failed "SLAM: no map was
+    published" with Nav2 then reaching 8/8 on that map.
     """
     start = time.time()
     while time.time() - start < timeout_sec:
         try:
             if require_message:
-                res = run_ros(f"timeout 5 ros2 topic echo {topic_name} --once "
+                left = timeout_sec - (time.time() - start)
+                echo_s = max(5, min(15, int(left)))
+                res = run_ros(f"timeout {echo_s} ros2 topic echo {topic_name} --once "
                               f"--field {require_message} 2>/dev/null",
-                              timeout=10, distro=distro)
+                              timeout=echo_s + 5, distro=distro)
                 if res.returncode == 0 and res.stdout.strip():
                     return True
             elif require_publisher:
