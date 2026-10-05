@@ -12,6 +12,7 @@ this applies the same choices to the Zephyr module's libmicroros.mk:
   * every repository on its `lyrical` branch, except rclc (`rolling`: ros2/rclc has
     no lyrical branch) and micro-CDR / Micro-XRCE-DDS-Client (`ros2`, as for jazzy);
   * the packages micro_ros_platformio ignores for lyrical get a COLCON_IGNORE;
+  * colcon.meta adds RCUTILS_NO_PROCESS_SUPPORT (Zephyr has no fork);
   * the source patches micro_ros_platformio's patch_mcu_sources() applies, run after
     the clone and before colcon (this script, called again by the makefile with
     --patch-sources <src>).
@@ -63,7 +64,18 @@ def patch_makefile(libmicroros, me=None):
         end = last + len("touch src/rcl_interfaces/test_msgs/COLCON_IGNORE;")
         hook = f" \\\n\tpython3 {me} --patch-sources $(UROS_DIR)/src; {MARK}"
         return s[:end] + hook + s[end:]
-    return _rw(mk, edit)
+    meta = _rw(os.path.join(libmicroros, "colcon.meta"), _meta)
+    return _rw(mk, edit) or meta
+
+
+def _meta(c):
+    """Lyrical's rcutils compiles process.c (fork/execvp) unless told not to. newlib
+    declares fork as a stub, which is why the PlatformIO builds never needed this;
+    Zephyr's POSIX layer has no fork at all."""
+    if "RCUTILS_NO_PROCESS_SUPPORT" in c:
+        return c
+    return c.replace('"-DRCUTILS_NO_THREAD_SUPPORT=ON",',
+                     '"-DRCUTILS_NO_THREAD_SUPPORT=ON",\n                "-DRCUTILS_NO_PROCESS_SUPPORT=ON",', 1)
 
 
 AMENT_TARGET_DEPENDENCIES = """
