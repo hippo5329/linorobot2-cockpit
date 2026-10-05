@@ -121,3 +121,42 @@ def test_a_reference_design_simulates_nothing():
         on = [k for k, v in (bc.get("sensors") or {}).items() if k.startswith("use_sim_") and v]
         assert not on, f"{d} simulates {on}"
         assert (bc.get("simulation") or {}).get("mode") in (None, "real"), d
+
+
+def test_the_pipeline_discovers_every_design_and_refuses_sim_on_it():
+    assert ocp.reference_design_names() == set(DESIGNS)
+    src = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
+    a = src.index("if robot_name in reference_design_names() and")
+    assert '(args.mode == "sim" or controller == SIM_MCU)' in src[a:a + 120]
+    assert "[SIM REFUSED]" in src[a:a + 600]
+    # before anything is flashed or launched
+    assert a < src.index("sim_mcu = controller == SIM_MCU")
+
+
+SIMSYNC = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const pick = (start) => { const a = src.indexOf(start); return src.slice(a, src.indexOf("\n}\n", a) + 3); };
+const mk = (v) => ({ value: v, disabled: false, title: "" });
+const sels = {};
+for (const id of ["hdr-pipeline-mode", "cockpit-pipeline-mode"]) sels[id] = { value: "sim", options: [mk("sim"), mk("real"), mk("auto")] };
+for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) sels[id] = { value: "pico2", options: [mk("pico2"), mk("sim")] };
+const document = { getElementById: (id) => sels[id] || null };
+const state = { robot_name: process.argv[3], reference: JSON.parse(process.argv[4]) };
+eval(pick("function isReferenceDesign(") + pick("function syncSimForDesign(") + `
+syncSimForDesign();
+console.log(JSON.stringify({ mode: sels["hdr-pipeline-mode"].value, simOff: sels["hdr-pipeline-mode"].options[0].disabled,
+  mcuSimOff: sels["cfg-mcu"].options[1].disabled }));`);
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+@pytest.mark.parametrize("robot, design", [("gendrv", True), ("bare_pico2", False), ("bare_sim", False)])
+def test_the_ui_offers_no_sim_for_a_design(robot, design, tmp_path):
+    h = tmp_path / "simsync.js"
+    h.write_text(SIMSYNC)
+    out = subprocess.run([NODE, str(h), os.path.join(ROOT, "web", "frontend", "app-core.js"), robot, json.dumps(DESIGNS)],
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res == ({"mode": "real", "simOff": True, "mcuSimOff": True} if design
+                   else {"mode": "sim", "simOff": False, "mcuSimOff": False}), res

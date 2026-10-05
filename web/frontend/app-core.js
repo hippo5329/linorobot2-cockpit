@@ -906,7 +906,33 @@ async function loadRobotList() {
     const r = await fetch("/api/robots").then((x) => x.json());
     state.robots = r.robots || [];
     state.robot_name = r.active || state.robot_name;
+    state.reference = r.reference || state.reference || [];
+    syncSimForDesign();
   } catch (e) { /* ignore */ }
+}
+
+// A reference design is a real robot and simulates nothing (user, 2026-10-06: "a ref design
+// mean real robot, so no sim devices"): Sim mode and the Sim MCU are not offered for one,
+// and a mode select left on Sim moves to Real. The pipeline refuses them too
+// ([SIM REFUSED]); this says so before anyone presses Start.
+function isReferenceDesign(name) {
+  return (state.reference || []).includes(String(name || ""));
+}
+function syncSimForDesign() {
+  const design = isReferenceDesign(state.robot_name);
+  for (const id of ["hdr-pipeline-mode", "cockpit-pipeline-mode"]) {
+    const sel = document.getElementById(id);
+    const opt = sel && [...sel.options].find((o) => o.value === "sim");
+    if (!opt) continue;
+    opt.disabled = design;
+    opt.title = design ? "A reference design is a real robot: it simulates nothing. " +
+      "Pick its board's bare robot or bare_sim to simulate." : "";
+    if (design && sel.value === "sim") sel.value = "real";
+  }
+  for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) {
+    const opt = [...(document.getElementById(id)?.options || [])].find((o) => o.value === "sim");
+    if (opt) opt.disabled = design;
+  }
 }
 
 // Dropdown picker shared by the Robot and Branch header fields. Ported from
@@ -1031,6 +1057,7 @@ async function selectRobot(name, byUser = true) {
     put("cfg-container-registry", c.container_registry);
     const ri = document.getElementById("hdr-robot-name");
     if (ri) ri.value = state.robot_name;
+    syncSimForDesign();
 
     // The base controller has to follow the robot, or the two silently diverge.
     // 1-Click reads its controller from #cockpit-target-select, NOT from the

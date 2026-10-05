@@ -36,6 +36,7 @@ from core import (
     text_field,
     yaml_merge,
 )
+import one_click_pipeline  # noqa: E402  (scripts/, via core's sys.path)
 
 import gen_bare_config  # scripts/ is on sys.path via core
 import mcu_identity  # noqa: E402  (scripts/, the controller -> silicon table)
@@ -417,6 +418,9 @@ def get_robots():
         "status": "ok",
         "robots": get_robots_list(params),
         "active": robot_name,
+        # The shipped reference designs: real robots, never run in Sim mode or on the Sim
+        # MCU (one_click_pipeline refuses; the UI disables the Sim choice for them).
+        "reference": sorted(one_click_pipeline.reference_design_names()),
         "path": display_path(active_path),
     }
 

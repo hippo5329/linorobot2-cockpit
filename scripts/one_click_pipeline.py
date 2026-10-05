@@ -285,6 +285,23 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
 SIM_MCU = "sim"
 
 
+def reference_design_names(root: str = None) -> set:
+    """The robot names the repo ships as reference designs (config/reference/*_config.yaml).
+
+    Discovered, never listed: a design added later is covered the day it lands."""
+    import glob
+    names = set()
+    for path in glob.glob(os.path.join(root or REPO_ROOT, "config", "reference", "*_config.yaml")):
+        try:
+            with open(path) as fh:
+                names.add((yaml.safe_load(fh) or {}).get("robot", {}).get("name")
+                          or os.path.basename(path)[:-len("_config.yaml")])
+        except (OSError, yaml.YAMLError):
+            continue
+    names.discard(None)
+    return names
+
+
 def is_generated_robot(robot_name: str) -> bool:
     """A bare module or the Sim MCU robot (`bare_*`), generated rather than designed.
 
@@ -1610,6 +1627,17 @@ def main():
                          f"own pins and kinematics.")
     robot_name = params.get("robot", {}).get("name") or DEFAULT_ROBOT
     controller = args.controller or controller_cfg.get("name") or "pico2"
+    # A reference design is a real robot and simulates nothing (user, 2026-10-06: "a ref
+    # design mean real robot, so no sim devices"). Sim mode forces every sim flag on and
+    # the Sim MCU simulates the whole board, so neither runs a design: simulation belongs
+    # to the generated robots -- the board's bare robot, or bare_sim.
+    if robot_name in reference_design_names() and (args.mode == "sim" or controller == SIM_MCU):
+        raise SystemExit(
+            f"\n❌ [SIM REFUSED] '{robot_name}' is a reference design -- a real robot, which "
+            f"simulates nothing -- and this run asked for "
+            f"{'the Sim MCU' if controller == SIM_MCU else 'Sim mode'}.\n"
+            f"   Run it in Real mode on its own board, or simulate with a generated robot: "
+            f"its board's bare robot (bare_<mcu>) or the Sim MCU robot (bare_sim). Nothing was started.")
     # The simulated MCU: base controller `sim`, or no board on the bus at all.
     # sim_base_node stands in for the board on this computer (same wheel model,
     # same topics), so a person with nothing plugged in gets a running robot
