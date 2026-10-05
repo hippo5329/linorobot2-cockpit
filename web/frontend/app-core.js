@@ -143,14 +143,33 @@ function hideActionBanner() {
 // from the one vid/pid table the flasher's own guard uses, and only on decisive
 // evidence (an ESP32 behind a USB bridge never blocks). flash_mcu.py still
 // refuses on its own: this is the warning before the request, not the only wall.
+// A generated robot -- a bare module (`bare_<silicon>`) or the Sim MCU (`bare_sim`) -- as
+// opposed to a real one: a reference design, or a robot the user saved. Only a generated
+// robot may fall back to the Sim MCU when no board is attached.
+function isGeneratedRobot(name) {
+  return !name || /^bare_/.test(String(name));
+}
 async function boardMatchesOrWarn(controller, action) {
   if (!controller || String(controller).toLowerCase() === "sim") return true;
-  let mm = null;
+  let mm = null, s = null;
   try {
-    const s = await fetch(`/api/status?controller=${encodeURIComponent(controller)}`).then((r) => r.json());
+    s = await fetch(`/api/status?controller=${encodeURIComponent(controller)}`).then((r) => r.json());
     mm = s && s.mcu_mismatch;
   } catch (e) {
     return true;   // no answer is no evidence; the flasher's guard still stands
+  }
+  // A real robot with NO board attached is refused too, not run on the Sim MCU in its
+  // place: a reference design is a real robot, selectable without its board, but its
+  // actions need that board (user, 2026-10-06). A 1-Click pressed on one ran bare_sim.
+  if (!mm && s && s.board_on_bus === false && !s.mcu_detected && !isGeneratedRobot(state.robot_name)) {
+    const want = siliconOf(controller);
+    const title = `${action} blocked: no board attached.`;
+    const detail = `${state.robot_name} is a real robot: ${action} runs it on its own ${want} board, ` +
+      `and nothing is plugged in. Nothing was sent. Plug in its board, or pick the Sim MCU robot ` +
+      `(bare_sim) to try the stack without hardware. Editing the design needs no board.`;
+    logLine(`⚠️ [NO BOARD] ${title} ${detail}`);
+    showActionBanner(title, detail);
+    return false;
   }
   if (!mm) return true;
   const title = `${action} blocked: the board does not match this design.`;
@@ -1332,7 +1351,11 @@ async function noBoardSwitch(s) {
   if (!noBoardBusy) {
     noBoardBusy = true;
     try {
-      if (absent && !userChoseController && state.robot_name && state.robot_name !== "bare_sim") {
+      // Only a GENERATED robot (a bare module) may be swapped for the Sim MCU: a real robot --
+      // any reference design, or one the user saved -- stays what the user chose (user,
+      // 2026-10-06: "ref design are real robots, user can select it independent of detected mcu").
+      if (absent && !userChoseController && state.robot_name && state.robot_name !== "bare_sim"
+          && isGeneratedRobot(state.robot_name)) {
         noBoardSwitchedFrom = state.robot_name;
         await useSimRobot();
       } else if (!absent && noBoardSwitchedFrom && state.robot_name === "bare_sim" && s.mcu_detected) {
@@ -1353,10 +1376,13 @@ async function noBoardSwitch(s) {
   if (!el) return;
   const onSim = state.robot_name === "bare_sim";
   if (absent && !onSim) {
-    // The user kept a board robot with nothing plugged in: say what will
-    // happen rather than overriding them.
-    el.innerHTML = "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +
-      "(the firmware, running on this computer) until a board is plugged in.";
+    // A board robot with nothing plugged in: say what will happen rather than overriding.
+    el.innerHTML = isGeneratedRobot(state.robot_name)
+      ? "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +
+        "(the firmware, running on this computer) until a board is plugged in."
+      : `⚠️ <b>No MCU board detected.</b> <code>${escapeHtml(state.robot_name)}</code> is a real robot: ` +
+        "you can edit it freely, but Flash, 1-Click and Bringup need its board. " +
+        "Pick the <b>Sim MCU</b> robot (<code>bare_sim</code>) to try the stack without hardware.";
     el.hidden = false;
   } else if (absent) {
     el.innerHTML = "⚠️ <b>No MCU board detected</b> — switched to the <b>Sim MCU</b> robot " +

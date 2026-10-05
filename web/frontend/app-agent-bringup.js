@@ -809,6 +809,11 @@ wireStartStop({
   slot: "bringup",
   title: "Bringup",
   buildCommand: async () => {
+    // Bringup runs the robot on its board, like 1-Click: a real robot needs its board
+    // attached (a different one OR none is refused here), a generated one may run on the
+    // Sim MCU. Same guard as Flash and 1-Click (app-core.js boardMatchesOrWarn).
+    const ctl = controllerForRun(document.getElementById("cfg-mcu")?.value || "");
+    if (!(await boardMatchesOrWarn(ctl, "Bringup"))) throw new Error("no matching board");
     if (!isDockerMode() && state.status && state.status.ros2_installed === false) {
       const rosOk = await ensureRos2Installed();
       if (!rosOk) {

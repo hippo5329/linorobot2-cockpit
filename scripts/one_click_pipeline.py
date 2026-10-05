@@ -285,6 +285,15 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
 SIM_MCU = "sim"
 
 
+def is_generated_robot(robot_name: str) -> bool:
+    """A bare module or the Sim MCU robot (`bare_*`), generated rather than designed.
+
+    Only these may run on the Sim MCU in place of a missing board. Every other robot is
+    real -- a reference design from config/reference/, or one the user saved -- and its
+    actions need its own board."""
+    return not robot_name or robot_name.startswith("bare_")
+
+
 def no_board_attached(controller_cfg: dict) -> bool:
     """Nothing to flash: the configured port is absent AND no RP2/Espressif
     device is on the USB bus (a board in BOOTSEL has no tty, so the port alone
@@ -1607,6 +1616,16 @@ def main():
     # instead of a flash error. Nothing is built, probed or flashed.
     sim_mcu = controller == SIM_MCU
     if not sim_mcu and not args.skip_flash and not args.require_board and no_board_attached(controller_cfg):
+        # Only a GENERATED robot (a bare module, `bare_<silicon>`) falls back. A real robot --
+        # a reference design, or one the user saved -- runs on its own board or not at all:
+        # swapping it for the Sim MCU ran some other robot under its name (user, 2026-10-06).
+        if not is_generated_robot(robot_name):
+            raise SystemExit(
+                f"\n❌ [NO BOARD] '{robot_name}' is a real robot and its {controller} board is not "
+                f"attached (nothing on the USB bus, nothing at "
+                f"{controller_cfg.get('serial_port', '/dev/ttyACM0')}).\n"
+                f"   Plug its board in, or run the Sim MCU robot (--robot bare_sim) to try the "
+                f"stack without hardware. Nothing was started.")
         print(f"⚠️  No board on the USB bus (and nothing at "
               f"{controller_cfg.get('serial_port', '/dev/ttyACM0')}): running '{robot_name}' "
               f"on the simulated MCU instead of '{controller}'. Plug a board in to flash it; "
