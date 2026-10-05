@@ -76,3 +76,19 @@
 		};
 	};
 };
+
+/*
+ * The system clock from the board's 16 MHz crystal (HSE), not the MSI. The board file
+ * runs PLL1 from MSIS in PLL mode, which trims the RC oscillator against the 32 kHz
+ * crystal in coarse steps: measured against the robot computer's NTP-held clock it ran
+ * 300-900 ppm off (2026-10-05), so a timestamp synced once at connect was ~140 ms out
+ * after five minutes and the host's scans sat "in the future" of the odom TF. Same
+ * 160 MHz: 16 MHz / M 1 x N 20 / R 2 (VCO 320 MHz).
+ */
+&pll1 {
+	clocks = <&clk_hse>;
+	div-m = <1>;
+	mul-n = <20>;
+	div-q = <2>;
+	div-r = <2>;
+};

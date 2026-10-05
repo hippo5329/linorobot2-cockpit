@@ -614,6 +614,7 @@ static inline bool ledRead() {
 void flashLED(int n_times);
 void rclErrorLoop();
 bool syncTime();
+static void resyncTime();
 struct timespec getTime();
 bool createEntities();
 bool destroyEntities();
@@ -1485,6 +1486,7 @@ void loop() {
             // reached over the LAN and a 200 ms ping is both unnecessary and a
             // way to declare a working link dead on one lost datagram; on a
             // serial link the ping is how a disappeared agent is noticed at all.
+            resyncTime();
             if (!urosTransportIsUdp())
             {
                 EXECUTE_EVERY_N_MS(200, {
@@ -1850,6 +1852,16 @@ bool destroyEntities()
     if (raw_scan_pub_ready)
     {
         raw_scan_pub_ready = false;
+        // The message BORROWS raw_scan_batch (flushRawScan points data.data at it),
+        // and __fini frees data.data. Freeing the batch here -- which initRawScan()
+        // allocates once and the LiDAR keeps writing into -- corrupted the heap on
+        // every agent reconnect: the next allocation walked a freed chunk the scan was
+        // still filling (bus faults inside the allocator on the UNO Q, 2026-10-05,
+        // both at a reconnect). Hand the buffer back before __fini releases what the
+        // message owns.
+        raw_scan_msg.data.data = NULL;
+        raw_scan_msg.data.size = 0;
+        raw_scan_msg.data.capacity = 0;
         std_msgs__msg__UInt8MultiArray__fini(&raw_scan_msg);
         RCSOFTCHECK(rcl_publisher_fini(&raw_scan_publisher, &node));
     }
@@ -2435,6 +2447,83 @@ void publishData()
     diagTime(DIAGT_PUB, micros() - pub_t0);
 }
 
+#if defined(LINO_ZEPHYR)
+// The UNO Q's STM32 (Zephyr). Two things differ from the branches below, and both
+// cost timestamps.
+//
+// 1. XRCE keeps its own time with clock_gettime(CLOCK_REALTIME) on Zephyr (its
+//    util/time.c), so the _POSIX_TIMERS branch's clock_settime(CLOCK_REALTIME) moved
+//    the very clock the session's sync offset and timeouts are measured against. Here
+//    the epoch is an offset to the monotonic uptime, at microseconds, and XRCE's clock
+//    is never touched.
+// 2. One exchange at connect, then never again, left every stamp of a session ~140 ms
+//    behind the robot computer's clock (2026-10-05): scans stamped by the host driver
+//    then sat "in the future" of the EKF's odom TF, collision_monitor dropped the laser
+//    as an invalid source and stopped the robot mid-leg. So the sync is NTP's: at
+//    connect the exchange with the shortest round trip of five (the least-delayed one
+//    has the least asymmetry error), then one exchange every 10 s, kept only when its
+//    round trip is no worse than twice the best seen.
+#include <zephyr/sys/printk.h>     // the RAM console: syslog has no Wi-Fi to leave by here
+extern uint64_t _lino_zephyr_now_us();
+static int64_t zephyr_epoch_offset_us = 0;      // epoch_us - uptime_us
+static bool zephyr_time_ok = false;
+static int64_t zephyr_best_rtt_us = INT64_MAX;
+
+static bool zephyrSyncOnce(int timeout_ms, int64_t *rtt_us, int64_t *offset_us)
+{
+    const uint64_t t0 = _lino_zephyr_now_us();
+    if (rmw_uros_sync_session(timeout_ms) != RMW_RET_OK || !rmw_uros_epoch_synchronized())
+        return false;
+    const int64_t epoch_us = rmw_uros_epoch_nanos() / 1000;
+    const uint64_t t1 = _lino_zephyr_now_us();
+    *rtt_us = (int64_t)(t1 - t0);
+    *offset_us = epoch_us - (int64_t)t1;
+    return true;
+}
+
+static bool zephyrSync(int tries, int timeout_ms)
+{
+    int64_t best_rtt = INT64_MAX, best_off = 0;
+    for (int i = 0; i < tries; i++) {
+        int64_t rtt, off;
+        if (zephyrSyncOnce(timeout_ms, &rtt, &off) && rtt < best_rtt) {
+            best_rtt = rtt;
+            best_off = off;
+        }
+    }
+    if (best_rtt == INT64_MAX)
+        return false;
+    if (zephyr_time_ok && best_rtt > 2 * zephyr_best_rtt_us && best_rtt > 2000)
+        return true;     // a delayed exchange: exactly the one that would mislead
+    if (best_rtt < zephyr_best_rtt_us)
+        zephyr_best_rtt_us = best_rtt;
+    printk("[time] sync: rtt %ld us, offset moved %ld us\n",
+           (long)best_rtt, (long)(zephyr_time_ok ? best_off - zephyr_epoch_offset_us : 0));
+    zephyr_epoch_offset_us = best_off;
+    zephyr_time_ok = true;
+    return true;
+}
+
+bool syncTime()
+{
+    zephyr_best_rtt_us = INT64_MAX;     // a new session: its own round trips
+    return zephyrSync(5, 100);
+}
+
+static void resyncTime()
+{
+    EXECUTE_EVERY_N_MS(10000, { zephyrSync(1, 20); });
+}
+
+struct timespec getTime()
+{
+    struct timespec tp = {0};
+    const int64_t us = (int64_t)_lino_zephyr_now_us() + zephyr_epoch_offset_us;
+    tp.tv_sec = (time_t)(us / 1000000);
+    tp.tv_nsec = (long)((us % 1000000) * 1000);
+    return tp;
+}
+#else
 bool syncTime()
 {
     const int timeout_ms = 1000;
@@ -2473,6 +2562,9 @@ struct timespec getTime()
 #endif
     return tp;
 }
+
+static void resyncTime() {}
+#endif
 
 void rclErrorLoop() 
 {
