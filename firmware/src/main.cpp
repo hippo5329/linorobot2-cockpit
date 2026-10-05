@@ -415,6 +415,53 @@ void flushRawScan()
     }
 }
 
+// A PHYSICAL LD19 on one of the MCU's UARTs, sent to the robot computer as raw_scan --
+// the same topic, the same 47-byte packets and the same batch as the emulator, so the
+// host's LD19 driver (comm_mode topic) cannot tell the two apart. For a board whose only
+// link to the robot computer is micro-ROS: the Arduino UNO Q, where the LD19 is wired to
+// the STM32 and the QRB2210 sees nothing but /dev/ttyHS1.
+//
+// The UART is the platform's to open (lidarUartOpen): nullptr where it has no spare UART
+// on that pin, and the firmware then says so rather than publishing an empty topic.
+// Whole packets only, synced on the 0x54 0x2C header: a byte stream cut at an arbitrary
+// point would leave the host re-syncing on every message.
+#if defined(LINO_ZEPHYR)
+Stream *lidarUartOpen(int rx_pin, uint32_t baud);
+#else
+static Stream *lidarUartOpen(int, uint32_t) { return nullptr; }
+#endif
+#define LD19_PACKET_LEN 47
+static Stream *real_lidar = nullptr;
+static uint8_t real_lidar_pkt[LD19_PACKET_LEN];
+static size_t real_lidar_len = 0;
+static uint32_t real_lidar_packets = 0;
+
+static void pumpRealLidar()
+{
+    // Bounded: the loop also has a robot to run. 512 bytes is ~22 ms of LD19 at 230400.
+    for (int n = 0; n < 512 && real_lidar->available() > 0; n++)
+    {
+        const int c = real_lidar->read();
+        if (c < 0)
+            break;
+        const uint8_t b = (uint8_t)c;
+        if (real_lidar_len == 0 && b != 0x54)
+            continue;
+        if (real_lidar_len == 1 && b != 0x2C)
+        {
+            real_lidar_len = (b == 0x54) ? 1 : 0;
+            continue;
+        }
+        real_lidar_pkt[real_lidar_len++] = b;
+        if (real_lidar_len == LD19_PACKET_LEN)
+        {
+            onRawScanPacket(real_lidar_pkt, LD19_PACKET_LEN);
+            real_lidar_packets++;
+            real_lidar_len = 0;
+        }
+    }
+}
+
 // The drivetrain is built in setup() from the env partition, not here. Pins,
 // wheel geometry, PID gains, the motor driver type and whether the wheels are
 // real or simulated used to be macros, which is why two ESP32 robots differing
@@ -1261,7 +1308,27 @@ void setup()
             sim_ld19->begin();
     }
     else
+    {
         Serial.println("[lidar] sim_ld19=0: the LiDAR emulator is off (a real LiDAR on this robot)");
+        const int rx = envInt("lidar_rx", LIDAR_RXD);
+        const bool topic = SimLD19::parseCommMode(envGet("lidar_comm", NULL),
+                               SimLD19::parseCommMode(LIDAR_COMM_DEFAULT, SimLD19::COMM_SERIAL))
+                           == SimLD19::COMM_TOPIC;
+        if (topic && rx >= 0)
+        {
+            const uint32_t baud = envU32("lidar_baud", LIDAR_BAUDRATE);
+            real_lidar = lidarUartOpen(rx, baud);
+            if (real_lidar)
+            {
+                initRawScan();
+                Serial.printf("[lidar] a real LD19 on pin %d at %lu baud -> raw_scan\n",
+                              rx, (unsigned long)baud);
+            }
+            else
+                Serial.printf("[lidar] lidar_comm=topic with lidar_rx=%d, but this board has no "
+                              "UART for that pin -- no raw_scan\n", rx);
+        }
+    }
 
     // /sonar: a real HC-SR04 if the env named both pins, else the simulated
     // cone when the emulator is running to raycast it. `sim_sonar` can turn
@@ -1472,6 +1539,8 @@ void loop() {
 #endif
     if (sim_ld19)
         sim_ld19->step();
+    if (real_lidar)
+        pumpRealLidar();
     flushRawScan();
     // The emulator's own account of itself every 5 s, over syslog (verified to
     // arrive with the agent up). Cumulative counters; read the deltas. Not
@@ -1646,7 +1715,7 @@ bool createEntities()
     // publisher is compiled into every image now, so `sim_lidar_on` alone
     // would put an unread raw_scan on the wire for every serial and udp robot,
     // and spend one of RMW_UXRCE_MAX_PUBLISHERS doing it.
-    if (sim_lidar_on && sim_lidar_comm == SimLD19::COMM_TOPIC)
+    if ((sim_lidar_on && sim_lidar_comm == SimLD19::COMM_TOPIC) || real_lidar)
     {
         RCCHECK(rclc_publisher_init_default(
             &raw_scan_publisher,

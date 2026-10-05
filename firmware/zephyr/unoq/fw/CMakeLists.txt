@@ -30,7 +30,7 @@ foreach(d ${DEP_DIRS})
   endif()
 endforeach()
 target_sources(app PRIVATE
-  src/zephyr_core.cpp src/uart_link.cpp src/pins.cpp
+  src/zephyr_core.cpp src/uart_link.cpp src/pins.cpp src/lidar_uart.cpp
   ${FIRMWARE_ROOT}/src/main.cpp ${LIB_SOURCES} ${TOOL_SOURCES} ${DEP_SOURCES})
 if(NOT DEFINED FW_GIT_REV)
   set(FW_GIT_REV "unknown")

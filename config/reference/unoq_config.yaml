@@ -28,11 +28,15 @@ base_controller:
   # 50 Hz topic up; at 115200 a single Odometry outlasts the 20 ms control period.
   baudrate: 4000000
   lidar:
-    # The LD19 plugs into the robot computer (a USB-serial adapter on the QRB2210's
-    # USB-C hub), read by the host driver directly -- the MCU never sees it.
+    # The LD19 is wired to the STM32 -- its TX to D0 (USART1 RX, PB7), P5V to the 5 V
+    # pin, GND to GND -- and the firmware sends its packets to the robot computer as
+    # raw_scan over micro-ROS (comm_mode topic), where the LD19 driver turns them into
+    # /scan. The QRB2210 has no other wire to it: /dev/ttyHS1 carries everything.
+    # (In simulation mode the same raw_scan comes from the STM32's LD19 emulator.)
     model: ld19
-    comm_mode: serial
-    serial_port: /dev/ttyUSB0
+    comm_mode: topic
+    raw_scan_topic: raw_scan
+    rx_pin: 0
     baudrate: 230400
   sensors:
     # Arduino Modulino Movement: an LSM6DSOX at 0x6A on the Qwiic connector (the
