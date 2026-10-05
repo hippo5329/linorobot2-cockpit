@@ -485,7 +485,7 @@ def resolve_command(data: Dict[str, Any], default: str = "") -> str:
 # ------------------------------------------------------------------------------
 # Single Source of Truth Helpers (Per-Robot Configuration)
 # ------------------------------------------------------------------------------
-DEFAULT_ROBOT_NAME = "pico2_mecanum"
+DEFAULT_ROBOT_NAME = "bare_sim"   # with no design chosen, the board decides (cockpit_paths.DEFAULT_ROBOT)
 ACTIVE_PARAMS_PATH = os.path.join(CONFIG_DIR, f"{DEFAULT_ROBOT_NAME}_config.yaml")
 ACTIVE_ROBOT_NAME = DEFAULT_ROBOT_NAME
 

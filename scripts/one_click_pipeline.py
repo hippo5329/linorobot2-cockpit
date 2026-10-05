@@ -1585,6 +1585,9 @@ def main():
     # files written by a release build two days earlier: 0.152 m wheels, inverted
     # even-numbered motors, LED -1 and a different Nav2 template than the one
     # every other default carries -- while the repo said otherwise.
+    # Nothing named at all: the default robot (bare_sim), regenerated like any bare module.
+    if not args.robot and not args.controller:
+        args.robot = DEFAULT_ROBOT
     bare_mcu = re.fullmatch(r"bare_([a-z0-9]+)", args.robot or "")
     if bare_mcu and bare_mcu.group(1) in gen_bare_config.KNOWN:
         bare_path = os.path.join(CONFIG_DIR, f"{args.robot}_config.yaml")

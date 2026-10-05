@@ -1407,6 +1407,17 @@ async function noBoardSwitch(s) {
         // next poll will know.
         noBoardSwitchedFrom = null;
         await leaveSimRobot(siliconOf(s.detected_mcu));
+      } else if (!absent && s.mcu_detected && !userChoseController && isGeneratedRobot(state.robot_name)) {
+        // No design chosen, so the board decides (user, 2026-10-06): a detected MCU gets its
+        // bare module, every device simulated -- a UNO Q its STM32 (bare_unoq). Only when
+        // the silicon differs, so a bare drivetrain variant the user picked for this very
+        // board (bare_pico2_mecanum on a Pico 2) stays. A design is never touched.
+        const sil = siliconOf(s.detected_mcu);
+        const cur = state.robot_name === "bare_sim" ? "sim" : siliconOf(loadedControllerName);
+        if (sil && sil !== cur) {
+          if (state.robot_name === "bare_sim") await leaveSimRobot(sil);
+          else await selectRobot(`bare_${sil}`, false);
+        }
       }
     } finally {
       noBoardBusy = false;

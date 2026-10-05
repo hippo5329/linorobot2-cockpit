@@ -105,3 +105,32 @@ def test_a_board_that_does_not_name_its_silicon_yet_is_waited_for(tmp_path):
     assert res["robot"] == "bare_sim", res
     res = run("bare_pico2", "pico2", [NONE, bootsel, board("pico")], tmp_path)
     assert res["robot"] == "bare_pico", res
+
+
+def test_with_no_design_chosen_the_detected_board_decides(tmp_path):
+    """User, 2026-10-06: no reference design selected -> a detected MCU defaults to its bare
+    module, every device simulated; a detected UNO Q to its STM32 (bare_unoq)."""
+    assert run("bare_sim", "sim", [board("esp32")], tmp_path)["robot"] == "bare_esp32"
+    assert run("bare_sim", "sim", [board("unoq")], tmp_path)["robot"] == "bare_unoq"
+    # a bare robot of another silicon follows the board too
+    assert run("bare_pico2", "pico2", [board("esp32s3")], tmp_path)["robot"] == "bare_esp32s3"
+
+
+def test_a_bare_variant_for_the_detected_board_stays(tmp_path):
+    res = run("bare_pico2_mecanum", "pico2", [board("pico2")], tmp_path)
+    assert res["calls"] == [] and res["robot"] == "bare_pico2_mecanum", res
+
+
+@pytest.mark.parametrize("design, controller", _designs())
+def test_a_design_is_never_replaced_by_the_detected_board(design, controller, tmp_path):
+    res = run(design, controller, [board("esp32s3")], tmp_path)
+    assert res["calls"] == [] and res["robot"] == design, res
+
+
+def test_the_default_robot_is_the_sim_mcu_not_a_design():
+    import sys
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import cockpit_paths
+    assert cockpit_paths.DEFAULT_ROBOT == "bare_sim"
+    core = open(os.path.join(REPO_ROOT, "web", "backend", "core.py")).read()
+    assert 'DEFAULT_ROBOT_NAME = "bare_sim"' in core
