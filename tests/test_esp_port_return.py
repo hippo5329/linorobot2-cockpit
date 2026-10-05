@@ -35,3 +35,22 @@ def test_every_esp_fallback_attempt_waits_for_the_port():
     loop = src[src.index("for safe_baud in [460800, 115200]:"):]
     loop = loop[:loop.index("flashed_ok(")]
     assert "wait_for_port_return(args.port" in loop
+
+
+def test_native_usb_s3_gets_usb_reset(monkeypatch):
+    monkeypatch.setattr(flash_mcu.mcu_identity, "identify_port",
+                        lambda p: ("esp32s3", "ESP32-S3 (Native USB CDC)", True))
+    assert flash_mcu.esptool_before("/dev/ttyACM0") == ["--before", "usb-reset"]
+
+
+def test_bridge_board_keeps_the_default_reset(monkeypatch):
+    monkeypatch.setattr(flash_mcu.mcu_identity, "identify_port",
+                        lambda p: ("esp32", "ESP32 (CP2102N bridge)", False))
+    assert flash_mcu.esptool_before("/dev/ttyUSB0") == []
+
+
+def test_the_esptool_write_uses_the_board_specific_reset():
+    src = open(flash_mcu.__file__).read()
+    body = src[src.index("def flash_via_esptool"):]
+    body = body[:body.index("return res.returncode")]
+    assert "esptool_before(port)" in body

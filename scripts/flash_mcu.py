@@ -645,29 +645,6 @@ def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
     return False
 
 
-def wait_for_port_return(port: str, before: str) -> bool:
-    """Wait up to PORT_RETURN_WAIT_S for a re-enumerating board's node to come back.
-
-    A native-USB ESP32-S3 drops off the bus on every esptool reset. Inside a
-    container its node returns only after the host re-attaches it, and behind a
-    chain of hubs that took ~3 s (m21, 2026-10-05: three re-enumerations in 3 s);
-    both fallback attempts started at once, found no port and the flash failed,
-    twice in a row, while the board was fine.
-    """
-    if not port or os.path.exists(port):
-        return bool(port)
-    log(f"{port} is not present; waiting up to {PORT_RETURN_WAIT_S:.0f}s for it to come back before {before}...")
-    deadline = time.time() + PORT_RETURN_WAIT_S
-    while time.time() < deadline and not os.path.exists(port):
-        time.sleep(0.25)
-    if not os.path.exists(port):
-        log(f"{port} did not come back; {before} will fail")
-        return False
-    time.sleep(0.5)                      # let the CDC driver finish its line setup
-    log(f"{port} is back")
-    return True
-
-
 def pulse_1200_baud(port: str) -> bool:
     """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot.
 
@@ -1394,6 +1371,47 @@ def esp_identity_watch(line: str) -> Optional[str]:
             f"with --new-board.")
 
 
+def wait_for_port_return(port: str, before: str) -> bool:
+    """Wait up to PORT_RETURN_WAIT_S for a re-enumerating board's node to come back.
+
+    A native-USB ESP32-S3 drops off the bus on every esptool reset. Inside a
+    container its node returns only after the host re-attaches it, and behind a
+    chain of hubs that took ~3 s (m21, 2026-10-05: three re-enumerations in 3 s);
+    both fallback attempts started at once, found no port and the flash failed,
+    twice in a row, while the board was fine.
+    """
+    if not port or os.path.exists(port):
+        return bool(port)
+    log(f"{port} is not present; waiting up to {PORT_RETURN_WAIT_S:.0f}s for it to come back before {before}...")
+    deadline = time.time() + PORT_RETURN_WAIT_S
+    while time.time() < deadline and not os.path.exists(port):
+        time.sleep(0.25)
+    if not os.path.exists(port):
+        log(f"{port} did not come back; {before} will fail")
+        return False
+    time.sleep(0.5)                      # let the CDC driver finish its line setup
+    log(f"{port} is back")
+    return True
+
+
+def esptool_before(port: str) -> list:
+    """`--before usb-reset` for a native-USB ESP32-S3/S2, nothing for a bridge board.
+
+    esptool picks its reset sequence from the USB ids it reads in sysfs for the
+    port name. Inside a container the tty is a bind mount, so /sys/class/tty/<name>
+    is whatever the HOST calls that name -- on m21 (2026-10-05) the cell's ttyACM0
+    was the host's Pico 2 W, esptool used the classic UART reset on the S3's
+    USB-Serial/JTAG, the board dropped off the bus, and every attempt failed with
+    "Could not configure port: Input/output error". mcu_identity resolves the tty by
+    device number, so it knows the real board; tell esptool rather than let it guess.
+    """
+    family, chip, _ = mcu_identity.identify_port(port)
+    if family in ("esp32s3", "esp32s2") and "Native USB" in (chip or ""):
+        log(f"    {chip}: esptool --before usb-reset")
+        return ["--before", "usb-reset"]
+    return []
+
+
 def flash_via_esptool(build_dir: str, env: str, port: str, baud: int, timeout: int = 300,
                       env_bin: Optional[str] = None) -> bool:
     """Write an ESP32 build with esptool. The only way this script touches an ESP32."""
@@ -1409,7 +1427,7 @@ def flash_via_esptool(build_dir: str, env: str, port: str, baud: int, timeout: i
         log(f"No .bin images found in {build_dir} — was the firmware built?")
         return False
 
-    cmd = esptool_argv + ["--port", port, "--baud", str(baud), "write_flash", "-z"]
+    cmd = esptool_argv + ["--port", port, "--baud", str(baud)] + esptool_before(port) + ["write_flash", "-z"]
     for offset, path in plan:
         cmd += [offset, path]
         log(f"    {offset} <- {os.path.basename(path)}")
@@ -1488,7 +1506,7 @@ def flash_env_via_esptool(env_bin: str, env: str, port: str, baud: int,
     if not esptool_argv:
         log("esptool not found. Install it with: pip install esptool")
         return False
-    cmd = esptool_argv + ["--port", port, "--baud", str(baud), "write_flash", "-z",
+    cmd = esptool_argv + ["--port", port, "--baud", str(baud)] + esptool_before(port) + ["write_flash", "-z",
                           ENV_PARTITION_OFFSET, env_bin]
     log(f"    {ENV_PARTITION_OFFSET} <- {os.path.basename(env_bin)} (env partition only)")
     return run_tool(cmd, timeout=timeout, watch=esp_identity_watch).returncode == 0
