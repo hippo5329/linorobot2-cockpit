@@ -5,6 +5,14 @@
 // name back while that silicon is still the one selected -- so loading the
 // GenDrv design and pressing Save does not rename it to "esp32".
 const BOARD_SILICON = { gendrv: "esp32", yb_eet01: "esp32s3" };
+// A config that names its BOARD as its controller also says its silicon (`mcu:`); learn it
+// whenever one loads, so a board this table never heard of (makerspet_mini -> esp32) is
+// still its silicon. Without this the controller select went blank on makerspet_mini, and
+// the board-action guard, handed an empty controller, waved a no-board Bringup through.
+function learnBoardSilicon(board, mcu) {
+  const b = String(board || "").toLowerCase(), m = String(mcu || "").toLowerCase();
+  if (b && m && b !== m) BOARD_SILICON[b] = m;
+}
 let loadedControllerName = null;
 function siliconOf(name) {
   const n = String(name || "").toLowerCase();
@@ -150,7 +158,10 @@ function isGeneratedRobot(name) {
   return !name || /^bare_/.test(String(name));
 }
 async function boardMatchesOrWarn(controller, action) {
-  if (!controller || String(controller).toLowerCase() === "sim") return true;
+  if (String(controller || "").toLowerCase() === "sim") return true;
+  // An unknown or empty controller is no licence: a real robot still needs its board.
+  if (!controller && isGeneratedRobot(state.robot_name)) return true;
+  controller = controller || loadedControllerName || "";
   let mm = null, s = null;
   try {
     s = await fetch(`/api/status?controller=${encodeURIComponent(controller)}`).then((r) => r.json());
@@ -1031,6 +1042,7 @@ async function selectRobot(name, byUser = true) {
     // an unknown one blanks the element and is worse than leaving it alone.
     // The selects list silicon; a config may name its board (gendrv -> esp32).
     const bcBoard = (c.base_controller || {}).name;
+    learnBoardSilicon(bcBoard, (c.base_controller || {}).mcu);
     const bcName = bcBoard ? siliconOf(bcBoard) : bcBoard;
     if (bcBoard) loadedControllerName = bcBoard;
     const tsel = document.getElementById("cockpit-target-select");

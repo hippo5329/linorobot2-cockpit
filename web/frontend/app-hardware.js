@@ -47,6 +47,7 @@ async function loadHardwareConfig() {
     // 1. Base & MCU
     // The selects list silicon; a config may name its board (gendrv, yb_eet01).
     loadedControllerName = data.controller || "pico2";
+    learnBoardSilicon(loadedControllerName, tgt.mcu);
     const elMcu = document.getElementById("cfg-mcu");
     if (elMcu) elMcu.value = siliconOf(loadedControllerName);
 

@@ -134,7 +134,8 @@ def get_status(controller: Optional[str] = None):
         # warning about the config while the run uses something else is a false
         # alarm in one direction and silence in the other.
         want_name = (controller_hint or controller.get("name") or "")
-        want = mcu_identity.env_family(want_name)
+        # A board-named controller (makerspet_mini) is no family; its config's `mcu` is.
+        want = mcu_identity.env_family(want_name) or mcu_identity.env_family(controller.get("mcu") or "")
         got = mcu_identity.env_family(detected_mcu)
         for lp in ports_info.get("local_ports", []):
             if lp.get("mcu_hint") == detected_mcu:

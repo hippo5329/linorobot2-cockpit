@@ -49,6 +49,7 @@ const src = require("fs").readFileSync(process.argv[2], "utf8");
 const pick = (start) => { const a = src.indexOf(start); return src.slice(a, src.indexOf("\n}\n", a) + 3); };
 const answer = JSON.parse(process.argv[3]);
 const state = { robot_name: process.argv[4] };
+let loadedControllerName = "";
 const banners = [], logged = [];
 const BOARD_SILICON = { gendrv: "esp32", yb_eet01: "esp32s3" };
 function siliconOf(n) { n = String(n || "").toLowerCase(); return BOARD_SILICON[n] || n; }
@@ -93,3 +94,20 @@ def test_bringup_asks_the_same_guard():
     js = open(os.path.join(ROOT, "web", "frontend", "app-agent-bringup.js")).read()
     a = js.index('title: "Bringup",')
     assert 'boardMatchesOrWarn(ctl, "Bringup")' in js[a:a + 800]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_empty_controller_is_no_licence_for_a_real_robot(tmp_path):
+    """makerspet_mini names its board as its controller; the select went blank, the guard got
+    '' and let a no-board Bringup through (2026-10-06)."""
+    res = guard(tmp_path, NO_BOARD, "makerspet_mini", "")
+    assert res["ok"] is False and "no board attached" in res["banners"][0], res
+    assert guard(tmp_path, NO_BOARD, "bare_pico2", "")["ok"] is True
+
+
+def test_every_design_names_its_silicon():
+    """The UI learns a board-named controller's silicon from the config's `mcu`."""
+    import yaml
+    for d in DESIGNS:
+        bc = yaml.safe_load(open(os.path.join(ROOT, "config", "reference", f"{d}_config.yaml")))["base_controller"]
+        assert bc.get("mcu"), f"{d}: base_controller has no mcu"
