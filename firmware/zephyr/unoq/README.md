@@ -29,11 +29,11 @@ Same contract as the Arduino firmware: node `linorobot_base_node`, `odom/unfilte
 read from the last flash page (0x081FE000). Keys read: `app` (`base` | `test_sensors`),
 `base` (2wd only), `max_rpm`, `rpm_ratio`, `wheel_d`, `lr_dist`, `angular_scale`, `motor_v`,
 `power_v`, `kp`/`ki`/`kd`, `pwm_freq`, `pwm_bits`, `m1_cpr`/`m2_cpr`, `m1_inv`/`m2_inv`,
-`m1_enc_inv`/`m2_enc_inv`, `sim_wheel`, `best_effort`, `baud` (default 1500000),
-`domain_id`, `node`. Run the agent at the same speed: `-b 1500000` by default. Pins are fixed by `base/app.overlay`, not the env.
+`m1_enc_inv`/`m2_enc_inv`, `sim_wheel`, `best_effort`, `baud` (default 4000000),
+`domain_id`, `node`. Run the agent at the same speed: `-b 4000000` by default. Pins are fixed by `base/app.overlay`, not the env.
 
 `sim_wheel=1` is a first-order wheel (150 ms) fed the commanded PWM; the full model is phase 4.
 The console is a RAM buffer (`ram_console_buf`), read over SWD; the UART console does not reach Linux.
 
 Not yet: IMU, battery publishing, `topic_prefix`, the boot banner on the link, an
-interrupt-driven transport write (the polled write takes ~23 % of the CPU at 1.5 Mbaud with 50 Hz odom).
+interrupt-driven transport write (the polled write takes ~10 % of the CPU at 4 Mbaud with 50 Hz odom).
