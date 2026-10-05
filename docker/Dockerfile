@@ -484,6 +484,11 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ARG LINO_GIT_REV=unknown
 LABEL org.opencontainers.image.revision=$LINO_GIT_REV
 RUN printf '%s\n' "$LINO_GIT_REV" > /ws/BUILD_COMMIT
+# A release image names its own release: VERSION is what fetch_prebuilt.py asks for, and
+# the tree's `<date>-dev` made a release image fetch the NEWEST release's firmware -- the
+# wrong firmware for it as soon as a newer release exists. Only a tag build sets this.
+ARG LINO_VERSION=
+RUN if [ -n "$LINO_VERSION" ]; then printf '%s\n' "$LINO_VERSION" > /ws/VERSION; fi
 
 ENV COCKPIT_CONFIG_DIR=/config
 EXPOSE 8000 9090

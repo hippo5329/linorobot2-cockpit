@@ -21,3 +21,13 @@ def test_the_final_stage_labels_and_records_its_commit():
 def test_every_image_build_passes_the_commit():
     for wf in ("release.yml", "ci.yml"):
         assert "LINO_GIT_REV=${{ github.sha }}" in open(os.path.join(ROOT, ".github", "workflows", wf)).read(), wf
+
+
+def test_a_release_image_fetches_its_own_release():
+    """VERSION in a tag build is the tag; the tree's `<date>-dev` resolved to the NEWEST release."""
+    df = open(os.path.join(ROOT, "docker", "Dockerfile")).read()
+    final = df[df.rindex("\nFROM "):]
+    assert re.search(r"^ARG LINO_VERSION", final, re.M)
+    assert '> /ws/VERSION' in final
+    wf = open(os.path.join(ROOT, ".github", "workflows", "release.yml")).read()
+    assert "LINO_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '' }}" in wf
