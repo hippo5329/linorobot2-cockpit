@@ -45,8 +45,15 @@
 	};
 };
 
-/* micro-ROS on lpuart1, the internal link to the QRB2210 (/dev/ttyHS1). */
-&lpuart1 { status = "okay"; };
+/*
+ * micro-ROS on lpuart1, the internal link to the QRB2210 (/dev/ttyHS1). The LPUART's
+ * 8-byte hardware FIFOs are off unless asked for (CR1.FIFOEN); without them a byte
+ * every 3.3 us at 3 Mbaud overran the per-byte interrupt path (ISR.ORE set).
+ */
+&lpuart1 {
+	status = "okay";
+	fifo-enable;
+};
 
 /*
  * The robot's env block (firmware/common/lib/mcu_env/mcu_env.h layout: CRC32, then
