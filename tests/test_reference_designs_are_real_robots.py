@@ -111,3 +111,13 @@ def test_every_design_names_its_silicon():
     for d in DESIGNS:
         bc = yaml.safe_load(open(os.path.join(ROOT, "config", "reference", f"{d}_config.yaml")))["base_controller"]
         assert bc.get("mcu"), f"{d}: base_controller has no mcu"
+
+
+def test_a_reference_design_simulates_nothing():
+    """User, 2026-10-06: "a ref design mean real robot, so no sim devices"."""
+    import yaml
+    for d in DESIGNS:
+        bc = yaml.safe_load(open(os.path.join(ROOT, "config", "reference", f"{d}_config.yaml")))["base_controller"]
+        on = [k for k, v in (bc.get("sensors") or {}).items() if k.startswith("use_sim_") and v]
+        assert not on, f"{d} simulates {on}"
+        assert (bc.get("simulation") or {}).get("mode") in (None, "real"), d
