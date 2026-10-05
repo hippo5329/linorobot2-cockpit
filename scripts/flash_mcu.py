@@ -645,6 +645,29 @@ def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
     return False
 
 
+def wait_for_port_return(port: str, before: str) -> bool:
+    """Wait up to PORT_RETURN_WAIT_S for a re-enumerating board's node to come back.
+
+    A native-USB ESP32-S3 drops off the bus on every esptool reset. Inside a
+    container its node returns only after the host re-attaches it, and behind a
+    chain of hubs that took ~3 s (m21, 2026-10-05: three re-enumerations in 3 s);
+    both fallback attempts started at once, found no port and the flash failed,
+    twice in a row, while the board was fine.
+    """
+    if not port or os.path.exists(port):
+        return bool(port)
+    log(f"{port} is not present; waiting up to {PORT_RETURN_WAIT_S:.0f}s for it to come back before {before}...")
+    deadline = time.time() + PORT_RETURN_WAIT_S
+    while time.time() < deadline and not os.path.exists(port):
+        time.sleep(0.25)
+    if not os.path.exists(port):
+        log(f"{port} did not come back; {before} will fail")
+        return False
+    time.sleep(0.5)                      # let the CDC driver finish its line setup
+    log(f"{port} is back")
+    return True
+
+
 def pulse_1200_baud(port: str) -> bool:
     """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot.
 
@@ -2032,6 +2055,7 @@ def main() -> int:
         # Retry with lower flash baudrate — a marginal USB-UART bridge often
         # enumerates fine but cannot sustain 921600 through a whole write.
         for safe_baud in [460800, 115200]:
+            wait_for_port_return(args.port, f"the {safe_baud}-baud attempt")
             log(f"Attempting ESP32 flash at fallback baudrate {safe_baud}...")
             if flash_via_esptool(build_dir, args.env, args.port, safe_baud, timeout=args.timeout):
                 return flashed_ok(f"✅ Firmware flashed successfully at fallback baudrate {safe_baud}!")
