@@ -51,11 +51,15 @@ fi
   && git apply "$HERE/patches/micro_ros_zephyr_module-zephyr44-unoq.patch" \
   && rm -rf modules/libmicroros/micro_ros_src/build modules/libmicroros/micro_ros_src/install modules/libmicroros/micro_ros_src/log \
   && rm -rf modules/libmicroros/include modules/libmicroros/libmicroros.a )
-# The cloned sources are untracked and survive the checkout: a distro change refetches them.
+# The cloned sources and the dev tools are untracked and survive the checkout. They are
+# reused only after a build that SUCCEEDED for this distro: a failed one leaves
+# micro_ros_dev/install behind, make takes the step as done, and every later build runs
+# on half-built tools (lyrical, 2026-10-05: no ament_cmake_ros).
 LIBUROS="$WORK/micro_ros_zephyr_module/modules/libmicroros"
-if [ "$(cat "$LIBUROS/.lino_distro" 2>/dev/null)" != "$DISTRO" ]; then
-  rm -rf "$LIBUROS/micro_ros_src" "$LIBUROS/micro_ros_dev"; echo "$DISTRO" > "$LIBUROS/.lino_distro"
+if [ "$(cat "$LIBUROS/.lino_built" 2>/dev/null)" != "$DISTRO" ]; then
+  rm -rf "$LIBUROS/micro_ros_src" "$LIBUROS/micro_ros_dev" "$LIBUROS/.lino_distro"
 fi
+rm -f "$LIBUROS/.lino_built"
 PREP=""
 if [ "$DISTRO" = lyrical ]; then
   cp "$HERE/microros_lyrical.py" "$WORK/microros_lyrical.py"
@@ -82,3 +86,4 @@ $PREP
 west build -p always -b arduino_uno_q -d /work/build-$APP /work/unoq_$APP -- $EXTRA_CMAKE
 "
 ls -la "$WORK/build-$APP/zephyr/zephyr.bin" "$WORK/build-$APP/zephyr/zephyr.elf"
+echo "$DISTRO" > "$LIBUROS/.lino_built"
