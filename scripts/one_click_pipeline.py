@@ -285,17 +285,29 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
 SIM_MCU = "sim"
 
 
+_DESIGN_NAME_CACHE = {}
+
+
 def reference_design_names(root: str = None) -> set:
     """The robot names the repo ships as reference designs (config/reference/*_config.yaml).
 
-    Discovered, never listed: a design added later is covered the day it lands."""
+    Discovered, never listed: a design added later is covered the day it lands.
+
+    Each file's name is cached by (path, mtime, size), so an added, removed or edited
+    design is still seen at once. Parsing them all on every call cost the cockpit's
+    /api/status 2.7 s on a 4-core cell (2026-10-07): robot_kind() asked twice per
+    robot, 91 YAML parses per poll, and the page's overlapping polls held a core."""
     import glob
     names = set()
     for path in glob.glob(os.path.join(root or REPO_ROOT, "config", "reference", "*_config.yaml")):
         try:
-            with open(path) as fh:
-                names.add((yaml.safe_load(fh) or {}).get("robot", {}).get("name")
-                          or os.path.basename(path)[:-len("_config.yaml")])
+            st = os.stat(path)
+            key = (path, st.st_mtime_ns, st.st_size)
+            if key not in _DESIGN_NAME_CACHE:
+                with open(path) as fh:
+                    _DESIGN_NAME_CACHE[key] = ((yaml.safe_load(fh) or {}).get("robot", {}).get("name")
+                                               or os.path.basename(path)[:-len("_config.yaml")])
+            names.add(_DESIGN_NAME_CACHE[key])
         except (OSError, yaml.YAMLError):
             continue
     names.discard(None)

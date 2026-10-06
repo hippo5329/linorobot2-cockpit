@@ -1193,6 +1193,7 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
             is_active = (r_name == active_robot_name
                          or stem_of(fname) == active_robot_name)
 
+        kind = one_click_pipeline.robot_kind(r_name, reference, bare)
         robot_list.append({
             "name": r_name,
             "description": desc or f"Robot {r_name}",
@@ -1210,10 +1211,10 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
             # What kind of robot this is (one_click_pipeline.robot_kind): a shipped DESIGN
             # (a template, applied to the user's robot, not switched to), a GENERATED bare
             # module, or the user's ROBOT -- real when built from a design (`reference`).
-            "kind": one_click_pipeline.robot_kind(r_name, reference, bare),
+            "kind": kind,
             "reference": reference,
             "bare": bare,
-            "real": one_click_pipeline.robot_kind(r_name, reference, bare) in ("design", "real"),
+            "real": kind in ("design", "real"),
         })
 
     robot_list.sort(key=lambda r: (not r["active"], r["name"]))
