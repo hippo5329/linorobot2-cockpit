@@ -403,6 +403,38 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
                     env["sim_ld19"] = "0"
             except ValueError:
                 pass
+            # Every device is simulated by DEFAULT, and the user may switch one OFF -- no
+            # IMU, no magnetometer, no barometer... (user, 2026-10-06: "in sim mode, default
+            # enable all sim devices, allow user to disable some devices, eg, no imu no mag").
+            # Only a bare module runs in Sim mode (no pin assigned), so a device it does not
+            # simulate cannot be real: it is ABSENT. The wheels always are simulated: the base
+            # must move. (This mode once forced every flag on because a REAL robot's config
+            # could reach it; a real robot is refused Sim mode now, [SIM REFUSED].)
+            # Only on a BARE module does "off" mean absent: a config with pins that reaches Sim
+            # mode anyway (refused by the pipeline, but the Sim MCU's env is built directly)
+            # is simulated whole, as before.
+            import pin_catalog
+            sensors = controller.get("sensors") or {}
+            bare = not pin_catalog.assigned_pins(whole)
+            off = {k for k, v in sensors.items() if k.startswith("use_sim_") and v is False} if bare else set()
+            if "use_sim_imu" in off:
+                env["imu"] = "none"
+                env["mag"] = "none"          # no IMU, no orientation for a field to anchor
+            if "use_sim_mag" in off:
+                env["mag"] = "none"
+                env["pub_mag"] = 0
+            if "use_sim_env" in off:
+                env["sim_env"] = "0"
+                env["pub_env"] = 0
+            if "use_sim_battery" in off:
+                env["sim_battery"] = "0"
+                env["pub_battery"] = 0
+            if "use_sim_ld19" in off:
+                env["sim_ld19"] = "0"        # no LiDAR: no /scan, so no SLAM or Nav2
+            if "use_sim_sonar" in off:
+                env["sim_sonar"] = "0"
+            # The depth camera needs nothing here: Sim mode simulates one only where a camera
+            # is configured (one_click_pipeline sim_depth), so "no camera" is not configuring one.
     else:
         env["sim_wheel"] = "0"
         env["sim_ld19"] = "0"

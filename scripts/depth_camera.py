@@ -114,6 +114,14 @@ def lidar_fitted(controller: dict) -> bool:
     # still left a "fitted" LiDAR, named by a model nothing would ever drive.
     if str(controller.get("name") or "").strip().lower() == "sim":
         return sim
+    # ...and so has every BARE module (no pin assigned but the LED): it simulates or lacks
+    # each device, never reads a real one, so its LiDAR is fitted exactly when simulated. An
+    # absent device has no topic (user, 2026-10-06): no LiDAR driver, no /scan to wait for.
+    # (A bare module always carries its pins block, every pin -1; a config with no pins block
+    # at all says nothing about its pins and is judged by its LiDAR model as before.)
+    import pin_catalog
+    if isinstance(controller.get("pins"), dict) and not pin_catalog.assigned_pins({"base_controller": controller}):
+        return sim
     return (isinstance(lidar, dict) and _fitted(lidar.get("model"))) or sim
 
 
