@@ -42,12 +42,18 @@ def test_spin_all_follows_spin_some_where_rclc_has_it():
     assert "rclc_executor_spin_all(executor, RCL_MS_TO_NS(SPIN_ALL_MAX_MS))" in connected
 
 
-def test_the_sim_mcu_builds_rclc_with_spin_all():
+def test_rclc_is_upstream_everywhere():
+    """spin_all was measured and dropped (2026-10-07): at MAX_HISTORY=1 there is one message
+    to drain, so it changed nothing (Sim MCU 833 -> 823 ms), and history 4 + spin_all on the
+    GenDrv over Wi-Fi was within noise (median 283 -> 264 ms, worse tail). The call stays
+    behind RCLC_EXECUTOR_HAS_SPIN_ALL, dormant until upstream rclc has it; no fork is built."""
     repos = open(os.path.join(ROOT, "firmware", "host", "client.repos.txt")).read()
     line = next(l for l in repos.splitlines() if l.startswith("uros/rclc "))
-    assert "hippo5329/rclc" in line and "DISTRO-spin-all" in line
-    build = open(os.path.join(ROOT, "firmware", "host", "build_client_ws.sh")).read()
-    assert "want=${branch//DISTRO/$DISTRO}" in build
+    assert "github.com/ros2/rclc.git" in line and "spin-all" not in line
+    ini = open(os.path.join(ROOT, "firmware", "common", "platformio_base.ini")).read()
+    assert "#spin-all" not in ini
+    unoq = open(os.path.join(ROOT, "firmware", "zephyr", "unoq", "build.sh")).read()
+    assert "hippo5329/rclc" not in unoq
 
 
 def test_board_metas_hold_one_input_buffer():

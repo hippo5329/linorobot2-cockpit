@@ -21,7 +21,7 @@ mkdir -p "$WS/src"
 cd "$WS"
 grep -vE '^\s*(#|$)' "$HERE/client.repos.txt" | while read -r dir url branch fallback; do
   [ -d "src/$dir/.git" ] && continue
-  want=${branch//DISTRO/$DISTRO}     # DISTRO, or a name built on it (DISTRO-spin-all)
+  want=${branch//DISTRO/$DISTRO}     # DISTRO, or a branch name built on it
   if ! git ls-remote --exit-code --heads "$url" "$want" >/dev/null 2>&1; then
     [ -n "${fallback:-}" ] || { echo "no branch $want in $url"; exit 1; }
     echo "[client] $dir: no $want branch, using $fallback"

@@ -1555,6 +1555,11 @@ void loop() {
                 const uint32_t spin_t0 = micros();
                 rcl_ret_t spin_rc = rclc_executor_spin_some(executor, RCL_MS_TO_NS(100));
 #ifdef RCLC_EXECUTOR_HAS_SPIN_ALL
+                // Dormant: upstream rclc has no spin_all, and no fork is built (2026-10-07).
+                // Measured before it was dropped: at MAX_HISTORY=1 the client holds ONE
+                // message, so there is nothing more to drain (Sim MCU 833 -> 823 ms), and
+                // history 4 + spin_all on the GenDrv over Wi-Fi was within noise (median
+                // 283 -> 264 ms, no better tail); history 4 WITHOUT it was worse (810 ms max).
                 // ...then everything else that is ready. spin_some takes one message per
                 // handle per call, so a loop slower than /cmd_vel fell behind it and ran
                 // on commands up to ~0.5 s old (rclc benchmark, 2026-10-06: 8 Hz loop,

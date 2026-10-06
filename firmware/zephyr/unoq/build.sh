@@ -60,20 +60,6 @@ if [ "$(cat "$LIBUROS/.lino_built" 2>/dev/null)" != "$DISTRO" ]; then
   rm -rf "$LIBUROS/micro_ros_src" "$LIBUROS/micro_ros_dev" "$LIBUROS/.lino_distro"
 fi
 rm -f "$LIBUROS/.lino_built"
-# rclc from hippo5329/rclc, which adds rclc_executor_spin_all (main.cpp uses it where
-# RCLC_EXECUTOR_HAS_SPIN_ALL is defined): the module's clone line, rewritten after the
-# checkout above restored it. Before microros_lyrical.py, whose own rewrite matches only
-# `-b jazzy <url>` and so leaves this line alone.
-RCLC_BRANCH=jazzy-spin-all; [ "$DISTRO" = lyrical ] && RCLC_BRANCH=rolling-spin-all
-sed -i -E "s#git clone -b jazzy [^ ]*/rclc src/rclc;#git clone -b $RCLC_BRANCH https://github.com/hippo5329/rclc src/rclc;#" "$LIBUROS/libmicroros.mk"
-grep -q "hippo5329/rclc src/rclc;" "$LIBUROS/libmicroros.mk" \
-  || { echo "build.sh: the rclc clone line in libmicroros.mk was not rewritten"; exit 1; }
-# Sources kept from an earlier build were cloned from wherever the makefile said then: an
-# rclc that is not the fork's means the whole source tree is stale, so clone it again.
-if [ -d "$LIBUROS/micro_ros_src/src/rclc" ] && \
-   ! git -C "$LIBUROS/micro_ros_src/src/rclc" remote get-url origin 2>/dev/null | grep -q hippo5329/rclc; then
-  rm -rf "$LIBUROS/micro_ros_src"
-fi
 PREP=""
 if [ "$DISTRO" = lyrical ]; then
   cp "$HERE/microros_lyrical.py" "$WORK/microros_lyrical.py"
