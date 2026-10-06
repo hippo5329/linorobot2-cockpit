@@ -25,6 +25,16 @@ static uint32_t last_tick_ms = 0;
 
 void diagBegin(void)
 {
+#ifdef LINO_HOST
+    // The Sim MCU has no second UART: the line goes to stdout (the bringup log), when
+    // LINO_DIAG is set in its environment.
+    if (getenv("LINO_DIAG")) {
+        diag_out = &Serial;
+        last_tick_ms = millis();
+        diag_out->printf("[diag] up on stdout (LINO_DIAG)\r\n");
+    }
+    return;
+#endif
     const char *tx_env = envGet("diag_tx", NULL);
     if (!tx_env || !*tx_env) return;
     const int tx = (int)strtol(tx_env, NULL, 10);
@@ -118,14 +128,15 @@ void diagTick(void)
 
     diag_out->printf("D t=%lu dt=%lu st=%d loop=%lu tmr=%lu pub=%lu fail=%lu "
                      "tx=%lu rx=%lu/%lu(%lu empty) spin=%lu rc=%d max=%luus "
-                     "ping=%lu/%lu",
+                     "ping=%lu/%lu cmd=%lu",
                      (unsigned long)now, (unsigned long)dt, diag_state,
                      (unsigned long)d[DIAG_LOOP], (unsigned long)d[DIAG_TIMER],
                      (unsigned long)d[DIAG_PUBLISH], (unsigned long)d[DIAG_PUBFAIL],
                      (unsigned long)d[DIAG_TX_BYTES], (unsigned long)d[DIAG_RX_BYTES],
                      (unsigned long)d[DIAG_RX_CALLS], (unsigned long)d[DIAG_RX_EMPTY],
                      (unsigned long)sc, src, (unsigned long)smax,
-                     (unsigned long)d[DIAG_PING_OK], (unsigned long)d[DIAG_PING_FAIL]);
+                     (unsigned long)d[DIAG_PING_OK], (unsigned long)d[DIAG_PING_FAIL],
+                     (unsigned long)d[DIAG_CMD]);
     uint32_t tm[DIAGT_N];
     for (int i = 0; i < DIAGT_N; i++) { tm[i] = time_max_us[i]; time_max_us[i] = 0; }
     diag_out->printf(" mv=%lu sens=%lu pubs=%luus", (unsigned long)tm[DIAGT_MOVE],

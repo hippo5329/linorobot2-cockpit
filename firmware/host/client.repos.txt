@@ -8,7 +8,7 @@
 # rcl and gives it rmw_microxrcedds.
 eProsima/Micro-CDR                        https://github.com/eProsima/Micro-CDR.git                        ros2
 eProsima/Micro-XRCE-DDS-Client            https://github.com/eProsima/Micro-XRCE-DDS-Client.git            ros2
-uros/rclc                                 https://github.com/ros2/rclc.git                                 DISTRO rolling
+uros/rclc                                 https://github.com/hippo5329/rclc.git                            DISTRO-spin-all rolling-spin-all
 uros/micro_ros_msgs                       https://github.com/micro-ROS/micro_ros_msgs.git                  DISTRO rolling
 uros/rmw_microxrcedds                     https://github.com/micro-ROS/rmw-microxrcedds.git                DISTRO rolling
 uros/rosidl_typesupport_microxrcedds      https://github.com/micro-ROS/rosidl_typesupport_microxrcedds.git DISTRO rolling
