@@ -1607,6 +1607,9 @@ function askForRobotName() {
 function onConfigEdit(e) {
   const t = e.target;
   if (!t || !t.closest || !AUTOSAVE_PANES.some((id) => t.closest("#" + id))) return;
+  // An ACTION, not an edit: the Reference Designs picker applies a design on the server and
+  // reloads the form; autosaving the screen it is replacing would write the old controller
+  // back over the design (found by the walkthrough, 2026-10-06).
   if (t.closest("[data-no-autosave]") || t.type === "button" || t.type === "file") return;
   autosavePending = true;
   if (!robotIsNamed()) { askForRobotName(); return; }

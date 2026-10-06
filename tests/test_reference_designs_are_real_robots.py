@@ -191,3 +191,25 @@ def test_the_kits_say_they_are_kits():
     kits = {d for d in DESIGNS if yaml.safe_load(open(os.path.join(
         ROOT, "config", "reference", f"{d}_config.yaml")))["robot"].get("kit")}
     assert kits == set(KIT_CHASSIS)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_real_robot_is_refused_the_sim_mcu_in_the_ui(tmp_path):
+    """The guard waved controller "sim" through; a robot built from a design sent --controller sim
+    and only the pipeline stopped it (found by the walkthrough, 2026-10-06)."""
+    res = guard(tmp_path, NO_BOARD, "my_rover", "sim", "real")
+    assert res["ok"] is False and "Sim MCU" in res["banners"][0], res
+    assert guard(tmp_path, NO_BOARD, "bare_sim", "sim")["ok"] is True
+    assert guard(tmp_path, NO_BOARD, "my_rover", "sim", "sim")["ok"] is True
+
+
+def test_applying_a_design_moves_every_controller_select():
+    js = open(os.path.join(ROOT, "web", "frontend", "app-presets.js")).read()
+    a = js.index("async function applyReferenceDesign(")
+    body = js[a:js.index("\n}\n", a)]
+    assert '"cockpit-target-select"' in body and "loadedControllerName = bc.name" in body
+
+
+def test_the_design_picker_is_an_action_not_an_autosaved_edit():
+    html = open(os.path.join(ROOT, "web", "frontend", "index.html")).read()
+    assert 'id="preset-select" data-no-autosave' in html

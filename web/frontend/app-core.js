@@ -158,7 +158,18 @@ function isGeneratedRobot(name) {
   return !name || /^bare_/.test(String(name));
 }
 async function boardMatchesOrWarn(controller, action) {
-  if (String(controller || "").toLowerCase() === "sim") return true;
+  if (String(controller || "").toLowerCase() === "sim") {
+    // The Sim MCU is fine for a simulated robot; a REAL robot (built from a design) never runs
+    // on it. Before this, an action with controller "sim" skipped every check, and a robot
+    // built from a design sent --controller sim (the pipeline refused it: [SIM REFUSED]).
+    if (!activeRobotIsReal()) return true;
+    const title = `${action} blocked: a real robot does not run on the Sim MCU.`;
+    const detail = `${state.robot_name} is built from a reference design, so it simulates nothing. ` +
+      `Pick its own controller (MCU & Sim) and plug in its board, or pick the Sim MCU robot (bare_sim).`;
+    logLine(`⚠️ [SIM REFUSED] ${title} ${detail}`);
+    showActionBanner(title, detail);
+    return false;
+  }
   // An unknown or empty controller is no licence: a real robot still needs its board.
   if (!controller && !activeRobotIsReal()) return true;
   controller = controller || loadedControllerName || "";

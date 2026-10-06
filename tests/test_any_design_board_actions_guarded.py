@@ -26,6 +26,11 @@ GUARD_HARNESS = r"""
 const src = require("fs").readFileSync(process.argv[2], "utf8");
 const a = src.indexOf("async function boardMatchesOrWarn(");
 const b = src.indexOf("\n}\n", a) + 3;
+const pick = (start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf("\n}\n", i) + 3); };
+const helpers = pick("function isGeneratedRobot(") + pick("function isReferenceDesign(") +
+                pick("function activeRobot(") + pick("function activeRobotIsReal(");
+const state = { robot_name: "bare_sim", robots: [], reference: [] };
+let loadedControllerName = "";
 const answer = JSON.parse(process.argv[3]);
 const fetched = [], logged = [], banners = [];
 async function fetch(url) {
@@ -35,7 +40,7 @@ async function fetch(url) {
 }
 function logLine(x) { logged.push(x); }
 function showActionBanner(t, d) { banners.push([t, d]); }
-eval(src.slice(a, b) + `
+eval(helpers + src.slice(a, b) + `
 boardMatchesOrWarn(process.argv[4], "Flash").then((ok) =>
   console.log(JSON.stringify({ ok, fetched, banners, logged })));`);
 """

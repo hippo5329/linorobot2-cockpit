@@ -78,7 +78,20 @@ async function applyReferenceDesign(designId) {
   }
   state.robots = res.robots || state.robots;
   state.config = res.config || state.config;
-  learnBoardSilicon((res.config?.base_controller || {}).name, (res.config?.base_controller || {}).mcu);
+  // The controller follows the robot's config in EVERY select, as selectRobot does: the
+  // Operations tab's select is what 1-Click sends, and it was left on the previous robot's
+  // controller ("sim"), so a robot just built from a design started on the Sim MCU.
+  const bc = res.config?.base_controller || {};
+  learnBoardSilicon(bc.name, bc.mcu);
+  if (bc.name) {
+    loadedControllerName = bc.name;
+    const sil = siliconOf(bc.name);
+    for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) {
+      const sel = document.getElementById(id);
+      if (sel && [...sel.options].some((o) => o.value === sil)) sel.value = sil;
+    }
+    if (window.__syncControllerSelects) window.__syncControllerSelects(sil, "cfg-mcu");
+  }
   if (typeof loadHardwareConfig === "function") await loadHardwareConfig();
   syncSimForDesign();
   updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
