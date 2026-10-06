@@ -260,6 +260,12 @@ slam:
   # jump, all translation, to a look-alike room inside slam_toolbox's 3.0 m loop
   # search, after which home sat behind a wall (gate, 2026-10-03, three camera
   # legs). Replayed, a 2.0 m search took the camera skid run from 2.68 m to 0.20 m.
+  # The coarse angular search is halved (20 -> 10 deg): with ~90 deg of wall the
+  # best match sat at the window's EDGE, and the map turned 20.8, 41.2, 61.4 deg
+  # in steps of one window until a room was sealed (rc65, camera mecanum: 4 of 6
+  # bags, both distros; loop closing off did not stop it). With 10 deg, 12 of 12
+  # camera mecanum legs returned home, the largest turn 10.4 deg (2026-10-07).
+  # Odometry cannot be 10 deg off within minimum_travel_heading (0.5 rad).
   narrow_fov_overrides:
     angle_variance_penalty: 0.02
     minimum_angle_penalty: 0.3
@@ -269,6 +275,7 @@ slam:
     loop_match_minimum_response_fine: 0.7
     loop_match_minimum_chain_size: 15
     loop_search_maximum_distance: 2.0
+    coarse_search_angle_offset: 0.175
   slam_toolbox:
     ros__parameters:
       solver_plugin: solver_plugins::CeresSolver

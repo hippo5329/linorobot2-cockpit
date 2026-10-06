@@ -5,6 +5,7 @@ and wrong for the other: held hard to the odometry, a depth camera's map stopped
 rotating (3-4 m / 30-39 deg of pose error down to 0.2 m / 2.5 deg), while on the
 1280 m2 warehouse a LiDAR lost 1.9 m and two live maps came out rotated 1 deg.
 """
+import math
 import os
 import re
 import sys
@@ -21,12 +22,14 @@ STRONG = {"angle_variance_penalty": 0.02, "minimum_angle_penalty": 0.3,
           "distance_variance_penalty": 0.1, "minimum_distance_penalty": 0.3,
           "loop_match_minimum_response_coarse": 0.6, "loop_match_minimum_response_fine": 0.7,
           "loop_match_minimum_chain_size": 15,
-          "loop_search_maximum_distance": 2.0}
+          "loop_search_maximum_distance": 2.0,
+          "coarse_search_angle_offset": 0.175}
 # slam_toolbox's own defaults (mapper_params_online_async.yaml), which a full LiDAR keeps
 UPSTREAM = {"angle_variance_penalty": 1.0, "minimum_angle_penalty": 0.9,
             "distance_variance_penalty": 0.5, "minimum_distance_penalty": 0.5,
             "loop_match_minimum_response_coarse": 0.35, "loop_match_minimum_response_fine": 0.45,
-            "loop_match_minimum_chain_size": 10}
+            "loop_match_minimum_chain_size": 10,
+            "coarse_search_angle_offset": 0.349}
 
 
 def _ref(name):
@@ -79,3 +82,17 @@ def test_a_loop_closure_cannot_reach_the_next_room():
         with open(os.path.join(ROOT, "config", "reference", f"{name}_config.yaml")) as fh:
             rp = yaml.safe_load(fh)["slam"]["slam_toolbox"]["ros__parameters"]
         assert rp["loop_search_space_dimension"] / 2 < 2.9 / 2 + 0.1, name
+
+
+def test_a_narrow_scan_searches_half_the_angle():
+    """rc65: a 90 deg view matched best at the coarse window's edge and the map turned
+    in steps of one window (20.8, 41.2, 61.4 deg) until a room was sealed. Half the
+    window bounds a false turn; a 360 deg LiDAR keeps slam_toolbox's 0.349 rad."""
+    for name in REFS + ("makerspet_mini", "unoq"):
+        slam = _ref(name)["slam"]
+        narrow = slam["narrow_fov_overrides"]["coarse_search_angle_offset"]
+        full = slam["slam_toolbox"]["ros__parameters"]["coarse_search_angle_offset"]
+        assert full == 0.349, name
+        assert narrow < full and math.degrees(narrow) <= 10.1, name
+        # the coarse step still divides the window into more than a few candidates
+        assert narrow / slam["slam_toolbox"]["ros__parameters"]["coarse_angle_resolution"] >= 4, name
