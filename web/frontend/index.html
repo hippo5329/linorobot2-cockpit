@@ -1677,6 +1677,31 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       </div>
       <div id="bringup-health-table" class="hint" style="margin-top:10px;"></div>
 
+    </div>
+
+    <div class="card" id="card-topic-monitor">
+      <h2>📡 MCU topic monitor: rates and live messages</h2>
+      <p class="hint">The board's own topics (⬆ it publishes, ⬇ it subscribes to), their measured
+        rates, and a live view of any one of them: <b>Hz</b> streams its rate once a second (with the longest gap and the time
+        since the last message, so a stall shows at once), <b>Echo</b> streams its messages.
+        Measured by a direct subscription, never guessed from the topic's name. A topic not in
+        the list has no publisher: a device the robot does not have publishes nothing.</p>
+      <div class="row">
+        <button type="button" id="btn-topics-refresh" class="btn btn-secondary">🔄 Refresh topics</button>
+        <button type="button" id="btn-topics-measure-all" class="btn btn-primary">⚡ Measure all</button>
+        <span id="topic-monitor-status" class="hint"></span>
+      </div>
+      <div class="pin-table-wrapper" style="margin-top:10px; max-height:320px; overflow:auto;">
+        <table class="pin-table" id="topic-monitor-table">
+          <thead><tr><th>MCU topic</th><th>Type</th><th style="text-align:right">Rate</th><th></th></tr></thead>
+          <tbody id="topic-monitor-body"><tr><td colspan="4" class="hint">Press Refresh topics.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <span id="topic-stream-title" class="hint">No stream.</span>
+        <button type="button" id="btn-topic-stream-stop" class="btn btn-secondary btn-sm" style="display:none">⏹ Stop</button>
+      </div>
+      <pre id="topic-stream-out" class="topic-stream-out"></pre>
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="lidar">⬅ Step 7: LiDAR / Scan</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="teleop">Step 9: Teleop &amp; Odometry ➔</button>

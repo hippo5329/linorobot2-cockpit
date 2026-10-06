@@ -903,3 +903,133 @@ wireStartStop({
   } }),
 });
 
+
+// =============================================================================
+// Topic monitor (imported from the Robot Config Engine's topic viewer): every topic in
+// the graph, its MEASURED rate, and a live Hz or Echo stream of one. The engine showed
+// a rate guessed from the topic's name ("odom" -> 50 Hz) until measured, and ran the
+// ros2 CLI; here a rate is only ever a measurement (scripts/topic_stream.py).
+// =============================================================================
+let topicStreamSource = null;
+
+function topicRateCell(topic) {
+  return [...document.querySelectorAll("#topic-monitor-body tr")]
+    .find((tr) => tr.dataset.topic === topic)?.querySelector("td.rate");
+}
+
+function showTopicRate(cell, r) {
+  if (!cell) return;
+  const hz = Number(r.hz) || 0;
+  cell.textContent = hz > 0 ? `${hz.toFixed(hz < 2 ? 2 : 1)} Hz` : (r.advertised === false ? "gone" : "silent");
+  cell.classList.toggle("silent", !(hz > 0));
+  cell.title = hz > 0 ? `${r.count} messages; longest gap ${r.max_gap ?? "?"} s` : "no message in the window";
+}
+
+async function refreshTopicList() {
+  const status = document.getElementById("topic-monitor-status");
+  const body = document.getElementById("topic-monitor-body");
+  if (!body) return;
+  if (status) status.textContent = "Reading the ROS graph...";
+  try {
+    const res = await fetch(`/api/ros2/mcu_topics?distro=${encodeURIComponent(getDistro())}`);
+    const data = await res.json();
+    // The MCU's view only (user, 2026-10-06): what the board publishes, then what it reads.
+    const topics = (data.topics || []).sort((a, b) =>
+      a.direction.localeCompare(b.direction) || a.topic.localeCompare(b.topic));
+    body.innerHTML = topics.length ? "" :
+      '<tr><td colspan="4" class="hint">The MCU is not on the ROS graph: is its agent running and the board connected?</td></tr>';
+    for (const t of topics) {
+      const tr = document.createElement("tr");
+      tr.dataset.topic = t.topic;
+      tr.innerHTML = `<td>${t.direction === "pub" ? "⬆" : "⬇"} <code>${escapeHtml(t.topic)}</code></td>` +
+        `<td class="hint">${escapeHtml(t.type)}</td><td class="rate">--</td>` +
+        '<td style="white-space:nowrap"><button type="button" class="btn btn-sm btn-secondary" data-mode="hz">⚡ Hz</button> ' +
+        '<button type="button" class="btn btn-sm btn-secondary" data-mode="echo">▶ Echo</button></td>';
+      tr.querySelectorAll("button").forEach((b) =>
+        b.addEventListener("click", () => startTopicStream(t.topic, b.dataset.mode)));
+      body.appendChild(tr);
+    }
+    const node = topics[0]?.node;
+    if (status) status.textContent = node ? `${node}: publishes ${topics.filter((t) => t.direction === "pub").length}, ` +
+      `subscribes ${topics.filter((t) => t.direction === "sub").length}` : "";
+  } catch (err) {
+    if (status) status.textContent = `Could not read the graph: ${err}`;
+  }
+}
+
+async function measureAllTopics() {
+  const status = document.getElementById("topic-monitor-status");
+  if (!document.querySelector("#topic-monitor-body tr[data-topic]")) await refreshTopicList();
+  const all = [...document.querySelectorAll("#topic-monitor-body tr")].filter((tr) => tr.dataset.topic);
+  if (status) status.textContent = `Measuring ${all.length} topics over 7 s...`;
+  // 7 s, every topic at once: a 1 Hz topic (/battery) gets ~7 samples, and the wait does
+  // not grow with the number of topics.
+  await Promise.all(all.map(async (tr) => {
+    const cell = tr.querySelector("td.rate");
+    cell.textContent = "…";
+    try {
+      const r = await (await fetch(`/api/ros2/hz_single?topic=${encodeURIComponent(tr.dataset.topic)}` +
+                                   `&secs=7&distro=${encodeURIComponent(getDistro())}`)).json();
+      showTopicRate(cell, r);
+    } catch { cell.textContent = "error"; }
+  }));
+  if (status) status.textContent = `${all.length} topics measured`;
+}
+
+function stopTopicStream() {
+  if (topicStreamSource) { topicStreamSource.close(); topicStreamSource = null; }
+  const stop = document.getElementById("btn-topic-stream-stop");
+  if (stop) stop.style.display = "none";
+  document.querySelectorAll("#topic-monitor-body tr.active").forEach((tr) => tr.classList.remove("active"));
+}
+
+async function startTopicStream(topic, mode) {
+  stopTopicStream();
+  const out = document.getElementById("topic-stream-out");
+  const title = document.getElementById("topic-stream-title");
+  const ticket = await streamTicket();
+  if (!ticket) {
+    if (title) title.textContent = "Not authorised: this cockpit needs its access token before it will stream.";
+    return;
+  }
+  document.querySelector(`#topic-monitor-body tr[data-topic="${CSS.escape(topic)}"]`)?.classList.add("active");
+  if (title) title.textContent = `${mode === "hz" ? "Rate of" : "Messages on"} ${topic}`;
+  if (out) out.textContent = `Connecting to ${topic}...\n`;
+  document.getElementById("btn-topic-stream-stop").style.display = "";
+  const qs = `topic=${encodeURIComponent(topic)}&mode=${mode}&distro=${encodeURIComponent(getDistro())}`;
+  const src = new EventSource(`/api/ros2/stream?${qs}&ticket=${encodeURIComponent(ticket)}`);
+  topicStreamSource = src;
+  const keep = (text) => {               // the last ~200 lines: a long echo must not grow the page forever
+    if (!out) return;
+    const lines = (out.textContent + text).split("\n");
+    out.textContent = lines.slice(-200).join("\n");
+    out.scrollTop = out.scrollHeight;
+  };
+  src.addEventListener("start", (ev) => {
+    const d = JSON.parse(ev.data);
+    if (out) out.textContent = `${d.topic} [${d.type}]\n`;
+  });
+  src.addEventListener("hz", (ev) => {
+    const d = JSON.parse(ev.data);
+    showTopicRate(topicRateCell(topic), d);
+    keep(`${d.hz > 0 ? d.hz.toFixed(2) + " Hz" : "silent"}   min gap ${d.min_gap ?? "-"} s   max gap ` +
+         `${d.max_gap ?? "-"} s   last ${d.since_last ?? "-"} s ago   (${d.count} msgs)\n`);
+  });
+  src.addEventListener("msg", (ev) => {
+    const d = JSON.parse(ev.data);
+    keep(`--- #${d.seq}${d.skipped ? ` (${d.skipped} not shown)` : ""}\n${d.text}`);
+  });
+  src.addEventListener("status", (ev) => {
+    const d = JSON.parse(ev.data);
+    keep(`[${d.level || "info"}] ${d.message}\n`);
+  });
+  src.onerror = () => {
+    if (topicStreamSource === src) { keep("[stream closed]\n"); stopTopicStream(); }
+  };
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("btn-topics-refresh")?.addEventListener("click", refreshTopicList);
+  document.getElementById("btn-topics-measure-all")?.addEventListener("click", measureAllTopics);
+  document.getElementById("btn-topic-stream-stop")?.addEventListener("click", stopTopicStream);
+});

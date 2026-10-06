@@ -269,21 +269,93 @@ def api_ros2_topics(distro: str = "jazzy"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/ros2/hz_single")
-def api_ros2_hz_single(topic: str, distro: str = "jazzy"):
-    cmd = get_ros_exec_cmd(f"timeout 3 ros2 topic hz {shlex.quote(topic)}", distro=distro)
+def _topic_stream_cmd(topic: str, mode: str, distro: str, extra: str = "") -> list:
+    script = os.path.join(REPO_ROOT, "scripts", "topic_stream.py")
+    return get_ros_exec_cmd(
+        f"python3 -u {shlex.quote(script)} --topic {shlex.quote(topic)} --mode {mode} {extra}"
+        if topic else f"python3 -u {shlex.quote(script)} --mode {mode} {extra}",
+        distro=distro)
+
+
+@app.get("/api/ros2/mcu_topics")
+def api_ros2_mcu_topics(distro: str = "jazzy"):
+    """The MCU's view: the topics its node (`<robot>_base_node`) publishes or subscribes to.
+    The Topic monitor shows only these (user, 2026-10-06); an absent device has none."""
+    cmd = _topic_stream_cmd("", "mcu", distro, "--wait 4")
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
-        rate = 0.0
-        for line in res.stdout.splitlines():
-            if "average rate:" in line:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="the ROS graph did not answer in 25 s")
+    for line in reversed(res.stdout.splitlines()):
+        try:
+            out = json.loads(line)
+        except ValueError:
+            continue
+        if out.get("event") == "topics":
+            return {"success": True, "topics": out["topics"]}
+    raise HTTPException(status_code=500, detail=(res.stdout + res.stderr).strip()[-400:] or "no answer")
+
+
+@app.get("/api/ros2/hz_single")
+def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0):
+    """One topic's rate over `secs` (3-20 s: a 1 Hz topic needs several to average).
+
+    Measured by scripts/topic_stream.py's rclpy subscription, not `ros2 topic hz`,
+    which cannot see the micro-ROS publishers under the cockpit's Fast DDS profile
+    (runners.check_bringup_health). `hz` is 0.0 for a silent topic; `advertised`
+    says whether it was in the graph at all."""
+    secs = max(3.0, min(float(secs), 20.0))
+    cmd = _topic_stream_cmd(topic, "once", distro, f"--secs {secs} --wait 3")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=secs + 20)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail=f"{topic}: no answer in {secs + 20:.0f} s")
+    for line in reversed(res.stdout.splitlines()):
+        try:
+            out = json.loads(line)
+        except ValueError:
+            continue
+        if out.get("event") == "result":
+            return {"success": True, **out}
+    raise HTTPException(status_code=500, detail=(res.stdout + res.stderr).strip()[-400:] or "no result")
+
+
+@app.get("/api/ros2/stream")
+def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz: float = 5.0):
+    """SSE: a topic's live rate (`hz`, once a second) or its messages (`echo`).
+
+    Imported from the Robot Config Engine's topic viewer, on scripts/topic_stream.py
+    rather than the ros2 CLI (see api_ros2_hz_single). Each JSON line is relayed as
+    the event it names; the process ends with the stream."""
+    if mode not in ("hz", "echo"):
+        raise HTTPException(status_code=400, detail="mode must be hz or echo")
+    cmd = _topic_stream_cmd(topic, mode, distro, f"--max-hz {max(0.2, min(float(max_hz), 50.0))}")
+
+    def event_generator():
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    rate = float(line.split("average rate:")[1].strip().split()[0])
-                except Exception:
-                    pass
-        return {"success": True, "topic": topic, "hz": rate}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                    payload = json.loads(line)
+                    evt = payload.get("event", "status")
+                except (ValueError, AttributeError):
+                    payload = {"event": "status", "level": "info", "message": line}
+                    evt = "status"
+                yield f"event: {evt}\ndata: {json.dumps(payload)}\n\n"
+            rc = proc.wait()
+            yield f"event: status\ndata: {json.dumps({'level': 'error' if rc else 'info', 'message': f'{topic}: stream ended (exit {rc})'})}\n\n"
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/lidar_stream")

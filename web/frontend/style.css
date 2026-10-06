@@ -1583,3 +1583,10 @@ body.console-collapsed {
 .hdr-run-mode { margin-left: 6px; padding: 2px 8px; border-radius: 10px; font-size: 0.78rem; white-space: nowrap; }
 .hdr-run-mode.sim { color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.45); }
 .hdr-run-mode.real { color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.5); }
+
+/* Topic monitor (Bringup tab) */
+.topic-stream-out { max-height: 360px; overflow: auto; margin-top: 6px; padding: 8px; font-size: 0.78rem;
+  background: rgba(0, 0, 0, 0.35); border-radius: 6px; white-space: pre-wrap; min-height: 2.5em; }
+#topic-monitor-table td.rate { text-align: right; font-family: monospace; white-space: nowrap; }
+#topic-monitor-table td.rate.silent { color: #f87171; }
+#topic-monitor-table tr.active td { background: rgba(167, 139, 250, 0.12); }
