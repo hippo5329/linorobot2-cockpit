@@ -160,7 +160,7 @@ function isGeneratedRobot(name) {
 async function boardMatchesOrWarn(controller, action) {
   if (String(controller || "").toLowerCase() === "sim") return true;
   // An unknown or empty controller is no licence: a real robot still needs its board.
-  if (!controller && isGeneratedRobot(state.robot_name)) return true;
+  if (!controller && !activeRobotIsReal()) return true;
   controller = controller || loadedControllerName || "";
   let mm = null, s = null;
   try {
@@ -172,7 +172,7 @@ async function boardMatchesOrWarn(controller, action) {
   // A real robot with NO board attached is refused too, not run on the Sim MCU in its
   // place: a reference design is a real robot, selectable without its board, but its
   // actions need that board (user, 2026-10-06). A 1-Click pressed on one ran bare_sim.
-  if (!mm && s && s.board_on_bus === false && !s.mcu_detected && !isGeneratedRobot(state.robot_name)) {
+  if (!mm && s && s.board_on_bus === false && !s.mcu_detected && activeRobotIsReal()) {
     const want = siliconOf(controller);
     const title = `${action} blocked: no board attached.`;
     const detail = `${state.robot_name} is a real robot: ${action} runs it on its own ${want} board, ` +
@@ -908,6 +908,7 @@ async function loadRobotList() {
     state.robot_name = r.active || state.robot_name;
     state.reference = r.reference || state.reference || [];
     syncSimForDesign();
+    if (typeof updateReferenceDesigns === "function") updateReferenceDesigns(loadedControllerName);
   } catch (e) { /* ignore */ }
 }
 
@@ -918,8 +919,18 @@ async function loadRobotList() {
 function isReferenceDesign(name) {
   return (state.reference || []).includes(String(name || ""));
 }
+// What kind of robot is active (/api/robots `kind`): design | generated | real | sim. A robot
+// is REAL when it is a design or was built from one (robot.reference): it simulates nothing
+// and its actions need its board. A `sim` robot is the user's, with no design: a bare module.
+function activeRobot() {
+  return (state.robots || []).find((r) => r.name === state.robot_name) || null;
+}
+function activeRobotIsReal() {
+  const r = activeRobot();
+  return r ? !!r.real : isReferenceDesign(state.robot_name);
+}
 function syncSimForDesign() {
-  const design = isReferenceDesign(state.robot_name);
+  const design = activeRobotIsReal();
   for (const id of ["hdr-pipeline-mode", "cockpit-pipeline-mode"]) {
     const sel = document.getElementById(id);
     const opt = sel && [...sel.options].find((o) => o.value === "sim");
@@ -1180,7 +1191,12 @@ function setupRobotBranchHeader() {
       // name when it is unique, the filename stem when it is not. The clash is
       // shown rather than resolved, because only the user can fix it.
       return {
-        items: state.robots.map((r) => (r.conflict ? `${r.name} (${r.filename})` : r.name)),
+        // The user's robots, plus the Sim MCU robot and whatever is active. Reference designs
+        // are applied to a robot from the MCU & Sim tab, not switched to; generated bare
+        // modules follow the board on their own (user, 2026-10-06).
+        items: state.robots
+          .filter((r) => r.active || r.name === "bare_sim" || (r.kind !== "design" && r.kind !== "generated"))
+          .map((r) => (r.conflict ? `${r.name} (${r.filename})` : r.name)),
         current: state.robot_name,
       };
     },
@@ -1343,6 +1359,9 @@ initGitVersionBadge();
 // the switch was ours; a Sim MCU the user picked stays picked.
 let noBoardSwitchedFrom = null;
 let userChoseController = false;
+// Set ONLY by a hand pick in a controller select (not by choosing a robot): the user's own
+// robot with no design follows the board unless the user picked its controller themselves.
+let controllerPickedByHand = false;
 // Set while selectRobot() re-fires "change" on the controller select to follow
 // the robot it just loaded: that is not a user choice. (isTrusted cannot tell:
 // automation and assistive tools fire untrusted events for real choices.)
@@ -1354,6 +1373,7 @@ document.addEventListener("change", (e) => {
   if (!syntheticControllerChange && ["cfg-mcu", "cockpit-target-select", "hw-flash-env"].includes(e.target?.id)) {
     noBoardSwitchedFrom = null;
     userChoseController = true;
+    controllerPickedByHand = true;
   }
 });
 // The Sim MCU is a robot of its own, bare_sim (every simulated device on,
@@ -1424,6 +1444,15 @@ async function noBoardSwitch(s) {
         if (sil && sil !== cur) {
           if (state.robot_name === "bare_sim") await leaveSimRobot(sil);
           else await selectRobot(`bare_${sil}`, false);
+        }
+      } else if (!absent && s.mcu_detected && !controllerPickedByHand && activeRobot()?.kind === "sim") {
+        // The user's robot with no design IS a bare module of its board: a board of another
+        // silicon makes it that board's bare module, every device simulated (a UNO Q: its
+        // STM32). A robot built from a design is real and never follows.
+        const sil = siliconOf(s.detected_mcu);
+        if (sil && sil !== siliconOf(loadedControllerName) && typeof applyReferenceDesign === "function") {
+          state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu });
+          await applyReferenceDesign(BARE_CHOICE);
         }
       }
     } finally {

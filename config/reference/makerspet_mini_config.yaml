@@ -2,6 +2,9 @@ robot:
   name: makerspet_mini
   description: 'Maker''s Pet mini 120 mm: ESP32 + BDC-30P, 2WD N20 gearmotors, LDROBOT
     LD14P'
+  # A kit: the vendor's motors, wheels and chassis come with the board. Applying this design
+  # brings them in; the user may then override them with their own (autosaved).
+  kit: true
 base_controller:
   name: makerspet_mini
   description: 'Maker''s Pet mini (120 mm build pack): ESP32 DevKit + BDC-30P, 2WD,

@@ -36,6 +36,9 @@
 robot:
   name: xrp
   description: SparkFun XRP Kit -- XRP Controller (RP2350B + RM2), 2WD, LSM6DSOX
+  # A kit: the vendor's motors, wheels and chassis come with the board. Applying this design
+  # brings them in; the user may then override them with their own (autosaved).
+  kit: true
 base_controller:
   name: xrp
   description: 'SparkFun XRP Kit: XRP Controller (RP2350B + RM2), 2WD, LSM6DSOX'

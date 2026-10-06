@@ -98,4 +98,6 @@ def test_every_board_writing_action_asks_before_its_first_request():
 def test_every_design_is_offered_whatever_the_mcu():
     p = src("app-presets.js")
     body = p[p.index("function updateReferenceDesigns("):p.index("async function applyReferenceDesign(")]
-    assert "...Object.keys(REFERENCE_DESIGNS).filter((k) => k !== family)" in body
+    # every design the cockpit ships (/api/robots kind "design"), the current MCU's group first
+    assert 'r.kind === "design"' in body
+    assert "Object.keys(groups).filter((k) => k !== family)" in body

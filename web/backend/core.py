@@ -1088,7 +1088,10 @@ def pio_present() -> bool:
 
 
 def _read_robot_file(fpath: str):
-    """(declared_name, description, controller, mcu) from a config, or None."""
+    """(declared_name, description, controller, mcu, reference) from a config, or None.
+
+    `reference` is the design the robot was built from (robot.reference), None for a robot
+    that is a bare module -- which decides whether it is real (docs: robots-sim-vs-reference)."""
     try:
         with open(fpath, "r") as f:
             yd = yaml.safe_load(f) or {}
@@ -1104,7 +1107,7 @@ def _read_robot_file(fpath: str):
         ctrl = {}
     controller = ctrl.get("name") or "pico2"
     return (r_info.get("name"), r_info.get("description"),
-            controller, ctrl.get("mcu", controller))
+            controller, ctrl.get("mcu", controller), r_info.get("reference") or None)
 
 
 def _robot_candidates(config_dir: str):
@@ -1176,7 +1179,7 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
     for fname in files:
         if fname not in read:
             continue
-        declared, desc, controller_name, mcu = read[fname]
+        declared, desc, controller_name, mcu, reference = read[fname]
         fpath = os.path.join(config_dir, fname)
         r_name = identity[fname]
         rivals = [f for f in claims[r_name] if f != fname]
@@ -1203,6 +1206,12 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
             # Present only when another file claims the same name, so the UI can
             # show the clash instead of the user losing a robot to it.
             "conflict": rivals or None,
+            # What kind of robot this is (one_click_pipeline.robot_kind): a shipped DESIGN
+            # (a template, applied to the user's robot, not switched to), a GENERATED bare
+            # module, or the user's ROBOT -- real when built from a design (`reference`).
+            "kind": one_click_pipeline.robot_kind(r_name, reference),
+            "reference": reference,
+            "real": one_click_pipeline.robot_kind(r_name, reference) in ("design", "real"),
         })
 
     robot_list.sort(key=lambda r: (not r["active"], r["name"]))

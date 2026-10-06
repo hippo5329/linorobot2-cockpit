@@ -107,10 +107,7 @@ def test_the_yahboom_reference_and_preset_use_uart0():
     with open(os.path.join(ROOT, "config", "reference", "yb_eet01_config.yaml")) as fh:
         d = yaml.safe_load(fh)
     assert d["base_controller"]["console"] == "uart0"
-    js = _read(os.path.join(ROOT, "web", "frontend", "app-presets.js"))
-    blk = js[js.index('id: "yb_eet01"'):]
-    blk = blk[:blk.index("id: \"crawler_esp32s3\"")]
-    assert 'console: "uart0"' in blk
+    # The UI applies this very file (/api/robot/apply_reference); it keeps no copy of it.
 
 
 def test_the_backend_saves_the_key_and_only_its_two_spellings():

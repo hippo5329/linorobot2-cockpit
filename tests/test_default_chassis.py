@@ -104,11 +104,7 @@ def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
     per preset is an unmeasured guess that makes two Nav2 results incomparable.
     A robot gets its measured numbers when the robot exists.
     """
-    presets = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js")).read()
-    for key, want in (("wheel_diameter", 0.1), ("lr_wheels_distance", 0.271),
-                      ("max_rpm", 140), ("cpr", 4000)):
-        values = {float(v) for v in re.findall(rf"\n      {key}: ([0-9.]+)", presets)}
-        assert values == {float(want)}, f"presets disagree on {key}: {sorted(values)}"
+    # The UI applies these files (it kept a JavaScript copy of them until 2026-10-06).
     for name, params in _refs():
         if kit(name):
             continue   # a vendor kit ships its own published wheels (kit_chassis.py)

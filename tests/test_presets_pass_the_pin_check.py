@@ -1,63 +1,36 @@
-"""Every UI reference preset passes the same pin check the server applies on save.
+"""Every reference design passes the same pin check the server applies on save.
 
-The "ESP32 DevKit (4WD Mecanum + WiFi UDP + BNO085)" preset put the battery
-divider on GPIO 36, which its own encoder2 already used. Applying it saved a
-config the pin catalogue refuses ("GPIO 36 is used by encoder2.pin_a,
-battery.pin"), so the header was not built and the page jumped to the Pin
-Matrix -- found by a press-every-control browser pass, not by any test. The
-presets are a JavaScript literal (web/frontend/app-presets.js); node evaluates
-just that literal, and each preset is checked exactly as a saved config is.
+The UI's Reference Designs picker applies a design FILE (config/reference/) to the user's
+robot (/api/robot/apply_reference). Until 2026-10-06 it applied a JavaScript copy of the
+designs kept in app-presets.js, which drifted from the files: one preset put the battery on
+GPIO 36, which its own encoder2 already used, and applying it saved a config the catalogue
+refuses. The copy is gone; the files are checked here exactly as a saved config is.
 """
-import json
+import glob
 import os
-import shutil
-import subprocess
 import sys
 
-import pytest
+import yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import pin_catalog  # noqa: E402
 
-NODE = shutil.which("node") or shutil.which("nodejs")
-HARNESS = r"""
-const src = require("fs").readFileSync(process.env.PRESETS_JS, "utf8");
-const a = src.indexOf("const REFERENCE_DESIGNS = ");
-const b = src.indexOf("\n};\n", a) + 3;
-const REFERENCE_DESIGNS = eval("(" + src.slice(a + "const REFERENCE_DESIGNS = ".length, b - 1) + ")");
-process.stdout.write(JSON.stringify(REFERENCE_DESIGNS));
-"""
+DESIGNS = sorted(glob.glob(os.path.join(REPO, "config", "reference", "*_config.yaml")))
 
 
-def _presets():
-    env = dict(os.environ, PRESETS_JS=os.path.join(REPO, "web", "frontend", "app-presets.js"))
-    out = subprocess.run([NODE, "-e", HARNESS], env=env,
-                         capture_output=True, text=True, timeout=30, check=True).stdout
-    return [d for designs in json.loads(out).values() for d in designs]
-
-
-def _as_config(d):
-    p = d.get("pins") or {}
-    pins = {"led": p.get("led", -1), "i2c": p.get("i2c") or {},
-            "battery": {"pin": p.get("battery", -1)},
-            "sonar": {"trigger": (p.get("sonar") or {}).get("trig", -1),
-                      "echo": (p.get("sonar") or {}).get("echo", -1)}}
-    for n in range(1, 5):
-        pins[f"motor{n}"] = p.get(f"motor{n}") or {}
-        e = p.get(f"encoder{n}") or {}
-        pins[f"encoder{n}"] = {"pin_a": e.get("a", -1), "pin_b": e.get("b", -1)}
-    return {"base_controller": {"name": d["mcu"], "mcu": d["mcu"],
-                                "driver_type": d.get("driver", ""), "pins": pins}}
-
-
-@pytest.mark.skipif(not NODE, reason="node evaluates the preset literal")
-def test_every_preset_passes_the_pin_check_it_will_be_saved_through():
-    presets = _presets()
-    assert len(presets) >= 9, f"read {len(presets)} presets -- the literal moved?"
+def test_every_design_passes_the_pin_check_it_will_be_saved_through():
+    assert DESIGNS
     bad = {}
-    for d in presets:
-        errors = [msg for level, msg in pin_catalog.check_config(_as_config(d)) if level == "error"]
+    for path in DESIGNS:
+        cfg = yaml.safe_load(open(path))
+        errors = [msg for level, msg in pin_catalog.check_config(cfg) if level == "error"]
         if errors:
-            bad[d["id"]] = errors
-    assert not bad, f"presets the server would refuse on save: {bad}"
+            bad[os.path.basename(path)] = errors
+    assert not bad, f"designs the server would refuse on save: {bad}"
+
+
+def test_the_ui_keeps_no_copy_of_the_designs():
+    js = open(os.path.join(REPO, "web", "frontend", "app-presets.js")).read()
+    assert "REFERENCE_DESIGNS" not in js
+    assert "/api/robot/apply_reference" in js

@@ -32,11 +32,10 @@ def test_the_yahboom_skid_steer_wires_all_four_channels():
     assert cfg["kinematics"]["fr_wheels_distance"] > 0
 
 
-def test_the_yahboom_preset_matches_its_config():
-    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app-presets.js"), encoding="utf-8").read()
-    blk = js[js.index('id: "yb_eet01"'):]
-    blk = blk[:blk.index("\n    },")]
-    assert 'kinematics: "4wd"' in blk
-    for frag in ("motor3: { in_a: 9, in_b: 10", "motor4: { in_a: 13, in_b: 14",
-                 "encoder3: { a: 11, b: 12 }", "encoder4: { a: 1, b: 2 }", "fr_wheels_distance: 0.18"):
-        assert frag in blk, frag
+def test_the_yahboom_design_wires_all_four_wheels():
+    """The UI applies the design file itself (it kept a JavaScript copy until 2026-10-06)."""
+    import yaml
+    c = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", "yb_eet01_config.yaml")))
+    p = c["base_controller"]["pins"]
+    assert (p["motor3"]["in_a"], p["motor3"]["in_b"], p["motor4"]["in_a"], p["motor4"]["in_b"]) == (9, 10, 13, 14)
+    assert (p["encoder3"]["pin_a"], p["encoder3"]["pin_b"], p["encoder4"]["pin_a"], p["encoder4"]["pin_b"]) == (11, 12, 1, 2)

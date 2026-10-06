@@ -39,6 +39,7 @@ from core import (
 import one_click_pipeline  # noqa: E402  (scripts/, via core's sys.path)
 
 import gen_bare_config  # scripts/ is on sys.path via core
+import robot_templates  # noqa: E402
 import mcu_identity  # noqa: E402  (scripts/, the controller -> silicon table)
 
 # A board's base_controller.mcu is its silicon; every other controller name is one.
@@ -492,6 +493,66 @@ async def select_robot(request: Request):
         "message": f"Active robot set to '{name}' ({rel_path})",
         "generator_stdout": res.stdout if res else "",
     }
+
+
+def _named_robot_or_400():
+    """(path, params, name) of the active robot when it is the user's own; 400 otherwise.
+
+    A design is a template and a generated robot is rewritten on every run, so neither is
+    a robot to apply anything to: name your robot first (user, 2026-10-06)."""
+    path = get_active_params_path()
+    params = load_params(path)
+    name = (params.get("robot") or {}).get("name") or ""
+    kind = one_click_pipeline.robot_kind(name, (params.get("robot") or {}).get("reference"))
+    if kind in ("design", "generated"):
+        raise HTTPException(status_code=400, detail=(
+            f"'{name}' is {'a reference design' if kind == 'design' else 'generated'}: name your "
+            f"robot first (the Robot field), then apply a design or a board to it."))
+    return path, params, name
+
+
+def _robot_reply(path, params, message):
+    res = regenerate_firmware_headers(controller=get_controller_name(params), params_path=path)
+    return {"status": "ok", "active": params["robot"]["name"], "config": params,
+            "robots": get_robots_list(params), "message": message,
+            "generator_stdout": res.stdout if res else ""}
+
+
+@app.post("/api/robot/apply_reference")
+async def apply_reference(request: Request):
+    """Make the user's robot the reference design: the design's whole config, under the
+    robot's own name, recording where it came from (robot.reference). The robot is real from
+    then on -- no simulated devices -- and every later tuning is the user's (autosaved)."""
+    data = await json_body(request)
+    design = text_field(data, "design")
+    if design not in one_click_pipeline.reference_design_names():
+        raise HTTPException(status_code=400, detail=f"no reference design '{design}'")
+    path, old, name = _named_robot_or_400()
+    with open(os.path.join(REPO_ROOT, "config", "reference", f"{design}_config.yaml")) as fh:
+        design_params = yaml.safe_load(fh) or {}
+    # The controller from the design; the chassis stays the user's unless it is still the
+    # untouched default or the design is a kit (scripts/robot_templates.py has the rules).
+    params, kept, is_kit = robot_templates.apply_design(old, design_params, design)
+    save_params(params, path=path)
+    return _robot_reply(path, params,
+                        f"'{name}' now uses the reference design '{design}' (a real robot)"
+                        + ("; your chassis and tuning are kept" if kept
+                           else "; with the kit's motors, wheels and chassis (override them as you like)" if is_kit
+                           else "; with the design's chassis"))
+
+
+@app.post("/api/robot/apply_bare")
+async def apply_bare(request: Request):
+    """Make the user's robot a bare module of `mcu`: every pin unconnected, every device
+    simulated, no design. What a named robot with no design is -- it follows the board."""
+    data = await json_body(request)
+    mcu = text_field(data, "mcu")
+    if mcu not in gen_bare_config.KNOWN:
+        raise HTTPException(status_code=400, detail=f"no bare module for '{mcu}'")
+    path, old, name = _named_robot_or_400()
+    params = robot_templates.apply_bare(name, mcu)
+    save_params(params, path=path)
+    return _robot_reply(path, params, f"'{name}' is now a bare {mcu} module (every device simulated)")
 
 
 @app.post("/api/import_config")

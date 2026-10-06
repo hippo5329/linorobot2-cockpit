@@ -5,321 +5,16 @@
 // Reference Build Presets & Hardware Design Engine
 // ==============================================================================
 
-// Reference designs are CONFIGURED ROBOTS -- a board wired to motors and
-// sensors. A bare module is not one: it is the absence of a design, generated
-// per board (scripts/gen_bare_config.py) and chosen as a `bare_<board>` robot in
-// the Robot selector, not here (user, 2026-09-25).
-const REFERENCE_DESIGNS = {
-  pico2: [
-    {
-      id: "pico2_diff",
-      name: "⚡ Pico 2 · 2WD Differential · BTS7960 (Simulated IMU Default)",
-      mcu: "pico2",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: 10, in_b: 11, pwm: 12 },
-        motor2: { in_a: 13, in_b: 14, pwm: 15 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: 2, b: 3 },
-        encoder2: { a: 4, b: 5 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: 0, scl: 1 },
-        battery: 26,
-        sonar: { trig: 22, echo: 27 },
-      }
-    },
-    {
-      id: "pico2_mecanum",
-      name: "⚡ Pico 2 · 4WD Mecanum · AT8236 (ICM-20948 9-DOF IMU)",
-      mcu: "pico2",
-      kinematics: "mecanum",
-      driver: "AT8236",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.18,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "ICM20948",
-      mag: "AK09916",
-      use_sim_imu: false,
-      use_sim_mag: false,
-      use_sim_wheel: false,
-      use_sim_ld19: false,
-      pins: {
-        led: 25,
-        motor1: { in_a: 2, in_b: 3, pwm: 22 },
-        motor2: { in_a: 6, in_b: 7, pwm: 22 },
-        motor3: { in_a: 8, in_b: 9, pwm: 22 },
-        motor4: { in_a: 10, in_b: 11, pwm: 22 },
-        encoder1: { a: 12, b: 13 },
-        encoder2: { a: 14, b: 15 },
-        encoder3: { a: 16, b: 17 },
-        encoder4: { a: 18, b: 19 },
-        i2c: { sda: 20, scl: 21 },
-        battery: 26,
-        sonar: { trig: 27, echo: 28 },
-      }
-    },
-    {
-      id: "scout_pico2",
-      name: "Raspberry Pi Pico 2 (2WD Diff + TB6612 / L298N)",
-      mcu: "pico2",
-      kinematics: "2wd",
-      driver: "GENERIC_2_IN",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: 11, in_b: 12, pwm: 10 },
-        motor2: { in_a: 14, in_b: 15, pwm: 13 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: 2, b: 3 },
-        encoder2: { a: 4, b: 5 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: 0, scl: 1 },
-        battery: 26,
-        sonar: { trig: 22, echo: 27 },
-      }
-    },
-    {
-      id: "mech_pico2",
-      name: "Raspberry Pi Pico 2 (4WD Mecanum + TB6612)",
-      mcu: "pico2",
-      kinematics: "mecanum",
-      driver: "GENERIC_2_IN",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.18,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: 11, in_b: 12, pwm: 10 },
-        motor2: { in_a: 14, in_b: 15, pwm: 13 },
-        motor3: { in_a: 17, in_b: 18, pwm: 16 },
-        motor4: { in_a: 20, in_b: 21, pwm: 19 },
-        encoder1: { a: 2, b: 3 },
-        encoder2: { a: 4, b: 5 },
-        encoder3: { a: 6, b: 7 },
-        encoder4: { a: 8, b: 9 },
-        i2c: { sda: 0, scl: 1 },
-        battery: 26,
-        sonar: { trig: 22, echo: 27 },
-      }
-    }
-  ],
-  pico: [
-    {
-      id: "scout_pico",
-      name: "Raspberry Pi Pico (2WD Diff + TB6612 / L298N)",
-      mcu: "pico",
-      kinematics: "2wd",
-      driver: "GENERIC_2_IN",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "SIM",
-      mag: "NONE",
-      use_sim_imu: true,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 25,
-        motor1: { in_a: 11, in_b: 12, pwm: 10 },
-        motor2: { in_a: 14, in_b: 15, pwm: 13 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: 2, b: 3 },
-        encoder2: { a: 4, b: 5 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: 0, scl: 1 },
-        battery: 26,
-        sonar: { trig: 22, echo: 27 },
-      }
-    }
-  ],
-  esp32: [
-    {
-      id: "waveshare_gendrv",
-      name: "Waveshare General Driver Board (ESP32 + BTS7960 + QMI8658)",
-      mcu: "gendrv",
-      kinematics: "2wd",
-      driver: "BTS7960",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.0,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "QMI8658",
-      mag: "AK09918",
-      use_sim_imu: false,
-      use_sim_mag: false,
-      use_sim_wheel: false,
-      use_sim_ld19: false,
-      pins: {
-        led: -1,
-        motor1: { in_a: 17, in_b: 21, pwm: -1 },
-        motor2: { in_a: 23, in_b: 22, pwm: -1 },
-        motor3: { in_a: -1, in_b: -1, pwm: -1 },
-        motor4: { in_a: -1, in_b: -1, pwm: -1 },
-        encoder1: { a: 34, b: 35 },
-        encoder2: { a: 16, b: 27 },
-        encoder3: { a: -1, b: -1 },
-        encoder4: { a: -1, b: -1 },
-        i2c: { sda: 32, scl: 33 },
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
-    {
-      id: "mech_esp32",
-      name: "ESP32 DevKit (4WD Mecanum + WiFi UDP + BNO085)",
-      mcu: "esp32",
-      kinematics: "mecanum",
-      driver: "GENERIC_2_IN",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.18,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "BNO085",
-      mag: "NONE",
-      use_sim_imu: false,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 2,
-        motor1: { in_a: 14, in_b: 27, pwm: 13 },
-        motor2: { in_a: 26, in_b: 33, pwm: 25 },
-        motor3: { in_a: 19, in_b: 23, pwm: 18 },
-        motor4: { in_a: 16, in_b: 17, pwm: 15 },
-        encoder1: { a: 34, b: 35 },
-        encoder2: { a: 36, b: 39 },
-        encoder3: { a: 4, b: 32 },
-        encoder4: { a: 5, b: 12 },
-        i2c: { sda: 21, scl: 22 },
-        // Not wired: four 3-pin drivers, eight encoder lines, I2C and the LED take
-        // every ADC1 pin a DevKit breaks out (36 is encoder2's), and ADC2 is the
-        // Wi-Fi's. The sonar was GPIO 0 for both trigger and echo.
-        battery: -1,
-        sonar: { trig: -1, echo: -1 },
-      }
-    }
-  ],
-  esp32s3: [
-    {
-      id: "yb_eet01",
-      name: "Yahboom microROS Control Board (ESP32-S3, YB-EET01-V2.0), 4WD skid steer",
-      mcu: "esp32s3",
-      kinematics: "4wd",
-      console: "uart0",
-      driver: "AT8236",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.18,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 8.4,
-      imu: "ICM42670",
-      mag: "NONE",
-      use_sim_imu: false,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 45,
-        motor1: { in_a: 4, in_b: 5, pwm: -1 },
-        motor2: { in_a: 15, in_b: 16, pwm: -1 },
-        motor3: { in_a: 9, in_b: 10, pwm: -1 },
-        motor4: { in_a: 13, in_b: 14, pwm: -1 },
-        encoder1: { a: 6, b: 7 },
-        encoder2: { a: 47, b: 48 },
-        encoder3: { a: 11, b: 12 },
-        encoder4: { a: 1, b: 2 },
-        i2c: { sda: 40, scl: 39 },
-        battery: 3,
-        sonar: { trig: -1, echo: -1 },
-      }
-    },
-    {
-      id: "crawler_esp32s3",
-      name: "ESP32-S3 (4WD Skid + TB6612 + Sonar + ADC)",
-      mcu: "esp32s3",
-      kinematics: "4wd",
-      driver: "GENERIC_2_IN",
-      wheel_diameter: 0.1,
-      lr_wheels_distance: 0.271,
-      fr_wheels_distance: 0.18,
-      max_rpm: 140,
-      cpr: 4000,
-      operating_voltage: 12.0,
-      imu: "MPU6050",
-      mag: "NONE",
-      use_sim_imu: false,
-      use_sim_mag: true,
-      use_sim_wheel: false,
-      use_sim_ld19: true,
-      pins: {
-        led: 48,
-        motor1: { in_a: 2, in_b: 4, pwm: 1 },
-        motor2: { in_a: 6, in_b: 7, pwm: 5 },
-        motor3: { in_a: 9, in_b: 10, pwm: 8 },
-        motor4: { in_a: 12, in_b: 13, pwm: 11 },
-        encoder1: { a: 14, b: 15 },
-        encoder2: { a: 16, b: 17 },
-        encoder3: { a: 18, b: 21 },
-        encoder4: { a: 38, b: 39 },
-        i2c: { sda: 41, scl: 42 },
-        battery: 3,
-        sonar: { trig: 47, echo: 40 },
-      }
-    }
-  ]
-};
+// Reference designs are REAL ROBOTS' configurations, applied to the user's own robot
+// (user, 2026-10-06): name your robot, then pick a design here. The design's controller --
+// MCU, board, pins, motor driver, sensors, link -- becomes your robot's, your chassis and
+// tuning stay (a fresh robot takes the design's chassis too), and your robot records the
+// design (robot.reference): it is real from then on, with no simulated devices. Everything
+// after that is your tuning, autosaved. The designs come from the cockpit (/api/robots,
+// discovered from config/reference/), never from a list kept here -- a list in this file
+// drifted from the shipped configs and named the set, and more designs are coming.
+// The logic: the lab's cockpit/docs/robots-sim-vs-reference.md.
+const BARE_CHOICE = "__bare__";
 
 function normalizeMcuFamily(mcu) {
   if (!mcu) return "pico2";
@@ -333,166 +28,64 @@ function normalizeMcuFamily(mcu) {
   return "pico2";
 }
 
+// The designs the cockpit ships, grouped by silicon, the current MCU's group first. Every
+// design is offered whatever MCU is detected (a design is chosen before its board is on the
+// desk); actions that touch a board need the matching one (boardMatchesOrWarn).
 function updateReferenceDesigns(mcuHint) {
   const select = document.getElementById("preset-select");
   if (!select) return;
-  const family = normalizeMcuFamily(mcuHint);
-  const currentVal = select.value;
-
-  const mcuLabels = {
-    pico2: "Raspberry Pi Pico 2 (RP2350)",
-    pico: "Raspberry Pi Pico (RP2040)",
-    xrp: "SparkFun XRP Controller (RP2350B)",
-    esp32: "ESP32",
-    esp32s3: "ESP32-S3",
-    unoq: "Arduino UNO Q (STM32U585)",
-  };
-
-  // Every design is offered, whatever MCU is detected or selected (user,
-  // 2026-09-26): someone starting a new design picks it before the board is on
-  // the desk, and choosing one moves the MCU to its silicon (applyReferenceDesign).
-  // The MCU must match only for what touches a board -- flash, 1-Click, an app
-  // switch -- and those are refused with a warning (boardMatchesOrWarn). This
-  // replaces 2026-09-25's filter, which offered only the detected silicon's
-  // designs. The current MCU's group comes first; the Sim MCU keeps the order.
-  let html = "";
-  const isSim = String(mcuHint || "").toLowerCase() === "sim";
-  const families = isSim ? Object.keys(REFERENCE_DESIGNS)
-    : [family, ...Object.keys(REFERENCE_DESIGNS).filter((k) => k !== family)];
-  const primaryDesigns = REFERENCE_DESIGNS[families[0]] || [];
-  for (const fKey of families) {
-    html += `<optgroup label="${isSim ? "Sim MCU — any design, " : "MCU: "}${mcuLabels[fKey] || fKey.toUpperCase()}">`;
-    for (const d of REFERENCE_DESIGNS[fKey] || []) {
-      html += `<option value="${d.id}">${d.name}</option>`;
+  const designs = (state.robots || []).filter((r) => r.kind === "design");
+  const family = normalizeMcuFamily(siliconOf(mcuHint));
+  const groups = {};
+  for (const d of designs) (groups[normalizeMcuFamily(siliconOf(d.mcu))] ||= []).push(d);
+  const order = [family, ...Object.keys(groups).filter((k) => k !== family).sort()];
+  const active = (state.robots || []).find((r) => r.name === state.robot_name) || {};
+  let html = `<option value="${BARE_CHOICE}">No design: a bare module of the board (every device simulated)</option>`;
+  for (const k of order) {
+    if (!groups[k]) continue;
+    html += `<optgroup label="MCU: ${escapeHtml(k)}">`;
+    for (const d of groups[k].sort((a, b) => a.name.localeCompare(b.name))) {
+      html += `<option value="${escapeHtml(d.name)}">${escapeHtml(d.description || d.name)}</option>`;
     }
-    html += `</optgroup>`;
+    html += "</optgroup>";
   }
-
   select.innerHTML = html;
-  const hasCurrent = select.querySelector(`option[value="${currentVal}"]`);
-  if (hasCurrent) {
-    select.value = currentVal;
-  } else if (primaryDesigns.length > 0) {
-    select.value = primaryDesigns[0].id;
-  }
+  select.value = active.reference && designs.some((d) => d.name === active.reference) ? active.reference : BARE_CHOICE;
 }
 
+// Apply a design (or the bare module of the board) to the user's NAMED robot.
 async function applyReferenceDesign(designId) {
-  let found = null;
-  for (const list of Object.values(REFERENCE_DESIGNS)) {
-    found = list.find((d) => d.id === designId);
-    if (found) break;
+  const bare = designId === BARE_CHOICE;
+  if (!robotIsNamed()) {           // a design or a generated robot takes nothing applied
+    askForRobotName();
+    updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
+    return;
   }
-  if (!found) return;
-
-  // Base & MCU. A preset that changes the controller must change it
-  // everywhere, or it silently splits the two selects apart -- see
-  // syncControllerSelects.
-  const mcuSel = document.getElementById("cfg-mcu");
-  if (mcuSel && found.mcu) {
-    // A reference design names its BOARD (gendrv, yb_eet01); the select names
-    // silicon. Keep what the user picked when it is already that silicon's
-    // family (a Pico W stays a Pico W on a Pico design) or the Sim MCU (any
-    // design can be simulated); otherwise move to the design's silicon.
-    const cur = mcuSel.value;
-    const keep = cur === "sim" || normalizeMcuFamily(cur) === normalizeMcuFamily(siliconOf(found.mcu));
-    const silicon = keep ? cur : siliconOf(found.mcu);
-    loadedControllerName = BOARD_SILICON[String(found.mcu).toLowerCase()] === silicon ? found.mcu : silicon;
-    mcuSel.value = silicon;
-    if (window.__syncControllerSelects) window.__syncControllerSelects(silicon, "cfg-mcu");
+  if (typeof flushAutosave === "function") await flushAutosave();
+  const mcu = bare ? (siliconOf(state.status?.detected_mcu || loadedControllerName) || "pico2") : null;
+  let res = null;
+  try {
+    res = await fetch(bare ? "/api/robot/apply_bare" : "/api/robot/apply_reference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bare ? { mcu } : { design: designId }),
+    }).then((r) => r.json());
+  } catch (e) { res = { detail: String(e) }; }
+  if (!res || res.status !== "ok") {
+    logLine(`❌ ${res?.detail || res?.error || "could not apply the design"}`);
+    updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
+    return;
   }
-
-  const baseSel = document.getElementById("cfg-kinematics");
-  if (baseSel && found.kinematics) baseSel.value = found.kinematics;
-
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && val !== undefined) el.value = val;
-  };
-  setVal("cfg-console", found.console || "usb");
-  setVal("cfg-wheel-diameter", found.wheel_diameter);
-  setVal("cfg-track-width", found.lr_wheels_distance);
-  setVal("cfg-wheelbase", found.fr_wheels_distance);
-  setVal("cfg-max-rpm", found.max_rpm);
-  setVal("cfg-cpr", found.cpr);
-  setVal("cfg-motor-voltage", found.operating_voltage);
-
-  // Drive & Motors
-  const drvSel = document.getElementById("cfg-driver-type");
-  if (drvSel && found.driver) drvSel.value = found.driver;
-
-  // Sensors
-  const imuSel = document.getElementById("cfg-imu");
-  if (imuSel && found.imu) imuSel.value = found.imu;
-
-  const magSel = document.getElementById("cfg-mag");
-  if (magSel && found.mag) magSel.value = found.mag;
-
-  const setChk = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && val !== undefined) el.checked = !!val;
-  };
-  setChk("chk-sim-imu", found.use_sim_imu);
-  setChk("chk-sim-mag", found.use_sim_mag);
-  setChk("chk-sim-wheel", found.use_sim_wheel);
-  setChk("chk-sim-ld19", found.use_sim_ld19);
-  setChk("chk-sim-env", found.use_sim_env);
-  setChk("chk-sim-sonar", found.use_sim_sonar);
-  setChk("chk-sim-battery", found.use_sim_battery);
-
-  // Pins
-  if (found.pins) {
-    setVal("pin-led", found.pins.led);
-    setVal("pin-m1-p1", found.pins.motor1?.pwm);
-    setVal("pin-m1-p2", found.pins.motor1?.in_a);
-    setVal("pin-m1-p3", found.pins.motor1?.in_b);
-
-    setVal("pin-m2-p1", found.pins.motor2?.pwm);
-    setVal("pin-m2-p2", found.pins.motor2?.in_a);
-    setVal("pin-m2-p3", found.pins.motor2?.in_b);
-
-    setVal("pin-m3-p1", found.pins.motor3?.pwm);
-    setVal("pin-m3-p2", found.pins.motor3?.in_a);
-    setVal("pin-m3-p3", found.pins.motor3?.in_b);
-
-    setVal("pin-m4-p1", found.pins.motor4?.pwm);
-    setVal("pin-m4-p2", found.pins.motor4?.in_a);
-    setVal("pin-m4-p3", found.pins.motor4?.in_b);
-
-    setVal("pin-enc-1a", found.pins.encoder1?.a);
-    setVal("pin-enc-1b", found.pins.encoder1?.b);
-    setVal("pin-enc-2a", found.pins.encoder2?.a);
-    setVal("pin-enc-2b", found.pins.encoder2?.b);
-    setVal("pin-enc-3a", found.pins.encoder3?.a);
-    setVal("pin-enc-3b", found.pins.encoder3?.b);
-    setVal("pin-enc-4a", found.pins.encoder4?.a);
-    setVal("pin-enc-4b", found.pins.encoder4?.b);
-
-    setVal("pin-i2c-sda", found.pins.i2c?.sda);
-    setVal("pin-i2c-scl", found.pins.i2c?.scl);
-    setVal("pin-battery", found.pins.battery);
-    setVal("pin-sonar-trig", found.pins.sonar?.trig);
-    setVal("pin-sonar-echo", found.pins.sonar?.echo);
-  }
-
-  const mcuTarget = found.mcu || "pico2";
-  // Native USB (CDC-ACM) for the RP2s and the ESP32-S3, whose image talks on its own
-  // USB unless `console: uart0` -- the same rule as gen_bare_config.NATIVE_USB_MCUS.
-  const defaultPort = /pico|xrp|esp32s3/.test(mcuTarget) ? "/dev/ttyACM0" : "/dev/ttyUSB0";
-  const portToUse = found.serial_port || defaultPort;
-  setVal("cfg-serial-port", portToUse);
-  setVal("cfg-baudrate", 921600);
-  syncMcuSerialSettings();
-
-  updateKinematicsVisibility();
-  updateMotorPinVisibility();
-  updateKinematicsHUD();
-  updateAdcCalculations();
-  validateHardwareSafety();
-
-  await saveScreenNow();   // into the NAMED robot; on a design or a bare robot it asks for a name
-  showToast(`⚡ Reference Build Loaded: ${found.name}`);
+  state.robots = res.robots || state.robots;
+  state.config = res.config || state.config;
+  learnBoardSilicon((res.config?.base_controller || {}).name, (res.config?.base_controller || {}).mcu);
+  if (typeof loadHardwareConfig === "function") await loadHardwareConfig();
+  syncSimForDesign();
+  updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
+  logLine(`✅ ${res.message}`);
+  showToast(bare ? `Bare ${mcu} module: every device simulated` : `⚡ ${res.message}`);
 }
+
 
 function initReferenceDesigns() {
   const presetSel = document.getElementById("preset-select");

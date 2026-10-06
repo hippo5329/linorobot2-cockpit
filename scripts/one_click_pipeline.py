@@ -302,6 +302,28 @@ def reference_design_names(root: str = None) -> set:
     return names
 
 
+def robot_kind(robot_name: str, reference: str = None) -> str:
+    """What a robot is, from its name and the design its config was built from.
+
+      design     a shipped reference design (config/reference/): a template, real
+      generated  a bare module or the Sim MCU robot (bare_*): every device simulated
+      real       the user's robot built from a design (robot.reference): simulates nothing
+      sim        the user's robot with no design: a bare module of its MCU, all simulated
+
+    The full logic: the lab's cockpit/docs/robots-sim-vs-reference.md."""
+    if robot_name in reference_design_names():
+        return "design"
+    if is_generated_robot(robot_name):
+        return "generated"
+    return "real" if reference else "sim"
+
+
+def is_real_robot(params: dict, robot_name: str = None) -> bool:
+    """A real robot simulates nothing, runs in Real mode only, and needs its own board."""
+    name = robot_name or (params.get("robot") or {}).get("name")
+    return robot_kind(name, (params.get("robot") or {}).get("reference")) in ("design", "real")
+
+
 def is_generated_robot(robot_name: str) -> bool:
     """A bare module or the Sim MCU robot (`bare_*`), generated rather than designed.
 
@@ -1634,9 +1656,13 @@ def main():
     # design mean real robot, so no sim devices"). Sim mode forces every sim flag on and
     # the Sim MCU simulates the whole board, so neither runs a design: simulation belongs
     # to the generated robots -- the board's bare robot, or bare_sim.
-    if robot_name in reference_design_names() and (args.mode == "sim" or controller == SIM_MCU):
+    real_robot = is_real_robot(params, robot_name)
+    if real_robot and (args.mode == "sim" or controller == SIM_MCU):
+        origin = (params.get("robot") or {}).get("reference")
         raise SystemExit(
-            f"\n❌ [SIM REFUSED] '{robot_name}' is a reference design -- a real robot, which "
+            f"\n❌ [SIM REFUSED] '{robot_name}' is "
+            f"{'built from the reference design ' + repr(origin) if origin else 'a reference design'} "
+            f"-- a real robot, which "
             f"simulates nothing -- and this run asked for "
             f"{'the Sim MCU' if controller == SIM_MCU else 'Sim mode'}.\n"
             f"   Run it in Real mode on its own board, or simulate with a generated robot: "
@@ -1650,7 +1676,7 @@ def main():
         # Only a GENERATED robot (a bare module, `bare_<silicon>`) falls back. A real robot --
         # a reference design, or one the user saved -- runs on its own board or not at all:
         # swapping it for the Sim MCU ran some other robot under its name (user, 2026-10-06).
-        if not is_generated_robot(robot_name):
+        if real_robot:
             raise SystemExit(
                 f"\n❌ [NO BOARD] '{robot_name}' is a real robot and its {controller} board is not "
                 f"attached (nothing on the USB bus, nothing at "

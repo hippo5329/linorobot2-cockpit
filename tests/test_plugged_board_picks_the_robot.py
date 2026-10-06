@@ -24,14 +24,20 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 
 HARNESS = r"""
 const src = require("fs").readFileSync(process.argv[2], "utf8");
-const g0 = src.indexOf("function isGeneratedRobot(");
-const g = src.slice(g0, src.indexOf("\n}\n", g0) + 3);
+const pick = (start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf("\n}\n", i) + 3); };
+const g = pick("function isGeneratedRobot(") + pick("function isReferenceDesign(") +
+          pick("function activeRobot(") + pick("function activeRobotIsReal(");
 const a = src.indexOf("let noBoardSwitchedFrom = null;");
 const b0 = src.indexOf("async function noBoardSwitch(s)");
 const b = src.indexOf("\n}\n", b0) + 3;
 if (a < 0 || b0 < 0 || b < 3) { console.log(JSON.stringify({error: "switch code not found"})); process.exit(0); }
 const calls = [];
-const state = { robot_name: process.argv[3] };
+const robot = process.argv[3];
+const kind = robot.startsWith("bare_") ? "generated" : (process.argv[6] || "design");
+const state = { robot_name: robot, robots: [{ name: robot, kind, real: kind === "design" || kind === "real" }] };
+let controllerPickedByHand = false;
+const BARE_CHOICE = "__bare__";
+async function applyReferenceDesign(v) { calls.push("apply:" + v); }
 let loadedControllerName = process.argv[4];
 const BOARD_SILICON = { gendrv: "esp32", yb_eet01: "esp32s3" };
 function siliconOf(n) { n = String(n || "").toLowerCase(); return BOARD_SILICON[n] || n; }
@@ -53,11 +59,11 @@ def board(mcu):
     return {"board_on_bus": True, "mcu_detected": True, "detected_mcu": mcu}
 
 
-def run(robot, controller, polls, tmp_path):
+def run(robot, controller, polls, tmp_path, kind=""):
     h = tmp_path / "harness.js"
     h.write_text(HARNESS)
     out = subprocess.run([NODE, str(h), os.path.join(REPO_ROOT, "web", "frontend", "app-core.js"),
-                          robot, controller, json.dumps(polls)],
+                          robot, controller, json.dumps(polls), kind],
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.strip().splitlines()[-1])
@@ -77,7 +83,7 @@ def _designs():
     for path in sorted(glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml"))):
         c = yaml.safe_load(open(path))
         out.append((c["robot"]["name"], c["base_controller"]["name"]))
-    return out + [("my_robot", "pico2")]
+    return out
 
 
 @pytest.mark.parametrize("design, controller", _designs())
@@ -134,3 +140,17 @@ def test_the_default_robot_is_the_sim_mcu_not_a_design():
     assert cockpit_paths.DEFAULT_ROBOT == "bare_sim"
     core = open(os.path.join(REPO_ROOT, "web", "backend", "core.py")).read()
     assert 'DEFAULT_ROBOT_NAME = "bare_sim"' in core
+
+
+@pytest.mark.parametrize("kind", ["real", "design"])
+def test_a_robot_built_from_a_design_is_never_moved_by_the_board(kind, tmp_path):
+    res = run("my_rover", "pico2", [NONE, board("esp32s3")], tmp_path, kind)
+    assert res["calls"] == [] and res["robot"] == "my_rover", res
+
+
+def test_the_users_robot_with_no_design_follows_the_board(tmp_path):
+    """A named robot with no design IS a bare module of its board (user, 2026-10-06)."""
+    res = run("my_rover", "pico2", [board("esp32")], tmp_path, "sim")
+    assert res["calls"] == ["apply:__bare__"], res
+    res = run("my_rover", "unoq", [board("unoq")], tmp_path, "sim")
+    assert res["calls"] == [], res          # already that board
