@@ -1580,16 +1580,24 @@ function robotIsNamed(name = state.robot_name) {
     !(typeof isReferenceDesign === "function" && isReferenceDesign(name));
 }
 
-function setSavedIndicator(text, ok) {
-  const btns = new Set([...document.querySelectorAll('button[onclick="saveScreenNow()"]'),
-    ...["btn-save-mcu-config", "btn-save-base-config", "btn-save-drive-config", "btn-save-sensors-config",
-      "btn-save-pins-config"].map((id) => document.getElementById(id)).filter(Boolean)]);
-  for (const b of btns) {
-    b.textContent = text;
-    b.classList.toggle("btn-primary", !ok);
-    b.classList.toggle("btn-secondary", !!ok);
-  }
+// The header's one save state (#hdr-save-state). `st`: saved | saving | error | unnamed.
+function setSavedIndicator(text, ok, st) {
+  const el = document.getElementById("hdr-save-state");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove("saved", "saving", "error", "unnamed");
+  el.classList.add(st || (ok ? "saved" : "error"));
 }
+// The steady state, when nothing is pending: saved for a named robot, a name needed otherwise.
+function refreshSaveState() {
+  if (autosavePending) return;
+  const named = robotIsNamed();
+  setSavedIndicator(named ? "✓ Saved" : "✎ Name your robot", named, named ? "saved" : "unnamed");
+}
+document.getElementById("hdr-save-state")?.addEventListener("click", () => {
+  if (robotIsNamed()) saveScreenNow();          // a retry after an error, or "save now"
+  else askForRobotName();
+});
 
 function askForRobotName() {
   const what = isGeneratedRobot(state.robot_name)
@@ -1599,7 +1607,7 @@ function askForRobotName() {
     `${what}, so your changes are not saved to it. Type a name for your robot in the Robot field ` +
     `(lowercase, digits, _) and press Enter: it is created from what you see now, and every change ` +
     `after that is saved to it.`);
-  setSavedIndicator("✎ Name your robot to save", false);
+  setSavedIndicator("✎ Name your robot", false, "unnamed");
   const ri = document.getElementById("hdr-robot-name");
   if (ri) { ri.focus(); ri.select(); }
 }
@@ -1613,7 +1621,7 @@ function onConfigEdit(e) {
   if (t.closest("[data-no-autosave]") || t.type === "button" || t.type === "file") return;
   autosavePending = true;
   if (!robotIsNamed()) { askForRobotName(); return; }
-  setSavedIndicator("… saving", false);
+  setSavedIndicator("… saving", false, "saving");
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(flushAutosave, AUTOSAVE_MS);
 }
@@ -1630,7 +1638,7 @@ async function flushAutosave() {
   if (!robotIsNamed()) return false;
   autosavePending = false;
   const ok = await saveCurrentHardwareConfig({ auto: true });
-  setSavedIndicator(ok ? `✓ Saved to ${state.robot_name}` : "⚠ Not saved — see the console", ok);
+  setSavedIndicator(ok ? "✓ Saved" : "⚠ Not saved — click to retry", ok);
   if (!ok) autosavePending = true;
   return ok;
 }
@@ -1658,6 +1666,6 @@ async function configReadyOrWarn(action) {
 async function autosaveAfterNaming(wasNew) {
   if (wasNew && autosavePending) await flushAutosave();
   else autosavePending = false;   // switching to another existing robot drops unsaved edits
-  setSavedIndicator(robotIsNamed() ? `✓ Saved to ${state.robot_name}` : "✎ Name your robot to save",
-    robotIsNamed());
+  setSavedIndicator(robotIsNamed() ? "✓ Saved" : "✎ Name your robot", robotIsNamed(),
+    robotIsNamed() ? "saved" : "unnamed");
 }

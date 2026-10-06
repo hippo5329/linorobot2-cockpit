@@ -62,8 +62,12 @@ async function applyReferenceDesign(designId) {
     return;
   }
   if (typeof flushAutosave === "function") await flushAutosave();
-  const mcu = bare ? (siliconOf(state.status?.detected_mcu || loadedControllerName) || "pico2") : null;
+  // The board that is really on the bus; with none, the robot's own controller. (/api/status
+  // still names a detected_mcu when nothing is detected: the configured one, as a fallback.)
+  const onBus = state.status?.mcu_detected ? state.status.detected_mcu : null;
+  const mcu = bare ? (siliconOf(onBus || loadedControllerName) || "pico2") : null;
   let res = null;
+  robotEpoch++;
   try {
     res = await fetch(bare ? "/api/robot/apply_bare" : "/api/robot/apply_reference", {
       method: "POST",
@@ -71,6 +75,7 @@ async function applyReferenceDesign(designId) {
       body: JSON.stringify(bare ? { mcu } : { design: designId }),
     }).then((r) => r.json());
   } catch (e) { res = { detail: String(e) }; }
+  robotEpoch++;
   if (!res || res.status !== "ok") {
     logLine(`❌ ${res?.detail || res?.error || "could not apply the design"}`);
     updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
@@ -95,6 +100,7 @@ async function applyReferenceDesign(designId) {
   if (typeof loadHardwareConfig === "function") await loadHardwareConfig();
   syncSimForDesign();
   updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
+  if (typeof refreshSaveState === "function") refreshSaveState();
   logLine(`✅ ${res.message}`);
   showToast(bare ? `Bare ${mcu} module: every device simulated` : `⚡ ${res.message}`);
 }

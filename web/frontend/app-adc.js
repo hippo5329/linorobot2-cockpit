@@ -391,10 +391,7 @@ function initBaseControllerConfigModule() {
   const btnSmartAlloc = document.getElementById("btn-smart-alloc");
   if (btnSmartAlloc) btnSmartAlloc.addEventListener("click", () => { autoAssignPins(); saveScreenNow(); });
 
-  ["btn-save-mcu-config", "btn-save-base-config", "btn-save-drive-config", "btn-save-sensors-config", "btn-save-pins-config"].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.addEventListener("click", saveScreenNow);
-  });
+  // No Save buttons: autosave, and one save state in the header (#hdr-save-state).
 
   const btnRefreshPorts = document.getElementById("btn-refresh-ports-hw");
   if (btnRefreshPorts) btnRefreshPorts.addEventListener("click", refreshHwSerialPorts);

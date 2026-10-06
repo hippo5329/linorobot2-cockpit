@@ -913,13 +913,18 @@ async function loadGitInfo() {
 }
 
 async function loadRobotList() {
+  // A reply begun before a newer robot change (a selection, a design applied) is stale: dropped,
+  // or it re-enabled Sim on a robot just built from a design (found by the walkthrough).
+  const epoch = robotEpoch;
   try {
     const r = await fetch("/api/robots").then((x) => x.json());
+    if (epoch !== robotEpoch) return;
     state.robots = r.robots || [];
     state.robot_name = r.active || state.robot_name;
     state.reference = r.reference || state.reference || [];
     syncSimForDesign();
     if (typeof updateReferenceDesigns === "function") updateReferenceDesigns(loadedControllerName);
+    if (typeof refreshSaveState === "function") refreshSaveState();
   } catch (e) { /* ignore */ }
 }
 
@@ -1431,7 +1436,7 @@ async function useDefaultRobotFor(sil) {
   const existed = (state.robots || []).some((r) => r.name === name);
   await selectRobot(name, false);
   if (!existed && state.robot_name === name && typeof applyReferenceDesign === "function") {
-    state.status = Object.assign({}, state.status || {}, { detected_mcu: sil });
+    state.status = Object.assign({}, state.status || {}, { detected_mcu: sil, mcu_detected: true });
     await applyReferenceDesign(BARE_CHOICE);
   }
 }
@@ -1473,7 +1478,7 @@ async function noBoardSwitch(s) {
         if (sil && sil !== siliconOf(loadedControllerName)) {
           if (/^lino_[a-z0-9]+$/.test(state.robot_name)) await useDefaultRobotFor(sil);
           else if (typeof applyReferenceDesign === "function") {
-            state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu });
+            state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu, mcu_detected: true });
             await applyReferenceDesign(BARE_CHOICE);
           }
         }

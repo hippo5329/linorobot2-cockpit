@@ -37,3 +37,13 @@ def test_a_new_name_takes_the_edits_on_screen():
     body = core[a:core.index("loadHardwareConfig", a)]
     assert "autosaveAfterNaming(wasNew)" in body
     assert body.index("autosaveAfterNaming") < len(body)   # before the form reloads from the file
+
+
+def test_one_save_state_in_the_header_and_no_save_buttons():
+    """User, 2026-10-06: with autosave, one save indicator in the header instead of Save buttons."""
+    html = src("index.html")
+    assert "Save robot settings" not in html
+    assert 'id="hdr-save-state"' in html
+    hw = src("app-hardware.js")
+    a = hw.index("function setSavedIndicator(")
+    assert 'getElementById("hdr-save-state")' in hw[a:a + 300]

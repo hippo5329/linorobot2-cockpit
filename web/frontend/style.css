@@ -1568,3 +1568,13 @@ body.console-collapsed {
 .u-overflow-y-auto { overflow-y: auto; }
 .u-max-h-160 { max-height: 160px; }
 .u-max-h-60 { max-height: 60px; }
+
+/* The header's save state (autosave): saved / saving / not saved / name needed. */
+.hdr-save-state {
+  margin-left: 6px; padding: 2px 8px; border-radius: 10px; border: 1px solid transparent;
+  font-size: 0.78rem; white-space: nowrap; cursor: pointer; background: transparent; color: #94a3b8;
+}
+.hdr-save-state.saved { color: #4ade80; border-color: rgba(74, 222, 128, 0.35); }
+.hdr-save-state.saving { color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); }
+.hdr-save-state.error { color: #f87171; border-color: rgba(248, 113, 113, 0.5); }
+.hdr-save-state.unnamed { color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); }
