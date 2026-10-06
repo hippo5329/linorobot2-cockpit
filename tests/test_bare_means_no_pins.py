@@ -68,3 +68,22 @@ def test_the_robots_list_reports_the_pins():
     core = open(os.path.join(ROOT, "web", "backend", "core.py")).read()
     assert "one_click_pipeline.is_bare_config(yd)" in core
     assert "one_click_pipeline.robot_kind(r_name, reference, bare)" in core
+
+
+def test_a_bare_module_may_have_any_chassis_and_still_run_sim():
+    """User, 2026-10-06: with no pin assigned, any motor/wheel/drivetrain/battery parameter can be
+    changed and the robot still runs sim. Only pins decide; the chassis never does."""
+    cfg = gen_bare_config.bare_config("esp32")
+    cfg["robot"]["name"] = "my_rover"
+    k = cfg["kinematics"]
+    k.update(base_type="mecanum", wheel_diameter=0.0815, lr_wheels_distance=0.33,
+             fr_wheels_distance=0.25, motor_max_rpm=210, counts_per_rev=1440,
+             motor_operating_voltage=7.4, motor_power_max_voltage=8.4)
+    bat = cfg["base_controller"]["pins"]["battery"]
+    bat.update(r1=47000, r2=10000)                      # the divider is not a pin
+    cfg["base_controller"].setdefault("battery", {}).update(cells=2, chemistry="lipo")
+    assert ocp.is_bare_config(cfg)
+    assert ocp.robot_kind("my_rover", None, ocp.is_bare_config(cfg)) == "sim"
+    assert not ocp.is_real_robot(cfg)
+    bat["pin"] = 36                                     # the battery's SENSE pin is a pin
+    assert not ocp.is_bare_config(cfg)
