@@ -1722,6 +1722,21 @@ def main():
         print(f"❌ {exc}")
         return 1
     has_lidar = scan_from is not None
+    # The scan's carrier, by the rules bringup applies (depth_camera): raw_scan over an
+    # ESP32's UART is refused, and a simulated `serial` scan with no port reaches nothing --
+    # a bare ESP32 has no LIDAR_RXD bridge. Then this run has no /scan to map from: it
+    # proves the topics and the drive, and says why there is no SLAM or Nav2.
+    if scan_from == "lidar" and not sim_mcu:
+        why = depth_camera.raw_scan_over_uart(controller_cfg)
+        if why:
+            print(f"❌ [RAW_SCAN OVER UART REFUSED] {why}")
+            return 1
+        lidar_port = str((controller_cfg.get("lidar") or {}).get("serial_port") or "/dev/ttyUSB1")
+        why = depth_camera.sim_scan_unreachable(controller_cfg, lidar_port)
+        if why:
+            print(f"⚠️ No /scan: {why}. Topics and drive only -- no SLAM, no Nav2.")
+            has_lidar = False
+            args.topics_only = True
     # A robot with no IMU (`imu: NONE`) publishes no /imu/data; the gate must not
     # wait for it (mcu_env.robot_has_imu, the same answer bringup's EKF uses).
     import mcu_env  # noqa: E402

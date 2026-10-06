@@ -250,13 +250,12 @@ def launch_setup(context, *args, **kwargs):
     # exist, so a bare ESP32 -- which has no scan source (gen_bare_config._bare_comm_mode)
     # -- ran SLAM and Nav2 on the host's scan and looked like it had one.
     use_host_sim_laser = no_board
-    sim_ld19_cfg = bool(controller.get("sensors", {}).get("use_sim_ld19", False))
-    no_scan_why = ""
-    if (not no_board and robot_has_lidar and sim_ld19_cfg and not host_fw_bin
-            and effective_lidar_comm_mode == "serial" and not os.path.exists(lidar_port)):
-        no_scan_why = (f"the simulated LD19 is `serial` but {lidar_port} does not exist -- "
-                       f"nothing carries its frames (a bare ESP32 has no LIDAR_RXD bridge); "
-                       f"use comm_mode topic or udp, wire the bridge, or sim_base:=true")
+    no_scan_why = ("" if (no_board or host_fw_bin)
+                   else depth_camera.sim_scan_unreachable(controller, lidar_port))
+    if not no_board and not host_fw_bin and robot_has_lidar:
+        _uart_why = depth_camera.raw_scan_over_uart(controller)
+        if _uart_why:
+            raise RuntimeError(f"[RAW_SCAN OVER UART REFUSED] {_uart_why}")
 
     # World "map" (depth_camera.WORLDS): a saved occupancy map is the world. A board
     # cannot hold one; the Sim MCU runs on this computer and raycasts the map file

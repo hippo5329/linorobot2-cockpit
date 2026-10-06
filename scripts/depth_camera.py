@@ -148,6 +148,58 @@ def scan_source(controller: dict):
     return None
 
 
+def raw_scan_over_uart(controller: dict) -> str:
+    """Why this board may not send its scan as raw_scan, or "".
+
+    `lidar.comm_mode: topic` carries the LD19 frames over the micro-ROS link. An RP2's
+    native USB and an ESP32-S3's native USB (USB-Serial/JTAG, `console: usb`) hold that
+    beside the 50 Hz control loop. An ESP32 always talks through a UART bridge, and so does
+    an ESP32-S3 on its UART port (`console: uart0`, the Yahboom YB-EET01's CP2102), and at
+    921600 baud the scan exhausts the link: every topic drops to 40-45 Hz (user,
+    2026-10-06: "esp32 serial transport and raw scan topic will exhaust 921600 baud
+    bandwidth"; "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot").
+    """
+    lidar = (controller or {}).get("lidar") or {}
+    if str(lidar.get("comm_mode", "") or "").strip().lower() != "topic":
+        return ""
+    if not lidar_fitted(controller):
+        return ""
+    transport = str(controller.get("transport", "serial") or "serial").strip().lower()
+    if transport not in ("serial", ""):
+        return ""                         # micro-ROS over Wi-Fi: not a UART
+    mcu = str(controller.get("mcu", "") or "").strip().lower()
+    console = str(controller.get("console", "") or "").strip().lower()
+    if mcu == "esp32" or (mcu == "esp32s3" and console != "usb"):
+        link = "an ESP32" if mcu == "esp32" else f"an ESP32-S3 on its UART (console: {console or 'uart0'})"
+        return (f"lidar.comm_mode topic sends the scan as raw_scan over micro-ROS, and on {link} "
+                f"that is a 921600-baud UART: the scan exhausts it and every topic drops to "
+                f"40-45 Hz. Use serial (LIDAR_RXD to a USB bridge) or udp (Wi-Fi) for the scan; "
+                f"only native USB (RP2, ESP32-S3 with console: usb) carries raw_scan.")
+    return ""
+
+
+def sim_scan_unreachable(controller: dict, lidar_port: str) -> str:
+    """Why a board's SIMULATED LD19 has no way to the LD driver, or "".
+
+    Its frames go out a UART to a bridge (`serial`), as raw_scan (`topic`) or over Wi-Fi
+    (`udp`). A `serial` scan whose port does not exist reaches nothing: a bare ESP32 has one
+    USB, for micro-ROS, and no bridge on its LIDAR_RXD. Then there is no /scan -- the robot
+    computer's own laser stands in only on the no-board path (sim_base) -- and the
+    bringup and the pipeline say so instead of waiting for one."""
+    if scan_source(controller) != "lidar":
+        return ""
+    if not ((controller.get("sensors") or {}).get("use_sim_ld19", False)):
+        return ""
+    lidar = controller.get("lidar") or {}
+    if str(lidar.get("comm_mode", "serial") or "serial").strip().lower() != "serial":
+        return ""
+    if os.path.exists(lidar_port):
+        return ""
+    return (f"the simulated LD19 is `serial` but {lidar_port} does not exist -- nothing carries "
+            f"its frames (a bare ESP32 has no LIDAR_RXD bridge, and its 921600-baud link cannot "
+            f"carry raw_scan); wire the bridge, use udp over Wi-Fi, or sim_base:=true")
+
+
 def scan_fov_deg(controller: dict):
     """How many degrees /scan sees, or None when nothing publishes it.
 

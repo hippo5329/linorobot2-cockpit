@@ -88,10 +88,10 @@ def test_the_bare_scan_sink_follows_the_silicon():
     drops to 40-45 Hz, and 33 Hz on a GenDrv that also reads four I2C sensors,
     because one 921600 link is carrying both. So a bare ESP32 defaults to the
     UART sink -- with no LIDAR_RXD wired it simply has no scan, which is honest
-    -- rather than to a mode that halves its control rate.
+    -- rather than to a mode that halves its control rate. The ESP32-S3's bare module
+    is on its native USB, which carries raw_scan (~77 Hz): topic (user, 2026-10-06).
     """
     from gen_bare_config import bare_config
-    for mcu in ("pico", "pico2"):
+    for mcu in ("pico", "pico2", "esp32s3"):
         assert bare_config(mcu)["base_controller"]["lidar"]["comm_mode"] == "topic", mcu
-    for mcu in ("esp32", "esp32s3"):
-        assert bare_config(mcu)["base_controller"]["lidar"]["comm_mode"] == "serial", mcu
+    assert bare_config("esp32")["base_controller"]["lidar"]["comm_mode"] == "serial"

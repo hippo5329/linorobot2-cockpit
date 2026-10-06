@@ -1180,6 +1180,7 @@ def _sensors_refusal(env: dict):
 # are the exception by design: each tests one real subsystem on a half-built robot,
 # which is how a robot gets built (REAL_ONLY_TOOLS, tool_refusal).
 MIXED_SIM_TAG = "MIXED SIMULATION REFUSED"
+RAW_SCAN_UART_TAG = "RAW_SCAN OVER UART REFUSED"
 MIXED_SIM_EXIT = 3   # flash_mcu stops on it rather than flashing without an env
 
 
@@ -1344,6 +1345,11 @@ def main():
             why = mixed_simulation(whole, a.sensors, a.params)
             if why:
                 print(f"❌ [{MIXED_SIM_TAG}] {why}")
+                sys.exit(MIXED_SIM_EXIT)
+            import depth_camera
+            why = depth_camera.raw_scan_over_uart(whole.get("base_controller") or {})
+            if why:
+                print(f"❌ [{RAW_SCAN_UART_TAG}] {why}")
                 sys.exit(MIXED_SIM_EXIT)
         with open(a.out, "wb") as fh:
             fh.write(encode(env))

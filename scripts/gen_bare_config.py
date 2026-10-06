@@ -104,9 +104,14 @@ def _bare_comm_mode(mcu: str) -> str:
     UART (`serial`, LIDAR_RXD to a bridge) or over the radio (`udp`) -- and a
     BARE ESP32 has neither wired, so it has no scan source, which is the honest
     default rather than one that quietly halves the control rate.
+
+    The ESP32-S3's bare module is on its NATIVE USB (USB-Serial/JTAG, `console: usb`), not a
+    UART, and that carries raw_scan beside the 50 Hz loop (~77 Hz measured): `topic` too
+    (user, 2026-10-06: "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot" --
+    the UART case, a Yahboom's CP2102, is refused by depth_camera.raw_scan_over_uart).
     """
     # RP2_MCUS, not startswith("pico"): the SparkFun XRP Controller is an RP2350B too.
-    return "topic" if mcu in gen_firmware_header.RP2_MCUS else "serial"
+    return "topic" if (mcu in gen_firmware_header.RP2_MCUS or mcu == "esp32s3") else "serial"
 
 
 # The simulated world, written out IN FULL rather than left to the firmware's
