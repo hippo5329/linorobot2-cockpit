@@ -121,17 +121,20 @@ class GamepadPublisher(Node):
                 lx = ly = az = 0.0
             measured = self.measured
             odom_age = None if self.odom_time is None else now - self.odom_time
-            moving = abs(lx) + abs(ly) + abs(az) > 0
+            # A command nobody receives is not being held: the base cannot follow what
+            # never reaches it, so the spin-up clock starts once a reader has matched.
+            subscribers = self.pub.get_subscription_count()
+            moving = abs(lx) + abs(ly) + abs(az) > 0 and subscribers > 0
             if not moving:
                 self.held_since = None
             elif self.held_since is None:
                 self.held_since = now
             held = 0.0 if self.held_since is None else now - self.held_since
-        v = stall_check.verdict((lx, ly, az), measured, held, odom_age)
+        v = stall_check.verdict((lx, ly, az), measured, held, odom_age, subscribers)
         status = {"t": time.time(), **v,
                   "commanded": {"linear_x": lx, "linear_y": ly, "angular_z": az},
                   "measured": {"linear_x": measured[0], "linear_y": measured[1], "angular_z": measured[2]},
-                  "odom_age_s": odom_age, "held_s": held}
+                  "odom_age_s": odom_age, "held_s": held, "subscribers": subscribers}
         tmp = self.status_file + ".tmp"
         try:
             with open(tmp, "w") as fh:

@@ -1004,6 +1004,9 @@ async function startTopicStream(topic, mode, type = "") {
   stopTopicStream();
   const out = document.getElementById("topic-stream-out");
   const title = document.getElementById("topic-stream-title");
+  // Cleared before the ticket round trip, not after it: until then the previous
+  // stream's lines stood under the new title and read as this topic's.
+  if (out) out.textContent = `Connecting to ${topic}...\n`;
   const ticket = await streamTicket();
   if (!ticket) {
     if (title) title.textContent = "Not authorised: this cockpit needs its access token before it will stream.";
@@ -1011,7 +1014,6 @@ async function startTopicStream(topic, mode, type = "") {
   }
   document.querySelector(`#topic-monitor-body tr[data-topic="${CSS.escape(topic)}"]`)?.classList.add("active");
   if (title) title.textContent = `${mode === "hz" ? "Rate of" : "Messages on"} ${topic}`;
-  if (out) out.textContent = `Connecting to ${topic}...\n`;
   document.getElementById("btn-topic-stream-stop").style.display = "";
   const qs = `topic=${encodeURIComponent(topic)}&mode=${mode}&type=${encodeURIComponent(type)}` +
              `&distro=${encodeURIComponent(getDistro())}`;

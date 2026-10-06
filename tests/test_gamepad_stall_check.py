@@ -36,6 +36,21 @@ def test_the_verdict(cmd, meas, held, age, want):
     assert sc.verdict(cmd, meas, held, age)["stalled"] is want
 
 
+def test_no_subscriber_is_unknown_never_a_stall():
+    # commands sent before the base's reader matched never arrive: not the robot's fault
+    v = sc.verdict(FWD, (0.0, 0.0, 0.0), 2.0, 0.1, subscribers=0)
+    assert v["stalled"] is None and "subscribes" in v["reason"]
+    assert sc.verdict(FWD, (0.0, 0.0, 0.0), 2.0, 0.1, subscribers=1)["stalled"] is True
+    assert sc.verdict((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 2.0, 0.1, subscribers=0)["stalled"] is False
+
+
+def test_the_publisher_holds_only_a_command_someone_receives():
+    pub = open(os.path.join(ROOT, "scripts", "gamepad_publisher.py")).read()
+    assert "get_subscription_count()" in pub
+    assert "and subscribers > 0" in pub
+    assert "held, odom_age, subscribers)" in pub
+
+
 def _runner(tmp_path):
     sys.path.insert(0, os.path.join(ROOT, "web", "backend"))
     import runners

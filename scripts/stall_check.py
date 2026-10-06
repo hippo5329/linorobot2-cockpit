@@ -23,16 +23,21 @@ FOLLOW_FRACTION = 0.25
 ODOM_FRESH_S = 1.0
 
 
-def verdict(commanded, measured, held_s, odom_age_s):
+def verdict(commanded, measured, held_s, odom_age_s, subscribers=None):
     """{"stalled": bool | None, "reason": str}. None means it cannot tell.
 
     commanded, measured: (linear_x, linear_y, angular_z). held_s: how long the current
     non-zero command has been held. odom_age_s: age of the last odometry, None if none yet.
+    subscribers: how many readers the command topic has matched, None if not known. With
+    none, every command is lost before it reaches a base: right after the pad starts, DDS
+    discovery of its new publisher took seconds, and the check called that a stall.
     """
     lin_c = math.hypot(commanded[0], commanded[1])
     ang_c = abs(commanded[2])
     if lin_c < MIN_LINEAR and ang_c < MIN_ANGULAR:
         return {"stalled": False, "reason": "no command to follow"}
+    if subscribers == 0:
+        return {"stalled": None, "reason": "nothing subscribes to the command topic yet: cannot tell"}
     if held_s < SPIN_UP_S:
         return {"stalled": False, "reason": f"spinning up ({held_s:.1f} s)"}
     if odom_age_s is None:
