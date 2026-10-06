@@ -2358,8 +2358,12 @@ def main():
                   f"odometry...")
             stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
             tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
+            # The config and the world, so the suite knows the walls the simulated base is
+            # held by (a --world given here overrides the config's, as it does for bringup).
+            drive_world = ("map" if args.world_map else (args.world or "")) if not is_real else ""
             drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} "
-                                f"{tname} --base-type {base_type}",
+                                f"{tname} --config {params_path} --base-type {base_type}"
+                                + (f" --world {drive_world}" if drive_world else ""),
                                 timeout=140, distro=args.distro)
             if drive_res.stdout:
                 print(drive_res.stdout)

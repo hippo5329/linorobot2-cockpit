@@ -84,24 +84,36 @@ def test_a_tiny_command_has_a_floor_so_noise_does_not_fail_it():
     assert judge(0.20, 0.80, 0.20, 0.80)
 
 
-# The room-geometry note, mirrored the same way and for the same reason: it is
-# pure, and if it drifts from the suite (or from sim_ld19.h) it stops telling
-# a clamped pose from a base fault. Keep these numbers identical to both.
+# The room-geometry check, lifted from the suite like the functions above (it used to be a
+# copy here, kept in step by checking the suite's constants by name). _where() reads the
+# module's SEGMENTS / ROBOT_R / NEAR / OUTER / OBSTACLE, which the suite builds from the
+# robot's world (depth_camera.room_segments); the default room is given here the same way.
+def _where_for(segments, robot_r=0.30, obstacle=True):
+    import ast
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    tree = ast.parse(_suite_src())
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("_seg_dist", "_where")]
+    assert len(fns) == 2, "_seg_dist / _where are gone from drive_suite.py"
+    import math
+    ns = {"math": math, "SEGMENTS": segments, "ROBOT_R": robot_r, "NEAR": 0.05, "OUTER": 4,
+          "OBSTACLE": obstacle}
+    exec(compile(ast.Module(fns, []), "drive_suite.py", "exec"), ns)
+    return ns["_where"]
+
+
+def _default_room():
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import depth_camera
+    return depth_camera.room_segments(dict(depth_camera.ROOM_DEFAULTS))
+
+
 ROOM_W, ROOM_H, ROBOT_R = 10.0, 6.0, 0.30
-WALL_X, WALL_HALF_SPAN, NEAR = 2.0, 1.5, 0.05
-
-
-def where(x, y):
-    if x != x or y != y:
-        return "pose unknown"
-    notes = []
-    if abs(abs(x) - (ROOM_W / 2 - ROBOT_R)) < NEAR:
-        notes.append("room wall x")
-    if abs(abs(y) - (ROOM_H / 2 - ROBOT_R)) < NEAR:
-        notes.append("room wall y")
-    if abs(y) <= WALL_HALF_SPAN + ROBOT_R and abs(abs(x - WALL_X) - ROBOT_R) < NEAR:
-        notes.append("OBSTACLE WALL")
-    return ", ".join(notes) if notes else "clear"
+WALL_X, WALL_HALF_SPAN = 2.0, 1.5
+where = _where_for(_default_room())
 
 
 def test_the_middle_of_the_room_is_clear():
@@ -121,22 +133,19 @@ def test_being_held_against_the_obstacle_wall_is_named():
 
 
 def test_the_rooms_own_walls_are_named():
-    assert where(ROOM_W / 2 - ROBOT_R, 0.0) == "room wall x"
-    assert where(0.0, -(ROOM_H / 2 - ROBOT_R)) == "room wall y"
+    assert where(ROOM_W / 2 - ROBOT_R, 0.0) == "room wall"
+    assert where(0.0, -(ROOM_H / 2 - ROBOT_R)) == "room wall"
 
 
 def test_no_pose_says_so_rather_than_guessing():
     assert where(float("nan"), 0.0) == "pose unknown"
 
 
-def test_the_note_matches_the_suite_verbatim():
-    import os
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "scripts", "drive_suite.py")).read()
-    for needle in ("ROOM_W, ROOM_H = 10.0, 6.0", "ROBOT_R = 0.30",
-                   "WALL_X, WALL_HALF_SPAN = 2.0, 1.5", "NEAR = 0.05",
-                   'notes.append("OBSTACLE WALL")', "pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"):
-        assert needle in src, needle
+def test_the_suite_builds_its_walls_from_the_robots_world():
+    src = _suite_src()
+    assert "depth_camera.room_segments(room, depth_camera.sim_walls(cfg))" in src
+    assert 'notes.append(name)' in src and '"OBSTACLE WALL"' in src
+    assert "pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s" in src
 
 
 def test_a_commanded_speed_is_judged_by_the_speed_it_HELD():

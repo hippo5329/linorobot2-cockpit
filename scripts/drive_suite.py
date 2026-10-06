@@ -70,11 +70,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402  -- the prefix rule lives in one place
 
 
-# The simulated room, mirrored from sim_ld19.h so a manoeuvre can say whether
-# the pose it reports was being clamped.
-ROOM_W, ROOM_H = 10.0, 6.0
+# The simulated world the clamp holds the robot in, as wall segments, so a manoeuvre can say
+# whether the pose it reports was being held. It used to be the default room only (the box
+# and the obstacle wall at x = 2.0): in the four-room world an exploration leg ended at
+# (+0.65, +0.18), its forward manoeuvre was held 0.31 m short of the interior wall at x = 1.5,
+# and the suite called the pose "clear" and failed the base on distance -- every mecanum
+# exploration leg, rc63 and rc64. set_world() replaces these from the robot's config, through
+# the same depth_camera functions the emulator's env and the host laser use.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import depth_camera  # noqa: E402
+
 ROBOT_R = 0.30
-WALL_X, WALL_HALF_SPAN = 2.0, 1.5
+SEGMENTS = depth_camera.room_segments(dict(depth_camera.ROOM_DEFAULTS))
+OUTER = 4            # the first four segments are the room's outer box
+OBSTACLE = True      # the fifth, when present, is the single test wall
 NEAR = 0.05          # "against" a surface: within this of where the clamp holds
 
 # Distance and gap. The travel tolerance is the speed check's 45 % (a sign-and-magnitude
@@ -126,18 +135,52 @@ def _travel_ok(want: float, got: float) -> bool:
 BASE_TYPE, MECANUM, STRAFES = "2wd", False, True
 
 
+def _seg_dist(x: float, y: float, seg) -> float:
+    x1, y1, x2, y2 = seg
+    sx, sy = x2 - x1, y2 - y1
+    l2 = sx * sx + sy * sy
+    t = 0.0 if l2 < 1e-12 else max(0.0, min(1.0, ((x - x1) * sx + (y - y1) * sy) / l2))
+    return math.hypot(x - (x1 + t * sx), y - (y1 + t * sy))
+
+
 def _where(x: float, y: float) -> str:
-    """Which surface, if any, the robot is being held against."""
+    """Which surface, if any, the robot is being held against: within NEAR of the distance the
+    clamp keeps its centre from a wall (the robot radius)."""
     if x != x or y != y:                       # NaN: no pose seen
         return "pose unknown"
     notes = []
-    if abs(abs(x) - (ROOM_W / 2 - ROBOT_R)) < NEAR:
-        notes.append("room wall x")
-    if abs(abs(y) - (ROOM_H / 2 - ROBOT_R)) < NEAR:
-        notes.append("room wall y")
-    if abs(y) <= WALL_HALF_SPAN + ROBOT_R and abs(abs(x - WALL_X) - ROBOT_R) < NEAR:
-        notes.append("OBSTACLE WALL")
+    for i, seg in enumerate(SEGMENTS):
+        if abs(_seg_dist(x, y, seg) - ROBOT_R) < NEAR:
+            name = ("room wall" if i < OUTER else
+                    "OBSTACLE WALL" if (OBSTACLE and i == OUTER) else
+                    "interior wall (%g,%g)-(%g,%g)" % tuple(seg))
+            if name not in notes:
+                notes.append(name)
     return ", ".join(notes) if notes else "clear"
+
+
+def set_world(cfg: dict, world: str = None) -> None:
+    """The walls and radius of the robot's simulated world (base_controller.simulation), as the
+    firmware's emulator and the host laser have them. A saved-map world has no collision."""
+    global SEGMENTS, ROBOT_R, OBSTACLE
+    cfg = cfg or {}
+    if world:
+        cfg.setdefault("base_controller", {}).setdefault("simulation", {})["world"] = world
+    try:
+        if depth_camera.sim_world(cfg) == "map":
+            SEGMENTS, OBSTACLE = [], False
+        else:
+            room = depth_camera.sim_room(cfg)
+            OBSTACLE = bool(room.get("wall_obstacle", True))
+            SEGMENTS = depth_camera.room_segments(room, depth_camera.sim_walls(cfg))
+        sim = (cfg.get("base_controller") or {}).get("simulation") or {}
+        radius = sim.get("robot_radius")
+        if radius is None:
+            import gen_firmware_header
+            radius = gen_firmware_header.nav2_robot_radius(cfg)
+        ROBOT_R = float(radius)
+    except (ValueError, TypeError, KeyError) as exc:
+        print(f"[drive_suite] world not read from the config ({exc}); the default room", flush=True)
 
 
 def _peak(samples: list, want: float) -> float:
@@ -202,11 +245,15 @@ def main() -> int:
     argv = sys.argv[1:]
     prefix = ""
     base_type = "2wd"
+    world_cfg, world_arg = None, None
     rest = []
     i = 0
     while i < len(argv):
         if argv[i] == "--base-type" and i + 1 < len(argv):
             base_type = argv[i + 1].strip().lower()
+            i += 2
+        elif argv[i] == "--world" and i + 1 < len(argv):
+            world_arg = argv[i + 1].strip().lower()
             i += 2
         elif argv[i] == "--prefix" and i + 1 < len(argv):
             prefix = argv[i + 1].strip().strip("/")
@@ -216,12 +263,15 @@ def main() -> int:
             with open(os.path.expanduser(argv[i + 1])) as fh:
                 _cfg = yaml.safe_load(fh) or {}
             prefix = cockpit_paths.robot_namespace(_cfg)
+            world_cfg = _cfg
             base_type = str((_cfg.get("kinematics") or {}).get(
                 "base_type", base_type)).strip().lower()
             i += 2
         else:
             rest.append(argv[i])
             i += 1
+    if world_cfg is not None or world_arg:
+        set_world(world_cfg or {}, world_arg)
     BASE_TYPE = base_type
     MECANUM = base_type == "mecanum"
     # Every drivetrain runs the strafe pair; only the expected answer differs.
@@ -326,6 +376,14 @@ def main() -> int:
         gap_col = "   gap %.2f s %s" % (gap, "ok" if ok_gap else "BAD")
         x1, y1 = seen["x"], seen["y"]
         where = _where(x1, y1)
+        # A move that ends held against a wall was stopped by the room, not the base: the
+        # clamp holds the centre one radius off it, so the path is short by whatever lay
+        # past the wall. Its distance is not judged; the speeds still are. A spin turns in
+        # place and is judged whatever is around it.
+        held = (lin or lat) and not ok_d and where not in ("clear", "pose unknown")
+        if held:
+            ok_d = True
+            dist_col = "   dist %.2f/%.2f m held" % (got_d, want_d)
         # vy is only printed when it is part of the question: on a differential
         # base every line would carry a column that is always zero, and a column
         # that is always zero stops being read.
@@ -346,6 +404,9 @@ def main() -> int:
             print("             ^ /odom went silent for %.2f s (limit %.1f s): the link dropped "
                   "the base; it stops 200 ms after its last cmd_vel." % (gap, GAP_LIMIT_S),
                   flush=True)
+        if held:
+            print("             ^ held against %s: the room stopped the move short, which is "
+                  "not a base fault; the distance is not judged." % where, flush=True)
         if not ok and where not in ("clear", "pose unknown"):
             print("             ^ held against %s: the clamp moves the pose every cycle and "
                   "that shows up as a velocity nobody commanded. Not a base fault." % where,
