@@ -302,26 +302,35 @@ def reference_design_names(root: str = None) -> set:
     return names
 
 
-def robot_kind(robot_name: str, reference: str = None) -> str:
-    """What a robot is, from its name and the design its config was built from.
+def is_bare_config(params: dict) -> bool:
+    """A bare module: no pin assigned but the LED (and a simulated LiDAR's output pin)."""
+    import pin_catalog
+    return not pin_catalog.assigned_pins(params)
+
+
+def robot_kind(robot_name: str, reference: str = None, bare: bool = True) -> str:
+    """What a robot is, from its name, the design it was built from, and its pins.
 
       design     a shipped reference design (config/reference/): a template, real
-      generated  a bare module or the Sim MCU robot (bare_*): every device simulated
-      real       the user's robot built from a design (robot.reference): simulates nothing
-      sim        the user's robot with no design: a bare module of its MCU, all simulated
+      real       built from a design (robot.reference), or ANY robot with a pin assigned:
+                 simulates nothing, needs its own board
+      generated  a bare module or the Sim MCU robot (bare_*), no pin assigned: all simulated
+      sim        the user's robot with no design and no pin assigned: a bare module
 
-    The full logic: the lab's cockpit/docs/robots-sim-vs-reference.md."""
+    User, 2026-10-06: "once a pin is assigned, it is no longer a bare module, it can not run
+    sim". The full logic: the lab's cockpit/docs/robots-sim-vs-reference.md."""
     if robot_name in reference_design_names():
         return "design"
-    if is_generated_robot(robot_name):
-        return "generated"
-    return "real" if reference else "sim"
+    if reference or not bare:
+        return "real"
+    return "generated" if is_generated_robot(robot_name) else "sim"
 
 
 def is_real_robot(params: dict, robot_name: str = None) -> bool:
     """A real robot simulates nothing, runs in Real mode only, and needs its own board."""
     name = robot_name or (params.get("robot") or {}).get("name")
-    return robot_kind(name, (params.get("robot") or {}).get("reference")) in ("design", "real")
+    return robot_kind(name, (params.get("robot") or {}).get("reference"),
+                      is_bare_config(params)) in ("design", "real")
 
 
 def is_generated_robot(robot_name: str) -> bool:

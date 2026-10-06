@@ -833,6 +833,10 @@ wireStartStop({
     if (laser && !isDockerMode()) {
       await checkAndInstallLidarDriver(laser);
     }
+    // The config path comes from the status: refresh it, or right after a robot switch Bringup
+    // launched the robot just LEFT (found by the walkthrough: bare_sim selected, the previous
+    // robot's serial agent started on /dev/ttyACM0).
+    if (typeof refreshStatus === "function") await refreshStatus();
     openTerminal("Robot Bringup [streaming]");
     attachBringupStream();
     return bringupLaunchCommand();

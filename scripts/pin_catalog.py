@@ -163,6 +163,20 @@ def _collect(tgt: dict) -> List[Tuple[str, int, str]]:
     return [(r, g, d) for (r, g, d) in out if g >= 0]
 
 
+def assigned_pins(params: dict) -> List[str]:
+    """The pins a config assigns that make it more than a BARE MODULE.
+
+    User, 2026-10-06: "a bare module has no pin assigned, except led pins. a bare module can
+    run sim. once a pin is assigned, it is no longer a bare module, it can not run sim." The
+    one other exception is the pin that carries a SIMULATED LiDAR out (the GenDrv's LIDAR_RXD
+    with sim_ld19 on): it is the simulation's own output, not wiring to a real part.
+    """
+    tgt = params.get("base_controller") or {}
+    sim_lidar = bool((tgt.get("sensors") or {}).get("use_sim_ld19"))
+    return [role for role, _gpio, _d in _collect(tgt)
+            if role != "led" and not (role == "lidar.rx_pin" and sim_lidar)]
+
+
 def check_config(params: dict) -> List[Finding]:
     tgt = params.get("base_controller") or {}
     key = mcu_key(tgt.get("mcu") or tgt.get("name"))

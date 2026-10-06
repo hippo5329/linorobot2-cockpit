@@ -1077,6 +1077,8 @@ async function selectRobot(name, byUser = true) {
     }
     state.robot_name = res.active || res.robot_name || name;
     state.robots = res.robots || [];
+    // The status names the active config; until the next poll it is the robot just left.
+    if (res.robot_config_path) state.status = Object.assign({}, state.status || {}, { robot_config_path: res.robot_config_path });
     if (typeof autosaveAfterNaming === "function") await autosaveAfterNaming(wasNew);
     state.config = res.config || state.config;
     // Push the switched robot's workflow settings into the header selects.

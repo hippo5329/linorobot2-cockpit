@@ -503,8 +503,11 @@ def _named_robot_or_400():
     path = get_active_params_path()
     params = load_params(path)
     name = (params.get("robot") or {}).get("name") or ""
-    kind = one_click_pipeline.robot_kind(name, (params.get("robot") or {}).get("reference"))
-    if kind in ("design", "generated"):
+    # A design is a template and a generated robot is rewritten on every run. (Named robots of
+    # either kind -- real or bare -- take a design or a board.)
+    kind = one_click_pipeline.robot_kind(name, (params.get("robot") or {}).get("reference"),
+                                         one_click_pipeline.is_bare_config(params))
+    if kind == "design" or one_click_pipeline.is_generated_robot(name):
         raise HTTPException(status_code=400, detail=(
             f"'{name}' is {'a reference design' if kind == 'design' else 'generated'}: name your "
             f"robot first (the Robot field), then apply a design or a board to it."))

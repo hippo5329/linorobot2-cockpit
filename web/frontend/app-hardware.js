@@ -1640,6 +1640,10 @@ async function flushAutosave() {
   const ok = await saveCurrentHardwareConfig({ auto: true });
   setSavedIndicator(ok ? "✓ Saved" : "⚠ Not saved — click to retry", ok);
   if (!ok) autosavePending = true;
+  // A save can change what the robot IS: the first pin assigned makes a bare module a real
+  // robot (no Sim, its board needed), and clearing them makes it bare again (user,
+  // 2026-10-06). Re-read the robots so the Sim choices and the board guard follow at once.
+  if (ok && typeof loadRobotList === "function") await loadRobotList();
   return ok;
 }
 

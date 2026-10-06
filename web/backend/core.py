@@ -1107,7 +1107,8 @@ def _read_robot_file(fpath: str):
         ctrl = {}
     controller = ctrl.get("name") or "pico2"
     return (r_info.get("name"), r_info.get("description"),
-            controller, ctrl.get("mcu", controller), r_info.get("reference") or None)
+            controller, ctrl.get("mcu", controller), r_info.get("reference") or None,
+            one_click_pipeline.is_bare_config(yd))
 
 
 def _robot_candidates(config_dir: str):
@@ -1179,7 +1180,7 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
     for fname in files:
         if fname not in read:
             continue
-        declared, desc, controller_name, mcu, reference = read[fname]
+        declared, desc, controller_name, mcu, reference, bare = read[fname]
         fpath = os.path.join(config_dir, fname)
         r_name = identity[fname]
         rivals = [f for f in claims[r_name] if f != fname]
@@ -1209,9 +1210,10 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
             # What kind of robot this is (one_click_pipeline.robot_kind): a shipped DESIGN
             # (a template, applied to the user's robot, not switched to), a GENERATED bare
             # module, or the user's ROBOT -- real when built from a design (`reference`).
-            "kind": one_click_pipeline.robot_kind(r_name, reference),
+            "kind": one_click_pipeline.robot_kind(r_name, reference, bare),
             "reference": reference,
-            "real": one_click_pipeline.robot_kind(r_name, reference) in ("design", "real"),
+            "bare": bare,
+            "real": one_click_pipeline.robot_kind(r_name, reference, bare) in ("design", "real"),
         })
 
     robot_list.sort(key=lambda r: (not r["active"], r["name"]))
