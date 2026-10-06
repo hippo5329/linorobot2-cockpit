@@ -32,6 +32,8 @@ def _load_gamepad():
         "rclpy.node": ["Node"],
         "geometry_msgs": [],
         "geometry_msgs.msg": ["Twist", "TwistStamped"],
+        "nav_msgs": [],
+        "nav_msgs.msg": ["Odometry"],      # the stall check hears /odom
     }
     saved = {n: sys.modules.get(n) for n in stubs}
     for n, attrs in stubs.items():

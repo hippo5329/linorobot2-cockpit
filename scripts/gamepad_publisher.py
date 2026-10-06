@@ -27,6 +27,7 @@ with nothing said on either side.
 """
 
 import argparse
+import json
 import os
 import sys
 import threading
@@ -34,6 +35,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist, TwistStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
 # One source of truth for which distros stamp /cmd_vel: the same function the
@@ -42,6 +44,7 @@ from rclpy.node import Node
 # disagree on exactly the distro nobody tested.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_firmware_header import distro_stamps_cmd_vel  # noqa: E402
+import stall_check  # noqa: E402
 
 
 def resolve_cmd_vel_type(choice: str, distro: str = None) -> bool:
@@ -62,7 +65,7 @@ def resolve_cmd_vel_type(choice: str, distro: str = None) -> bool:
 
 
 class GamepadPublisher(Node):
-    def __init__(self, topic, rate_hz, timeout_s, stamped=False):
+    def __init__(self, topic, rate_hz, timeout_s, stamped=False, odom_topic="/odom", status_file=None):
         super().__init__("console_gamepad")
         self.stamped = stamped
         self.msg_type = TwistStamped if stamped else Twist
@@ -71,7 +74,15 @@ class GamepadPublisher(Node):
         self.lock = threading.Lock()
         self.target = (0.0, 0.0, 0.0)
         self.last_cmd_time = 0.0
+        # The stall check: what the base measures against what it is told (stall_check.py).
+        self.status_file = status_file
+        self.measured = (0.0, 0.0, 0.0)
+        self.odom_time = None
+        self.held_since = None
+        self.create_subscription(Odometry, odom_topic, self.on_odom, 10)
         self.create_timer(1.0 / rate_hz, self.tick)
+        if status_file:
+            self.create_timer(0.25, self.write_status)
         self.get_logger().info(
             "publishing %s on %s at %g Hz, deadman timeout %gs"
             % (self.msg_type.__name__, topic, rate_hz, timeout_s)
@@ -94,6 +105,40 @@ class GamepadPublisher(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.twist = twist
         return msg
+
+    def on_odom(self, msg):
+        t = msg.twist.twist
+        with self.lock:
+            self.measured = (t.linear.x, t.linear.y, t.angular.z)
+            self.odom_time = time.monotonic()
+
+    def write_status(self):
+        """The stall verdict where the cockpit reads it, replaced atomically."""
+        now = time.monotonic()
+        with self.lock:
+            lx, ly, az = self.target
+            if (now - self.last_cmd_time) > self.timeout_s:
+                lx = ly = az = 0.0
+            measured = self.measured
+            odom_age = None if self.odom_time is None else now - self.odom_time
+            moving = abs(lx) + abs(ly) + abs(az) > 0
+            if not moving:
+                self.held_since = None
+            elif self.held_since is None:
+                self.held_since = now
+            held = 0.0 if self.held_since is None else now - self.held_since
+        v = stall_check.verdict((lx, ly, az), measured, held, odom_age)
+        status = {"t": time.time(), **v,
+                  "commanded": {"linear_x": lx, "linear_y": ly, "angular_z": az},
+                  "measured": {"linear_x": measured[0], "linear_y": measured[1], "angular_z": measured[2]},
+                  "odom_age_s": odom_age, "held_s": held}
+        tmp = self.status_file + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                json.dump(status, fh)
+            os.replace(tmp, self.status_file)
+        except OSError:
+            pass
 
     def tick(self):
         with self.lock:
@@ -135,6 +180,8 @@ def main():
     ap.add_argument("--topic", default="/cmd_vel")
     ap.add_argument("--rate", type=float, default=20.0)
     ap.add_argument("--timeout", type=float, default=0.5)
+    ap.add_argument("--odom-topic", default="/odom", help="what the stall check measures against")
+    ap.add_argument("--status-file", default=None, help="where the stall verdict is written (the cockpit reads it)")
     ap.add_argument("--cmd-vel-type", default="auto",
                     choices=("auto", "twist", "twist_stamped"),
                     help="message type for --topic; auto asks ROS_DISTRO, the same "
@@ -143,7 +190,8 @@ def main():
 
     rclpy.init()
     node = GamepadPublisher(args.topic, args.rate, args.timeout,
-                            stamped=resolve_cmd_vel_type(args.cmd_vel_type))
+                            stamped=resolve_cmd_vel_type(args.cmd_vel_type),
+                            odom_topic=args.odom_topic, status_file=args.status_file)
     threading.Thread(target=read_stdin, args=(node,), daemon=True).start()
     try:
         rclpy.spin(node)

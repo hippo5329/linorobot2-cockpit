@@ -305,7 +305,10 @@ async def api_gamepad_cmd(request: Request):
 # POST is what the page sends (app-workflow.js checkStall); GET kept for curl.
 @app.api_route("/api/gamepad/stall", methods=["GET", "POST"])
 def api_gamepad_stall():
-    return {"stalled": False, "running": gamepad_runner.is_running()}
+    # The publisher measures /odom against the command it holds (scripts/stall_check.py).
+    # This was a stub answering stalled: false, so the Teleop tab's "not moving" warning
+    # could never fire. `stalled` is None when it cannot tell (no odometry yet).
+    return gamepad_runner.status()
 
 
 @app.post("/api/gamepad/kill")

@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -194,6 +195,9 @@ class GamepadRunner:
         self.lock: threading.Lock = threading.Lock()
         self.target: Tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.topic: Optional[str] = None
+        # Where the publisher writes its stall verdict (scripts/stall_check.py): one file
+        # per backend process, so two cockpits on one machine cannot read each other's.
+        self.status_file = os.path.join(tempfile.gettempdir(), f"cockpit_gamepad_{os.getpid()}.json")
 
     def is_running(self) -> bool:
         with self.lock:
@@ -212,7 +216,12 @@ class GamepadRunner:
             script = os.path.join(self.repo_root, "scripts", "gamepad_publisher.py")
             if not os.path.isfile(script):
                 return False
-            cmd = f"python3 {shlex.quote(script)} --topic {shlex.quote(topic)}"
+            try:
+                os.remove(self.status_file)      # no verdict from a previous publisher
+            except OSError:
+                pass
+            cmd = (f"python3 {shlex.quote(script)} --topic {shlex.quote(topic)} "
+                   f"--status-file {shlex.quote(self.status_file)}")
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
             try:
@@ -245,6 +254,23 @@ class GamepadRunner:
             except (BrokenPipeError, ValueError):
                 self.process = None
                 return False
+
+    def status(self) -> dict:
+        """The publisher's last stall verdict: commanded vs measured, and whether it is stuck.
+
+        A verdict older than 2 s (the publisher writes every 0.25 s) or no verdict at all is
+        reported as unknown, never as moving freely."""
+        running = self.is_running()
+        try:
+            with open(self.status_file) as fh:
+                st = json.load(fh)
+        except (OSError, ValueError):
+            return {"stalled": None, "running": running, "reason": "no stall verdict yet"}
+        if time.time() - float(st.get("t", 0)) > 2.0:
+            return {"stalled": None, "running": running, "reason": "stall verdict is stale",
+                    "commanded": st.get("commanded"), "measured": st.get("measured")}
+        st["running"] = running
+        return st
 
     def kill(self) -> bool:
         with self.lock:
