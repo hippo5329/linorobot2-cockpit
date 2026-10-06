@@ -96,10 +96,21 @@ size_t platformio_transport_read(struct uxrCustomTransport *transport,
     (void)errcode;
 #ifdef UROS_HAVE_UDP
     if (uros_use_udp) {
-        int64_t start = uxr_millis();
-        while ((uxr_millis() - start) < (int64_t)timeout && uros_udp.parsePacket() == 0)
+        // Look for a datagram at least ONCE, then keep looking until the timeout. The
+        // loop used to test the clock first, so a zero timeout never called parsePacket()
+        // at all: every zero-timeout read came back empty with datagrams waiting, the
+        // executor got one message per loop (the one its timed wait read), and the rest
+        // aged in the socket -- measured on the Sim MCU at an 8 Hz loop: 8 of 20 /cmd_vel
+        // a second taken, each ~0.7 s old, whatever the executor did (2026-10-06).
+        const int64_t start = uxr_millis();
+        while (uros_udp.available() == 0 && uros_udp.parsePacket() == 0) {
+            if ((uxr_millis() - start) >= (int64_t)timeout) break;
             delay(1);
-        return uros_udp.available() ? uros_udp.read(buf, len) : 0;
+        }
+        const size_t n = uros_udp.available() ? uros_udp.read(buf, len) : 0;
+        diagCount(DIAG_RX_CALLS);
+        if (n == 0) diagCount(DIAG_RX_EMPTY); else diagCount(DIAG_RX_BYTES, (uint32_t)n);
+        return n;
     }
 #endif
     Stream *stream = (Stream *)transport->args;

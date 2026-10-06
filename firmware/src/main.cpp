@@ -1462,6 +1462,33 @@ static inline void simWallLedService()
 #endif
 }
 
+// The longest rclc_executor_spin_all() may run per loop(): one control period (50 Hz).
+#ifndef SPIN_ALL_MAX_MS
+#define SPIN_ALL_MAX_MS 20
+#endif
+// spin_all is on unless the Sim MCU is told otherwise (LINO_SPIN_ALL=0), which is how the
+// before/after comparison runs one binary.
+static bool spinAllEnabled()
+{
+#ifdef LINO_HOST
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("LINO_SPIN_ALL"); on = (e && strcmp(e, "0") == 0) ? 0 : 1; }
+    return on == 1;
+#else
+    return true;
+#endif
+}
+#ifdef LINO_HOST
+// The Sim MCU's loop() runs far faster than a board's; LINO_LOOP_DELAY_MS slows it to one
+// (an ESP32 with its radio up and a session connected: ~125 ms) for the executor comparison.
+static void hostLoopDelay()
+{
+    static int ms = -1;
+    if (ms < 0) { const char *e = getenv("LINO_LOOP_DELAY_MS"); ms = e ? atoi(e) : 0; }
+    if (ms > 0) delay(ms);
+}
+#endif
+
 void loop() {
     if (app_mode != APP_BASE) {
         // The radio is the dispatcher's: a tool that serviced it as well would
@@ -1526,7 +1553,16 @@ void loop() {
                 // -- it gives the micro-ROS transport less time to drain, on a
                 // board where the radio path is already the scarce resource.
                 const uint32_t spin_t0 = micros();
-                const rcl_ret_t spin_rc = rclc_executor_spin_some(executor, RCL_MS_TO_NS(100));
+                rcl_ret_t spin_rc = rclc_executor_spin_some(executor, RCL_MS_TO_NS(100));
+#ifdef RCLC_EXECUTOR_HAS_SPIN_ALL
+                // ...then everything else that is ready. spin_some takes one message per
+                // handle per call, so a loop slower than /cmd_vel fell behind it and ran
+                // on commands up to ~0.5 s old (rclc benchmark, 2026-10-06: 8 Hz loop,
+                // 20 Hz topic, mean age 470 ms; with spin_all 60 ms). Bounded, so a flood
+                // cannot hold the control loop: one control period.
+                if (spinAllEnabled() && (RCL_RET_OK == spin_rc || RCL_RET_TIMEOUT == spin_rc))
+                    spin_rc = rclc_executor_spin_all(executor, RCL_MS_TO_NS(SPIN_ALL_MAX_MS));
+#endif
                 diagSpin((int)spin_rc, micros() - spin_t0);
             }
             break;
@@ -1544,6 +1580,9 @@ void loop() {
     runWifis();
     runOta();
     wdtFeed();
+#ifdef LINO_HOST
+    hostLoopDelay();
+#endif
 #ifdef BOARD_LOOP // board specific loop
     BOARD_LOOP
 #endif
@@ -1591,6 +1630,7 @@ void controlCallback(rcl_timer_t * timer, int64_t last_call_time)
 void twistStampedCallback(const void * msgin) 
 {
     (void)msgin;
+    diagCount(DIAG_CMD);
     ledWrite(!ledRead());
 
     prev_cmd_time = millis();
@@ -1606,9 +1646,36 @@ void twistStampedCallback(const void * msgin)
 void twistCallback(const void * msgin) 
 {
     (void)msgin;
+    diagCount(DIAG_CMD);
     ledWrite(!ledRead());
 
     prev_cmd_time = millis();
+}
+
+// /cmd_vel is subscribed BEST EFFORT, keep-last 1. rclc's default (reliable, keep-last 10)
+// is the wrong pair for a board built with RMW_UXRCE_MAX_HISTORY=1: the client has ONE
+// static input buffer, shared by every subscription, and with depth 10 a command arriving
+// while one is buffered asks the empty pool for another and is DROPPED -- the board keeps
+// the oldest command, not the newest. Depth 1 makes the one buffer hold the newest, and
+// best effort costs no acknowledgements on a stream where the next command is worth more
+// than a retransmitted old one (as raw_scan and the 50 Hz topics already are). Nav2's
+// reliable publisher matches a best-effort subscriber. Measured on the Sim MCU at an
+// ESP32's 8 Hz loop, 20 Hz /cmd_vel (2026-10-06): step to motion 825 ms -> 645 ms with
+// spin_all; history 4 without spin_all was the worst case, 1206 ms.
+// LINO_CMD_QOS=default (Sim MCU only) brings back rclc's default, for comparisons.
+static rcl_ret_t cmdSubscriptionInit(rcl_subscription_t *sub, rcl_node_t *node,
+                                     const rosidl_message_type_support_t *ts, const char *topic)
+{
+#ifdef LINO_HOST
+    const char *q = getenv("LINO_CMD_QOS");
+    if (q && strcmp(q, "default") == 0)
+        return rclc_subscription_init_default(sub, node, ts, topic);
+#endif
+    rmw_qos_profile_t qos = rmw_qos_profile_default;
+    qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+    qos.depth = 1;
+    qos.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
+    return rclc_subscription_init(sub, node, ts, topic, &qos);
 }
 
 bool createEntities()
@@ -1745,7 +1812,7 @@ bool createEntities()
     size_t executor_handles = 2;
     if (stamped_cmd_vel) {
     // create stamped twist subscriber for Nav2 on /cmd_vel
-    RCCHECK(rclc_subscription_init_default( 
+    RCCHECK(cmdSubscriptionInit( 
         &twist_stamped_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, TwistStamped),
@@ -1757,7 +1824,7 @@ bool createEntities()
     twist_stamped_msg.header.frame_id.capacity = sizeof(twist_stamped_frame_id);
 
     // create unstamped fallback subscriber on /cmd_vel_unstamped for legacy teleop tools
-    RCCHECK(rclc_subscription_init_default( 
+    RCCHECK(cmdSubscriptionInit( 
         &twist_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
@@ -1766,7 +1833,7 @@ bool createEntities()
     executor_handles = 3;
     } else {
     // create standard unstamped twist command subscriber on /cmd_vel
-    RCCHECK(rclc_subscription_init_default( 
+    RCCHECK(cmdSubscriptionInit( 
         &twist_subscriber, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),

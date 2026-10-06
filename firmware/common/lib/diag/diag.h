@@ -28,6 +28,7 @@ enum DiagCounter {
     DIAG_RX_EMPTY,   // transport read calls that returned nothing
     DIAG_PING_OK,
     DIAG_PING_FAIL,
+    DIAG_CMD,        // /cmd_vel callbacks: commands taken from the queue
     DIAG_N
 };
 

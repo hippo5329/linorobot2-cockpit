@@ -29,13 +29,14 @@
 #                        USE_STAMPED_CMD_VEL, one otherwise.
 #   MAX_SERVICES      0  no rclc_service_init anywhere in the firmware.
 #   MAX_CLIENTS       0  no rclc_client_init, and no parameter server.
-#   MAX_HISTORY       1  the stream buffers are MTU x history PER STREAM, so
-#                        this is where the bytes are; upstream ships exactly
-#                        this change as metas/colcon_lowmem.meta. One message
-#                        in flight per stream instead of four: on a best-effort
-#                        stream that is already the case, on a reliable one it
-#                        costs pipelining, not correctness. If a reliable topic
-#                        starts stalling under load, suspect this line.
+#   MAX_HISTORY       1  the client's static INPUT buffers, one pool shared by every
+#                        subscription, each MTU x STREAM_HISTORY (1024 x 4) bytes --
+#                        so this is where the bytes are (upstream: colcon_lowmem.meta).
+#                        It is NOT the reliable stream's window (STREAM_HISTORY, 4).
+#                        One buffer means one received message held at a time: a
+#                        subscription must be keep-last 1 or it keeps the OLDEST
+#                        message (main.cpp cmdSubscriptionInit). 4 costs ~16 KB and
+#                        only pays with rclc_executor_spin_all draining it.
 #
 # Motivated by esp32_lyrical, which does not fit at all (.dram0.bss over
 # dram0_0_seg by 14504 bytes), but applied everywhere: the smaller boards have
