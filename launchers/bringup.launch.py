@@ -240,33 +240,43 @@ def launch_setup(context, *args, **kwargs):
     # (ldlidar_stl_ros2), whichever way its frames travel -- `serial` from a tty (the
     # GenDrv's LIDAR_RXD bridge), `udp` to the udp_server, `topic` as raw_scan over
     # micro-ROS (user, 2026-10-06: "let topic /raw_scan go through stl driver to generate
-    # /scan"). The ONE special case is the no-board path, `sim_base:=true` (or no host
-    # firmware build): sim_base_node and sim_laser_node together, rclpy publishing straight
-    # into DDS, to debug SLAM / Nav2 with micro-ROS, the agent and the driver all out of
-    # the loop ("we have sim base node as special case, together with sim laser node").
-    # Until 2026-10-06 the host laser also stood in for any comm mode but serial, so a
-    # `topic` board's raw_scan was published and read by nothing (bringup logs:
-    # lidar_mode='topic', sim_laser_node, no ld19), and for a serial port that did not
-    # exist, so a bare ESP32 -- which has no scan source (gen_bare_config._bare_comm_mode)
-    # -- ran SLAM and Nav2 on the host's scan and looked like it had one.
-    use_host_sim_laser = no_board
-    no_scan_why = ("" if (no_board or host_fw_bin)
-                   else depth_camera.sim_scan_unreachable(controller, lidar_port))
-    if not no_board and not host_fw_bin and robot_has_lidar:
-        _uart_why = depth_camera.raw_scan_over_uart(controller)
-        if _uart_why:
-            raise RuntimeError(f"[RAW_SCAN OVER UART REFUSED] {_uart_why}")
+    # /scan"). The robot computer raycasts the room itself (sim_laser_node.py) only in the
+    # special cases, each said in the log:
+    #   - no board: `sim_base:=true` (or no host firmware build), beside sim_base_node --
+    #     SLAM / Nav2 with micro-ROS, the agent and the driver all out of the loop;
+    #   - `host_laser:=true`: a board whose link cannot carry its simulated scan -- an ESP32,
+    #     or an ESP32-S3 on its UART, at 921600 baud, with no LIDAR_RXD bridge -- so the
+    #     test suite can still run SLAM and Nav2 on it (user, 2026-10-06: "update test suit
+    #     to use sim_laser_node with esp32/esp32s3 serial transport uart baud 921600, ie,
+    #     raycasting on host");
+    #   - a saved-map world on a board, which cannot hold the map ("world map support use
+    #     sim_laser_node"). The Sim MCU raycasts a map itself (sim_ld19.h, sim_world_map).
+    # Without one of them a board's scan with no carrier is no /scan, and bringup says so.
+    host_laser_asked = (str(context.launch_configurations.get("host_laser", "")).strip().lower()
+                        in ("true", "1", "yes"))
+    if host_laser_asked and is_real:
+        raise RuntimeError("[HOST LASER REFUSED] host_laser raycasts a simulated room; a real "
+                           "robot's /scan is its LiDAR")
 
-    # World "map" (depth_camera.WORLDS): a saved occupancy map is the world. A board
-    # cannot hold one; the Sim MCU runs on this computer and raycasts the map file
-    # itself (sim_ld19.h, sim_world_map), so its scan still goes through the LD driver.
+    # World "map" (depth_camera.WORLDS): a saved occupancy map is the world.
     world_map_path, world_start = depth_camera.world_map(params)
     world_params = ({"world_map": world_map_path, "world_start": list(world_start)}
                     if (world_map_path and not is_real) else {})
-    if world_map_path and not is_real and not no_board and not host_fw_bin:
-        raise RuntimeError(
-            f"[MAP WORLD] a board cannot hold the saved map {world_map_path}: run the map "
-            f"world on the Sim MCU (no board), or with sim_base:=true")
+
+    host_laser_why = ""
+    if no_board:
+        host_laser_why = "no board (sim_base)"
+    elif not host_fw_bin and robot_has_lidar and host_laser_asked:
+        host_laser_why = "asked for (host_laser): the board's link does not carry its simulated scan"
+    elif not host_fw_bin and robot_has_lidar and world_map_path and not is_real:
+        host_laser_why = f"a board cannot hold the saved map {world_map_path}"
+    use_host_sim_laser = bool(host_laser_why)
+    no_scan_why = ("" if (use_host_sim_laser or host_fw_bin)
+                   else depth_camera.sim_scan_unreachable(controller, lidar_port))
+    if not use_host_sim_laser and not host_fw_bin and robot_has_lidar:
+        _uart_why = depth_camera.raw_scan_over_uart(controller)
+        if _uart_why:
+            raise RuntimeError(f"[RAW_SCAN OVER UART REFUSED] {_uart_why}")
 
     host_fw_env = None
     if host_fw_bin:
@@ -286,7 +296,9 @@ def launch_setup(context, *args, **kwargs):
             print(f"[bringup] world: the saved map {world_map_path} -- raycast by the Sim MCU, "
                   f"/scan from the LD driver")
     if use_host_sim_laser and robot_has_lidar:
-        print("[bringup] no board (sim_base): /scan from the host's simulated laser (sim_laser_node)")
+        print(f"[bringup] /scan from the host's simulated laser (sim_laser_node): {host_laser_why}")
+    if host_laser_asked and host_fw_bin:
+        print("[bringup] host_laser ignored: the Sim MCU's own emulator is the scan")
     if no_scan_why:
         print(f"[bringup] NO /scan: {no_scan_why}")
 
@@ -688,8 +700,8 @@ def launch_setup(context, *args, **kwargs):
                                  **{k: (bool(v) if k == "wall_obstacle" else float(v))
                                     for k, v in depth_camera.sim_room(params).items()}}],
                 )
-                # The virtual room: the no-board (sim_base) path only; see
-                # use_host_sim_laser above.
+                # The virtual room on the robot computer: the special cases in
+                # use_host_sim_laser above (sim_base, host_laser, a map world on a board).
                 if use_host_sim_laser
                 # A real RPLIDAR, YDLIDAR or XV-11: its vendor's node, the
                 # vendor's per-model settings (lidar_drivers.py), respawned
@@ -978,6 +990,12 @@ def generate_launch_description():
             "world",
             default_value="",
             description="Override simulated world ('wall', 'rooms' for multi-room exploration, or 'map')",
+        ),
+        DeclareLaunchArgument(
+            "host_laser",
+            default_value="",
+            description="true: /scan from the host's simulated laser (sim_laser_node), for a board "
+                        "whose link cannot carry its simulated scan (ESP32 / ESP32-S3 UART at 921600)",
         ),
         DeclareLaunchArgument(
             "world_map",

@@ -525,17 +525,24 @@ any full topic or frame name written into a config file.
 and `ldlidar_stl_ros2` turns them into `/scan` whichever way they travel: `serial` from a tty
 (the GenDrv's `LIDAR_RXD` bridge), `udp` as its UDP server, `topic` by subscribing to
 `raw_scan`. The Sim MCU streams over UDP, and on a `map` world raycasts the saved map itself
-(`sim_world_map.h`). A board cannot hold a map, so a `map` world on one is refused.
+(`sim_world_map.h`). A board cannot hold a map, so on a `map` world the robot computer's laser
+raycasts it for the board.
 
-The host's raycaster, `scripts/sim_laser_node.py`, runs only beside `sim_base_node.py`, on the
-no-board path (`sim_base:=true`, or an image without the host firmware build):
+The host's raycaster, `scripts/sim_laser_node.py`, runs only in the special cases, and bringup
+prints which:
+
+- **no board**: `sim_base:=true` (or an image without the host firmware build), beside
+  `sim_base_node.py`, with micro-ROS, the agent and the driver all out of the loop;
+- **`host_laser:=true`** (the pipeline's `--host-laser`, Sim mode only): a board whose link cannot
+  carry its simulated scan, an ESP32 or an ESP32-S3 on its UART at 921600 baud with no LIDAR_RXD
+  bridge, so the test suite can still run SLAM and Nav2 on it;
+- **a saved-map world on a board**, which cannot hold the map.
 
 ```python
-use_host_sim_laser = no_board
+use_host_sim_laser = bool(host_laser_why)    # no board / host_laser / a board's map world
 ```
 
-It used to stand in for any comm mode but `serial`, and for a `serial` port that did not exist.
-The first meant a `topic` board's `raw_scan` was published and read by nothing; the second
-meant a bare ESP32, which has no scan source (no bridge, and 921600 baud cannot carry
-`raw_scan` beside the control loop), ran SLAM and Nav2 on the host's scan. Now that case
-prints `[bringup] NO /scan: ...` and starts no LiDAR driver.
+It used to stand in for any comm mode but `serial`, which meant a `topic` board's `raw_scan`
+was published and read by nothing. Without one of the cases above, a board whose simulated
+`serial` scan has no port prints `[bringup] NO /scan: ...` and starts no LiDAR driver: that
+LiDAR is the robot computer's, and Sim mode cannot raycast into it.
