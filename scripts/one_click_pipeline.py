@@ -1547,6 +1547,10 @@ def main():
     parser.add_argument("--world", choices=list(depth_camera.WORLDS.keys()), default=None,
                         help="Override simulated world: 'wall' (default obstacle room), "
                              "'rooms' (multi-room space for exploration), or 'map'")
+    parser.add_argument("--host-laser", action="store_true",
+                        help="Sim mode: /scan from the robot computer's simulated laser (sim_laser_node) "
+                             "instead of the board's emulator -- for a board whose link cannot carry "
+                             "its simulated scan (an ESP32 / ESP32-S3 UART at 921600, no LiDAR bridge)")
     parser.add_argument("--world-map", type=str, default=None,
                         help="Path to map .yaml to feed into the simulator as the physical world (--world map)")
     parser.add_argument("--drive-test", dest="drive_test", action="store_true", default=True,
@@ -1726,7 +1730,21 @@ def main():
     # ESP32's UART is refused, and a simulated `serial` scan with no port reaches nothing --
     # a bare ESP32 has no LIDAR_RXD bridge. Then this run has no /scan to map from: it
     # proves the topics and the drive, and says why there is no SLAM or Nav2.
-    if scan_from == "lidar" and not sim_mcu:
+    # --host-laser: the robot computer raycasts the room (sim_laser_node), so the board's
+    # scan carrier does not matter -- Sim mode only, and never on the Sim MCU, whose own
+    # emulator is the scan. A saved-map world on a board takes the same path in bringup.
+    host_laser = bool(args.host_laser) and not sim_mcu
+    try:
+        board_map_world = (not sim_mcu and not is_real and depth_camera.sim_world(params) == "map")
+    except ValueError:
+        board_map_world = False
+    if host_laser and is_real:
+        print("❌ [HOST LASER REFUSED] --host-laser raycasts a simulated room; a real robot's "
+              "/scan is its LiDAR.")
+        return 1
+    if host_laser:
+        print("   /scan: the robot computer's simulated laser (--host-laser), not the board's emulator")
+    if scan_from == "lidar" and not sim_mcu and not host_laser and not board_map_world:
         why = depth_camera.raw_scan_over_uart(controller_cfg)
         if why:
             print(f"❌ [RAW_SCAN OVER UART REFUSED] {why}")
@@ -2035,7 +2053,8 @@ def main():
                        + (" sim_depth:=true" if sim_depth else "")
                        + f" mode:={"real" if is_real else "sim"}"
                        + (f" world:={args.world}" if (args.world and not is_real) else "")
-                       + (f" world_map:={args.world_map}" if (args.world_map and not is_real) else ""))
+                       + (f" world_map:={args.world_map}" if (args.world_map and not is_real) else "")
+                       + (" host_laser:=true" if host_laser else ""))
         bg_processes.append(launch_bg(bringup_cmd, log_tag="bringup", distro=args.distro))
         stack_processes.append(("bringup", bg_processes[-1]))
         # A serial board is already enumerated when the agent starts, so 30 s is

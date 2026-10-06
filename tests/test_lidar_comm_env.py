@@ -221,25 +221,28 @@ def test_the_serial_lidar_driver_respawns():
         )
 
 
-def test_only_the_no_board_path_raycasts_on_the_host():
-    """User, 2026-10-06: "let topic /raw_scan go through stl driver to generate /scan. The
-    sim_laser_node should be used in special case" -- "we have sim base node as special case,
-    together with sim laser node". Every board's simulated LD19 goes through the LD driver
-    (serial, udp, or raw_scan as a topic); sim_laser_node only beside sim_base_node.
+def test_the_host_raycasts_only_in_its_special_cases():
+    """A board's simulated LD19 goes through the LD driver (user, 2026-10-06: "let topic
+    /raw_scan go through stl driver to generate /scan"). sim_laser_node raycasts on the robot
+    computer only with no board (sim_base), when asked (host_laser: an ESP32 / ESP32-S3 UART at
+    921600 has no link for its scan -- "update test suit to use sim_laser_node with
+    esp32/esp32s3 serial transport uart baud 921600"), or on a saved-map world on a board
+    ("world map support use sim_laser_node").
 
     Until then any comm mode but serial went to the host, so a `topic` board's raw_scan was
-    read by nothing (bringup logs: lidar_mode='topic', sim_laser_node, no ld19),
-    and so did a serial port that did not exist: a bare ESP32 -- no LIDAR_RXD bridge, and
-    921600 baud cannot carry raw_scan beside the control loop -- ran SLAM and Nav2 on the
-    host's scan. It has no scan source, and the launch now says so."""
+    read by nothing (bringup logs: lidar_mode='topic', sim_laser_node, no ld19)."""
     text = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
-    assert "use_host_sim_laser = no_board\n" in text
     assert 'effective_lidar_comm_mode != "serial"' not in text
+    assert 'host_laser_why = "no board (sim_base)"' in text
+    assert "host_laser_why = \"asked for (host_laser)" in text
+    assert 'host_laser_why = f"a board cannot hold the saved map {world_map_path}"' in text
+    assert "use_host_sim_laser = bool(host_laser_why)" in text
+    assert "[HOST LASER REFUSED]" in text
     assert "[bringup] NO /scan: {no_scan_why}" in text
     assert "if (not robot_has_lidar or no_scan_why)" in text
-    assert "if use_host_sim_laser" in text
-    # the LD driver gets the raw_scan topic for `topic` mode
     assert '"comm_mode": lidar_comm_mode,' in text and '"raw_scan_topic": lidar_raw_topic,' in text
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert 'parser.add_argument("--host-laser"' in pipe and '" host_laser:=true" if host_laser' in pipe
 
 def test_scan_wait_follows_the_scan_source_not_the_transport():
     """The pipeline's /scan gate must key on who PRODUCES the scan.

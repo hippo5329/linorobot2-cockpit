@@ -112,12 +112,13 @@ def test_a_map_world_needs_a_map(tmp_path):
 def test_the_sim_mcu_raycasts_the_map_and_the_ld_driver_publishes_scan():
     """User, 2026-10-06: "sim mcu should do the raycasts from imported map and let stl driver
     publish /scan". The map goes into the Sim MCU's env; its emulator stays on and streams to
-    the udp_server driver. A physical board cannot hold a map and is refused."""
+    the udp_server driver. A physical board cannot hold a map: the robot computer's laser
+    raycasts it ("world map support use sim_laser_node")."""
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
     assert "world_map_path, world_start = depth_camera.world_map(params)" in launch
     assert 'if effective_lidar_comm_mode == "udp_server" and not use_host_sim_laser' in launch
     assert "world=(world_map_path, world_start)" in launch
-    assert "[MAP WORLD] a board cannot hold the saved map" in launch
+    assert 'host_laser_why = f"a board cannot hold the saved map {world_map_path}"' in launch
     assert "**world_params," in launch          # the sim_base path's laser and the camera
     for node in ("sim_laser_node.py", "sim_depth_node.py"):
         assert "dc.GridWorld(" in open(os.path.join(REPO_ROOT, "scripts", node)).read()
