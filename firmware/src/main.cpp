@@ -977,7 +977,16 @@ void setup()
     Serial.end();
     if (micro_ros) {
         Serial.setRxBufferSize(SERIAL_RX_BUFFER);
-#ifndef ARDUINO_USB_CDC_ON_BOOT
+        // The TX ring too, on every Serial that has one: a UART, and the S3's
+        // USB-Serial/JTAG (HWCDC, ARDUINO_USB_MODE=1). Only TinyUSB's USBCDC
+        // (USB_MODE=0) has no setTxBufferSize. HWCDC's default ring is 256
+        // bytes, ~7 ms of this link, and when the host is slow to poll it,
+        // HWCDC::write() decides the port is disconnected and overwrites queued
+        // bytes. A lost XRCE frame then leaves a reliable publisher (battery,
+        // sonar) waiting RMW_UXRCE_PUBLISH_RELIABLE_TIMEOUT for its
+        // acknowledgement: the S3's 1.007 s /odom stalls under Nav2 (stamp and
+        // receive time both jumped 1.007 s; none in topic-only runs).
+#if !defined(ARDUINO_USB_CDC_ON_BOOT) || !ARDUINO_USB_CDC_ON_BOOT || ARDUINO_USB_MODE
         Serial.setTxBufferSize(SERIAL_TX_BUFFER);
 #endif
     }
