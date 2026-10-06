@@ -867,8 +867,13 @@ for the electronics, and an empty pack is swapped for a full one, so a soak runs
 The Sim MCU runs this same firmware on the robot computer (`firmware/host/`), so it publishes the same model.
 
 ### A lost ping is not a lost agent, and only a new run resets the simulated pose
-On a serial transport the board pings the agent every 200 ms while connected. It declares the agent
-gone only when pings have failed for `AGENT_LOSS_MS` (1 s), not on the first miss. When the session
+While connected the board pings the agent: every 200 ms on a serial transport, gone only when pings
+have failed for `AGENT_LOSS_MS` (1 s); every second on `udp4`, gone after `AGENT_LOSS_UDP_MS` (5 s)
+of failures, so one dropped datagram on the LAN is not a lost agent. The ping travels in the
+board's session, and an agent drops session traffic from a client it does not know, so a
+**restarted** agent does not answer it: the board notices, tears the session down and makes a new
+one with the new agent. Before 2026-10-06 `udp4` did not ping at all, and a Wi-Fi board whose
+agent was restarted kept publishing into a session nobody had until it was rebooted. When the session
 is rebuilt, the simulated pose goes back to the origin only for a **new run**: the first session
 since boot, or one after the agent was gone for at least `SIM_POSE_RESET_AFTER_MS` (3 s). A shorter
 gap is the same run's session coming back after a blip, and the pose is kept. syslog says which:

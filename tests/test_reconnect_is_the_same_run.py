@@ -29,7 +29,8 @@ def const_ms(name):
 def test_one_lost_ping_is_not_a_lost_agent():
     connected = MAIN[MAIN.index("case AGENT_CONNECTED:"):MAIN.index("case AGENT_DISCONNECTED:")]
     assert "state = ok ? AGENT_CONNECTED : AGENT_DISCONNECTED" not in connected
-    assert "millis() - ping_fail_since_ms >= AGENT_LOSS_MS" in connected
+    assert "millis() - ping_fail_since_ms >= loss_ms" in connected
+    assert "loss_ms = udp ? AGENT_LOSS_UDP_MS : AGENT_LOSS_MS" in connected
     assert const_ms("AGENT_LOSS_MS") >= 1000
 
 
@@ -51,3 +52,18 @@ def test_the_pipelines_pose_reset_outlasts_the_threshold():
     step = pipe[pipe.index("[4.7/6] [POSE] The robot is at"):]
     wait = step.index("SIM_POSE_RESET_AFTER_S + 1.0 - (time.time() - t_gone)")
     assert wait < step.index('log_tag="bringup2"'), "the wait must come before the relaunch"
+
+
+def test_a_wifi_board_notices_a_restarted_agent():
+    """2026-10-06: udp4 did not ping, so nothing declared the agent lost. A second launch killed
+    the first's agent, the respawn came straight back, and the board published into a session the
+    new agent did not have until it was rebooted. udp4 pings now, slower and more tolerant."""
+    connected = MAIN[MAIN.index("case AGENT_CONNECTED:"):MAIN.index("case AGENT_DISCONNECTED:")]
+    assert "if (!urosTransportIsUdp())" not in connected, "the ping must not be serial-only"
+    assert "EXECUTE_EVERY_N_MS(udp ? AGENT_PING_UDP_MS : 200" in connected
+    assert "rmw_uros_ping_agent(" in connected
+    udp_loss, udp_every = const_ms("AGENT_LOSS_UDP_MS"), const_ms("AGENT_PING_UDP_MS")
+    assert udp_loss >= 3 * udp_every, "several pings must fail, not one datagram"
+    # The pipeline's pose reset relaunches after SIM_POSE_RESET_AFTER_S + 1 s; the board must
+    # notice inside its handshake wait, and the gap it reports must read as a new run.
+    assert udp_loss + udp_every >= const_ms("SIM_POSE_RESET_AFTER_MS")

@@ -313,6 +313,19 @@ enum states
 // them landed inside a Nav2 goal (gate 20260926-disp7). A second of silence is
 // still a lost agent; one late reply on a busy 1.5 Mbaud link is not.
 static const uint32_t AGENT_LOSS_MS = 1000;
+// The same on udp4, slower and more tolerant: a ping a second, lost after five
+// seconds of failures. It used to be no ping at all ("a 200 ms ping is a way to
+// declare a working link dead on one lost datagram"), and then nothing declared
+// the agent lost: an agent restarted under a Wi-Fi board (2026-10-06, a second
+// launch killed the first's agent and its respawn came straight back) left the
+// board publishing into a session the new agent did not have, until a reboot.
+// The ping is the session's own (uxr_ping_agent_session sends the session id),
+// and an agent drops session traffic from a client it does not know, so a
+// restarted agent does not answer it: a failed ping is a lost session, which is
+// what needs noticing. Five seconds of a GenDrv's 16/250 ms Wi-Fi is not one
+// late datagram.
+static const uint32_t AGENT_PING_UDP_MS = 1000;
+static const uint32_t AGENT_LOSS_UDP_MS = 5000;
 // How long the agent must have been gone for a new session to be a new RUN, and
 // the simulated pose to be put back at the origin (createEntities). A blip that
 // the session did not survive is the same run: resetting the pose there
@@ -1481,15 +1494,16 @@ void loop() {
             }
             break;
         case AGENT_CONNECTED:
-            // Pinging is a property of the transport, so it is decided at run
-            // time along with the transport itself. On udp4 the agent is
-            // reached over the LAN and a 200 ms ping is both unnecessary and a
-            // way to declare a working link dead on one lost datagram; on a
-            // serial link the ping is how a disappeared agent is noticed at all.
+            // Pinging is a property of the transport, decided at run time along
+            // with the transport itself: every 200 ms on serial, where the ping
+            // is how a disappeared agent is noticed at all; every second on
+            // udp4, lost only after AGENT_LOSS_UDP_MS of failures, so one
+            // dropped datagram on the LAN is not a lost agent.
             resyncTime();
-            if (!urosTransportIsUdp())
             {
-                EXECUTE_EVERY_N_MS(200, {
+                const bool udp = urosTransportIsUdp();
+                const uint32_t loss_ms = udp ? AGENT_LOSS_UDP_MS : AGENT_LOSS_MS;
+                EXECUTE_EVERY_N_MS(udp ? AGENT_PING_UDP_MS : 200, {
                     const bool ok = (RMW_RET_OK == rmw_uros_ping_agent(100, 1));
                     diagCount(ok ? DIAG_PING_OK : DIAG_PING_FAIL);
                     if (ok) {
@@ -1498,16 +1512,10 @@ void loop() {
                     } else if (!ping_failing) {
                         ping_failing = true;
                         ping_fail_since_ms = millis();
-                    } else if (millis() - ping_fail_since_ms >= AGENT_LOSS_MS) {
+                    } else if (millis() - ping_fail_since_ms >= loss_ms) {
                         state = AGENT_DISCONNECTED;
                     }
                 });
-            }
-            else
-            {
-                // No ping on udp4: nothing declares the agent lost, so the
-                // session being up is the proof.
-                agent_ok_ms = millis();
             }
             if (state == AGENT_CONNECTED) 
             {

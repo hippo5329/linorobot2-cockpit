@@ -2162,7 +2162,7 @@ def main():
                     if not wait_for_topic("/odom/unfiltered", timeout_sec=handshake_wait,
                                           require_publisher=True, distro=args.distro):
                         print(f"  ❌ the bringup did not come back within {handshake_wait} s. On udp4 the "
-                              f"board has to find the agent again; it may need a power cycle.")
+                              f"board notices the old session is gone after 5 s of failed pings, then dials again.")
                         failures.append("pose reset: bringup did not come back")
                     else:
                         after = _odom_xy(args.distro)
