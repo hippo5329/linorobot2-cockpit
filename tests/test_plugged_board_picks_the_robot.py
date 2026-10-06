@@ -93,15 +93,16 @@ def test_a_real_robot_is_never_swapped_for_the_sim_mcu(design, controller, tmp_p
     assert res["calls"] == [] and res["robot"] == design, res
 
 
-def test_a_bare_robot_falls_back_and_follows_the_plugged_board(tmp_path):
+def test_a_bare_robot_falls_back_and_the_plugged_board_gets_its_default_robot(tmp_path):
+    """User, 2026-10-06: with a board detected, the default robot is named for it (lino_esp32)."""
     res = run("bare_pico2", "pico2", [NONE, board("esp32")], tmp_path)
-    assert res["calls"] == ["bare_sim", "bare_esp32"], res
-    assert res["robot"] == "bare_esp32"
+    assert res["calls"] == ["bare_sim", "lino_esp32", "apply:__bare__"], res
+    assert res["robot"] == "lino_esp32"
 
 
-def test_the_same_silicon_goes_back_to_the_bare_robot_it_left(tmp_path):
+def test_the_same_silicon_gets_its_default_robot_not_the_generated_one(tmp_path):
     res = run("bare_pico2", "pico2", [NONE, board("pico2")], tmp_path)
-    assert res["robot"] == "bare_pico2", res
+    assert res["robot"] == "lino_pico2", res
 
 
 def test_a_board_that_does_not_name_its_silicon_yet_is_waited_for(tmp_path):
@@ -110,21 +111,23 @@ def test_a_board_that_does_not_name_its_silicon_yet_is_waited_for(tmp_path):
     res = run("bare_pico2", "pico2", [NONE, bootsel], tmp_path)
     assert res["robot"] == "bare_sim", res
     res = run("bare_pico2", "pico2", [NONE, bootsel, board("pico")], tmp_path)
-    assert res["robot"] == "bare_pico", res
+    assert res["robot"] == "lino_pico", res
 
 
 def test_with_no_design_chosen_the_detected_board_decides(tmp_path):
     """User, 2026-10-06: no reference design selected -> a detected MCU defaults to its bare
     module, every device simulated; a detected UNO Q to its STM32 (bare_unoq)."""
-    assert run("bare_sim", "sim", [board("esp32")], tmp_path)["robot"] == "bare_esp32"
-    assert run("bare_sim", "sim", [board("unoq")], tmp_path)["robot"] == "bare_unoq"
-    # a bare robot of another silicon follows the board too
-    assert run("bare_pico2", "pico2", [board("esp32s3")], tmp_path)["robot"] == "bare_esp32s3"
+    # ...as a robot NAMED for the board, created as its bare module: lino_<mcu>
+    res = run("bare_sim", "sim", [board("esp32")], tmp_path)
+    assert res["calls"] == ["lino_esp32", "apply:__bare__"] and res["robot"] == "lino_esp32", res
+    assert run("bare_sim", "sim", [board("unoq")], tmp_path)["robot"] == "lino_unoq"
+    assert run("bare_pico2", "pico2", [board("esp32s3")], tmp_path)["robot"] == "lino_esp32s3"
 
 
-def test_a_bare_variant_for_the_detected_board_stays(tmp_path):
-    res = run("bare_pico2_mecanum", "pico2", [board("pico2")], tmp_path)
-    assert res["calls"] == [] and res["robot"] == "bare_pico2_mecanum", res
+def test_a_default_robot_gives_way_to_the_next_boards_default_robot(tmp_path):
+    """lino_esp32 does not become a Pico robot under its ESP32 name: lino_pico2 is selected."""
+    res = run("lino_esp32", "esp32", [board("pico2")], tmp_path, "sim")
+    assert res["calls"] == ["lino_pico2", "apply:__bare__"], res
 
 
 @pytest.mark.parametrize("design, controller", _designs())

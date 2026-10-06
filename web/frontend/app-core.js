@@ -1410,6 +1410,21 @@ document.addEventListener("change", (e) => {
   else leaveSimRobot(e.target.value);
 });
 
+// The default robot for a detected board: `lino_<mcu>` (lino_esp32, lino_unoq), the user's
+// to rename. Not `rover_<mcu>`: older releases shipped rover_pico2 and its siblings, and a
+// stale copy left in a config directory would be picked up as this robot. Created as a bare module of that board, every device simulated; an existing one
+// (tuned, or built from a design since) is selected as it is.
+async function useDefaultRobotFor(sil) {
+  const name = `lino_${sil}`;
+  if (state.robot_name === name) return;
+  const existed = (state.robots || []).some((r) => r.name === name);
+  await selectRobot(name, false);
+  if (!existed && state.robot_name === name && typeof applyReferenceDesign === "function") {
+    state.status = Object.assign({}, state.status || {}, { detected_mcu: sil });
+    await applyReferenceDesign(BARE_CHOICE);
+  }
+}
+
 let noBoardBusy = false;
 async function noBoardSwitch(s) {
   const el = document.getElementById("hdr-no-board");
@@ -1424,35 +1439,32 @@ async function noBoardSwitch(s) {
           && isGeneratedRobot(state.robot_name)) {
         noBoardSwitchedFrom = state.robot_name;
         await useSimRobot();
-      } else if (!absent && noBoardSwitchedFrom && state.robot_name === "bare_sim" && s.mcu_detected) {
-        // Follow the board that was PLUGGED, not the robot we left: back to that
-        // robot only if it is the same silicon, else the plugged silicon's bare
-        // robot (leaveSimRobot). Going straight back sent an ESP32 plugged into a
-        // fresh install to pico2_mecanum, the default robot -- a Pico 2 design.
-        // Only once the bus NAMES the silicon: a board in BOOTSEL, or a bridge
-        // with no tty yet, is on the bus before it can be classified, and the
-        // next poll will know.
+      } else if (!absent && s.mcu_detected && (noBoardSwitchedFrom || !userChoseController)
+                 && isGeneratedRobot(state.robot_name)) {
+        // A board is plugged and no robot of the user's is active: the default robot for it,
+        // `lino_<mcu>` (user, 2026-10-06: "when mcu is detected, the default robot name has it
+        // as suffix"), a bare module of that board, every device simulated (a UNO Q: its
+        // STM32). Back from the Sim MCU to the robot it left when that is a robot of the user's
+        // on this same silicon. Only once the bus NAMES the silicon: a board in BOOTSEL, or a
+        // bridge with no tty yet, is on the bus before it can be classified.
+        const sil = siliconOf(s.detected_mcu);
+        const back = noBoardSwitchedFrom && !isGeneratedRobot(noBoardSwitchedFrom) &&
+          robotBeforeSimSilicon === sil ? noBoardSwitchedFrom : null;
         noBoardSwitchedFrom = null;
-        await leaveSimRobot(siliconOf(s.detected_mcu));
-      } else if (!absent && s.mcu_detected && !userChoseController && isGeneratedRobot(state.robot_name)) {
-        // No design chosen, so the board decides (user, 2026-10-06): a detected MCU gets its
-        // bare module, every device simulated -- a UNO Q its STM32 (bare_unoq). Only when
-        // the silicon differs, so a bare drivetrain variant the user picked for this very
-        // board (bare_pico2_mecanum on a Pico 2) stays. A design is never touched.
-        const sil = siliconOf(s.detected_mcu);
-        const cur = state.robot_name === "bare_sim" ? "sim" : siliconOf(loadedControllerName);
-        if (sil && sil !== cur) {
-          if (state.robot_name === "bare_sim") await leaveSimRobot(sil);
-          else await selectRobot(`bare_${sil}`, false);
-        }
+        if (back) await selectRobot(back, false);
+        else if (sil) await useDefaultRobotFor(sil);
       } else if (!absent && s.mcu_detected && !controllerPickedByHand && activeRobot()?.kind === "sim") {
-        // The user's robot with no design IS a bare module of its board: a board of another
-        // silicon makes it that board's bare module, every device simulated (a UNO Q: its
-        // STM32). A robot built from a design is real and never follows.
+        // The user's robot with no design IS a bare module of its board. A default-named one
+        // (lino_esp32) gives way to the new board's own default robot; one the user renamed
+        // becomes the new board's bare module, keeping its name. A robot built from a design
+        // is real and never follows.
         const sil = siliconOf(s.detected_mcu);
-        if (sil && sil !== siliconOf(loadedControllerName) && typeof applyReferenceDesign === "function") {
-          state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu });
-          await applyReferenceDesign(BARE_CHOICE);
+        if (sil && sil !== siliconOf(loadedControllerName)) {
+          if (/^lino_[a-z0-9]+$/.test(state.robot_name)) await useDefaultRobotFor(sil);
+          else if (typeof applyReferenceDesign === "function") {
+            state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu });
+            await applyReferenceDesign(BARE_CHOICE);
+          }
         }
       }
     } finally {
