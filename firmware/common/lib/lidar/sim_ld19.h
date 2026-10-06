@@ -24,6 +24,9 @@
 #include <stdint.h>
 #include <stdlib.h>   // malloc, for the sink buffers
 #include <string.h>   // strcmp, for parseCommMode
+#ifdef LINO_HOST
+#include "sim_world_map.h"   // world "map": the Sim MCU raycasts a saved map
+#endif
 
 // Which SINKS are compiled in is a property of the BOARD; which one is used is
 // a property of the robot's env. They used to be the same thing -- USE_LIDAR_UDP
@@ -316,6 +319,11 @@ private:
     static const int SIM_WALLS_MAX = 12;
     float walls_[SIM_WALLS_MAX * 4] = {0};
     int walls_n_ = 0;
+#ifdef LINO_HOST
+    // World "map" on the Sim MCU: a saved occupancy map replaces the box and the walls
+    // for the scan and the sonar (sim_world_map.h). Env keys sim_world_map, sim_world_start.
+    SimWorldMap world_;
+#endif
 
 #ifdef SIM_LD19_UDP_SINK
     WiFiUDP udp_;
@@ -473,6 +481,21 @@ public:
             walls_n_++;
             while (*w == ';' || *w == ' ') w++;
         }
+#ifdef LINO_HOST
+        const char *wm = envGet("sim_world_map", NULL);
+        if (wm && *wm)
+        {
+            // Said either way, on the console the bringup log carries: a map that did not
+            // load leaves the box, and a scan of the wrong world looks like a SLAM fault.
+            if (world_.load(wm, envGet("sim_world_start", "")))
+                printf("[lidar] world: the saved map %s, %dx%d cells at %.3f m\n", wm,
+                       world_.width(), world_.height(), (double)world_.resolution());
+            else
+                printf("[lidar] world: the saved map did NOT load (%s) -- raycasting the box\n",
+                       world_.error());
+            fflush(stdout);
+        }
+#endif
     }
 
     void begin(int tx_pin = -1, uint32_t baud = LIDAR_BAUDRATE)
@@ -564,6 +587,9 @@ public:
     // Returns true when the pose had to be moved.
     bool clampToRoom(float &x, float &y) const
     {
+#ifdef LINO_HOST
+        if (world_.loaded()) return false;   // a map world has no collision (depth_camera.WORLDS)
+#endif
         const float lim_x = map_w_ * 0.5f - robot_radius_;
         const float lim_y = map_h_ * 0.5f - robot_radius_;
         const float in_x = x, in_y = y;
@@ -721,9 +747,18 @@ public:
         };
 
         int count = wall_on_ ? 5 : 4;
+        int walls_n_cast = walls_n_;
         float min_dist = (float)SIM_LD19_MAX_RANGE_M; // nothing seen yet
+#ifdef LINO_HOST
+        if (world_.loaded())
+        {
+            min_dist = world_.range(ox, oy, ray_rad, (float)SIM_LD19_MAX_RANGE_M);
+            count = 0;
+            walls_n_cast = 0;
+        }
+#endif
 
-        for (int i = 0; i < count + walls_n_; i++)
+        for (int i = 0; i < count + walls_n_cast; i++)
         {
             // the box and the obstacle, then the interior walls
             const Segment sg = (i < count) ? segs[i]

@@ -33,7 +33,7 @@ def setup_script():
     return os.path.join(HOST_WS, "install", "local_setup.bash")
 
 
-def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889) -> dict:
+def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889, world=None) -> dict:
     """The env block a flash of this robot would write, for the host.
 
     Built by the flasher's own functions (mcu_env.env_from_config, then every
@@ -44,9 +44,16 @@ def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889) -> dic
     A robot config written for a board (the pipeline falls back to the Sim MCU
     when none is plugged in) says serial for both, and would otherwise boot a
     firmware that can reach neither.
+
+    `world` is (map .yaml path, (x, y, yaw) start) on a saved-map world, as the launch
+    resolved it (a `world_map:=` argument overrides the config). A board cannot hold a
+    map, but this one runs here: its LD19 emulator raycasts the map file itself
+    (sim_ld19.h, sim_world_map), so the scan still goes through the LD driver and the
+    sonar cone sees the map too (user, 2026-10-06: "sim mcu should do the raycasts from
+    imported map and let stl driver publish /scan").
     """
     e = mcu_env.env_from_config(config_file, cockpit_paths.secrets_path(), "127.0.0.1")
-    mcu_env.apply_sensor_mode(e, "sim", config_file)
+    mcu_env.apply_sensor_mode(e, "sim", config_file, holds_map=bool(world and world[0]))
     e.update({
         # The stack's own domain: several Sim MCUs run side by side on one
         # machine (host_matrix.sh, a leg per ROS_DOMAIN_ID), and a board's
@@ -59,14 +66,19 @@ def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889) -> dic
         "lidar_ip": "127.0.0.1",
         "lidar_port": int(lidar_port),
     })
+    if world and world[0]:
+        path, start = world
+        e["sim_world_map"] = os.path.abspath(path)
+        e["sim_world_start"] = ",".join(f"{float(v):g}" for v in (start or (0.0, 0.0, 0.0)))
     return e
 
 
-def write_env(config_file: str, out_path: str, agent_port: int = 8888, lidar_port: int = 8889) -> str:
+def write_env(config_file: str, out_path: str, agent_port: int = 8888, lidar_port: int = 8889,
+              world=None) -> str:
     """Write the 4096-byte image the host firmware maps (LINO_ENV_BIN)."""
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     tmp = out_path + ".tmp"
     with open(tmp, "wb") as fh:
-        fh.write(mcu_env.encode(env(config_file, agent_port, lidar_port)))
+        fh.write(mcu_env.encode(env(config_file, agent_port, lidar_port, world)))
     os.replace(tmp, out_path)
     return out_path

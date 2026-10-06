@@ -107,6 +107,9 @@ def _written_keys():
         env = mcu_env.env_from_config(path, SECRETS_EXAMPLE, "192.0.2.1")
         keys |= {_norm(k) for k in env}
     keys |= {_norm(k) for k in mcu_env.hardware_env(MAXIMAL_CONFIG)}
+    # The Sim MCU's own keys (host_firmware.env): the saved map it raycasts itself.
+    host = open(os.path.join(REPO_ROOT, "scripts", "host_firmware.py")).read()
+    keys |= set(re.findall(r'\be\["([a-z_]+)"\]\s*=', host))
     return keys
 
 

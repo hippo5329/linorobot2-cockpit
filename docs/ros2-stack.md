@@ -520,29 +520,22 @@ The general form is worth keeping in mind: **when you namespace a node, everythi
 to it by name has to be told.** Its params sections, its lifecycle manager's `node_names`, and
 any full topic or frame name written into a config file.
 
-### A bare module has no LiDAR tty, so the virtual room runs on the robot computer
-`use_sim_ld19` says a scan is simulated; it does not say *where*. Two benches want different
-answers, and picking the wrong one either bypasses the code under test or leaves the stack with
-no `/scan` at all:
+### A board's simulated scan always goes through the LD driver
+`use_sim_ld19` says a scan is simulated; the board's emulator makes it, as real LD19 frames,
+and `ldlidar_stl_ros2` turns them into `/scan` whichever way they travel: `serial` from a tty
+(the GenDrv's `LIDAR_RXD` bridge), `udp` as its UDP server, `topic` by subscribing to
+`raw_scan`. The Sim MCU streams over UDP, and on a `map` world raycasts the saved map itself
+(`sim_world_map.h`). A board cannot hold a map, so a `map` world on one is refused.
 
-- **A board with a real serial bridge** (the GenDrv emits its emulated LD19 out `LIDAR_RXD`
-  into a USB-serial adapter) must be read by the **real `ldlidar` driver**. Routing that to a
-  host node would bypass the very driver path the bench exists to exercise.
-- **A bare module** has one USB, for micro-ROS, and nothing else. The LiDAR tty never appears,
-  the serial driver dies on the missing port, `/scan` never comes, and SLAM and Nav2 sit there
-  waiting — on the configuration that is supposed to be the easiest one to run.
-
-So the host emulator (`scripts/sim_laser_node.py`) takes over only when the scan is simulated
-**and** either the mode is not serial or the configured port does not exist:
+The host's raycaster, `scripts/sim_laser_node.py`, runs only beside `sim_base_node.py`, on the
+no-board path (`sim_base:=true`, or an image without the host firmware build):
 
 ```python
-use_host_sim_laser = (
-    controller.get("sensors", {}).get("use_sim_ld19", False)
-    and (effective_lidar_comm_mode != "serial" or not os.path.exists(lidar_port))
-)
+use_host_sim_laser = no_board
 ```
 
-Testing the port rather than the config is what keeps the bench-with-a-bridge case unchanged
-while letting a module with nothing soldered to it run the whole pipeline. Both emulators
-raycast the same room from `geometry.laser.x`, so the scan agrees with the transform either
-way.
+It used to stand in for any comm mode but `serial`, and for a `serial` port that did not exist.
+The first meant a `topic` board's `raw_scan` was published and read by nothing; the second
+meant a bare ESP32, which has no scan source (no bridge, and 921600 baud cannot carry
+`raw_scan` beside the control loop), ran SLAM and Nav2 on the host's scan. Now that case
+prints `[bringup] NO /scan: ...` and starts no LiDAR driver.

@@ -31,7 +31,8 @@ def test_walls_reach_the_board_as_one_key():
 def test_the_firmware_reads_raycasts_and_collides_with_them():
     fw = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "sim_ld19.h")).read()
     assert 'envGet("sim_walls"' in fw
-    assert "for (int i = 0; i < count + walls_n_; i++)" in fw, "raycast"
+    assert "int walls_n_cast = walls_n_;" in fw and \
+        "for (int i = 0; i < count + walls_n_cast; i++)" in fw, "raycast"
     assert "pushOffSegment(x, y, w[0], w[1], w[2], w[3]" in fw, "collision"
     assert f"SIM_WALLS_MAX = {dc.SIM_WALLS_MAX};" in fw
 

@@ -236,27 +236,38 @@ def launch_setup(context, *args, **kwargs):
     )
     effective_lidar_comm_mode = "udp_server" if lidar_comm_mode in ("udp", "udp_server") else lidar_comm_mode
 
-    # Should the host-side simulated laser (the "virtual room") stand in for a real
-    # driver? Only when the scan is meant to be simd (use_sim_ld19), and:
-    #   - the comm mode is not a real serial tty, or
-    #   - it *is* serial but that tty is absent.
-    # A `serial` comm_mode says LD19 packets arrive on a real port, and on the
-    # gendrv bench the ESP32 itself emits sim_ld19 out LIDAR_RXD into a
-    # USB-serial bridge -- so when that bridge is present the real driver must
-    # read it, and routing to the host node would bypass the very driver path
-    # under test. But a *bare* module has only its one micro-ROS USB and no such
-    # bridge: the lidar tty never appears, the serial driver dies on a missing
-    # port, and /scan never comes -- which would strand SLAM/Nav2 on a bare
-    # bench. Falling back to the virtual room only when the port is absent keeps
-    # the bench-with-a-bridge case byte-identical while letting a bare module
-    # preview SLAM/Nav2 in pure simulation.
-    use_host_sim_laser = no_board or (
-        controller.get("sensors", {}).get("use_sim_ld19", False)
-        and (
-            effective_lidar_comm_mode != "serial"
-            or not os.path.exists(lidar_port)
-        )
-    )
+    # Who makes /scan from a SIMULATED LD19: the board's emulator, through the LD driver
+    # (ldlidar_stl_ros2), whichever way its frames travel -- `serial` from a tty (the
+    # GenDrv's LIDAR_RXD bridge), `udp` to the udp_server, `topic` as raw_scan over
+    # micro-ROS (user, 2026-10-06: "let topic /raw_scan go through stl driver to generate
+    # /scan"). The ONE special case is the no-board path, `sim_base:=true` (or no host
+    # firmware build): sim_base_node and sim_laser_node together, rclpy publishing straight
+    # into DDS, to debug SLAM / Nav2 with micro-ROS, the agent and the driver all out of
+    # the loop ("we have sim base node as special case, together with sim laser node").
+    # Until 2026-10-06 the host laser also stood in for any comm mode but serial, so a
+    # `topic` board's raw_scan was published and read by nothing (bringup logs:
+    # lidar_mode='topic', sim_laser_node, no ld19), and for a serial port that did not
+    # exist, so a bare ESP32 -- which has no scan source (gen_bare_config._bare_comm_mode)
+    # -- ran SLAM and Nav2 on the host's scan and looked like it had one.
+    use_host_sim_laser = no_board
+    sim_ld19_cfg = bool(controller.get("sensors", {}).get("use_sim_ld19", False))
+    no_scan_why = ""
+    if (not no_board and robot_has_lidar and sim_ld19_cfg and not host_fw_bin
+            and effective_lidar_comm_mode == "serial" and not os.path.exists(lidar_port)):
+        no_scan_why = (f"the simulated LD19 is `serial` but {lidar_port} does not exist -- "
+                       f"nothing carries its frames (a bare ESP32 has no LIDAR_RXD bridge); "
+                       f"use comm_mode topic or udp, wire the bridge, or sim_base:=true")
+
+    # World "map" (depth_camera.WORLDS): a saved occupancy map is the world. A board
+    # cannot hold one; the Sim MCU runs on this computer and raycasts the map file
+    # itself (sim_ld19.h, sim_world_map), so its scan still goes through the LD driver.
+    world_map_path, world_start = depth_camera.world_map(params)
+    world_params = ({"world_map": world_map_path, "world_start": list(world_start)}
+                    if (world_map_path and not is_real) else {})
+    if world_map_path and not is_real and not no_board and not host_fw_bin:
+        raise RuntimeError(
+            f"[MAP WORLD] a board cannot hold the saved map {world_map_path}: run the map "
+            f"world on the Sim MCU (no board), or with sim_base:=true")
 
     host_fw_env = None
     if host_fw_bin:
@@ -265,24 +276,20 @@ def launch_setup(context, *args, **kwargs):
         # board's own config on the Sim MCU when no board is plugged in.
         transport = "udp4"
         effective_lidar_comm_mode = "udp_server"
-        use_host_sim_laser = False      # the firmware's own emulator is the source
         robot_label = (params.get("robot") or {}).get("name") or \
             os.path.basename(config_file).replace("_config.yaml", "")
         host_fw_env = host_firmware.write_env(
             config_file,
             os.path.join(os.path.dirname(config_file), "generated", f"{robot_label}_host_env.bin"),
-            agent_port=int(udp_port), lidar_port=int(lidar_udp_port))
-
-    # World "map" (depth_camera.WORLDS): a saved occupancy map is the world, and
-    # no board can hold one -- the firmware's LD19 emulator knows only its box and
-    # walls (mcu_env turns it off for this world). The host's simulated laser,
-    # which raycasts the map, is the /scan instead, whatever the board.
-    world_map_path, world_start = depth_camera.world_map(params)
-    if world_map_path and robot_has_lidar and not is_real:
-        use_host_sim_laser = True
-        print(f"[bringup] world: the saved map {world_map_path} -- /scan from the host's simulated laser")
-    world_params = ({"world_map": world_map_path, "world_start": list(world_start)}
-                    if (world_map_path and not is_real) else {})
+            agent_port=int(udp_port), lidar_port=int(lidar_udp_port),
+            world=(world_map_path, world_start) if (world_map_path and not is_real) else None)
+        if world_map_path and robot_has_lidar and not is_real:
+            print(f"[bringup] world: the saved map {world_map_path} -- raycast by the Sim MCU, "
+                  f"/scan from the LD driver")
+    if use_host_sim_laser and robot_has_lidar:
+        print("[bringup] no board (sim_base): /scan from the host's simulated laser (sim_laser_node)")
+    if no_scan_why:
+        print(f"[bringup] NO /scan: {no_scan_why}")
 
     if transport in ("udp4", "udp", "wifi"):
         micro_ros_args = ["udp4", "--port", str(udp_port)]
@@ -337,7 +344,9 @@ def launch_setup(context, *args, **kwargs):
     # ...and on a saved-map world, where the board's emulator is off (mcu_env)
     # and its sonar with it (main.cpp: range_sim = sim_lidar_on && sim_sonar):
     # the host raycasts the map for the LiDAR, the camera AND the sonar.
-    host_sonar = (no_board or bool(world_map_path)) and \
+    # The Sim MCU raycasts a saved map itself, sonar included -- unless it has no
+    # LiDAR emulator running (a camera-only robot), when the host still casts the cone.
+    host_sonar = (no_board or (bool(world_map_path) and (host_fw_bin is None or not robot_has_lidar))) and \
         bool(controller.get("sensors", {}).get("use_sim_sonar", True))
     lidar_model = str(lidar_cfg.get("model", "ld19")).lower()
     # A model no driver here reads stops the launch with its name, not an LD19
@@ -628,10 +637,11 @@ def launch_setup(context, *args, **kwargs):
                 "params_glob": "[*]",
             }],
         ),
-        # 7. LiDAR Node (UDP server, virtual room emulator for bare bench, or hardware serial driver)
+        # 7. LiDAR Node: the LD driver (UDP server, serial, or raw_scan topic), a vendor's
+        # serial driver, or -- the sim_base path only -- the host's virtual room
         (
             None
-            if not robot_has_lidar
+            if (not robot_has_lidar or no_scan_why)
             else Node(
                 condition=IfCondition(LaunchConfiguration("lidar")),
                 package="ldlidar_stl_ros2",
@@ -657,7 +667,7 @@ def launch_setup(context, *args, **kwargs):
                     "enable_angle_crop_func": False,
                 }],
             )
-            if effective_lidar_comm_mode == "udp_server" and not no_board and not world_map_path
+            if effective_lidar_comm_mode == "udp_server" and not use_host_sim_laser
             else (
                 Node(
                     condition=IfCondition(LaunchConfiguration("lidar")),
@@ -679,8 +689,8 @@ def launch_setup(context, *args, **kwargs):
                                  **{k: (bool(v) if k == "wall_obstacle" else float(v))
                                     for k, v in depth_camera.sim_room(params).items()}}],
                 )
-                # The virtual room stands in for the driver on a bare bench; see
-                # use_host_sim_laser above for why a present serial port is not.
+                # The virtual room: the no-board (sim_base) path only; see
+                # use_host_sim_laser above.
                 if use_host_sim_laser
                 # A real RPLIDAR, YDLIDAR or XV-11: its vendor's node, the
                 # vendor's per-model settings (lidar_drivers.py), respawned

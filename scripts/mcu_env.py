@@ -348,7 +348,7 @@ def _bool(value) -> str:
 SENSOR_MODES = ("config", "sim", "real")
 
 
-def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
+def apply_sensor_mode(env: dict, mode: str, params_path: str = None, holds_map: bool = False) -> list:
     """Force the env's sensor flags to a MODE, whatever the config said.
 
     "sim" is what the pipeline's --mode sim means: simulate everything the
@@ -398,8 +398,10 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None) -> list:
                 if depth_camera.scan_source(controller) == "depth":
                     env["sim_ld19"] = "0"
                 # ...and on a saved-map world, where the host's laser raycasts
-                # the map and the board's emulator knows only its box.
-                if depth_camera.sim_world(whole) == "map":
+                # the map and the board's emulator knows only its box -- except
+                # on the Sim MCU (`holds_map`), which runs on the robot computer,
+                # reads the map file and raycasts it itself (host_firmware.env).
+                if depth_camera.sim_world(whole) == "map" and not holds_map:
                     env["sim_ld19"] = "0"
             except ValueError:
                 pass

@@ -61,6 +61,41 @@ def world(tmp_path, **extra):
         {"world": "map", "world_map": write_map(tmp_path)}, **extra)}}
 
 
+def _map_cfg(tmp_path):
+    path = tmp_path / "maprobot_config.yaml"
+    path.write_text(yaml.safe_dump(world(tmp_path)))
+    return str(path)
+
+
+def test_the_sim_mcus_raycast_is_gridworlds(tmp_path):
+    """The Sim MCU's C++ reader (sim_world_map.h) against GridWorld, beam for beam."""
+    import shutil
+    import subprocess
+    cxx = shutil.which("g++") or shutil.which("c++")
+    if not cxx:
+        pytest.skip("no C++ compiler")
+    src = tmp_path / "wm.cpp"
+    src.write_text("""#define LINO_HOST 1
+#include "sim_world_map.h"
+int main(int c, char **v) {
+  SimWorldMap m; if (!m.load(v[1], v[2])) { fprintf(stderr, "%s\\n", m.error()); return 1; }
+  for (int i = 0; i < 36; i++) printf("%.4f\\n", m.range(0.2f, 0.1f, i * 10 * M_PI / 180, 12.0f));
+}
+""")
+    exe = tmp_path / "wm"
+    subprocess.run([cxx, "-O1", "-I", os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar"),
+                    str(src), "-o", str(exe)], check=True)
+    m = write_map(tmp_path)
+    out = subprocess.run([str(exe), m, "0.5,-0.3,0.4"], capture_output=True, text=True, check=True).stdout
+    got = [float(v) for v in out.split()]
+    g = dc.GridWorld(m, (0.5, -0.3, 0.4))
+    wx, wy, wyaw = g.to_world(0.2, 0.1, 0.0)
+    want = g.ranges(wx, wy, [wyaw + i * 10 * math.pi / 180 for i in range(36)], 12.0)
+    for a, b in zip(got, want):
+        assert a == pytest.approx(min(b, 12.0), abs=1e-3)
+    assert any(v < 12.0 for v in got), "the map's wall must be seen"
+
+
 def test_the_board_emulator_is_off_and_its_box_out_of_reach(tmp_path):
     env = mcu_env.hardware_env(world(tmp_path))
     assert env["sim_ld19"] == "0" and env["sim_wall"] in (0, "0")
@@ -74,21 +109,43 @@ def test_a_map_world_needs_a_map(tmp_path):
     assert path.endswith("m.yaml") and start == (0.0, 0.0, 0.0)
 
 
-def test_bringup_puts_the_host_laser_on_the_map():
+def test_the_sim_mcu_raycasts_the_map_and_the_ld_driver_publishes_scan():
+    """User, 2026-10-06: "sim mcu should do the raycasts from imported map and let stl driver
+    publish /scan". The map goes into the Sim MCU's env; its emulator stays on and streams to
+    the udp_server driver. A physical board cannot hold a map and is refused."""
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
     assert "world_map_path, world_start = depth_camera.world_map(params)" in launch
-    assert 'if effective_lidar_comm_mode == "udp_server" and not no_board and not world_map_path' in launch
-    assert "**world_params," in launch
+    assert 'if effective_lidar_comm_mode == "udp_server" and not use_host_sim_laser' in launch
+    assert "world=(world_map_path, world_start)" in launch
+    assert "[MAP WORLD] a board cannot hold the saved map" in launch
+    assert "**world_params," in launch          # the sim_base path's laser and the camera
     for node in ("sim_laser_node.py", "sim_depth_node.py"):
         assert "dc.GridWorld(" in open(os.path.join(REPO_ROOT, "scripts", node)).read()
+    fw = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "lidar", "sim_ld19.h")).read()
+    assert '#include "sim_world_map.h"' in fw and 'envGet("sim_world_map", NULL)' in fw
+    assert "min_dist = world_.range(ox, oy, ray_rad" in fw
+
+
+def test_the_sim_mcu_env_keeps_its_emulator_on_a_map_world(tmp_path):
+    import host_firmware
+    src = open(os.path.join(REPO_ROOT, "scripts", "host_firmware.py")).read()
+    assert 'holds_map=bool(world and world[0])' in src
+    assert 'e["sim_world_map"] = os.path.abspath(path)' in src
+    cfg = _map_cfg(tmp_path)
+    board, host = {"sim_ld19": "1"}, {"sim_ld19": "1"}
+    mcu_env.apply_sensor_mode(board, "sim", cfg)
+    mcu_env.apply_sensor_mode(host, "sim", cfg, holds_map=True)
+    assert board["sim_ld19"] == "0" and host["sim_ld19"] == "1"
+    assert host_firmware is not None
 
 
 def test_the_sonar_raycasts_the_map_too():
-    """The board's sonar only simulates while its LD19 emulator runs (main.cpp), which
-    a map world turns off -- so the host raycasts the map for the sonar, camera-only
-    robots included."""
+    """On the Sim MCU the emulator's sonar cone raycasts the map (sim_ld19.h rangeAheadM
+    goes through raycastRangeMm); the host casts it only with no board, or for a
+    camera-only robot, whose emulator is off."""
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
-    assert "host_sonar = (no_board or bool(world_map_path)) and" in launch
+    assert ("host_sonar = (no_board or (bool(world_map_path) and "
+            "(host_fw_bin is None or not robot_has_lidar))) and") in launch
     assert 'name="sim_sonar_node"' in launch and '"topic": "sim_sonar_scan", **world_params' in launch
 
 

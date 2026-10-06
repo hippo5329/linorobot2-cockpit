@@ -221,38 +221,25 @@ def test_the_serial_lidar_driver_respawns():
         )
 
 
-def test_a_bare_module_falls_back_to_the_virtual_room_when_the_lidar_tty_is_absent():
-    """use_sim_ld19 + serial + no lidar tty must use the host-side simulated laser.
+def test_only_the_no_board_path_raycasts_on_the_host():
+    """User, 2026-10-06: "let topic /raw_scan go through stl driver to generate /scan. The
+    sim_laser_node should be used in special case" -- "we have sim base node as special case,
+    together with sim laser node". Every board's simulated LD19 goes through the LD driver
+    (serial, udp, or raw_scan as a topic); sim_laser_node only beside sim_base_node.
 
-    A bare ESP32 module has only its one micro-ROS USB; there is no second
-    USB-serial bridge for a lidar. A serial ldlidar driver then dies on a
-    missing /dev/ttyUSB1 and /scan never comes -- stranding SLAM/Nav2 and
-    breaking the "bring up a bare module instantly" promise. When the scan is
-    meant to be simd, an absent serial port must route to sim_laser_node (the
-    virtual room); a *present* port still drives the real serial driver, so the
-    gendrv driver-path test is unchanged.
-    """
-    path = os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")
-    text = open(path).read()
-    assert "use_host_sim_laser" in text, "the host-sim-laser guard is gone"
-    # `no_board or (...)`: with sim_base / the Sim MCU there is no board and so no
-    # sensor; the room is raycast on the host whatever the config says.
-    m = re.search(r"use_host_sim_laser\s*=\s*no_board or \((.*?)\n    \)", text, re.S)
-    assert m, "use_host_sim_laser is no longer a single assignment block"
-    guard = m.group(1)
-    assert "use_sim_ld19" in guard, "the fallback no longer requires a simd scan"
-    assert 'effective_lidar_comm_mode != "serial"' in guard, (
-        "the fallback no longer routes non-serial sim modes to the host node"
-    )
-    assert "os.path.exists(lidar_port)" in guard, (
-        "the bare-module fallback no longer checks whether the serial lidar "
-        "port exists; a bare board will strand SLAM/Nav2 on a missing /scan"
-    )
-    # The simulated-laser Node must be selected by exactly this guard.
-    assert "if use_host_sim_laser" in text, (
-        "sim_laser_node is no longer gated on use_host_sim_laser"
-    )
-
+    Until then any comm mode but serial went to the host, so a `topic` board's raw_scan was
+    read by nothing (bringup logs: lidar_mode='topic', sim_laser_node, no ld19),
+    and so did a serial port that did not exist: a bare ESP32 -- no LIDAR_RXD bridge, and
+    921600 baud cannot carry raw_scan beside the control loop -- ran SLAM and Nav2 on the
+    host's scan. It has no scan source, and the launch now says so."""
+    text = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
+    assert "use_host_sim_laser = no_board\n" in text
+    assert 'effective_lidar_comm_mode != "serial"' not in text
+    assert "[bringup] NO /scan: {no_scan_why}" in text
+    assert "if (not robot_has_lidar or no_scan_why)" in text
+    assert "if use_host_sim_laser" in text
+    # the LD driver gets the raw_scan topic for `topic` mode
+    assert '"comm_mode": lidar_comm_mode,' in text and '"raw_scan_topic": lidar_raw_topic,' in text
 
 def test_scan_wait_follows_the_scan_source_not_the_transport():
     """The pipeline's /scan gate must key on who PRODUCES the scan.
