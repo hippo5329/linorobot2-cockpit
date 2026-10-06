@@ -421,7 +421,14 @@ def launch_setup(context, *args, **kwargs):
                 # 0.75 here against 1.8 in every shipped config: on Lyrical the
                 # robot turned to heading at under half the speed Jazzy uses,
                 # on every leg, and no edit to the YAML could reach it.
-                "rotate_to_heading_angular_vel": follow_path.pop(
+                # Copied, not popped: the shim (FollowPath itself) reads the same two
+                # names for its own rotation, and popping them left it on Nav2's
+                # defaults -- 1.8 rad/s at 3.2 rad/s^2 against the config's 1.0 and 1.5
+                # that Jazzy's flat FollowPath gives both controllers. Read off the
+                # running controller_server on Lyrical, 2026-10-07: rotate-only was
+                # 57-70 % of the commands of an exploration leg (45 % on Jazzy), and
+                # "Failed to make progress" fired up to 143 times a leg (Jazzy: 0-5).
+                "rotate_to_heading_angular_vel": follow_path.get(
                     "rotate_to_heading_angular_vel", 1.8),
                 # NOT transform_tolerance, max_robot_pose_search_dist or stateful:
                 # Nav2 1.5.1 moved all three out of RPP (Kilted -> Lyrical,
@@ -449,7 +456,7 @@ def launch_setup(context, *args, **kwargs):
                 "use_rotate_to_heading": True,
                 "allow_reversing": False,
                 "rotate_to_heading_min_angle": 0.785,
-                "max_angular_accel": follow_path.pop("max_angular_accel", 3.2),
+                "max_angular_accel": follow_path.get("max_angular_accel", 3.2),
             }
         # 3. bt_navigator has to discover the action servers it calls, and on a
         #    loaded box it loses that race at the 1 s default: it gave up on

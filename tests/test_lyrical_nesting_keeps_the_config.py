@@ -3,7 +3,12 @@
 Lyrical (Nav2 1.5.1) nests the primary controller under
 FollowPath.primary_controller, where Jazzy reads a flat FollowPath block. The
 launcher rewrites one into the other, and every key it moves is taken from the
-config with .pop(key, default) so the robot's own tuning survives.
+config (.pop, or .get for a key the shim reads too) so the robot's own tuning survives.
+
+A key BOTH read -- the shim (FollowPath itself) and RPP -- must stay on FollowPath as
+well: popping rotate_to_heading_angular_vel and max_angular_accel left Lyrical's shim
+turning at Nav2's 1.8 rad/s and 3.2 rad/s^2 against the config's 1.0 and 1.5
+(controller_server's own parameters, 2026-10-07), and lyrical exploration failed on it.
 
 It also used to carry transform_tolerance, max_robot_pose_search_dist and
 stateful into that block, with a comment crediting transform_tolerance for the
@@ -74,7 +79,7 @@ def test_no_key_in_the_nesting_silently_drops_a_configured_value():
         if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
             continue
         if (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
-                and v.func.attr == "pop"):
+                and v.func.attr in ("pop", "get")):
             popped.add(k.value)
 
     nested_keys = {k.value for k in nested.keys
@@ -85,3 +90,19 @@ def test_no_key_in_the_nesting_silently_drops_a_configured_value():
     assert not missing, (
         f"the Lyrical nesting hardcodes {missing}, which the reference configs set -- "
         f"the flat value is then unreachable rather than overridden")
+
+
+# What Lyrical's RotationShimController declares (strings of the image's .so, 2026-10-07).
+SHIM_READS = {"angular_disengage_threshold", "angular_dist_threshold", "closed_loop",
+              "forward_sampling_distance", "max_angular_accel", "max_cost_threshold",
+              "rotate_to_goal_heading", "rotate_to_heading_angular_vel",
+              "rotate_to_heading_once", "simulate_ahead_time", "use_path_orientations"}
+
+
+def test_the_nesting_leaves_the_shim_its_own_keys():
+    nested = _nested_block()
+    popped = sorted(
+        k.value for k, v in zip(nested.keys, nested.values)
+        if isinstance(k, ast.Constant) and isinstance(v, ast.Call)
+        and isinstance(v.func, ast.Attribute) and v.func.attr == "pop" and k.value in SHIM_READS)
+    assert not popped, f"the Lyrical nesting takes {popped} off FollowPath, where the shim reads them"
