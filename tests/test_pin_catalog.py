@@ -44,9 +44,10 @@ def test_esp32_input_only_pin_cannot_drive_a_motor(reference):
 def test_esp32_adc2_battery_warns_only_with_the_radio(reference):
     params = copy.deepcopy(reference("gendrv"))
     params["base_controller"]["pins"].setdefault("battery", {})["pin"] = 25
-    params["base_controller"]["wifi"] = {"enabled": False}
+    params["base_controller"]["transport"] = "serial"
+    params["base_controller"]["wifi"] = {"enabled": True}   # ignored: serial has no radio
     assert not [m for l, m in pc.check_config(params) if "ADC2" in m]
-    params["base_controller"]["wifi"] = {"enabled": True}
+    params["base_controller"]["transport"] = "udp4"
     assert [m for l, m in pc.check_config(params) if "ADC2" in m]
 
 

@@ -333,7 +333,20 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
     if ota_password:
         env["ota_password"] = str(ota_password)
     env.update(hardware_env(params))
+    # Wi-Fi, syslog and OTA belong to a Wi-Fi transport only (user, 2026-10-07). A serial
+    # robot gets the radio off and no credentials on its flash -- the firmware ignores
+    # them on serial anyway (wifis.cpp wifiWanted), so writing them would only leave a
+    # network key on a board that never uses it.
+    if not transport_is_wifi(env.get("transport")):
+        env["wifi_ssid"] = ""
+        env["wifi_psk"] = ""
+        env.pop("ota_password", None)
     return env
+
+
+def transport_is_wifi(transport) -> bool:
+    """udp4 and its spellings: the only transports that bring the radio up."""
+    return str(transport or "").strip().lower() in ("udp4", "udp", "wifi")
 
 
 def _truthy(v) -> bool:
@@ -755,7 +768,8 @@ def hardware_env(params: dict) -> dict:
         if console not in ("usb", "uart0"):
             raise ValueError(f"base_controller.console must be 'usb' or 'uart0', not {console!r}")
         env["console"] = console
-    env["wifi"] = _bool((tgt.get("wifi", {}) or {}).get("enabled", False))
+    # No `wifi` key: the transport alone decides the radio (udp4 on, serial off; firmware
+    # wifiWanted, 2026-10-07), so base_controller.wifi.enabled is no longer read.
     # The radio is kept awake by default (firmware wifis.cpp, wifiAwake); a robot
     # that would rather save power says `wifi: {sleep: true}`. Written only when set.
     if (tgt.get("wifi", {}) or {}).get("sleep") is not None:

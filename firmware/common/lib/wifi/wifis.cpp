@@ -87,13 +87,6 @@ static void wifiAwake(void)
 }
 
 // Is there anything to connect TO -- from the env, or compiled in?
-static bool haveApList(void)
-{
-    const char *env_ssid = envGet("wifi_ssid", NULL);
-    if (env_ssid && *env_ssid)
-        return true;
-    return wifi_ap_list[0][0] != NULL;
-}
 
 bool wifiWanted(void)
 {
@@ -108,17 +101,16 @@ bool wifiWanted(void)
         || strcasecmp(mode, "wifi") == 0)
         return true;
 
-    // No AP list, no radio -- and this is the gate the whole firmware asks, so
-    // saying no here means the CYW43 is never touched at all: not by
-    // initWifis(), not by runWifis(), not by syslog()'s WiFi.status(), not by
-    // initOta(). That matters on the RP2 releases, which are built from the W
-    // envs (WIFI_DEFAULT_ENABLED 1, radio compiled in) and run unchanged on
-    // non-W boards where the chip is physically absent. Entering an AP list is
-    // what turns Wi-Fi on; until then the capability costs nothing but flash.
-    if (!haveApList())
-        return false;
-
-    return envU16("wifi", WIFI_DEFAULT_ENABLED) != 0;
+    // Every other transport is serial, and a serial robot never touches the radio: no
+    // Wi-Fi, no syslog, no OTA, whatever the env's `wifi` key or AP list says (user,
+    // 2026-10-07: "enable them only for wifi transport"). This is the gate the whole
+    // firmware asks, so the CYW43 / ESP radio is never touched at all: not by
+    // initWifis(), not by runWifis(), not by syslog()'s WiFi.status(), not by initOta()
+    // -- which also matters on the RP2 releases, built from the W envs and run unchanged
+    // on non-W boards where the chip is physically absent. A radio a serial robot does
+    // not need is one more thing that can stall loop(); mcu_env.py writes no
+    // credentials for it either.
+    return false;
 }
 
 void initWifis(void)

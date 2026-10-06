@@ -185,8 +185,8 @@ def check_config(params: dict) -> List[Finding]:
     cat = CATALOG[key]
     board = str(tgt.get("mcu") or tgt.get("name") or "").lower()
     wireless_rp2 = board in ("picow", "pico2w", "xrp")
-    wifi = bool((tgt.get("wifi") or {}).get("enabled", False)) or \
-        str(tgt.get("transport", "")).lower() in ("udp4", "udp", "wifi")
+    # The radio is up only on a Wi-Fi transport (firmware wifiWanted, 2026-10-07).
+    wifi = str(tgt.get("transport", "")).lower() in ("udp4", "udp", "wifi")
     findings: List[Finding] = []
     used = _collect(tgt)
 
