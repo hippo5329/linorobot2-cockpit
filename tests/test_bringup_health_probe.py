@@ -79,3 +79,39 @@ def test_rate_from_stamps():
     assert f([]) is None and f([1.0]) is None
     assert abs(f([0.0, 0.02, 0.04, 0.06, 0.08]) - 50.0) < 1e-6
     assert f([5.0, 5.0]) is None                      # zero span, no divide
+
+
+def _health_with(monkeypatch, rates):
+    """check_bringup_health on a fake graph: every health topic listed, `rates` Hz each."""
+    import json
+    import subprocess
+    import types
+    sys.path.insert(0, os.path.join(REPO_ROOT, "web", "backend"))
+    import runners
+    topics = [t for _, t, _, _ in runners.BRINGUP_HEALTH_TOPICS]
+
+    def fake_run(cmd, **kw):
+        if "ros2 topic list" in cmd[-1]:
+            return types.SimpleNamespace(returncode=0, stdout="\n".join(topics), stderr="")
+        stamps = {t: [i / hz for i in range(int(hz * 4))] if hz else [] for t, hz in
+                  ((t, rates.get(t, 0.0)) for t in topics)}
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(stamps), stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(runners.subprocess, "run", fake_run)
+    return runners.check_bringup_health(timeout=1.0)
+
+
+def test_the_ekf_alone_is_not_ready(monkeypatch):
+    """The EKF publishes /odom with no input at all; a silent board is not a ready robot
+    (walkthrough 2026-10-06: /odom 33.5 Hz, /odom/unfiltered silent, read as ready)."""
+    assert not _health_with(monkeypatch, {"/odom": 33.5})["ready"]
+    assert _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0})["ready"]
+
+
+def test_bringup_start_stops_a_stack_left_running():
+    js = open(os.path.join(REPO_ROOT, "web", "frontend", "app-agent-bringup.js")).read()
+    start = js.index('startBtn: document.getElementById("btn-bringup-start")')
+    block = js[start:js.index("\n});", start)]
+    assert 'fetch("/api/stack")' in block and '"/api/stack/stop"' in block
+    assert block.index("boardMatchesOrWarn") < block.index('"/api/stack/stop"'), \
+        "a refused Bringup must not stop the running robot"

@@ -837,6 +837,21 @@ wireStartStop({
     // launched the robot just LEFT (found by the walkthrough: bare_sim selected, the previous
     // robot's serial agent started on /dev/ttyACM0).
     if (typeof refreshStatus === "function") await refreshStatus();
+    // One robot at a time. A 1-Click run leaves its stack up on purpose (robot_stack.py), and a
+    // second launch beside it fought it for the agent's port: the new launch freed 8888 by
+    // killing the old stack's agent, the old launch respawned it, the board never got a session
+    // back, and the old robot's bringup stayed up with a silent board (walkthrough 2026-10-06:
+    // bare_sim selected, walkthrough_robot still running). Stop that stack first, and say so.
+    try {
+      const st = await (await fetch("/api/stack")).json();
+      const running = st.running || [];
+      if (running.length) {
+        logLine(`[console] Stopping the stack a 1-Click run left up (${st.summary || running.map((e) => e.tag).join(", ")}) before starting Bringup.`);
+        await fetch("/api/stack/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      }
+    } catch (err) {
+      console.warn("stack check before Bringup:", err);
+    }
     openTerminal("Robot Bringup [streaming]");
     attachBringupStream();
     return bringupLaunchCommand();

@@ -655,7 +655,11 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str
                 entry["hz"] = round(hz, 1)
                 entry["ok"] = hz >= entry["min_hz"]
 
-    odom_ok = res["topics"].get("odom", {}).get("ok") or res["topics"].get("odom_raw", {}).get("ok")
+    # Ready means the BOARD is publishing: /odom/unfiltered. The EKF publishes /odom at its own
+    # rate with no input at all (prediction only), so "fused OR raw" read a stack whose board
+    # had no agent session as ready -- /odom 33.5 Hz, /odom/unfiltered, /imu/data and /scan
+    # silent (walkthrough 2026-10-06).
+    odom_ok = res["topics"].get("odom_raw", {}).get("ok")
     res["ready"] = bool(odom_ok)
     res["summary"] = f"Bringup healthy: odom fused={res['topics'].get('odom', {}).get('ok')}, raw={res['topics'].get('odom_raw', {}).get('ok')}"
     return res
