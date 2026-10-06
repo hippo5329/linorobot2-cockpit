@@ -747,9 +747,15 @@ agent round trip over the USB bridge per message. Best-effort streams for the 50
 remove that wait, but a best-effort writer does not match a reliable subscriber, so the EKF's
 `/odom/unfiltered` subscription has to be checked before that topic changes. Not done.
 
-**Best effort is the default, and the MTU it needs.** The three 50 Hz publishers are
-best-effort (`qos: reliable` in the config → env `best_effort=0` turns it back), which removes
-the per-message ACK wait. Measured on one core, radio off: 1.5 Mbaud 42.3 → **50.0 Hz**;
+**Best effort is the default, and the MTU it needs.** Every publisher on the board is
+best-effort: the three 50 Hz topics and `battery`, `safety_stop`, `sonar`, `pressure`,
+`temperature`, `humidity` (`qos: reliable` in the config → env `best_effort=0` turns them all
+back), and `/cmd_vel` is subscribed best-effort, keep-last 1. That removes the per-message ACK
+wait, and with it a worse failure: a reliable publish that loses its acknowledgement blocks the
+loop for `RMW_UXRCE_PUBLISH_RELIABLE_TIMEOUT` (1 s). On the ESP32-S3's USB link the reliable
+battery and sonar stopped `/odom` for exactly 1.007 s, dozens of times per Nav2 run. Each of
+these topics republishes its state (`safety_stop` every pass), and every host consumer
+subscribes with sensor-data QoS, so the next message replaces a lost one. Measured on one core, radio off: 1.5 Mbaud 42.3 → **50.0 Hz**;
 **921 600 baud 25.1 / 33.0 → 50.1 / 50.0 Hz** — the rate most ESP32 modules can run at. The
 launch tree's `robot_localization` subscribes best-effort already:
 with the board best-effort, `/imu/data` 49.97 Hz and `/odom` 49.0 Hz. The first attempt lost `/odom/unfiltered` entirely (`fail=50` per second on the

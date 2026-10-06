@@ -171,7 +171,8 @@ extern void rcSoftFail(int line, int code);
 // simulated heading -- hard-iron bias and all -- and is exactly what a
 // calibration run needs even though no chip is present.
 static bool publish_mag = false;
-// QoS of the 50 Hz sensor topics (odom/unfiltered, imu/data, imu/mag):
+// QoS of every topic the board publishes (odom/unfiltered, imu/data, imu/mag,
+// battery, safety_stop, sonar, pressure, temperature, humidity):
 // best effort, the ROS convention for sensor data, and measured to matter.
 // A reliable rmw_publish on a serial link waits in
 // uxr_run_session_until_confirm_delivery for an agent round trip per
@@ -1711,12 +1712,18 @@ bool createEntities()
     RCCHECK(support_rc);
     // create node
     RCCHECK(rclc_node_init_default(&node, envGet("node", NODE_NAME), "", &support));
-    // The 50 Hz topics take the env's QoS (see best_effort above).
-    rcl_ret_t (*init_fast)(rcl_publisher_t *, const rcl_node_t *,
+    // Every publisher takes the env's QoS (see best_effort above): the 50 Hz
+    // topics and the slow ones alike. A reliable rmw_publish blocks the loop until
+    // the agent acknowledges it, up to RMW_UXRCE_PUBLISH_RELIABLE_TIMEOUT (1 s): one
+    // lost frame on the S3's USB link stopped /odom for 1.007 s, through the
+    // reliable battery and sonar publishers. Every one of them is a stream that
+    // republishes its state (safety_stop every pass), so the next message replaces
+    // a lost one, and every host consumer subscribes with sensor-data QoS.
+    rcl_ret_t (*init_pub)(rcl_publisher_t *, const rcl_node_t *,
                            const rosidl_message_type_support_t *, const char *) =
         best_effort ? rclc_publisher_init_best_effort : rclc_publisher_init_default;
     // create odometry publisher
-    RCCHECK(init_fast(
+    RCCHECK(init_pub(
         &odom_publisher, 
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
@@ -1743,14 +1750,14 @@ bool createEntities()
                   publish_mag ? "9-axis: gyro, accel and field fused on the board"
                               : "6-axis: gyro and accel fused on the board, yaw unanchored");
     if (imu_present)
-        RCCHECK(init_fast(
+        RCCHECK(init_pub(
             &imu_publisher,
             &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
             topicName(imu_topic)
         ));
     if (publish_mag)
-        RCCHECK(init_fast(
+        RCCHECK(init_pub(
             &mag_publisher,
             &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, MagneticField),
@@ -1758,7 +1765,7 @@ bool createEntities()
         ));
     // create battery publisher, if this robot can measure a voltage at all
     if (publish_battery)
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(init_pub(
         &battery_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, BatteryState),
@@ -1770,7 +1777,7 @@ bool createEntities()
         // it has to keep working when the ROS side is busy, wedged or
         // disconnected -- so this publisher only reports the state, it never
         // decides it.
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(init_pub(
         &safety_stop_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
@@ -1779,7 +1786,7 @@ bool createEntities()
     }
     if (publish_range)
     {
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(init_pub(
         &range_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
@@ -1788,16 +1795,16 @@ bool createEntities()
     }
     if (publish_env)
     {
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(init_pub(
             &pressure_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, FluidPressure),
             topicName("pressure")));
-        RCCHECK(rclc_publisher_init_default(
+        RCCHECK(init_pub(
             &temperature_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Temperature),
             topicName("temperature")));
         if (envHasHumidity())
-            RCCHECK(rclc_publisher_init_default(
+            RCCHECK(init_pub(
                 &humidity_publisher, &node,
                 ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, RelativeHumidity),
                 topicName("humidity")));
