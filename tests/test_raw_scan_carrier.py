@@ -2,7 +2,8 @@
 
 User: "esp32 serial transport and raw scan topic will exhaust 921600 baud bandwidth";
 "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot"; "esp32s3 uart like yahboom";
-"esp32 scan legs on gendrv only".
+"esp32 scan legs on gendrv only"; "We use raw scan topic only when the serial link is fast
+enough (like cdc or 1.5M/4M) as in pico/pico2/esp32s3 cdc/unoq".
 """
 import copy
 import os
@@ -47,6 +48,20 @@ def test_an_esp32s3_on_its_uart_is_refused_raw_scan_like_the_yahboom():
     s3 = bare("esp32s3")
     s3["console"] = "uart0"
     assert depth_camera.raw_scan_over_uart(s3)
+
+
+def test_a_fast_uart_carries_raw_scan_the_gendrv_and_the_uno_q():
+    with open(os.path.join(ROOT, "config", "reference", "gendrv_config.yaml")) as fh:
+        gd = copy.deepcopy(yaml.safe_load(fh)["base_controller"])
+    assert int(gd["baudrate"]) == 1500000
+    gd["lidar"]["comm_mode"] = "topic"
+    assert depth_camera.raw_scan_over_uart(gd) == ""
+    uq = bare("unoq")
+    assert int(uq["baudrate"]) == 4000000 and uq["lidar"]["comm_mode"] == "topic"
+    assert depth_camera.raw_scan_over_uart(uq) == ""
+    slow = copy.deepcopy(gd)
+    slow["baudrate"] = 921600
+    assert "921600" in depth_camera.raw_scan_over_uart(slow)
 
 
 def test_wifi_micro_ros_is_not_a_uart():

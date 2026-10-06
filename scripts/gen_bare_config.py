@@ -107,8 +107,9 @@ def _bare_comm_mode(mcu: str) -> str:
 
     The ESP32-S3's bare module is on its NATIVE USB (USB-Serial/JTAG, `console: usb`), not a
     UART, and that carries raw_scan beside the 50 Hz loop (~77 Hz measured): `topic` too
-    (user, 2026-10-06: "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot" --
-    the UART case, a Yahboom's CP2102, is refused by depth_camera.raw_scan_over_uart).
+    (user, 2026-10-06: "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot").
+    The rule is the link's speed -- native USB, or a UART at 1.5 Mbaud or more like the
+    GenDrv's or the UNO Q's (depth_camera.raw_scan_over_uart); a 921600 UART is refused.
     """
     # RP2_MCUS, not startswith("pico"): the SparkFun XRP Controller is an RP2350B too.
     return "topic" if (mcu in gen_firmware_header.RP2_MCUS or mcu == "esp32s3") else "serial"

@@ -148,16 +148,31 @@ def scan_source(controller: dict):
     return None
 
 
+# The slowest UART that carries raw_scan beside the 50 Hz control loop: the GenDrv's
+# 1.5 Mbaud and the UNO Q's 4 Mbaud do; 921600 does not (every topic drops to 40-45 Hz).
+RAW_SCAN_MIN_BAUD = 1_500_000
+
+
+def raw_scan_native_usb(controller: dict) -> bool:
+    """The micro-ROS link is the MCU's own USB (CDC), where the baud rate is nominal: an RP2,
+    or an ESP32-S3 on its USB-Serial/JTAG port (`console: usb`)."""
+    import gen_firmware_header
+    mcu = str((controller or {}).get("mcu", "") or "").strip().lower()
+    console = str((controller or {}).get("console", "") or "").strip().lower()
+    return mcu in gen_firmware_header.RP2_MCUS or (mcu == "esp32s3" and console == "usb")
+
+
 def raw_scan_over_uart(controller: dict) -> str:
     """Why this board may not send its scan as raw_scan, or "".
 
-    `lidar.comm_mode: topic` carries the LD19 frames over the micro-ROS link. An RP2's
-    native USB and an ESP32-S3's native USB (USB-Serial/JTAG, `console: usb`) hold that
-    beside the 50 Hz control loop. An ESP32 always talks through a UART bridge, and so does
-    an ESP32-S3 on its UART port (`console: uart0`, the Yahboom YB-EET01's CP2102), and at
-    921600 baud the scan exhausts the link: every topic drops to 40-45 Hz (user,
-    2026-10-06: "esp32 serial transport and raw scan topic will exhaust 921600 baud
-    bandwidth"; "esp32s3 cdc can support raw scan topic. esp32s3 uart cannot").
+    `lidar.comm_mode: topic` carries the LD19 frames over the micro-ROS serial link, which
+    must be fast enough to hold them beside the 50 Hz control loop: native USB (Pico, Pico 2,
+    XRP, an ESP32-S3 on CDC) or a UART at RAW_SCAN_MIN_BAUD or more (the GenDrv's 1.5 Mbaud,
+    the UNO Q's 4 Mbaud). At 921600 -- an ESP32 DevKit, an ESP32-S3 on its UART port like the
+    Yahboom's CP2102 -- the scan exhausts the link (user, 2026-10-06: "We use raw scan topic
+    only when the serial link is fast enough (like cdc or 1.5M/4M) as in
+    pico/pico2/esp32s3 cdc/unoq"). Most robots need none of this: the MCU is on serial and the
+    LiDAR on the robot computer; Wi-Fi with a udp scan is for a robot with no robot computer.
     """
     lidar = (controller or {}).get("lidar") or {}
     if str(lidar.get("comm_mode", "") or "").strip().lower() != "topic":
@@ -166,26 +181,31 @@ def raw_scan_over_uart(controller: dict) -> str:
         return ""
     transport = str(controller.get("transport", "serial") or "serial").strip().lower()
     if transport not in ("serial", ""):
-        return ""                         # micro-ROS over Wi-Fi: not a UART
-    mcu = str(controller.get("mcu", "") or "").strip().lower()
-    console = str(controller.get("console", "") or "").strip().lower()
-    if mcu == "esp32" or (mcu == "esp32s3" and console != "usb"):
-        link = "an ESP32" if mcu == "esp32" else f"an ESP32-S3 on its UART (console: {console or 'uart0'})"
-        return (f"lidar.comm_mode topic sends the scan as raw_scan over micro-ROS, and on {link} "
-                f"that is a 921600-baud UART: the scan exhausts it and every topic drops to "
-                f"40-45 Hz. Use serial (LIDAR_RXD to a USB bridge) or udp (Wi-Fi) for the scan; "
-                f"only native USB (RP2, ESP32-S3 with console: usb) carries raw_scan.")
-    return ""
+        return ""                         # micro-ROS over Wi-Fi: not a serial link
+    if raw_scan_native_usb(controller):
+        return ""
+    try:
+        baud = int(controller.get("baudrate") or 921600)
+    except (TypeError, ValueError):
+        baud = 921600
+    if baud >= RAW_SCAN_MIN_BAUD:
+        return ""
+    return (f"lidar.comm_mode topic sends the scan as raw_scan over micro-ROS, and this board's "
+            f"link is a {baud}-baud UART: the scan exhausts it and every topic drops to 40-45 Hz. "
+            f"raw_scan needs native USB or {RAW_SCAN_MIN_BAUD} baud or more. Put the LiDAR on the "
+            f"robot computer (serial), or use udp over Wi-Fi on a robot with no robot computer.")
 
 
 def sim_scan_unreachable(controller: dict, lidar_port: str) -> str:
     """Why a board's SIMULATED LD19 has no way to the LD driver, or "".
 
-    Its frames go out a UART to a bridge (`serial`), as raw_scan (`topic`) or over Wi-Fi
-    (`udp`). A `serial` scan whose port does not exist reaches nothing: a bare ESP32 has one
-    USB, for micro-ROS, and no bridge on its LIDAR_RXD. Then there is no /scan -- the robot
-    computer's own laser stands in only on the no-board path (sim_base) -- and the
-    bringup and the pipeline say so instead of waiting for one."""
+    A LiDAR not on the MCU is on the robot computer, at `lidar.serial_port`: the usual robot
+    (user, 2026-10-06: "when lidar is not connected to mcu, lidar can be connected to robot
+    computer. Only issue is that we cannot raycast in sim mode"). The board's emulator can
+    only reach that port through a bridge on its LIDAR_RXD (the GenDrv bench), as raw_scan
+    (`topic`) or over Wi-Fi (`udp`). A simulated `serial` scan whose port does not exist
+    reaches nothing, so in Sim mode the robot has no /scan -- the robot computer's own laser
+    stands in only on the no-board path (sim_base) -- and bringup and the pipeline say so."""
     if scan_source(controller) != "lidar":
         return ""
     if not ((controller.get("sensors") or {}).get("use_sim_ld19", False)):
@@ -195,9 +215,10 @@ def sim_scan_unreachable(controller: dict, lidar_port: str) -> str:
         return ""
     if os.path.exists(lidar_port):
         return ""
-    return (f"the simulated LD19 is `serial` but {lidar_port} does not exist -- nothing carries "
-            f"its frames (a bare ESP32 has no LIDAR_RXD bridge, and its 921600-baud link cannot "
-            f"carry raw_scan); wire the bridge, use udp over Wi-Fi, or sim_base:=true")
+    return (f"the LiDAR is on the robot computer ({lidar_port}, not present), and Sim mode cannot "
+            f"raycast into it: the board's simulated LD19 reaches the robot computer only through "
+            f"a bridge on LIDAR_RXD, as raw_scan on a fast link, or over Wi-Fi. A real LiDAR there "
+            f"is read by the LD driver in Real mode; sim_base:=true raycasts on the robot computer")
 
 
 def scan_fov_deg(controller: dict):
