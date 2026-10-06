@@ -1029,25 +1029,12 @@ function initCockpitDashboard() {
   }
 
   // --- 7. One-Click Autonomous Pipeline ---
-  const hdrMode = document.getElementById("hdr-pipeline-mode");
-  const cockpitMode = document.getElementById("cockpit-pipeline-mode");
   const grpSimWorld = document.getElementById("grp-cockpit-sim-world");
+  // The simulated world is for a robot that simulates: the robot's own mode, not a select.
   const updateSimWorldVisibility = () => {
-    const curMode = (cockpitMode && cockpitMode.value) || (hdrMode && hdrMode.value) || "sim";
-    if (grpSimWorld) {
-      grpSimWorld.style.display = curMode === "real" ? "none" : "flex";
-    }
+    if (grpSimWorld) grpSimWorld.style.display = robotRunMode() === "real" ? "none" : "flex";
   };
-  if (hdrMode && cockpitMode) {
-    hdrMode.addEventListener("change", () => {
-      cockpitMode.value = hdrMode.value;
-      updateSimWorldVisibility();
-    });
-    cockpitMode.addEventListener("change", () => {
-      hdrMode.value = cockpitMode.value;
-      updateSimWorldVisibility();
-    });
-  }
+  window.__updateSimWorld = updateSimWorldVisibility;   // syncSimForDesign: the robot changed
   updateSimWorldVisibility();
 
   const cockpitWorldSel = document.getElementById("cockpit-pipeline-world");
@@ -1068,7 +1055,8 @@ function initCockpitDashboard() {
     if (!(await boardMatchesOrWarn(controller, "1-Click"))) return;
     const sec = exploreSec ? parseInt(exploreSec.value, 10) || 15 : 15;
     const noNav2 = noNav2Check ? noNav2Check.checked : false;
-    const mode = (hdrMode && hdrMode.value) || (cockpitMode && cockpitMode.value) || "sim";
+    // What the robot IS decides the mode (a bare module: sim; a design or any pin: real).
+    const mode = robotRunMode();
     // Force a write even over a board that already runs this build (--flash).
     // Unticked by default; auto-update below is what handles the ordinary case.
     const updateFw = document.getElementById("cockpit-update-firmware")?.checked || false;

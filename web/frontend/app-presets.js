@@ -171,11 +171,6 @@ let currentSimMode = true;
 function updateSimModeUI(enabled) {
   currentSimMode = enabled;
 
-  const hdrMode = document.getElementById("hdr-pipeline-mode");
-  const cockpitMode = document.getElementById("cockpit-pipeline-mode");
-  if (hdrMode) hdrMode.value = enabled ? "sim" : "real";
-  if (cockpitMode) cockpitMode.value = enabled ? "sim" : "real";
-
   const stateBadge = document.getElementById("simulation-mode-state-badge");
   const descElem = document.getElementById("simulation-mode-desc");
   const toggleBtn = document.getElementById("btn-toggle-sim-mode");
@@ -292,20 +287,16 @@ async function setSimMode(enabled, transitionToDetails = false) {
   }
 }
 
+// Leaving simulation is not a switch: a reference design, or pins, make the robot real. The
+// card's buttons take the user to the Reference Designs picker.
+function goMakeItReal() {
+  document.querySelector(".tab-btn[data-tab='mcu-sim']")?.click();
+  const sel = document.getElementById("preset-select");
+  if (sel) { sel.scrollIntoView({ block: "center" }); sel.focus(); }
+}
 function initSimModeWorkflow() {
-  document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      setSimMode(false, true);
-    });
-  });
-
-  const toggleBtn = document.getElementById("btn-toggle-sim-mode");
-  if (toggleBtn) {
-    toggleBtn.addEventListener("click", () => {
-      setSimMode(!currentSimMode, !currentSimMode ? false : true);
-    });
-  }
-
+  document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => btn.addEventListener("click", goMakeItReal));
+  document.getElementById("btn-toggle-sim-mode")?.addEventListener("click", goMakeItReal);
   const jumpPreviewBtn = document.getElementById("btn-jump-preview");
   if (jumpPreviewBtn) {
     jumpPreviewBtn.addEventListener("click", () => {
@@ -313,27 +304,6 @@ function initSimModeWorkflow() {
       if (slamTab) {
         slamTab.click();
         window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    });
-  }
-
-  const hdrMode = document.getElementById("hdr-pipeline-mode");
-  const cockpitMode = document.getElementById("cockpit-pipeline-mode");
-  if (hdrMode) {
-    hdrMode.addEventListener("change", (e) => {
-      if (e.target.value === "real") {
-        setSimMode(false, false);
-      } else if (e.target.value === "sim") {
-        setSimMode(true, false);
-      }
-    });
-  }
-  if (cockpitMode) {
-    cockpitMode.addEventListener("change", (e) => {
-      if (e.target.value === "real") {
-        setSimMode(false, false);
-      } else if (e.target.value === "sim") {
-        setSimMode(true, false);
       }
     });
   }

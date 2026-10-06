@@ -764,7 +764,7 @@ async function refreshStatus() {
     if (s.sim_mode_active !== undefined && !window.hasSyncedSimMode) {
       window.hasSyncedSimMode = true;
       if (typeof updateSimModeUI === "function") {
-        updateSimModeUI(s.sim_mode_active);
+        updateSimModeUI(robotRunMode() === "sim");
       }
     }
     if (typeof updateBringupSummary === "function") {
@@ -945,21 +945,30 @@ function activeRobotIsReal() {
   const r = activeRobot();
   return r ? !!r.real : isReferenceDesign(state.robot_name);
 }
+// What the robot runs as. Not a choice any more (user, 2026-10-06): a bare module simulates
+// everything, and a real robot -- built from a design, or with any pin assigned -- simulates
+// nothing. 1-Click and Bringup send this; the header shows it.
+function robotRunMode() {
+  return activeRobotIsReal() ? "real" : "sim";
+}
 function syncSimForDesign() {
-  const design = activeRobotIsReal();
-  for (const id of ["hdr-pipeline-mode", "cockpit-pipeline-mode"]) {
-    const sel = document.getElementById(id);
-    const opt = sel && [...sel.options].find((o) => o.value === "sim");
-    if (!opt) continue;
-    opt.disabled = design;
-    opt.title = design ? "A reference design is a real robot: it simulates nothing. " +
-      "Pick its board's bare robot or bare_sim to simulate." : "";
-    if (design && sel.value === "sim") sel.value = "real";
+  const real = activeRobotIsReal();
+  const badge = document.getElementById("hdr-run-mode");
+  if (badge) {
+    badge.textContent = real ? "🔧 Real" : "🧪 Simulation";
+    badge.classList.toggle("real", real);
+    badge.classList.toggle("sim", !real);
+    badge.title = real
+      ? "A real robot: built from a reference design, or it has pins assigned. It simulates nothing and needs its own board."
+      : "A bare module: no pin assigned but the LED, every device simulated. Pick a reference design or assign a pin to make it real.";
   }
+  // The Sim MCU is a board-less SIMULATION: not offered to a real robot.
   for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) {
     const opt = [...(document.getElementById(id)?.options || [])].find((o) => o.value === "sim");
-    if (opt) opt.disabled = design;
+    if (opt) opt.disabled = real;
   }
+  if (typeof updateSimModeUI === "function") updateSimModeUI(!real);
+  if (typeof window !== "undefined" && window.__updateSimWorld) window.__updateSimWorld();
 }
 
 // Dropdown picker shared by the Robot and Branch header fields. Ported from

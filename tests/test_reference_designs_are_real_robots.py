@@ -141,15 +141,15 @@ SIMSYNC = r"""
 const src = require("fs").readFileSync(process.argv[2], "utf8");
 const pick = (start) => { const a = src.indexOf(start); return src.slice(a, src.indexOf("\n}\n", a) + 3); };
 const mk = (v) => ({ value: v, disabled: false, title: "" });
-const sels = {};
-for (const id of ["hdr-pipeline-mode", "cockpit-pipeline-mode"]) sels[id] = { value: "sim", options: [mk("sim"), mk("real"), mk("auto")] };
+const badge = { textContent: "", title: "", classList: { toggle() {} } };
+const sels = { "hdr-run-mode": badge };
 for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) sels[id] = { value: "pico2", options: [mk("pico2"), mk("sim")] };
 const document = { getElementById: (id) => sels[id] || null };
 const state = { robot_name: process.argv[3], reference: JSON.parse(process.argv[4]), robots: [] };
 eval(pick("function isReferenceDesign(") + pick("function activeRobot(") + pick("function activeRobotIsReal(") +
-     pick("function syncSimForDesign(") + `
+     pick("function robotRunMode(") + pick("function syncSimForDesign(") + `
 syncSimForDesign();
-console.log(JSON.stringify({ mode: sels["hdr-pipeline-mode"].value, simOff: sels["hdr-pipeline-mode"].options[0].disabled,
+console.log(JSON.stringify({ mode: robotRunMode(), badge: badge.textContent,
   mcuSimOff: sels["cfg-mcu"].options[1].disabled }));`);
 """
 
@@ -163,8 +163,8 @@ def test_the_ui_offers_no_sim_for_a_design(robot, design, tmp_path):
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.strip().splitlines()[-1])
-    assert res == ({"mode": "real", "simOff": True, "mcuSimOff": True} if design
-                   else {"mode": "sim", "simOff": False, "mcuSimOff": False}), res
+    assert res == ({"mode": "real", "badge": "🔧 Real", "mcuSimOff": True} if design
+                   else {"mode": "sim", "badge": "🧪 Simulation", "mcuSimOff": False}), res
 
 
 def test_a_robot_is_real_by_where_its_config_came_from():
@@ -213,3 +213,13 @@ def test_applying_a_design_moves_every_controller_select():
 def test_the_design_picker_is_an_action_not_an_autosaved_edit():
     html = open(os.path.join(ROOT, "web", "frontend", "index.html")).read()
     assert 'id="preset-select" data-no-autosave' in html
+
+
+
+def test_the_mode_is_the_robots_not_a_select():
+    """User, 2026-10-06: no Sim/Real select; a bare module simulates, a design or any pin is real."""
+    html = open(os.path.join(ROOT, "web", "frontend", "index.html")).read()
+    assert 'id="hdr-pipeline-mode"' not in html and 'id="cockpit-pipeline-mode"' not in html
+    assert 'id="hdr-run-mode"' in html
+    wf = open(os.path.join(ROOT, "web", "frontend", "app-workflow.js")).read()
+    assert "const mode = robotRunMode();" in wf

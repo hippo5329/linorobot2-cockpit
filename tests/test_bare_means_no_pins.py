@@ -87,3 +87,14 @@ def test_a_bare_module_may_have_any_chassis_and_still_run_sim():
     assert not ocp.is_real_robot(cfg)
     bat["pin"] = 36                                     # the battery's SENSE pin is a pin
     assert not ocp.is_bare_config(cfg)
+
+
+def test_a_bare_uno_q_uses_no_qwiic_pins():
+    """User, 2026-10-06: no Qwiic pins as a bare module by default for the UNO Q. Its Qwiic IMU
+    needs no pin on the firmware's default bus, so the bare module must not assign one: the
+    IMU is simulated like every other device, and the real one needs a design or a pin."""
+    cfg = gen_bare_config.bare_config("unoq")
+    bc = cfg["base_controller"]
+    assert (bc["pins"]["i2c"]["sda"], bc["pins"]["i2c"]["scl"]) == (-1, -1)
+    assert bc["sensors"]["use_sim_imu"] is True
+    assert ocp.is_bare_config(cfg)

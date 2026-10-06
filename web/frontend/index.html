@@ -57,6 +57,9 @@
         <!-- One save state for the whole robot (autosave): every edit and action saves to the
              named robot, so there is no Save button; this says where it stands. -->
         <button type="button" id="hdr-save-state" class="hdr-save-state" title="The robot's configuration is saved as you change it">✎ Name your robot</button>
+        <!-- Simulation or Real: what the ROBOT is, not a choice (a bare module simulates
+             everything; a design or any assigned pin makes it real). -->
+        <span id="hdr-run-mode" class="hdr-run-mode sim">🧪 Simulation</span>
       </div>
 
       <div class="hdr-field" id="hdr-branch-field" title="Git branch for this robot's workspace">
@@ -99,14 +102,6 @@
             <option value="native">Native (Host)</option>
             <option value="docker">Docker</option>
             <option value="podman">Podman</option>
-          </select>
-        </div>
-        <div class="hdr-field hdr-wf-field" title="Pipeline &amp; Bringup Mode (Sim / Zero-Wiring is Default)">
-          <label for="hdr-pipeline-mode">🚀 Sim/Real:</label>
-          <select id="hdr-pipeline-mode" class="hdr-select">
-            <option value="sim" selected>Sim / Zero-Wiring (Default)</option>
-            <option value="real">Real Hardware (Sensors &amp; Motors)</option>
-            <option value="auto">Auto (detect by controller)</option>
           </select>
         </div>
       </div>
@@ -270,8 +265,8 @@
       </div>
       <div class="u-flex u-justify-between u-items-center u-flex-wrap u-gap-10 u-mt-14" style="padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
         <div class="u-flex u-gap-8 u-items-center">
-          <button type="button" id="btn-toggle-sim-mode" class="btn btn-secondary" title="Toggle Sim Mode off to begin designing real hardware">
-            ⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design
+          <button type="button" id="btn-toggle-sim-mode" class="btn btn-secondary" title="Pick a reference design or assign pins: the robot is then real">
+            ⚡ Make it a real robot: pick a reference design, or assign its pins
           </button>
         </div>
         <div class="u-flex u-gap-8 u-items-center">
@@ -1757,12 +1752,12 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <span class="badge-pill badge-ok" id="slam-sim-mode-badge" style="font-size:0.72rem; padding:2px 8px;">Zero-Wiring Simulation Active</span>
           </h3>
           <p class="hint" style="margin:4px 0 0; color:#cbd5e1;">
-            Once you have verified the simulated Map, SLAM, and Nav2 navigation on your bench, switch Sim Mode <b>OFF</b> to transition into detailed physical hardware design: motor drivers, encoder resolutions, physical pin matrices, and low-level diagnostic tests.
+            Once you have verified the simulated Map, SLAM, and Nav2 navigation on your bench, make it a real robot: pick a <b>reference design</b>, or assign its pins (motor drivers, encoders, sensors). A robot with a design or any pin assigned is real: it simulates nothing.
           </p>
         </div>
         <div>
-          <button type="button" class="btn btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700; padding:9px 18px;" title="Disable sim simulation and start real hardware design">
-            ⚡ Switch Sim Mode OFF ➔ Start Details Hardware Design ➔
+          <button type="button" class="btn btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4); font-weight:700; padding:9px 18px;" title="Pick a reference design or assign pins: the robot is then real">
+            ⚡ Make it a real robot: a reference design or its pins ➔
           </button>
         </div>
       </div>
@@ -2264,15 +2259,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           </select>
         </label>
 
-        <label>Bringup Mode
-          <select id="cockpit-pipeline-mode" style="min-width:180px;">
-            <option value="sim" selected>Sim / Zero-Wiring (Default)</option>
-            <option value="real">Real Physical Sensors via I2C</option>
-            <option value="auto">Auto (detect by controller)</option>
-          </select>
-        </label>
-        
-        <label>Explore Duration
+<label>Explore Duration
           <div class="u-flex u-items-center u-gap-6">
             <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" style="width:75px; min-width:unset;">
             <span class="u-text-12" style="color:var(--text-dim);">sec</span>
@@ -2339,10 +2326,10 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <span class="u-font-700" style="font-size:0.88rem; color:#38bdf8;">✨ Finished Previewing 1-Click Autonomy?</span>
             <span class="badge-pill badge-ok" id="cockpit-sim-mode-badge" style="font-size:0.7rem; padding:1px 6px;">Sim Mode Active</span>
           </div>
-          <span class="u-block" style="font-size:0.8rem; color:#cbd5e1; margin-top:2px;">Switch Sim Mode OFF to transition from virtual zero-wiring bench simulation to detailed physical hardware design.</span>
+          <span class="u-block" style="font-size:0.8rem; color:#cbd5e1; margin-top:2px;">A bare module simulates everything. Pick a reference design, or assign its pins, and it is a real robot.</span>
         </div>
         <button type="button" class="btn btn-sm btn-accent btn-switch-real-hw" style="background:linear-gradient(135deg,#059669,#06b6d4);font-weight:700;">
-          ⚡ Switch Sim OFF &amp; Design Hardware ➔
+          ⚡ Make it a real robot ➔
         </button>
       </div>
     </div>
