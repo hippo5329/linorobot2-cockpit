@@ -53,3 +53,15 @@ def test_the_monitor_shows_the_mcus_topics_only():
     src = open(os.path.join(ROOT, "scripts", "topic_stream.py")).read()
     env = open(os.path.join(ROOT, "scripts", "mcu_env.py")).read()
     assert 'MCU_NODE_SUFFIX = "_base_node"' in src and 'f"{robot_name}_base_node"' in env
+
+
+def test_the_monitor_passes_the_type_it_already_knows():
+    """Measure all starts a helper per topic at once; each discovers the graph afresh, and one
+    reported /battery "gone" while echo showed it publishing (2026-10-06). The rows carry the
+    type from the MCU's list, so the helper need not look the topic up."""
+    routes = open(os.path.join(ROOT, "web", "backend", "routes_hardware.py")).read()
+    js = open(os.path.join(ROOT, "web", "frontend", "app-agent-bringup.js")).read()
+    assert routes.count("_type_arg(type)") == 2           # hz_single and stream
+    assert "tr.dataset.type = t.type" in js
+    assert "&type=${encodeURIComponent(tr.dataset.type" in js
+    assert "&type=${encodeURIComponent(type)}" in js

@@ -7,6 +7,7 @@ helpers come from core.py. See core.py for the split's contract.
 import json
 import os
 import queue
+import re
 import shlex
 import signal
 import subprocess
@@ -269,6 +270,21 @@ def api_ros2_topics(distro: str = "jazzy"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_MSG_TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/msg/[A-Za-z0-9_]+$")
+
+
+def _type_arg(msg_type: str) -> str:
+    """`--type` when the caller knows it: the Monitor's rows carry the type from the MCU's own
+    list, and a helper that need not look the topic up cannot miss it. Eight helpers started at
+    once (Measure all) each discover the graph afresh, and one reported /battery "gone" while
+    echo showed it publishing (walkthrough, 2026-10-06)."""
+    if not msg_type:
+        return ""
+    if not _MSG_TYPE_RE.match(msg_type):
+        raise HTTPException(status_code=400, detail="type must look like pkg/msg/Name")
+    return f" --type {msg_type}"
+
+
 def _topic_stream_cmd(topic: str, mode: str, distro: str, extra: str = "") -> list:
     script = os.path.join(REPO_ROOT, "scripts", "topic_stream.py")
     return get_ros_exec_cmd(
@@ -297,7 +313,7 @@ def api_ros2_mcu_topics(distro: str = "jazzy"):
 
 
 @app.get("/api/ros2/hz_single")
-def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0):
+def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0, type: str = ""):
     """One topic's rate over `secs` (3-20 s: a 1 Hz topic needs several to average).
 
     Measured by scripts/topic_stream.py's rclpy subscription, not `ros2 topic hz`,
@@ -305,7 +321,7 @@ def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0):
     (runners.check_bringup_health). `hz` is 0.0 for a silent topic; `advertised`
     says whether it was in the graph at all."""
     secs = max(3.0, min(float(secs), 20.0))
-    cmd = _topic_stream_cmd(topic, "once", distro, f"--secs {secs} --wait 3")
+    cmd = _topic_stream_cmd(topic, "once", distro, f"--secs {secs} --wait 3" + _type_arg(type))
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=secs + 20)
     except subprocess.TimeoutExpired:
@@ -321,7 +337,8 @@ def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0):
 
 
 @app.get("/api/ros2/stream")
-def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz: float = 5.0):
+def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz: float = 5.0,
+                    type: str = ""):
     """SSE: a topic's live rate (`hz`, once a second) or its messages (`echo`).
 
     Imported from the Robot Config Engine's topic viewer, on scripts/topic_stream.py
@@ -329,7 +346,7 @@ def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz:
     the event it names; the process ends with the stream."""
     if mode not in ("hz", "echo"):
         raise HTTPException(status_code=400, detail="mode must be hz or echo")
-    cmd = _topic_stream_cmd(topic, mode, distro, f"--max-hz {max(0.2, min(float(max_hz), 50.0))}")
+    cmd = _topic_stream_cmd(topic, mode, distro, f"--max-hz {max(0.2, min(float(max_hz), 50.0))}" + _type_arg(type))
 
     def event_generator():
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)

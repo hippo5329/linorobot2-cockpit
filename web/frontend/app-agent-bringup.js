@@ -956,12 +956,13 @@ async function refreshTopicList() {
     for (const t of topics) {
       const tr = document.createElement("tr");
       tr.dataset.topic = t.topic;
+      tr.dataset.type = t.type || "";
       tr.innerHTML = `<td>${t.direction === "pub" ? "⬆" : "⬇"} <code>${escapeHtml(t.topic)}</code></td>` +
         `<td class="hint">${escapeHtml(t.type)}</td><td class="rate">--</td>` +
         '<td style="white-space:nowrap"><button type="button" class="btn btn-sm btn-secondary" data-mode="hz">⚡ Hz</button> ' +
         '<button type="button" class="btn btn-sm btn-secondary" data-mode="echo">▶ Echo</button></td>';
       tr.querySelectorAll("button").forEach((b) =>
-        b.addEventListener("click", () => startTopicStream(t.topic, b.dataset.mode)));
+        b.addEventListener("click", () => startTopicStream(t.topic, b.dataset.mode, t.type)));
       body.appendChild(tr);
     }
     const node = topics[0]?.node;
@@ -984,7 +985,8 @@ async function measureAllTopics() {
     cell.textContent = "…";
     try {
       const r = await (await fetch(`/api/ros2/hz_single?topic=${encodeURIComponent(tr.dataset.topic)}` +
-                                   `&secs=7&distro=${encodeURIComponent(getDistro())}`)).json();
+                                   `&secs=7&type=${encodeURIComponent(tr.dataset.type || "")}` +
+                                   `&distro=${encodeURIComponent(getDistro())}`)).json();
       showTopicRate(cell, r);
     } catch { cell.textContent = "error"; }
   }));
@@ -998,7 +1000,7 @@ function stopTopicStream() {
   document.querySelectorAll("#topic-monitor-body tr.active").forEach((tr) => tr.classList.remove("active"));
 }
 
-async function startTopicStream(topic, mode) {
+async function startTopicStream(topic, mode, type = "") {
   stopTopicStream();
   const out = document.getElementById("topic-stream-out");
   const title = document.getElementById("topic-stream-title");
@@ -1011,7 +1013,8 @@ async function startTopicStream(topic, mode) {
   if (title) title.textContent = `${mode === "hz" ? "Rate of" : "Messages on"} ${topic}`;
   if (out) out.textContent = `Connecting to ${topic}...\n`;
   document.getElementById("btn-topic-stream-stop").style.display = "";
-  const qs = `topic=${encodeURIComponent(topic)}&mode=${mode}&distro=${encodeURIComponent(getDistro())}`;
+  const qs = `topic=${encodeURIComponent(topic)}&mode=${mode}&type=${encodeURIComponent(type)}` +
+             `&distro=${encodeURIComponent(getDistro())}`;
   const src = new EventSource(`/api/ros2/stream?${qs}&ticket=${encodeURIComponent(ticket)}`);
   topicStreamSource = src;
   const keep = (text) => {               // the last ~200 lines: a long echo must not grow the page forever
