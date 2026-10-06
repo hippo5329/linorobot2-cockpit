@@ -490,7 +490,7 @@ async function applyReferenceDesign(designId) {
   updateAdcCalculations();
   validateHardwareSafety();
 
-  await saveCurrentHardwareConfig();
+  await saveScreenNow();   // into the NAMED robot; on a design or a bare robot it asks for a name
   showToast(`⚡ Reference Build Loaded: ${found.name}`);
 }
 

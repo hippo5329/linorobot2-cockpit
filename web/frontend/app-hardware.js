@@ -1097,7 +1097,8 @@ function syncSonarFields() {
   });
 }
 
-async function saveCurrentHardwareConfig() {
+async function saveCurrentHardwareConfig(opts = {}) {
+  const auto = !!opts.auto;   // autosave: no tab jumps, a one-line log
   const activeController = controllerForSave(document.getElementById("cfg-mcu")?.value || "pico2");
   const kineType = document.getElementById("cfg-kinematics")?.value || "2wd";
   const driverType = document.getElementById("cfg-driver-type")?.value || "GENERIC_2_IN";
@@ -1276,7 +1277,7 @@ async function saveCurrentHardwareConfig() {
     });
   }
 
-  logLine(`[config-engine] Saving hardware configuration for [${activeController}]...`);
+  if (!auto) logLine(`[config-engine] Saving hardware configuration for [${activeController}]...`);
   try {
     const res = await fetch("/api/hardware/config", {
       method: "POST",
@@ -1285,22 +1286,25 @@ async function saveCurrentHardwareConfig() {
     });
     const result = await res.json();
     if (result.success) {
-      logLine(`${result.header_ok === false ? "⚠️" : "✅"} ${result.message}`);
+      if (auto) logLine(`${result.header_ok === false ? "⚠️" : "💾"} saved to ${state.robot_name}`);
+      else logLine(`${result.header_ok === false ? "⚠️" : "✅"} ${result.message}`);
       (result.pin_findings || []).forEach((f) => logLine(`[pins] ${f.level}: ${f.message}`));
       renderPinFindings(result.pin_findings, result.header_ok !== false);
       renderGeometryWarnings(result.geometry_warnings);
       if (result.urdf_ok === false) logLine(`⚠️ URDF not generated: ${result.urdf_error || "unknown error"}`);
       else if (result.urdf_path) logLine(`[urdf] ${result.urdf_path} regenerated`);
-      if (result.header_ok === false) {
+      if (result.header_ok === false && !auto) {
         document.querySelector('.tab-btn[data-tab="pin-matrix"]')?.click();
         document.getElementById("pin-findings")?.scrollIntoView({ block: "start" });
       }
+      return true;
     } else {
       logLine(`❌ Error saving hardware config: ${result.error || "Unknown error"}`);
     }
   } catch (err) {
     logLine(`❌ Failed to save configuration: ${err.message}`);
   }
+  return false;
 }
 
 function updateBringupSummary() {
@@ -1449,6 +1453,7 @@ async function executeHardwareAction(action, customFirmware = null) {
   const baud = parseInt(document.getElementById("cfg-baudrate")?.value || 921600, 10);
   // "upload" writes the board (a flash, or an app switch as an env write);
   // "build" compiles and "monitor" only reads, so neither needs the board to match.
+  if (action === "upload" && !(await configReadyOrWarn("Flash"))) return;
   if (action === "upload" && !(await boardMatchesOrWarn(mcuEnv, "Flash"))) return;
 
   const btnStop = document.getElementById("btn-hw-stop");
@@ -1554,3 +1559,102 @@ async function executeHardwareAction(action, customFirmware = null) {
   }
 }
 
+
+// ---------- autosave: the named robot's config follows the screen ----------
+// User, 2026-10-06: name the robot from the beginning; every selection and every action
+// creates and updates its configuration. So an edit in a configuration tab is saved to the
+// robot's file at once (debounced), and Flash, 1-Click and Bringup save before they run --
+// they used to run the last SAVED file, ignoring what the screen showed.
+//
+// Only a robot the user NAMED is written. A generated robot (bare_*) is regenerated on every
+// selection and run, so an edit saved into it would vanish; a reference design is the shipped
+// design. Editing either asks for a name, and the pending edits are saved under that name.
+// (cockpit/docs/robots-sim-vs-reference.md in the lab has the robot kinds.)
+const AUTOSAVE_PANES = ["tab-mcu-sim", "tab-base", "tab-drive-motors", "tab-sensors", "tab-pin-matrix"];
+const AUTOSAVE_MS = 800;
+let autosaveTimer = null;
+let autosavePending = false;
+
+function robotIsNamed(name = state.robot_name) {
+  return !!name && !isGeneratedRobot(name) &&
+    !(typeof isReferenceDesign === "function" && isReferenceDesign(name));
+}
+
+function setSavedIndicator(text, ok) {
+  const btns = new Set([...document.querySelectorAll('button[onclick="saveScreenNow()"]'),
+    ...["btn-save-mcu-config", "btn-save-base-config", "btn-save-drive-config", "btn-save-sensors-config",
+      "btn-save-pins-config"].map((id) => document.getElementById(id)).filter(Boolean)]);
+  for (const b of btns) {
+    b.textContent = text;
+    b.classList.toggle("btn-primary", !ok);
+    b.classList.toggle("btn-secondary", !!ok);
+  }
+}
+
+function askForRobotName() {
+  const what = isGeneratedRobot(state.robot_name)
+    ? `${state.robot_name} is generated from the board's rule and rewritten on every run`
+    : `${state.robot_name} is a reference design`;
+  showActionBanner("Name your robot first.",
+    `${what}, so your changes are not saved to it. Type a name for your robot in the Robot field ` +
+    `(lowercase, digits, _) and press Enter: it is created from what you see now, and every change ` +
+    `after that is saved to it.`);
+  setSavedIndicator("✎ Name your robot to save", false);
+  const ri = document.getElementById("hdr-robot-name");
+  if (ri) { ri.focus(); ri.select(); }
+}
+
+function onConfigEdit(e) {
+  const t = e.target;
+  if (!t || !t.closest || !AUTOSAVE_PANES.some((id) => t.closest("#" + id))) return;
+  if (t.closest("[data-no-autosave]") || t.type === "button" || t.type === "file") return;
+  autosavePending = true;
+  if (!robotIsNamed()) { askForRobotName(); return; }
+  setSavedIndicator("… saving", false);
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(flushAutosave, AUTOSAVE_MS);
+}
+document.addEventListener("change", onConfigEdit);
+document.addEventListener("input", (e) => {
+  if (["text", "number", "range"].includes(e.target?.type)) onConfigEdit(e);
+});
+
+// Save what is pending, now. false when edits are pending on a robot that cannot take them.
+async function flushAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  if (!autosavePending) return true;
+  if (!robotIsNamed()) return false;
+  autosavePending = false;
+  const ok = await saveCurrentHardwareConfig({ auto: true });
+  setSavedIndicator(ok ? `✓ Saved to ${state.robot_name}` : "⚠ Not saved — see the console", ok);
+  if (!ok) autosavePending = true;
+  return ok;
+}
+
+// Save what is on screen now, under the same rule: the Save buttons, and the tools that change
+// many fields at once without a change event (Smart Auto-Assign, a Reference Build Preset).
+async function saveScreenNow() {
+  autosavePending = true;
+  if (!robotIsNamed()) { askForRobotName(); return false; }
+  return await flushAutosave();
+}
+
+// Before Flash, 1-Click or Bringup: the run uses what the screen shows.
+async function configReadyOrWarn(action) {
+  if (autosavePending && !robotIsNamed()) {
+    askForRobotName();
+    logLine(`⚠️ [UNSAVED] ${action} not started: name your robot first so your changes are saved to it.`);
+    return false;
+  }
+  return await flushAutosave();
+}
+
+// selectRobot() calls this once a NEW name has been created (a copy of the robot shown) and
+// before the form reloads from the file, so the edits on screen land in the new robot.
+async function autosaveAfterNaming(wasNew) {
+  if (wasNew && autosavePending) await flushAutosave();
+  else autosavePending = false;   // switching to another existing robot drops unsaved edits
+  setSavedIndicator(robotIsNamed() ? `✓ Saved to ${state.robot_name}` : "✎ Name your robot to save",
+    robotIsNamed());
+}

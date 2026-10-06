@@ -1028,6 +1028,12 @@ async function selectRobot(name, byUser = true) {
   }
   if (name === state.robot_name) return;
   if (byUser) userChoseController = true;   // a real change of robot, by the user
+  // Autosave (app-hardware.js): the robot being left keeps its last edits, and a NEW name is
+  // created from what is on screen.
+  const wasNew = !(state.robots || []).some((r) => r.name === name || r.select === name);
+  if (typeof flushAutosave === "function" && typeof robotIsNamed === "function" && robotIsNamed()) {
+    await flushAutosave();
+  }
   try {
     robotEpoch++;
     const res = await fetch("/api/robot/select", {
@@ -1044,6 +1050,7 @@ async function selectRobot(name, byUser = true) {
     }
     state.robot_name = res.active || res.robot_name || name;
     state.robots = res.robots || [];
+    if (typeof autosaveAfterNaming === "function") await autosaveAfterNaming(wasNew);
     state.config = res.config || state.config;
     // Push the switched robot's workflow settings into the header selects.
     const c = state.config || {};

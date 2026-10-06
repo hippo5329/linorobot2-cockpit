@@ -283,7 +283,7 @@
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">🔌 1. Microcontroller Target &amp; Software Environment</h2>
-        <button type="button" id="btn-save-mcu-config" class="btn btn-primary btn-sm" onclick="saveCurrentHardwareConfig()">💾 Save MCU settings</button>
+        <button type="button" id="btn-save-mcu-config" class="btn btn-primary btn-sm" onclick="saveScreenNow()">💾 Save MCU settings</button>
       </div>
       <p class="hint">Microcontroller silicon target, micro-ROS serial transport, and software simulation environment.</p>
 
@@ -360,7 +360,7 @@
       </div>
 
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save MCU settings</button>
+        <button type="button" class="btn btn-primary" onclick="saveScreenNow()">💾 Save MCU settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="base">Step 2: Robot Base &amp; Mechanical Chassis ➔</button>
       </div>
     </div>
@@ -371,7 +371,7 @@
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">🤖 2. Robot Base &amp; Mechanical Chassis Configuration</h2>
-        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+        <button type="button" id="btn-save-base-config" class="btn btn-primary btn-sm" onclick="saveScreenNow()">💾 Save robot settings</button>
       </div>
       <p class="hint">Mechanical chassis dimensions, kinematics drive mechanism (Differential, Skid Steer, Mecanum), physical geometry, URDF body &amp; sensor placement, and drivetrain physics. Automatically updates <code>&lt;robot&gt;_config.yaml</code> and generates C++ firmware headers.</p>
 
@@ -726,7 +726,7 @@
 
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="mcu-sim">⬅ Step 1: MCU &amp; Sim</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+        <button type="button" class="btn btn-primary" onclick="saveScreenNow()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="drive-motors">Step 3: Configure Drive &amp; Motors ➔</button>
       </div>
     </div>
@@ -817,7 +817,7 @@
 
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="base">⬅ Step 2: Base</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+        <button type="button" class="btn btn-primary" onclick="saveScreenNow()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="sensors">Step 4: Configure Sensors ➔</button>
       </div>
     </div>
@@ -1107,7 +1107,7 @@
 
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="drive-motors">⬅ Step 3: Drive &amp; Motors</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+        <button type="button" class="btn btn-primary" onclick="saveScreenNow()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="pin-matrix">Step 5: Configure Pin Matrix ➔</button>
       </div>
     </div>
@@ -1275,7 +1275,7 @@
 
       <div class="u-flex u-justify-between u-items-center u-mt-20 u-pt-14 u-border-t">
         <button type="button" class="btn btn-secondary btn-workflow-prev" data-prev="sensors">⬅ Step 4: Sensors</button>
-        <button type="button" class="btn btn-primary" onclick="saveCurrentHardwareConfig()">💾 Save robot settings</button>
+        <button type="button" class="btn btn-primary" onclick="saveScreenNow()">💾 Save robot settings</button>
         <button type="button" class="btn btn-accent btn-workflow-next" data-next="hw-tests">Step 6: Step-by-Step Hardware Tests ➔</button>
       </div>
     </div>
