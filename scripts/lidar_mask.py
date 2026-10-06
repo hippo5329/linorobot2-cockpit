@@ -9,6 +9,7 @@ Config (base_controller.lidar):
 
     mask:
       sectors: [[150, 210]]     # degrees in the ROBOT frame: 0 ahead, counter-clockwise
+      margin_deg: 1.0           # each sector widened by this on both sides (default 1.0)
       boxes:                    # metres in base_link; any beam ending inside is removed
         - {min_x: -0.10, max_x: 0.10, min_y: -0.05, max_y: 0.05, min_z: -1.0, max_z: 1.0}
 
@@ -34,12 +35,23 @@ documents for exactly this. Two details decide whether it works:
     outside a scan's range matches nothing. Correct on both distros, both
     conventions, without wrap_angle.
 
+  * A margin on each sector edge. A beam's published angle is not exactly where it
+    was measured: the LD driver interpolates each beam's angle across its packet, so a
+    beam measured just inside an edge can be published up to one beam (0.79 deg on an
+    LD19) outside it, and a real structure's edge smears across a beam the same way.
+    Masked to the exact edge, that one beam got through on every scan: the simulated
+    LD19 occluding [105, 255) put a 0.12 m return at 104.4 deg into all 3175 scans of an
+    exploration leg (2026-10-06), SLAM and the costmap drew the robot's own trail as a
+    wall, and it closed the only door to the far rooms. margin_deg (default 1.0, just
+    over one beam) widens each sector by that much on both sides; 0 is the bare sector.
+
 The LD driver's own angle_crop was not used: one interval, in the LD19's raw
 clockwise degrees before its direction flip, and only for that driver.
 """
 import math
 
 MAX_SECTORS = 4          # the firmware's occlusion table (sim_ld19.h) holds this many
+DEFAULT_MARGIN_DEG = 1.0 # just over one LD19 beam (360 / 456 = 0.79 deg)
 BOX_KEYS = ("min_x", "max_x", "min_y", "max_y", "min_z", "max_z")
 
 
@@ -69,7 +81,14 @@ def mask_config(controller: dict) -> dict:
             if box[lo] >= box[hi]:
                 raise ValueError(f"lidar.mask.boxes: {lo} must be below {hi} in {bx!r}")
         boxes.append(box)
-    return {"sectors": sectors, "boxes": boxes}
+    margin = mask.get("margin_deg", DEFAULT_MARGIN_DEG)
+    try:
+        margin = float(DEFAULT_MARGIN_DEG if margin is None else margin)
+    except (TypeError, ValueError):
+        raise ValueError(f"lidar.mask.margin_deg: a number of degrees, not {mask.get('margin_deg')!r}")
+    if not 0.0 <= margin < 30.0:
+        raise ValueError(f"lidar.mask.margin_deg: 0 to 30 degrees, not {margin:g}")
+    return {"sectors": sectors, "boxes": boxes, "margin_deg": margin}
 
 
 def masked(controller: dict) -> bool:
@@ -93,8 +112,12 @@ def filter_chain_params(controller: dict, laser_yaw_rad: float, base_frame: str 
     """The scan_to_scan_filter_chain parameters for this robot's mask, or {} when unmasked."""
     m = mask_config(controller)
     filters = []
+    margin = m.get("margin_deg", DEFAULT_MARGIN_DEG)
     for i, (start, width) in enumerate(m["sectors"]):
-        for j, (lo, hi) in enumerate(scan_intervals(start, width, laser_yaw_rad)):
+        # widened by the margin on both sides, never to the whole circle
+        wide = min(width + 2.0 * margin, 359.0)
+        start = (start - (wide - width) / 2.0) % 360.0
+        for j, (lo, hi) in enumerate(scan_intervals(start, wide, laser_yaw_rad)):
             filters.append({"name": f"mask_sector_{i}_{j}",
                             "type": "laser_filters/LaserScanAngularBoundsFilterInPlace",
                             "params": {"lower_angle": round(lo, 6), "upper_angle": round(hi, 6),
