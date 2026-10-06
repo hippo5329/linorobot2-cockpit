@@ -132,8 +132,17 @@ static inline const char *topicName(const char *suffix)
 #define ENV_TIMER 1000 // 1Hz (BMP280/BME280 pressure/temperature/humidity)
 #endif
 
+// Used only inside createEntities(): a failed step returns false, and the state
+// machine (AGENT_AVAILABLE) destroys what was made and waits for the agent again.
+// It called rclErrorLoop(), which never returns, so one slow answer from the agent
+// stranded the board for good: an entity request times out after 1 s, and an agent
+// still creating its DDS participant on a loaded computer (the UNO Q, gate
+// rc-20261007.1: node init failed 1.006 s after the session opened) is that slow.
+// Only RP2's watchdog got out of it, by rebooting; ESP32 and the Sim MCU sat there.
 #ifndef RCCHECK
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){rclErrorLoop();}}
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){ \
+    syslog(LOG_ERR, "%s: %s failed (rc %d), retrying", __FUNCTION__, #fn, (int)temp_rc); \
+    return false;}}
 #endif
 // A discarded return is how a robot goes quiet without anyone noticing. Every
 // rcl_publish() in this firmware is wrapped in RCSOFTCHECK, and the empty body
@@ -1706,7 +1715,10 @@ bool createEntities()
     // options, which are finalised straight after.
     rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
     RCCHECK(rcl_init_options_init(&init_options, allocator));
-    RCCHECK(rcl_init_options_set_domain_id(&init_options, (size_t)envInt("domain_id", 0)));
+    const rcl_ret_t domain_rc = rcl_init_options_set_domain_id(&init_options, (size_t)envInt("domain_id", 0));
+    if (domain_rc != RCL_RET_OK)
+        (void)rcl_init_options_fini(&init_options);
+    RCCHECK(domain_rc);
     const rcl_ret_t support_rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
     (void)rcl_init_options_fini(&init_options);
     RCCHECK(support_rc);
