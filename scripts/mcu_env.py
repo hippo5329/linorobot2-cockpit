@@ -441,7 +441,11 @@ def wifi_keys_missing(params_path: str, secrets_path: str = None) -> bool:
     enters the Wi-Fi keys (Secrets tab) first, then runs the 1-Click -- the pipeline
     and the flasher refuse before anything is written. A serial robot needs none."""
     params = load_yaml(params_path)
-    if not transport_is_wifi((params.get("base_controller") or {}).get("transport")):
+    tgt = params.get("base_controller") or {}
+    if not transport_is_wifi(tgt.get("transport")):
+        return False
+    # The Sim MCU's udp4 never leaves this computer: no radio, no network to join.
+    if str(tgt.get("name") or "").lower() == "sim" or str(tgt.get("mcu") or "").lower() == "host":
         return False
     wifi = (load_yaml(secrets_path or cockpit_paths.secrets_path()).get("wifi") or {})
     ssid = str(wifi.get("ssid") or "").strip()

@@ -1755,12 +1755,6 @@ def main():
     # same topics), so a person with nothing plugged in gets a running robot
     # instead of a flash error. Nothing is built, probed or flashed.
     sim_mcu = controller == SIM_MCU
-    # A Wi-Fi robot needs its Wi-Fi keys before its first flash (the order is: Secrets,
-    # then the 1-Click). Refused here, before anything is probed or written.
-    if not sim_mcu and not args.skip_flash:
-        import mcu_env
-        if mcu_env.wifi_keys_missing(params_path):
-            raise SystemExit(f"\n❌ {mcu_env.WIFI_KEYS_MISSING}")
     # A Wi-Fi robot off the USB cable is still a robot with a board: look for it on the
     # network before calling it absent (and never swap it for the Sim MCU when this
     # host knows its board -- that would run another robot under its name).
@@ -1791,6 +1785,15 @@ def main():
               f"on the simulated MCU instead of '{controller}'. Plug a board in to flash it; "
               f"--require-board makes this an error.")
         controller, sim_mcu = SIM_MCU, True
+    # A Wi-Fi robot needs its Wi-Fi keys before its first flash (the order is: Secrets,
+    # then the 1-Click). Refused here, before anything is probed or written -- and only
+    # now, once the run knows whether it is the Sim MCU after all: a robot run on the
+    # Sim MCU (bare_sim, or a bare module with no board) has its udp4 on this computer
+    # and needs no keys. Asked before the fallback, the Sim MCU's 1-Click was refused.
+    if not sim_mcu and not args.skip_flash:
+        import mcu_env
+        if mcu_env.wifi_keys_missing(params_path):
+            raise SystemExit(f"\n❌ {mcu_env.WIFI_KEYS_MISSING}")
     # The Sim MCU is the firmware compiled for this computer when the host build
     # is here (bringup.launch.py makes the same decision): a micro-ROS client
     # of the agent, its scan through the LiDAR driver's udp_server. Otherwise

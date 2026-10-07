@@ -337,3 +337,20 @@ def test_a_board_that_does_not_answer_now_is_not_found(cfg, monkeypatch):
     monkeypatch.setattr(wifi_boards, "mdns_resolve", lambda *a, **k: "")
     monkeypatch.setattr(wifi_boards, "listen", lambda *a, **k: 0)
     assert wifi_boards.find_robot_board("yb_eet01") == ("A1B2C3D4E5F6", {})
+
+
+def test_the_sim_mcu_needs_no_wifi_keys(cfg):
+    """bare_sim is udp4 too, but its UDP never leaves this computer: the 1-Click of the
+    Sim MCU robot was refused [NO WI-FI KEYS] on a fresh config (the walkthrough, rc67)."""
+    import gen_bare_config
+    import yaml
+    sim = cfg / "bare_sim_config.yaml"
+    sim.write_text(yaml.safe_dump(gen_bare_config.bare_config("sim")))
+    (cfg / "secrets.yaml").write_text("wifi:\n  ssid: ''\n")
+    assert not mcu_env.wifi_keys_missing(str(sim), str(cfg / "secrets.yaml"))
+
+
+def test_the_pipeline_asks_for_keys_only_after_the_sim_mcu_fallback():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "scripts", "one_click_pipeline.py")).read()
+    assert src.index("controller, sim_mcu = SIM_MCU, True") < src.index("wifi_keys_missing(params_path)")
