@@ -362,6 +362,64 @@ def no_board_attached(controller_cfg: dict) -> bool:
     return not os.path.exists(port) and not mcu_identity.identify_bus()
 
 
+def wireless_board(controller_cfg: dict, params_path: str, params: dict) -> dict:
+    """A Wi-Fi robot that has left the USB cable, found on the network.
+
+    Only an ESP32/ESP32-S3 carries micro-ROS over Wi-Fi (udp4). After its first USB
+    flash it is unplugged and runs on the robot, and from then on it is found by
+    the robot's name: the uid its USB flash recorded, and the board answering a ping
+    (or sending a syslog banner) as that uid. Returns the board's entry with its
+    `uid` and `ip`; {"uid": ...} when this host knows the board but it did not
+    answer; {} when the robot is not a Wi-Fi robot, its USB port is present, or this
+    host never flashed it.
+    """
+    import mcu_env
+    import wifi_boards
+    if not mcu_env.transport_is_wifi(controller_cfg.get("transport")):
+        return {}
+    if os.path.exists(mcu_identity.resolve_port(controller_cfg.get("serial_port", "/dev/ttyACM0"))):
+        return {}
+    try:
+        env = mcu_env.env_from_config(params_path, cockpit_paths.secrets_path())
+    except SystemExit:
+        env = {}
+    uid, entry = wifi_boards.find_robot_board(
+        mcu_env.robot_name_of(params, params_path),
+        port=int(env.get("syslog_port") or wifi_boards.syslog_port()),
+        ping_port=int(env.get("ping_port") or wifi_boards.PING_PORT),
+        mdns_name=mcu_env.robot_mdns_name(params, params_path),
+        pinned_ip=mcu_env.ota_ip_for(params))
+    if not uid:
+        return {}
+    return dict(entry, uid=uid) if entry else {"uid": uid}
+
+
+def probe_wireless(found: dict, pio_env: str, prebuilt_dir: str = None) -> dict:
+    """The probe for a board on Wi-Fi: its own banner, as it just answered a ping,
+    against the image this run would install -- the same verdict rules as
+    mcu_probe.py, minus the USB evidence it does not have. The env is written on
+    every run regardless, so whether it changed is not asked."""
+    import mcu_probe
+    local = mcu_probe.local_build(pio_env, prebuilt_dir)
+    installed = {"git": found.get("git"), "app": found.get("app"), "distro": found.get("distro")}
+    if not installed["git"]:
+        verdict = "unknown"
+    elif installed["git"] != local.get("git") or (
+            installed["distro"] and installed["distro"] != local.get("distro")):
+        verdict = "stale"
+    else:
+        verdict = "up_to_date"
+    human = (f"Wi-Fi  uid={found.get('uid')} at {found.get('ip')} (not on USB)\n"
+             f"  installed      app={installed['app']} distro={installed['distro']} "
+             f"git={installed['git']}   [board]\n"
+             f"  this tree      git={local.get('git')} distro={local.get('distro')}\n"
+             f"  env over air   {'yes' if found.get('envota') else 'NO -- update the application first'}\n"
+             f"  verdict        {verdict}")
+    return {"verdict": verdict, "installed": installed, "local": local, "wireless": True,
+            "needs_env_write": True, "firmware_differs": verdict in ("stale", "unknown"),
+            "_human": human}
+
+
 def stop_previous_stack(state_dir: str = None) -> list:
     """Stop what an earlier 1-Click run left running before this one starts.
 
@@ -1697,7 +1755,21 @@ def main():
     # same topics), so a person with nothing plugged in gets a running robot
     # instead of a flash error. Nothing is built, probed or flashed.
     sim_mcu = controller == SIM_MCU
-    if not sim_mcu and not args.skip_flash and not args.require_board and no_board_attached(controller_cfg):
+    # A Wi-Fi robot off the USB cable is still a robot with a board: look for it on the
+    # network before calling it absent (and never swap it for the Sim MCU when this
+    # host knows its board -- that would run another robot under its name).
+    wireless = ({} if (sim_mcu or args.skip_flash)
+                else wireless_board(controller_cfg, params_path, params))
+    if wireless.get("ip"):
+        print(f"📡 '{robot_name}' is on Wi-Fi, not USB: board uid={wireless['uid']} answered "
+              f"from {wireless['ip']}.")
+    elif wireless.get("uid"):
+        raise SystemExit(
+            f"\n❌ [NO BOARD] '{robot_name}' is a Wi-Fi robot (board uid={wireless['uid']}) and it "
+            f"is not on USB, did not answer a ping and sent no syslog banner. Is it powered "
+            f"and on the network its config names? Nothing was started.")
+    if (not sim_mcu and not args.skip_flash and not args.require_board and not wireless
+            and no_board_attached(controller_cfg)):
         # Only a GENERATED robot (a bare module, `bare_<silicon>`) falls back. A real robot --
         # a reference design, or one the user saved -- runs on its own board or not at all:
         # swapping it for the Sim MCU ran some other robot under its name (user, 2026-10-06).
@@ -1890,7 +1962,7 @@ def main():
         source, prebuilt_dir = firmware_source(args.firmware, pio_env, args.distro)
         print(f"\n[2/6] [FIRMWARE] Image source for {pio_env}: "
               + ("local build (PlatformIO)" if source == "build" else f"prebuilt release image {prebuilt_dir}"))
-        if not os.path.exists(serial_port) and not sys.platform.startswith("linux"):
+        if not os.path.exists(serial_port) and not wireless and not sys.platform.startswith("linux"):
             print(f"  ❌ {serial_port} is not on this machine, and this is not Linux; the robot "
                   f"computer must be a Linux machine with the board plugged in.")
             return 1
@@ -1903,7 +1975,7 @@ def main():
         # a run: an RP2 names its own silicon in its vid/pid, but a classic
         # ESP32 answers through a CP2102/CH340/FTDI that says nothing about the
         # chip behind it, so that case must never block. See scripts/mcu_identity.py.
-        if not unoq and not args.skip_mcu_check:
+        if not unoq and not wireless and not args.skip_mcu_check:
             expected = mcu_identity.env_family(pio_env)
             family, chip, decisive = mcu_identity.identify_target(serial_port)
             if mcu_identity.mismatch(expected, family, decisive):
@@ -1933,6 +2005,9 @@ def main():
         if unoq:
             print("\n[2/6] [PROBE] Asking the UNO Q's STM32 over SWD what its flash holds...")
             board = probe_unoq(prebuilt_dir)
+        elif wireless:
+            print(f"\n[2/6] [PROBE] Asking '{robot_name}' over Wi-Fi ({wireless['ip']}) what it is running...")
+            board = probe_wireless(wireless, pio_env, prebuilt_dir)
         else:
             print(f"\n[2/6] [PROBE] Asking {serial_port} what it is already running...")
             board = probe_board(pio_env, serial_port, flash_baud, params_path, app="base",

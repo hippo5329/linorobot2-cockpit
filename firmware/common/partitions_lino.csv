@@ -56,10 +56,20 @@
 # firmware/common/lib/mcu_env/mcu_env.cpp, which finds the partition by name
 # rather than by offset. Keep the CSV and the script in step.
 #
+# 2026-10-07: `env` is subtype `spiffs` (0x82), not the private 0x99 it had. A Wi-Fi
+# robot leaves the computer after its first USB flash and is updated over the air from
+# then on, env block included. ArduinoOTA's filesystem command finds its target as
+# DATA/SPIFFS by label (Update.begin(..., U_SPIFFS, ..., label)), so the env answers to
+# it once it carries that subtype and ota.cpp names it with setPartitionLabel("env").
+# Nothing mounts it: SPIFFS.begin() looks for the label "spiffs", and this project
+# never calls it. The firmware finds the env by NAME with any subtype, so a new image
+# still reads an old table; an OLD image on this table does not find its env, which
+# is why the OTA uploader refuses an image whose banner lacks `envota=1`.
+#
 # Name,     Type, SubType,  Offset,   Size,     Flags
 nvs,        data, nvs,      0x9000,   0x5000,
 otadata,    data, ota,      0xe000,   0x2000,
 app0,       app,  ota_0,    0x10000,  0x1F0000,
 app1,       app,  ota_1,    0x200000, 0x1F0000,
 adclut,     data, 0x9a,     0x3FC000, 0x3000,
-env,        data, 0x99,     0x3FF000, 0x1000,
+env,        data, spiffs,   0x3FF000, 0x1000,

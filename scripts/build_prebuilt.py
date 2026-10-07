@@ -388,6 +388,12 @@ def build(profile, keep_going=False):
                     "this image. Build the env block with scripts/mcu_env.py and write "
                     f"it at {env_offset_for(env)}; reflashing the application never disturbs it.",
         }
+    # An ESP32/ESP32-S3 image from this tree takes its env block over the air
+    # (ArduinoOTA's filesystem command writes the `env` partition). flash_mcu.py
+    # sends an image over the air only when its manifest says so: an older image
+    # on the retagged partition table cannot find its env at all.
+    if "esp32" in env:
+        manifest["envota"] = True
     with open(os.path.join(out_dir, "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
         fh.write("\n")

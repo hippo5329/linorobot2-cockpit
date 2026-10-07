@@ -81,6 +81,9 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 #include "env.h"
 #include "lidar.h"
 #include "wifis.h"
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include <WiFi.h>   // the banner's ip= field
+#endif
 #include "ota.h"
 #include "diag.h"
 
@@ -835,6 +838,58 @@ static void identityField(char *buf, size_t n)
 #endif
 }
 
+// The banner line itself, without the newlines: the serial console prints it
+// and syslog carries it (announceBanner), and both must say the same thing.
+//
+// `envcrc=` is the CRC-32 of the env block it booted with (0: none), which is how
+// the uploader learns that an env it sent over the air took.
+// `envota=1` (ESP32/S3 only: the Wi-Fi transport boards) says this image takes an env block over the air (ArduinoOTA's
+// filesystem command lands in the env, see firmware/common/lib/wifi/ota.cpp).
+// The OTA uploader reads it to refuse an image that does not: sending an env to
+// one would be lost, and installing such an image over the air on an ESP32 with
+// the retagged partition table leaves the board unable to find its env at all.
+static void formatBanner(char *buf, size_t n)
+{
+    char ident[32];
+    identityField(ident, sizeof(ident));
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    const char *envota = " envota=1";
+#else
+    const char *envota = "";
+#endif
+    // The address it has on Wi-Fi, once it has one: a USB flash hears the banner
+    // over the cable and so learns where the robot will be after it is unplugged.
+    char ip[24] = "";
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    if (wifiWanted() && WiFi.status() == WL_CONNECTED)
+        snprintf(ip, sizeof(ip), " ip=%s", WiFi.localIP().toString().c_str());
+#endif
+    snprintf(buf, n, "[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s envcrc=%08lX%s%s",
+             toolName(app_mode), FW_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident, envota,
+             (unsigned long)mcuEnvCrc(), ip,
+             mcuEnvValid() ? "" : " (env blank or invalid - using header defaults)");
+}
+
+// The banner over syslog, for a board that is on Wi-Fi and not on USB: once the
+// first USB flash is done the board leaves the computer, and this line is how the
+// robot computer learns which board is where (the sender's address), what it runs
+// and that it is alive. Every 2 s for the first 30 s -- syslog() drops lines until
+// the radio has associated, and a probe should not wait a minute after a boot --
+// then every 60 s, so a cockpit started later learns the board within a minute.
+// A no-op without a radio, a syslog server or an association (syslog() decides).
+static void announceBanner(void)
+{
+    static uint32_t last = 0;
+    const uint32_t now = millis();
+    const uint32_t period = now < 30000 ? 2000 : 60000;
+    if (last && (now - last) < period)
+        return;
+    last = now ? now : 1;
+    char line[224];
+    formatBanner(line, sizeof(line));
+    syslog(LOG_NOTICE, "%s", line);
+}
+
 static void printBanner(void)
 {
     // distro is here and not in the env partition because it cannot be there:
@@ -845,11 +900,9 @@ static void printBanner(void)
     // The identity field is appended, not inserted: scripts/mcu_probe.py parses
     // this line as key=value pairs, and older hosts reading a newer board must
     // keep working.
-    char ident[32];
-    identityField(ident, sizeof(ident));
-    Serial.printf("\n[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s\n",
-                  toolName(app_mode), FW_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident,
-                  mcuEnvValid() ? "" : " (env blank or invalid - using header defaults)");
+    char line[224];
+    formatBanner(line, sizeof(line));
+    Serial.printf("\n%s\n", line);
 }
 
 // Why the board restarted. The ROM banner cannot answer this: it prints
@@ -1083,13 +1136,23 @@ void setup()
     // no tcpip thread. initWifis() returns early for a serial robot, so this
     // used to abort every ESP32 that flashed a released image -- which compiles
     // OTA in, because the image is built from a Wi-Fi robot's config.
-    if (wifiWanted())
+    if (wifiWanted()) {
         initOta();
+        initPing(formatBanner);
+    }
 
     // Everything above is what every application needs: the bus, the drivetrain,
     // the radio, a log sink. Everything below it is micro-ROS, which only the
     // robot firmware uses -- so a tool takes over here.
     if (!micro_ros) {
+#if LINO_CONSOLE_WRAPPED
+        // A tool on a Wi-Fi robot: the robot may be off the cable, and the tool's
+        // console is its whole output -- so every line also goes to syslog, where
+        // the cockpit's Monitor streams it. (The base application never tees: on a
+        // serial robot its console carries the micro-ROS frames.)
+        if (wifiWanted())
+            lino_console.teeToSyslog(true);
+#endif
         toolSetup(app_mode);
         return;
     }
@@ -1509,6 +1572,7 @@ static void hostLoopDelay()
 #endif
 
 void loop() {
+    announceBanner();
     if (app_mode != APP_BASE) {
         // The radio is the dispatcher's: a tool that serviced it as well would
         // run OTA twice per iteration.

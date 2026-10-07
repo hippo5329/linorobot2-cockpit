@@ -38,10 +38,25 @@ def test_bare_robots_are_generated():
 
 def test_the_pipeline_refuses_a_real_robot_with_no_board_rather_than_run_the_sim_mcu():
     src = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
-    a = src.index("no_board_attached(controller_cfg):\n")
+    main_at = src.index("sim_mcu = controller == SIM_MCU")
+    a = src.index("no_board_attached(controller_cfg)", main_at)
     block = src[a:a + 1500]
     assert "if real_robot:" in block
     assert block.index("raise SystemExit") < block.index("controller, sim_mcu = SIM_MCU, True")
+
+
+def test_a_wifi_robot_off_the_cable_is_looked_for_on_the_network_first():
+    """A Wi-Fi robot with no USB tty is not an absent board: the pipeline asks the
+    network (wireless_board) before the no-board fallback, and a board this host
+    knows that does not answer is an error -- never a swap to the Sim MCU."""
+    src = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
+    main_at = src.index("sim_mcu = controller == SIM_MCU")
+    look = src.index("wireless_board(controller_cfg, params_path, params)", main_at)
+    fallback = src.index("no_board_attached(controller_cfg)", main_at)
+    assert look < fallback
+    between = src[look:fallback]
+    assert "[NO BOARD]" in between and "raise SystemExit" in between
+    assert "not wireless" in src[fallback - 200:fallback]
 
 
 GUARD = r"""

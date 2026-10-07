@@ -19,6 +19,50 @@
 #if defined(HAS_WIFI)
 #include <ArduinoOTA.h>
 
+// The env block over the air (2026-10-07). A Wi-Fi robot -- an ESP32 or ESP32-S3,
+// the only boards on the udp4 transport -- leaves the computer after its first USB
+// flash; from then on its env (the tool to run, the agent address, the sensor
+// flags) is written with ArduinoOTA's FILESYSTEM command, as the same 4 KB image
+// scripts/mcu_env.py builds for USB. `env` is a DATA/SPIFFS partition
+// (partitions_lino.csv) and setPartitionLabel("env") points the filesystem command
+// at it, so the core's Updater writes the block in place and checks its MD5; the
+// board reboots into it, and the uploader confirms by the banner's `envcrc=`.
+
+#include <WiFiUdp.h>
+
+static WiFiUDP ping_udp;
+static bool ping_started = false;
+static void (*ping_format)(char *, size_t) = NULL;
+
+void initPing(void (*format_banner)(char *buf, size_t n))
+{
+    const uint16_t port = envU16("ping_port", 3233);
+    if (!port || !format_banner)
+        return;
+    ping_format = format_banner;
+    ping_started = ping_udp.begin(port);
+}
+
+// One non-blocking look per call: parsePacket() is a recvfrom on a socket with
+// nothing in it nearly always, which costs microseconds on the control loop.
+static void runPing(void)
+{
+    if (!ping_started)
+        return;
+    if (ping_udp.parsePacket() <= 0)
+        return;
+    char req[16];
+    const int r = ping_udp.read(req, sizeof(req) - 1);
+    req[r > 0 ? r : 0] = '\0';
+    if (strncmp(req, "lino?", 5) != 0)
+        return;
+    char line[224];
+    ping_format(line, sizeof(line));
+    ping_udp.beginPacket(ping_udp.remoteIP(), ping_udp.remotePort());
+    ping_udp.write((const uint8_t *)line, strlen(line));
+    ping_udp.endPacket();
+}
+
 // Only after initOta(): main.cpp calls that behind wifiWanted(), and handle()
 // on a listener that was never begun is a call per loop() for nothing.
 static bool ota_started = false;
@@ -70,6 +114,16 @@ void initOta(void)
 	Serial.println("End Failed");
       }
     });
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    // The filesystem command writes the env partition (see the top of this file).
+    ArduinoOTA.setPartitionLabel("env");
+#endif
+    // The robot's name on the network: ArduinoOTA starts mDNS under this hostname,
+    // so the robot computer resolves `<robot>.local` from the name the user picked
+    // the robot by (mcu_env writes `hostname` from robot.name, made DNS-safe).
+    const char *host = envGet("hostname", "");
+    if (host && host[0])
+        ArduinoOTA.setHostname(host);
     ArduinoOTA.begin();
     ota_started = true;
 }
@@ -78,6 +132,7 @@ void runOta(void)
 {
     if (ota_started)
         ArduinoOTA.handle();
+    runPing();
 }
 
 #endif // HAS_WIFI

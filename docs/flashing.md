@@ -144,3 +144,38 @@ stamp in only the primary one lost it on the first real run: the board was in ap
 the flash landed in recovery 4 (1200-baud touch, then picotool), which returned 0 directly, and the
 next probe reported a board that had "never been flashed by this host" moments after this host
 flashed it. One `flashed_ok()` exit point, always.
+
+### A Wi-Fi robot leaves the cable after its first flash — then everything is over the air
+Only an ESP32 or ESP32-S3 carries micro-ROS over Wi-Fi (`transport: udp4`); the RP2 boards
+are serial, with the radio off. Such a robot is flashed over USB **once**, then unplugged and
+mounted, and from then on it has no tty. Tools, bringup, teleop, SLAM and Nav2 all run with
+it on Wi-Fi, and every write to it goes over the air.
+
+The robot is found by **its name**, the one the user picks it by:
+
+1. **The first USB flash** generates the robot's OTA password when it has none
+   (`<config dir>/secrets.ota.yaml`, mode 600, keyed by robot name, gitignored there; never
+   printed), writes it into the env with the robot's mDNS `hostname` (its name made
+   DNS-safe: `yb_eet01` → `yb-eet01`), and hears the board's banner over the cable. That
+   banner names the board (`uid=`, the ESP32's efuse MAC) and, once Wi-Fi is up, its address
+   (`ip=`), so this host records robot → uid → address in
+   `<config dir>/state/wifi_boards.json`.
+2. **Unplugged, it is asked, not waited for.** The firmware answers a UDP `lino?` on its
+   ping port (3233, env `ping_port`) with its banner. The cockpit pings the address it last
+   had, then `<robot>.local` (mDNS, resolved by the cockpit itself), then broadcasts. It also
+   sends its banner to syslog every 60 s, and the agent session says it is connected.
+3. **Writes go over ArduinoOTA** (`scripts/ota_upload.py`, password-authenticated, MD5
+   checked by the board): the application to the next OTA slot, the env block to the `env`
+   partition. `flash_mcu.py` does this by itself when a Wi-Fi robot's port is absent (or
+   with `--ota`), so the pipeline, Hardware Tests and tool switching need nothing new. Each
+   write is confirmed by the board's own answer: the new `git=` after an application, the
+   new `envcrc=` after an env block. A board that answers as another uid is not written.
+4. **A tool's console is syslog.** A diagnostic tool on a Wi-Fi robot tees every console
+   line to syslog, and Hardware Tests' Monitor streams that board's syslog
+   (`scripts/wifi_boards.py monitor <robot config>`).
+
+`python3 scripts/wifi_boards.py ping` lists the boards that answer, with the robot each
+one is. An ESP32 board flashed before env-over-the-air (its partition table names `env`
+`0x99`, not `spiffs`) takes an application over the air but not an env: flash it over USB
+once. An image without `envota=1` in its banner, or `envota` in its release manifest, is
+never sent over the air, because on the new table it could not find its env.

@@ -88,8 +88,12 @@ def test_rp2350_and_esp32_emit_uid():
 def test_the_banner_appends_the_identity_after_git():
     """Order matters: an older host parsing a newer board must still match."""
     src = read_main()
-    fmt = re.search(r'Serial\.printf\("\\n\[fw\] linorobot2_hardware ([^"]*)"', src)
+    # One formatter serves the console and syslog (formatBanner in main.cpp).
+    fmt = re.search(r'snprintf\(buf, n, "\[fw\] linorobot2_hardware ([^"]*)"', src)
     assert fmt, "the banner format string moved"
-    assert fmt.group(1).index("git=%s") < fmt.group(1).rindex("%s"), (
+    f = fmt.group(1)
+    assert f.index("git=%s") < f.rindex("%s"), (
         "the identity field must come after git=, not be inserted before it"
     )
+    # The Wi-Fi fields (envota, envcrc) are appended too, after the identity.
+    assert f.index("git=%s") < f.index("envcrc="), "envcrc must follow git= and the identity"

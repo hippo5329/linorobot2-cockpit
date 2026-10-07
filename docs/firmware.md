@@ -833,14 +833,17 @@ flash over the air has quietly reacquired the job the split exists to take away 
 so on the one operation that can brick an assembled robot. The host builds; the robot writes,
 whether the bytes arrive over USB or over the air.
 
-This is **not implemented yet** — nothing in `scripts/` or `web/backend/` invokes `espota`, and the
-firmware side is the OTA responder, compiled in wherever there is a radio (`HAS_WIFI`), plus
-`telemetry.ota_port` (3232). When it is built, it takes
-the same shape as the USB path: the robot computer fetches or builds the image, verifies its
-SHA-256, and runs the uploader against the board itself. Do not add an OTA target to
-the host role, and do not drive it from PlatformIO's `upload` (invariant 6 forbids that for the same
-reason it forbids `pio run -t upload`: it welds build and flash together and hides which binary
-reached the board).
+It is implemented that way (2026-10-07), for the boards that need it: the Wi-Fi transport
+robots, ESP32 and ESP32-S3, which leave the USB cable after their first flash.
+`scripts/ota_upload.py` speaks ArduinoOTA to the board's responder (`telemetry.ota_port`,
+3232; the password is the robot's own, generated at its first USB flash), and
+`flash_mcu.py` uses it on the robot computer when the robot's port is absent: the release
+image's checksums are checked as for USB, the board is identified by its banner's `uid`
+before anything is written, and each write is confirmed by the board's next banner. The
+env block goes the same way: `env` is a DATA/SPIFFS partition and `ota.cpp` points
+ArduinoOTA's filesystem command at it. The board answers a UDP `lino?` on `ping_port`
+(3233) with its banner and advertises `<hostname>.local`; see docs/flashing.md, *A Wi-Fi
+robot leaves the cable*. Nothing here goes through PlatformIO's `upload`.
 
 ### Every env key has a writer and a reader, and a test says so
 A key the config side writes under one name and the firmware reads under another fails

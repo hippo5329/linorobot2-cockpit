@@ -27,7 +27,7 @@ there are only three firmware images -- one per MCU -- and a Waveshare General
 Driver board and a bare DevKit run the same esp32 binary. Everything that makes
 one of them a particular robot is here:
 
-    site        wifi_ssid  wifi_psk  wifi
+    site        wifi_ssid  wifi_psk  wifi  hostname (mDNS: the robot's name)
                 agent_ip   agent_port   transport  baud  node
                 syslog_ip  syslog_port
                 lidar_ip   lidar_port  lidar_rx  lidar_baud
@@ -35,7 +35,7 @@ one of them a particular robot is here:
     runtime     dual_core  i2c_scan  pub_mag  pub_battery  pub_env  best_effort  console
                 sim_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
-                ota_port
+                ota_port  ping_port
                 wifi_sleep  (1 = let the radio power-save; it is kept awake
                              by default -- latency over milliwatts)
                 diag_tx  diag_baud   (a second UART that prints the loop's
@@ -329,7 +329,13 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
         "lidar_ip": lidar_ip,
         "lidar_port": lidar_port,
     }
-    ota_password = sec_telem.get("ota_password") or telemetry.get("ota_password")
+    # The robot's name on the network (mDNS `<hostname>.local`), so the robot
+    # computer finds a Wi-Fi robot that has left the USB cable by the name the user
+    # picks it by. Not a secret; used only when the radio is on.
+    host = mdns_hostname(robot_mdns_name(params, params_path))
+    if host:
+        env["hostname"] = host
+    ota_password = ota_password_for(params, params_path, secrets)
     if ota_password:
         env["ota_password"] = str(ota_password)
     env.update(hardware_env(params))
@@ -342,6 +348,89 @@ def env_from_config(params_path: str, secrets_path: str, default_host: str = Non
         env["wifi_psk"] = ""
         env.pop("ota_password", None)
     return env
+
+
+def robot_name_of(params: dict, params_path: str = None) -> str:
+    """The name the user picks the robot by: robot.name, else the file's stem."""
+    name = (params.get("robot") or {}).get("name")
+    if not name and params_path:
+        name = os.path.basename(params_path)
+        for suffix in ("_config.yaml", ".yaml", ".yml"):
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+                break
+    return str(name or "")
+
+
+def mdns_hostname(robot_name: str) -> str:
+    """The robot's name as a DNS label: lowercase, [a-z0-9-] only, at most 63
+    characters (`yb_eet01` -> `yb-eet01`). The board advertises it over mDNS and
+    wifi_boards resolves `<label>.local`; both sides call this one function."""
+    import re
+    label = re.sub(r"[^a-z0-9-]+", "-", str(robot_name or "").lower()).strip("-")
+    return label[:63].strip("-")
+
+
+def robot_mdns_name(params: dict, params_path: str = None) -> str:
+    """What the robot is called on the network: telemetry.hostname when the user set
+    one, else the robot's name -- as the config engine's OTA hostname, which mirrors
+    the robot name until it is edited. Made a DNS label by mdns_hostname()."""
+    tel = ((params.get("base_controller") or {}).get("telemetry") or {})
+    return str(tel.get("hostname") or robot_name_of(params, params_path))
+
+
+def ota_ip_for(params: dict) -> str:
+    """An address the user pinned for the robot (telemetry.ota_ip, the config
+    engine's `ota.ip`): tried before the one this host learned. "" when unset."""
+    tel = ((params.get("base_controller") or {}).get("telemetry") or {})
+    return str(tel.get("ota_ip") or "")
+
+
+def ota_password_for(params: dict, params_path: str = None, secrets: dict = None) -> str:
+    """The OTA password of the robot `params` describes. The robot is chosen by name
+    and its credential follows it: the robot's own entry in secrets.ota.yaml (the one
+    generated at its first USB flash) wins, then a shared telemetry.ota_password in
+    secrets.yaml, then one written into the config itself."""
+    own = (load_yaml(cockpit_paths.ota_secrets_path()).get("robots") or {}).get(
+        robot_name_of(params, params_path)) or {}
+    tgt = params.get("base_controller", {}) or {}
+    return str(own.get("ota_password")
+               or ((secrets or {}).get("telemetry") or {}).get("ota_password")
+               or (tgt.get("telemetry") or {}).get("ota_password")
+               or "")
+
+
+def ensure_ota_password(params_path: str, secrets_path: str = None) -> str:
+    """A Wi-Fi robot's OTA password, generating and saving one when it has none.
+
+    Called by the USB flash of a Wi-Fi robot -- the last flash it gets over a cable --
+    so that every write after it, over the air, can authenticate. An OTA responder
+    without a password lets anyone on the robot's network reflash it. The password is
+    stored under the robot's name in secrets.ota.yaml (mode 600, gitignored in the
+    config directory) and never printed. A serial robot gets none: its radio is off.
+    Returns "" for a serial robot."""
+    params = load_yaml(params_path)
+    if not transport_is_wifi((params.get("base_controller") or {}).get("transport")):
+        return ""
+    existing = ota_password_for(params, params_path,
+                                load_yaml(secrets_path or cockpit_paths.secrets_path()))
+    if existing:
+        return existing
+    import secrets as _secrets
+    import yaml
+    name = robot_name_of(params, params_path)
+    path = cockpit_paths.ota_secrets_path()
+    data = load_yaml(path)
+    data.setdefault("robots", {})[name] = {"ota_password": _secrets.token_urlsafe(18)}
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("# Generated by the cockpit: each Wi-Fi robot's OTA password, set at its first\n"
+                 "# USB flash. Keep it; a robot that loses it needs a USB flash again.\n")
+        yaml.safe_dump(data, fh, default_flow_style=False, sort_keys=True)
+    os.replace(path + ".tmp", path)
+    print(f"[mcu_env] generated an OTA password for '{name}' (saved in "
+          f"{os.path.basename(path)}, not shown)", file=sys.stderr)
+    return data["robots"][name]["ota_password"]
 
 
 def transport_is_wifi(transport) -> bool:
@@ -721,6 +810,11 @@ def hardware_env(params: dict) -> dict:
     telemetry = tgt.get("telemetry", {}) or {}
     if telemetry.get("ota_port") is not None:
         env["ota_port"] = int(telemetry["ota_port"])
+    # The ping responder's port (firmware/common/lib/wifi/ota.h): "lino?" over UDP
+    # is answered with the banner, which is how a Wi-Fi robot off the cable is asked
+    # what it is. Default 3233 on the board; 0 turns it off.
+    if telemetry.get("ping_port") is not None:
+        env["ping_port"] = int(telemetry["ping_port"])
     if telemetry.get("ota_password"):
         env["ota_password"] = str(telemetry["ota_password"])
 

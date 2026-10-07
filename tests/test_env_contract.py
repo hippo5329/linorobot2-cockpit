@@ -40,7 +40,7 @@ MAXIMAL_CONFIG = {
         # Power save back on: not in any reference config (awake is the default).
         "wifi": {"sleep": True},
         "qos": "reliable", "use_dual_core": True, "boot_delay": 2,
-        "telemetry": {"ota_port": 3232, "wifi_monitor_min": 2, "ota_password": "secret_ota_pwd"}, "stamped_cmd_vel": True,
+        "telemetry": {"ota_port": 3232, "ping_port": 3233, "wifi_monitor_min": 2, "ota_password": "secret_ota_pwd"}, "stamped_cmd_vel": True,
         "sensors": {"imu": "auto", "mag": "auto", "current": "INA219", "env": "BMP280",
                     "use_sim_ld19": True},
         "lidar": {"model": "ld19", "comm_mode": "serial", "rx_pin": 4, "baudrate": 230400},

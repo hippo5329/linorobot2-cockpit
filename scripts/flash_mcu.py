@@ -183,6 +183,175 @@ def is_unoq_family(env: str) -> bool:
     return mcu_identity.env_family(env) == "unoq"
 
 
+def params_wifi_transport(params_path: Optional[str]) -> bool:
+    """Does this robot config put micro-ROS on Wi-Fi (udp4)? Only an ESP32/ESP32-S3
+    can: the RP2 boards are serial-only, with the radio off."""
+    if not params_path or not os.path.isfile(params_path):
+        return False
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import mcu_env
+        tgt = mcu_env.load_yaml(params_path).get("base_controller") or {}
+        return mcu_env.transport_is_wifi(tgt.get("transport"))
+    except Exception:
+        return False
+
+
+def image_takes_env_over_air(prebuilt_dir: Optional[str]) -> bool:
+    """Can the image about to be installed receive an env over the air? A release
+    profile says so in its manifest; a local build is this tree, and this tree's
+    ota.cpp points the filesystem command at the env partition. An image that
+    cannot must never be sent over the air: on the retagged partition table it does
+    not even find the env, and only a USB flash brings that board back."""
+    if prebuilt_dir:
+        try:
+            with open(os.path.join(prebuilt_dir, "manifest.json")) as fh:
+                return bool(json.load(fh).get("envota"))
+        except Exception:
+            return False
+    try:
+        with open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "wifi", "ota.cpp")) as fh:
+            return 'setPartitionLabel("env")' in fh.read()
+    except OSError:
+        return False
+
+
+def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
+    """Write a Wi-Fi robot that is not on USB: the application (unless --env-only) and
+    then the env block, both over ArduinoOTA, each confirmed by the board's own banner
+    on syslog.
+
+    The board is found by the robot, not by an address: the robot's name gives the
+    board's uid (recorded at its USB flash, wifi_boards.remember_robot) and the uid
+    gives the address it last sent a banner from. Nothing is written to a board
+    that has not identified itself as that uid -- the over-the-air twin of the
+    [WRONG BOARD] guard on USB.
+    """
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import mcu_env
+    import mcu_probe
+    import ota_upload
+    import wifi_boards
+    import cockpit_paths
+
+    if not args.params:
+        log("❌ [OTA] a flash over the air needs the robot config (--params): the robot's "
+            "name is what finds its board, and its secrets are its OTA password.")
+        return 1
+    params_path = os.path.abspath(args.params)
+    params = mcu_env.load_yaml(params_path)
+    robot = mcu_env.robot_name_of(params, params_path)
+    env_bin = resolve_env_bin(args, prebuilt_dir)
+    try:
+        env_vals = mcu_env.env_from_config(params_path, cockpit_paths.secrets_path())
+    except SystemExit as exc:
+        log(f"❌ [OTA] could not read the robot's env: {exc}")
+        return 1
+    syslog_port = int(env_vals.get("syslog_port") or wifi_boards.syslog_port())
+    ota_port = int(env_vals.get("ota_port") or 3232)
+    ping_port = int(env_vals.get("ping_port") or wifi_boards.PING_PORT)
+    password = str(env_vals.get("ota_password") or "")
+
+    log("==================================================================")
+    log(f"📡 Over the air: '{robot}' ({args.env}) is not on USB ({args.port} absent)"
+        if not getattr(args, "ota", False) else f"📡 Over the air: '{robot}' ({args.env}), --ota")
+    log("==================================================================")
+    uid, entry = wifi_boards.find_robot_board(
+        robot, port=syslog_port, ping_port=ping_port,
+        mdns_name=mcu_env.robot_mdns_name(params, params_path),
+        pinned_ip=mcu_env.ota_ip_for(params))
+    if not uid:
+        log(f"❌ [NO BOARD] this computer has never flashed '{robot}' over USB, so it does not "
+            f"know which board is that robot. Plug the board in and flash it once; after "
+            f"that it can leave the cable.")
+        return 1
+    if not entry:
+        heard = wifi_boards.heard_boards()
+        log(f"❌ [NO BOARD] '{robot}' (board uid={uid}) is not on USB and has not been heard "
+            f"on Wi-Fi: no answer to a ping (UDP {ping_port}) and no banner on syslog "
+            f"(UDP {syslog_port}) in the last {wifi_boards.FRESH_S} s. Is it powered, and on the network its env names?")
+        for u, e in sorted(heard.items()):
+            log(f"   heard: uid={u} at {e.get('ip')} running {e.get('git')} ({e.get('app')})")
+        return 1
+    ip = entry["ip"]
+    log(f"board uid={uid} at {ip}: running {entry.get('git')} {entry.get('distro') or ''} "
+        f"app={entry.get('app')}, heard {int(time.time() - float(entry.get('seen') or 0))} s ago")
+
+    def _progress(what):
+        last = [-1]
+
+        def show(done, total):
+            pct = done * 100 // total
+            if pct >= last[0] + 10 or done == total:
+                last[0] = pct
+                log(f"   {what}: {pct}% ({done}/{total} bytes)")
+        return show
+
+    if not args.env_only:
+        image = os.path.join(build_dir, "firmware.bin")
+        if not os.path.isfile(image):
+            log(f"❌ [OTA] no application image at {image}.")
+            return 1
+        if not image_takes_env_over_air(prebuilt_dir):
+            log("❌ [OTA] this image cannot take an env over the air (it predates that "
+                "change), so installing it over the air would strand the board's env. "
+                "Flash it over USB, or use a newer image.")
+            return 1
+        want_git = mcu_probe.local_build(args.env, prebuilt_dir).get("git")
+        t0 = time.time()
+        log(f"Writing the application ({os.path.getsize(image)} bytes) to {ip}:{ota_port}...")
+        try:
+            ota_upload.upload(ip, open(image, "rb").read(), "app", ota_port, password,
+                              progress=_progress("application"))
+        except ota_upload.OtaError as exc:
+            log(f"❌ [OTA] {exc}")
+            return 1
+        log(f"   written; waiting for the board to come back running {want_git}...")
+        back = wifi_boards.wait_for(uid, lambda e: e.get("git") == want_git, 120, since=t0,
+                                    port=syslog_port, ping_port=ping_port)
+        if not back:
+            log(f"❌ [OTA] the board took the image but has not reported {want_git} within "
+                f"120 s (its last banner: {wifi_boards.board(uid).get('git')}).")
+            return 1
+        entry, ip = back, back["ip"]
+        log(f"✅ application {want_git} running on uid={uid} ({ip}).")
+
+    if env_bin:
+        if not entry.get("envota"):
+            log("❌ [OTA] the board's image cannot take an env over the air. Update its "
+                "application first (a flash without --env-only), or flash it over USB.")
+            return 1
+        block = open(env_bin, "rb").read()
+        want_crc = int.from_bytes(block[:4], "little")
+        t1 = time.time()
+        log(f"Writing the env block to {ip}:{ota_port}...")
+        try:
+            ota_upload.upload(ip, block, "env", ota_port, password, filename="env.bin")
+        except ota_upload.OtaError as exc:
+            log(f"❌ [OTA] {exc}")
+            return 1
+        back = wifi_boards.wait_for(
+            uid, lambda e: int(e.get("envcrc") or "0", 16) == want_crc, 90, since=t1,
+            port=syslog_port, ping_port=ping_port)
+        if not back:
+            log(f"❌ [OTA] the env block was sent but the board has not booted with it "
+                f"(want envcrc={want_crc:08X}, last banner envcrc={wifi_boards.board(uid).get('envcrc')}).")
+            return 1
+        entry = back
+        log(f"✅ env block running on uid={uid} (envcrc={want_crc:08X}).")
+
+    # The stamp a USB flash would leave, filed under the board rather than a port it
+    # no longer has, so the probe and the UI can say what this host put there.
+    stamp = dict(mcu_probe.read_stamp(args.env, f"wifi-{uid}"))
+    stamp.update(env=args.env, port=f"wifi-{uid}", app=entry.get("app") or args.app or "base",
+                 git=entry.get("git"), distro=entry.get("distro"), id_kind="uid",
+                 board_id=uid, ip=entry.get("ip"), transport="wifi", banner_confirmed=True)
+    if env_bin:
+        stamp["env_sha256"] = hashlib.sha256(open(env_bin, "rb").read()).hexdigest()
+    mcu_probe.write_stamp(args.env, f"wifi-{uid}", stamp)
+    return 0
+
+
 def flash_unoq(args, prebuilt_dir: Optional[str]) -> int:
     """The UNO Q over SWD: the env block (with its `app`) and, unless --env-only, the image.
 
@@ -1351,6 +1520,18 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
         # not an override, it is the only true description of the hardware.
         params = params or manifest["config"]
 
+    # A Wi-Fi robot's env carries its OTA password, generated here on its first flash
+    # when it has none: every write after this one comes over the air and must
+    # authenticate. A serial robot gets none (its radio is off).
+    if is_esp_family(getattr(args, "env", "") or ""):
+        try:
+            sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+            import mcu_env
+            mcu_env.ensure_ota_password(os.path.abspath(params))
+        except SystemExit:
+            raise
+        except Exception as exc:
+            log(f"⚠️  could not set up an OTA password: {exc}")
     out = os.path.join(tempfile.gettempdir(), f"lino_env_{os.getpid()}.bin")
     cmd = [sys.executable, os.path.join(REPO_ROOT, "scripts", "mcu_env.py"), "build",
            "--params", os.path.abspath(params),
@@ -1796,6 +1977,21 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
         if banner.get("board_id"):
             stamp["board_id"] = banner["board_id"]
             stamp["id_kind"] = banner["id_kind"]
+            # A Wi-Fi robot leaves the cable after this flash, and from then on it is
+            # found by name: robot -> this uid -> the address its syslog banner comes
+            # from. Heard over USB just now, so this is the one certain moment.
+            if banner["id_kind"] == "uid" and is_esp_family(env) and params_wifi_transport(params):
+                try:
+                    import mcu_env
+                    import wifi_boards
+                    name = mcu_env.robot_name_of(mcu_env.load_yaml(params), params)
+                    ip_m = re.search(r"\bip=(\d+\.\d+\.\d+\.\d+)", captured or "")
+                    wifi_boards.remember_robot(name, banner["board_id"], env,
+                                               ip_m.group(1) if ip_m else None)
+                    log(f"Wi-Fi robot '{name}' is board uid={banner['board_id']}: it can be "
+                        f"unplugged now and is written over the air from here on.")
+                except Exception as exc:
+                    log(f"⚠️  could not record which board '{params}' is: {exc}")
     else:
         stamp["banner_confirmed"] = False
         log("(the board did not print a boot banner in time — the stamp records "
@@ -1871,6 +2067,10 @@ def main() -> int:
                              "flash are separate steps (see docs/flashing.md).")
     parser.add_argument("--no-build", action="store_true",
                         help=argparse.SUPPRESS)  # accepted for backwards compatibility; flashing never builds
+    parser.add_argument("--ota", action="store_true",
+                        help="Write an ESP32/ESP32-S3 Wi-Fi robot over the air even though its "
+                             "USB port is present (without it, over the air is chosen only when "
+                             "the port is absent). Needs --params.")
     parser.add_argument("--timeout", type=int, default=90, help="Timeout for a single upload attempt, in seconds")
     parser.add_argument("--total-timeout", type=int, default=600,
                         help="Budget for the whole flash including every recovery stage, in seconds")
@@ -1927,6 +2127,23 @@ def main() -> int:
     # USB identity, BOOTSEL or port handling below applies.
     if is_unoq_family(args.env):
         return flash_unoq(args, prebuilt_dir)
+
+    # A Wi-Fi robot that has left the USB cable (or --ota): everything below is USB.
+    # Only an ESP32/ESP32-S3 carries micro-ROS over Wi-Fi; an RP2's radio is off.
+    if is_esp_family(args.env) and params_wifi_transport(args.params) and (
+            args.ota or not os.path.exists(args.port)):
+        if args.build:
+            build_proc = run_tool(["pio", "run", "-d", os.path.abspath(os.path.join(REPO_ROOT, args.firmware_dir)),
+                                   "-e", args.env], timeout=900)
+            if build_proc.returncode != 0:
+                log(f"❌ Build failed (exit {build_proc.returncode}); nothing was written.")
+                return 1
+        ota_build_dir = prebuilt_dir or (os.path.join(REPO_ROOT, args.build_dir) if args.build_dir
+                                         else os.path.join(REPO_ROOT, args.firmware_dir, ".pio", "build", args.env))
+        return flash_over_air(args, prebuilt_dir, ota_build_dir)
+    if getattr(args, "ota", False):
+        log("❌ --ota is for an ESP32/ESP32-S3 robot whose config sets the Wi-Fi (udp4) transport.")
+        return 1
 
     # Pin the flash to one physical board -- its port, and its identity -- while
     # the tty still exists to say which one it is. Must happen before anything

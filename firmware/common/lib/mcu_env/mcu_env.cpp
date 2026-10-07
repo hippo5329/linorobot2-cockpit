@@ -51,7 +51,11 @@ static uint32_t crc32_iso(const uint8_t *data, size_t len)
 // point this at the wrong region -- a lookup that fails is loud, an offset that
 // drifts is not.
 #define ENV_PART_NAME    "env"
-#define ENV_PART_SUBTYPE ((esp_partition_subtype_t)0x99)
+// Any subtype: the table retagged `env` from the private 0x99 to `spiffs` on
+// 2026-10-07 so that ArduinoOTA's filesystem command can write it (see
+// partitions_lino.csv). Matching the name alone reads both tables, so a board
+// still carrying the old one keeps its env when it gets this image.
+#define ENV_PART_SUBTYPE ESP_PARTITION_SUBTYPE_ANY
 
 // Mapped, not copied -- the same trick the RP2 path below has always used.
 //
@@ -351,6 +355,21 @@ bool mcuEnvValid(void)
 {
     initMcuEnv();
     return env_valid;
+}
+
+// The stored CRC-32 of the block the board booted with, or 0 when it has none.
+// Every loader points env_data just past the CRC word, so it is read from there.
+// The banner carries it (`envcrc=`) and the OTA uploader waits for the value of the
+// block it sent: on an RP2 the board answers "OK" before the block is copied into
+// the env sector, so only the next boot can say the copy took.
+uint32_t mcuEnvCrc(void)
+{
+    initMcuEnv();
+    if (!env_valid || !env_data)
+        return 0;
+    uint32_t crc = 0;
+    memcpy(&crc, env_data - ENV_CRC_LEN, ENV_CRC_LEN);
+    return crc;
 }
 
 const char *envGet(const char *key, const char *fallback)

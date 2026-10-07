@@ -22,15 +22,35 @@
 
 #include <Arduino.h>
 
+// 2026-10-07: every ESP32 gets the wrapper, not only the S3, for one more job --
+// the syslog TEE. A Wi-Fi robot (ESP32/ESP32-S3 on udp4) leaves the USB cable after
+// its first flash, and a diagnostic tool's whole output is its console. With the tee
+// on, each complete console line also goes to syslog, where the cockpit's Monitor
+// streams it (the robot computer is the syslog sink). main.cpp turns it on for a
+// tool on a Wi-Fi robot only: the base application's console is the micro-ROS
+// serial transport on a serial robot, and its frames must never be split into
+// log lines. On a classic ESP32 there is nothing to select; the wrapper forwards
+// to the UART Serial.
+#if (defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT) || defined(ESP32)
 #if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
 #define LINO_CONSOLE_SELECTABLE 1
-
+#else
+#define LINO_CONSOLE_SELECTABLE 0
+#endif
+#define LINO_CONSOLE_WRAPPED 1
 class LinoConsole : public Stream
 {
     private:
         bool uart0_ = false;
+        bool tee_ = false;
+        char line_[160];
+        size_t len_ = 0;
+#if LINO_CONSOLE_SELECTABLE
         Stream &s() { return uart0_ ? static_cast<Stream &>(Serial0) : static_cast<Stream &>(Serial); }
-
+#else
+        Stream &s() { return static_cast<Stream &>(Serial); }
+#endif
+        void teeByte(uint8_t c);
     public:
         // Read the env key. Called once, at the top of setup(), before the
         // first print; the flash partition is readable by then.
@@ -38,31 +58,41 @@ class LinoConsole : public Stream
         void select(bool uart0) { uart0_ = uart0; }
         bool isUart0() const { return uart0_; }
         const char *name() const { return uart0_ ? "uart0" : "usb"; }
-
+        // Copy every complete line to syslog as well (a tool on a Wi-Fi robot).
+        void teeToSyslog(bool on) { tee_ = on; len_ = 0; }
         void begin(unsigned long baud);
         void end();
         size_t setRxBufferSize(size_t n);
         size_t setTxBufferSize(size_t n);
         // A bridge is always "open"; only the native port waits for a host.
+#if LINO_CONSOLE_SELECTABLE
         operator bool() { return uart0_ ? true : (bool)Serial; }
-
+#else
+        operator bool() { return true; }      // a classic ESP32's UART: always "open"
+#endif
         int available() override { return s().available(); }
         int read() override { return s().read(); }
         int peek() override { return s().peek(); }
         void flush() override { s().flush(); }
-        size_t write(uint8_t c) override { return s().write(c); }
-        size_t write(const uint8_t *buf, size_t n) override { return s().write(buf, n); }
+        size_t write(uint8_t c) override
+        {
+            if (tee_) teeByte(c);
+            return s().write(c);
+        }
+        size_t write(const uint8_t *buf, size_t n) override
+        {
+            if (tee_)
+                for (size_t i = 0; i < n; i++) teeByte(buf[i]);
+            return s().write(buf, n);
+        }
         using Print::write;
 };
-
 extern LinoConsole lino_console;
-
 // From here on, in every translation unit that includes this header, `Serial`
-// is the selectable console.
+// is the console wrapper.
 #define Serial lino_console
-
 #else
 #define LINO_CONSOLE_SELECTABLE 0
+#define LINO_CONSOLE_WRAPPED 0
 #endif
-
 #endif // LINO_CONSOLE_H

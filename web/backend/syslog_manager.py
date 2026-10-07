@@ -255,6 +255,14 @@ class SyslogManager:
                 self.recent_logs.append(log_entry)
 
                 self._broadcast(log_entry)
+                # A firmware banner is how a Wi-Fi robot that has left the USB cable
+                # is found again: which board, at which address, running what.
+                if "linorobot2_hardware" in clean_text:
+                    try:
+                        import wifi_boards
+                        wifi_boards.record_banner(clean_text, addr[0])
+                    except Exception:
+                        pass
             except Exception:
                 if not self.is_running:
                     break

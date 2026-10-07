@@ -31,6 +31,8 @@ void initMcuEnv(void);
 // accessor below returns its fallback, so a board with a blank or corrupt env
 // still boots and still says so over serial.
 bool mcuEnvValid(void);
+// CRC-32 of the env block the board booted with; 0 when it has none.
+uint32_t mcuEnvCrc(void);
 
 // Accessors. Each returns `fallback` when the key is absent or the env is
 // invalid, so a caller never has to check mcuEnvValid() first.

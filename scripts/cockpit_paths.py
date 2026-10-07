@@ -38,7 +38,10 @@ DEFAULT_ROBOT = "bare_sim"
 
 _CONFIG_GITIGNORE = """# Credentials never leave this machine.
 secrets.yaml
+secrets.ota.yaml
 .cockpit_token
+# What this machine recorded about the boards (flash stamps, Wi-Fi boards heard).
+state/
 # Which robot the supervisor has open: this machine's state, not the robot's.
 .active_robot
 # Derived from the configs at every bringup (the URDF); regenerated, never edited.
@@ -49,7 +52,7 @@ generated/
 
 # Lines a directory seeded by an older cockpit is missing. Appended, never
 # rewritten: the user's own additions stay.
-_GITIGNORE_REQUIRED = (".cockpit_token", ".active_robot", "generated/")
+_GITIGNORE_REQUIRED = (".cockpit_token", ".active_robot", "generated/", "secrets.ota.yaml", "state/")
 
 
 def config_dir() -> str:
@@ -85,6 +88,13 @@ def state_dir(directory: str = None) -> str:
 
 def secrets_path() -> str:
     return os.path.join(config_dir(), "secrets.yaml")
+
+
+def ota_secrets_path() -> str:
+    """Each Wi-Fi robot's OTA password, generated at its first USB flash (mcu_env
+    ensure_ota_password), keyed by robot name. Its own file so that secrets.yaml,
+    which the user edits and comments, is never rewritten by a program."""
+    return os.path.join(config_dir(), "secrets.ota.yaml")
 
 
 def robot_config_files(directory: str = None) -> list:

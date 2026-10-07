@@ -50,6 +50,16 @@ from core import (
 import robot_stack  # noqa: E402  (scripts/, via core's sys.path)
 
 
+def _wifi_robot(params_path: str) -> bool:
+    """Does the active robot put micro-ROS on Wi-Fi (an ESP32/ESP32-S3 on udp4)?"""
+    try:
+        import mcu_env
+        tgt = mcu_env.load_yaml(params_path).get("base_controller") or {}
+        return mcu_env.transport_is_wifi(tgt.get("transport"))
+    except Exception:
+        return False
+
+
 @app.post("/api/hardware/test")
 async def api_hardware_test(request: Request):
     data = await json_body(request)
@@ -147,6 +157,12 @@ async def api_hardware_test(request: Request):
                 f"--app {firmware} "
                 f"--baud {baud}"
             )
+    elif action == "monitor" and not os.path.exists(port) and _wifi_robot(params_path):
+        # A Wi-Fi robot off the USB cable: its console is syslog. The firmware tees a
+        # tool's every line there, so this streams the board's syslog -- found by the
+        # robot's name, not an address -- instead of a tty that is not here.
+        cmd = (f"python3 -u {os.path.join(REPO_ROOT, 'scripts', 'wifi_boards.py')} monitor "
+               f"{shlex.quote(params_path)}")
     elif action == "monitor":
         # NOT miniterm. It builds a Console() in its constructor, which calls
         # termios.tcgetattr() on stdin, and every command here runs on a PIPE --
