@@ -284,3 +284,24 @@ def test_an_ota_transfer_stops_the_base_and_feeds_the_watchdog():
     main = open(os.path.join(root, "firmware", "src", "main.cpp")).read()
     assert "if (ota_on_start) ota_on_start();" in ota and "if (ota_feed) ota_feed();" in ota
     assert "initOta(fullStop, otaFeedWatchdog);" in main
+
+
+def test_the_pet_comes_up_as_a_bare_esp32_and_its_design_brings_wifi_and_no_i2c(cfg):
+    """The Maker's Pet mini is detected as a bare ESP32 (serial: no keys needed), then
+    the user selects its design: Wi-Fi transport and no I2C -- so the Wi-Fi keys are
+    needed before its first flash, and i2c_detect is refused on it."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pet = os.path.join(root, "config", "reference", "makerspet_mini_config.yaml")
+    params = mcu_env.load_yaml(pet)
+    assert params["base_controller"]["mcu"] == "esp32"
+    assert mcu_env.transport_is_wifi(params["base_controller"]["transport"])
+    (cfg / "secrets.yaml").write_text("wifi:\n  ssid: ''\n")
+    assert mcu_env.wifi_keys_missing(pet, str(cfg / "secrets.yaml"))
+    env = dict(mcu_env.hardware_env(params), app="i2c_detect")
+    assert mcu_env.tool_refusal(env)
+    import gen_bare_config
+    import yaml
+    bare = cfg / "bare_esp32_config.yaml"
+    bare.write_text(yaml.safe_dump(gen_bare_config.bare_config("esp32")))
+    assert not mcu_env.transport_is_wifi(mcu_env.load_yaml(str(bare))["base_controller"].get("transport"))
+    assert not mcu_env.wifi_keys_missing(str(bare), str(cfg / "secrets.yaml"))
