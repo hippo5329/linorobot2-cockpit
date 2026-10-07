@@ -1,7 +1,8 @@
 """The diagnostic tools run on a real robot only -- per tool, by what each one tests.
 
 test_sensors needs a real IMU, test_motors and test_acc real wheels, adc_calibrate a real
-battery; i2c_detect runs anywhere (user, 2026-10-04). A simulated subsystem has nothing to
+battery; i2c_detect needs only the robot's I2C bus -- pins in its config -- whatever is
+simulated (user, 2026-10-07; test_i2c_detect_needs_pins.py). A simulated subsystem has nothing to
 measure: test_sensors on a simulated-IMU ESP32-S3 printed uninitialised floats (ACC Y /
 GYR Z of 90-180 digits) and "[+] IMU initialized successfully" on a board with no IMU.
 The host refuses before the env write (flash_mcu.refuse_simulated_tool, through
@@ -53,7 +54,9 @@ def test_each_tool_is_judged_on_its_own_subsystem():
     assert mcu_env.tool_refusal({**base, "app": "test_acc", "sim_wheel": "1"})
     assert mcu_env.tool_refusal({**base, "app": "test_sensors", "sim_wheel": "1"}) is None
     assert mcu_env.tool_refusal({**base, "app": "adc_calibrate", "sim_battery": "1"})
-    assert mcu_env.tool_refusal({**base, "app": "i2c_detect", "imu": "sim", "sim_wheel": "1"}) is None
+    # Judged by its bus, not by what is simulated: pins assigned -> it runs.
+    assert mcu_env.tool_refusal({**base, "app": "i2c_detect", "imu": "sim", "sim_wheel": "1",
+                                 "i2c_sda": 21, "i2c_scl": 22}) is None
     assert mcu_env.tool_refusal({**base, "app": "base", "imu": "sim", "sim_wheel": "1"}) is None
 
 
@@ -73,12 +76,12 @@ def test_the_flasher_stops_before_writing(capsys):
 
 def test_firmware_and_host_refuse_the_same_tools():
     src = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
-    fn = src[src.index("static const char *simulatedFor"):src.index("AppMode toolSelect")]
+    fn = src[src.index("static const char *simulatedFor"):src.index("static bool i2cUnassigned")]
     for tool, (key, value, _) in mcu_env.REAL_ONLY_TOOLS.items():
         case = "APP_" + tool.upper()
         assert case in fn, f"{tool} is refused on the host but not in toolSelect()"
         assert f'"{key}"' in fn, f"toolSelect() does not read {key} for {tool}"
-    assert "APP_I2C_DETECT" not in fn
+    assert "APP_I2C_DETECT" not in fn      # judged by its pins instead (i2cUnassigned)
 
 
 def test_test_sensors_runs_on_any_real_sensor_not_only_an_imu():

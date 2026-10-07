@@ -42,7 +42,7 @@ one of them a particular robot is here:
                                       counters once a second; a bench tool,
                                       set with --set, never from the config)
 
-    board       i2c_sda  i2c_scl  i2c_clock
+    board       i2c_sda  i2c_scl  i2c_clock  i2c_bus (a bus fixed in hardware)
                 gpio_out  gpio_out_late  boot_delay
                 imu  mag
                 battery_pin  bat_r1  bat_r2  bat_min  bat_max  bat_cap
@@ -734,6 +734,9 @@ def hardware_env(params: dict) -> dict:
         env["i2c_sda"] = i2c["sda"]
         env["i2c_scl"] = i2c["scl"]
         env["i2c_clock"] = i2c.get("clock", 400000)
+    # A bus fixed in hardware is named, not numbered (the UNO Q's Qwiic, i2c4).
+    if i2c.get("bus"):
+        env["i2c_bus"] = str(i2c["bus"])
     # The status LED. It is the only feedback an assembled robot gives before
     # micro-ROS is up -- boot, agent-waiting, IMU failure and the sim-wall
     # contact are all blink patterns -- so it must travel with the board rather
@@ -1232,8 +1235,9 @@ def hardware_env(params: dict) -> dict:
 # tests). A simulated subsystem has nothing for the tool to measure: test_sensors
 # on a simulated IMU printed uninitialised floats -- ACC Y / GYR Z of 90-180
 # digits -- and claimed "[+] IMU initialized successfully" on a board with no IMU.
-# i2c_detect is not here: scanning the bus is meaningful on any board. The
-# firmware's toolSelect() applies the same table (firmware/src/tools/tools.cpp).
+# i2c_detect is judged apart (tool_refusal): by the config assigning I2C pins, not by
+# a simulated part. The firmware's toolSelect() applies the same rules
+# (firmware/src/tools/tools.cpp).
 REAL_ONLY_TOOLS = {
     "test_sensors":  ("imu", ("sim", "none"), "the IMU"),
     "test_motors":   ("sim_wheel", "1", "the wheels"),
@@ -1242,9 +1246,30 @@ REAL_ONLY_TOOLS = {
 }
 
 
+def _pin_set(value) -> bool:
+    try:
+        return int(value) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def tool_refusal(env: dict):
-    """Why this env's `app` may not run, or None. Only the tools above are judged."""
+    """Why this env's `app` may not run, or None. The tools above are judged by what
+    they test being real, and i2c_detect by the robot having an I2C bus at all."""
     app = str(env.get("app", "base") or "base")
+    if app == "i2c_detect":
+        # On a real robot by default, unless its config assigns no I2C pins (user,
+        # 2026-10-07): the scan would probe a bus nobody wired, on whatever pins the
+        # board's Wire happens to default to. A bus fixed in hardware is named instead
+        # of numbered (`i2c_bus`, from pins.i2c.bus: the UNO Q's Qwiic i2c4), and counts.
+        # A bare module has neither: it runs in simulation mode first, and applying the
+        # robot's reference design is what brings its I2C (and motor) pins.
+        if (_pin_set(env.get("i2c_sda")) and _pin_set(env.get("i2c_scl"))) or env.get("i2c_bus"):
+            return None
+        return ("'i2c_detect' scans the robot's I2C bus, and this robot's config assigns no "
+                "I2C pins (base_controller.pins.i2c sda/scl). A bare module has none: apply "
+                "the robot's reference design, or set the pins in Config Studio (Pin Matrix), "
+                "and try again.")
     rule = REAL_ONLY_TOOLS.get(app)
     if not rule:
         return None

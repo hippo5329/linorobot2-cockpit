@@ -31,6 +31,19 @@ function renderPinFindings(findings, savedOk) {
   box.hidden = false;
 }
 
+// i2c_detect is on for a real robot by default, and off when its config assigns no I2C
+// pins -- neither SDA/SCL nor a named bus (pins.i2c.bus, the UNO Q's Qwiic). The host and
+// the firmware refuse it then too (mcu_env.tool_refusal). A bare module has none: apply
+// the robot's reference design first.
+function applyI2cAvailability(i2c) {
+  const btn = document.getElementById("btn-upload-i2c");
+  if (!btn) return;
+  const set = (v) => v !== "" && v !== null && v !== undefined && Number.isInteger(Number(v)) && Number(v) >= 0;
+  const usable = !!i2c.bus || (set(i2c.sda) && set(i2c.scl));
+  btn.disabled = !usable;
+  btn.title = usable ? "" : "No I2C pins in this robot's config: apply its reference design, or set SDA/SCL in the Pin Matrix";
+}
+
 async function loadHardwareConfig() {
   try {
     const res = await fetch("/api/hardware/config");
@@ -292,6 +305,7 @@ async function loadHardwareConfig() {
     const i2c = pins.i2c || {};
     if (document.getElementById("pin-i2c-sda")) document.getElementById("pin-i2c-sda").value = i2c.sda !== undefined ? i2c.sda : -1;
     if (document.getElementById("pin-i2c-scl")) document.getElementById("pin-i2c-scl").value = i2c.scl !== undefined ? i2c.scl : -1;
+    applyI2cAvailability(i2c);
 
     const elBatPin = document.getElementById("pin-battery");
     if (elBatPin) elBatPin.value = bat.pin !== undefined ? bat.pin : -1;

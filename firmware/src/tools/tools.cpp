@@ -52,7 +52,8 @@ static const ToolEntry *findByMode(AppMode mode)
 // to measure -- test_sensors on a simulated IMU printed uninitialised floats and
 // "[+] IMU initialized successfully" on a board with no IMU. Same table as
 // scripts/mcu_env.py REAL_ONLY_TOOLS, which refuses on the host before the write;
-// this is for an env written any other way. i2c_detect is meaningful anywhere.
+// this is for an env written any other way. i2c_detect is judged by the env
+// assigning I2C pins (i2cUnassigned) rather than by a simulated part.
 static const char *simulatedFor(AppMode mode)
 {
     switch (mode)
@@ -69,6 +70,19 @@ static const char *simulatedFor(AppMode mode)
     }
 }
 
+// i2c_detect needs the robot's I2C bus (user, 2026-10-07): both pins in the env, or a
+// bus fixed in hardware named by `i2c_bus` (the UNO Q's Qwiic i2c4). A bare module has
+// neither until the robot's reference design is applied.
+static bool i2cUnassigned(AppMode mode)
+{
+    if (mode != APP_I2C_DETECT)
+        return false;
+    const char *bus = envGet("i2c_bus", "");
+    if (bus && bus[0])
+        return false;
+    return envInt("i2c_sda", -1) < 0 || envInt("i2c_scl", -1) < 0;
+}
+
 AppMode toolSelect(void)
 {
     initMcuEnv();
@@ -79,6 +93,12 @@ AppMode toolSelect(void)
     for (size_t i = 0; i < TOOL_COUNT; i++)
         if (strcmp(TOOLS[i].name, want) == 0)
         {
+            if (i2cUnassigned(TOOLS[i].mode))
+            {
+                Serial.printf("[app] '%s' scans the I2C bus, and this board's env assigns no "
+                              "I2C pins - starting the robot firmware instead.\n", want);
+                return APP_BASE;
+            }
             const char *why = simulatedFor(TOOLS[i].mode);
             if (why)
             {

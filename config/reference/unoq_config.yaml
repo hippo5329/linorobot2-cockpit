@@ -106,6 +106,7 @@ base_controller:
     # EXTI lines (3 12 2 4 13 1 0 11): an STM32 has one EXTI line per pin NUMBER, so no two
     # encoder pins may share one. D0 is the LiDAR, A0 the battery; D1 and A1 are free.
     i2c:                 # the Qwiic connector, the MCU's i2c4 (PD12/PD13)
+      bus: qwiic         # fixed by the Zephyr devicetree: named, not numbered
       sda: -1
       scl: -1
     led: 21              # on-board LED3 green (PH11, active low)

@@ -88,7 +88,7 @@ base_controller:
       pin_a: -1
       pin_b: -1
       invert: false
-    i2c:
+    i2c:               # no I2C bus broken out on this board: i2c_detect is refused here
       sda: -1
       scl: -1
     led: 2

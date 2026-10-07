@@ -213,7 +213,14 @@ async def api_save_hardware_config(request: Request):
                 f"depth_camera.model must be none or one of {', '.join(depth_camera.DEPTH_MODELS)}, not {model!r}"))
         ctrl.setdefault("depth_camera", {})["model"] = "none" if model in depth_camera.NOT_FITTED else model
     if "pins" in data and isinstance(data["pins"], dict):
-        ctrl.setdefault("pins", {}).update(data["pins"])
+        # One level deep: a pin group the form edits (i2c: sda/scl) keeps the keys it does
+        # not show -- the UNO Q design's `i2c.bus` was lost on every save otherwise.
+        pins = ctrl.setdefault("pins", {})
+        for group, value in data["pins"].items():
+            if isinstance(value, dict) and isinstance(pins.get(group), dict):
+                pins[group].update(value)
+            else:
+                pins[group] = value
     # The simulated robot's load and drivetrain losses. Merged rather than
     # replaced: the form carries the mass and the four loss terms, and the room
     # (map_width, the obstacle wall) is set elsewhere -- a whole-block assignment
