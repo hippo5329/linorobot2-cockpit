@@ -105,8 +105,11 @@ base_controller:
     # Eight PWM pins (D3 D6 D9 D10 A2 A3 D11 D12) and eight encoder pins on eight different
     # EXTI lines (3 12 2 4 13 1 0 11): an STM32 has one EXTI line per pin NUMBER, so no two
     # encoder pins may share one. D0 is the LiDAR, A0 the battery; D1 and A1 are free.
-    i2c:                 # the Qwiic connector, the MCU's i2c4 (PD12/PD13)
-      bus: qwiic         # fixed by the Zephyr devicetree: named, not numbered
+    # The Qwiic connector, 3.3 V: SDA PD13 (I2C4_SDA), SCL PD12 (I2C4_SCL). STM32 port
+    # pins, not Arduino pin numbers, and fixed by the Zephyr devicetree -- so the bus is
+    # named, sda/scl stay -1, and i2c_detect counts the named bus as assigned.
+    i2c:
+      bus: qwiic
       sda: -1
       scl: -1
     led: 21              # on-board LED3 green (PH11, active low)
