@@ -1454,10 +1454,16 @@ def esp32_flash_plan(build_dir: str, env: str) -> List[tuple]:
         path = os.path.join(build_dir, name)
         if os.path.isfile(path):
             plan.append((offset, path))
-    for boot_app0 in sorted(glob.glob(os.path.expanduser(
+    # boot_app0.bin resets `otadata` so the chip boots app0, where firmware.bin goes.
+    # A release profile ships its own copy; a local build finds it in the framework
+    # package. It matters since OTA: an image written over the air boots from the
+    # OTHER slot, and a USB flash that skipped this file left otadata pointing there --
+    # the board rebooted into the previous image (a Yahboom S3, 2026-10-07).
+    for boot_app0 in [os.path.join(build_dir, "boot_app0.bin")] + sorted(glob.glob(os.path.expanduser(
             "~/.platformio/packages/framework-arduinoespressif32*/tools/partitions/boot_app0.bin"))):
-        plan.append(("0xe000", boot_app0))
-        break
+        if os.path.isfile(boot_app0):
+            plan.append(("0xe000", boot_app0))
+            break
     firmware = os.path.join(build_dir, "firmware.bin")
     if os.path.isfile(firmware):
         plan.append(("0x10000" if plan else "0x0", firmware))
@@ -2031,6 +2037,18 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
             "what was written, not what was heard)")
     mcu_probe.write_stamp(env, port, stamp)
     log(f"Recorded {mcu_probe.stamp_path(env, port)}")
+    # The board must be running what was just written. A release profile names its
+    # commit exactly, so a banner with another one means the write did not take: on
+    # 2026-10-07 a USB flash after an OTA update left otadata on the other slot and the
+    # board rebooted into the previous image, while this function recorded it as done.
+    # A local build only warns: the tree can move after it was built.
+    if app_written and banner.get("git") and local.get("git") and banner["git"] != local.get("git"):
+        if prebuilt_dir:
+            log(f"❌ [NOT THE NEW IMAGE] the board reports git={banner['git']} after a flash of "
+                f"{local.get('git')}: it is running another image than the one just written.")
+            return False
+        log(f"⚠️  the board reports git={banner['git']}, this tree is {local.get('git')}.")
+    return True
 
 
 def main() -> int:
@@ -2329,8 +2347,9 @@ def main() -> int:
         if message:
             log(message)
         time.sleep(2.0)
-        record_stamp(args.env, args.port, args.app, env_bin, args.params,
-                     args.baud, app_written=True, prebuilt_dir=prebuilt_dir)
+        if record_stamp(args.env, args.port, args.app, env_bin, args.params,
+                        args.baud, app_written=True, prebuilt_dir=prebuilt_dir) is False:
+            return 1
         return 0
 
     if flashed:

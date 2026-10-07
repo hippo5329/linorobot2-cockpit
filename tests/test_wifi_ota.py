@@ -305,3 +305,22 @@ def test_the_pet_comes_up_as_a_bare_esp32_and_its_design_brings_wifi_and_no_i2c(
     bare.write_text(yaml.safe_dump(gen_bare_config.bare_config("esp32")))
     assert not mcu_env.transport_is_wifi(mcu_env.load_yaml(str(bare))["base_controller"].get("transport"))
     assert not mcu_env.wifi_keys_missing(str(bare), str(cfg / "secrets.yaml"))
+
+
+def test_a_usb_flash_resets_otadata_from_the_profiles_own_boot_app0(tmp_path):
+    """After an OTA write the board boots the other slot. A USB flash writes firmware.bin
+    to app0 and must reset otadata with boot_app0.bin -- from the release profile itself,
+    on a robot computer with no PlatformIO -- or the board reboots into the old image."""
+    import flash_mcu
+    for name in ("bootloader.bin", "partitions.bin", "boot_app0.bin", "firmware.bin"):
+        (tmp_path / name).write_bytes(b"x")
+    plan = dict((os.path.basename(f), off) for off, f in flash_mcu.esp32_flash_plan(str(tmp_path), "esp32s3"))
+    assert plan["boot_app0.bin"] == "0xe000" and plan["firmware.bin"] == "0x10000"
+
+
+def test_a_release_flash_that_left_the_old_image_running_fails():
+    """record_stamp compares the board's banner with the image it just wrote."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "scripts", "flash_mcu.py")).read()
+    assert "[NOT THE NEW IMAGE]" in src
+    assert "args.baud, app_written=True, prebuilt_dir=prebuilt_dir) is False:" in src

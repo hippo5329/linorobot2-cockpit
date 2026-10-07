@@ -560,12 +560,15 @@ def esp32_flash_plan(build_dir: str, chip: str = "esp32") -> List[Tuple[str, str
         plan.append((boot_offset, bootloader))
     if os.path.isfile(partitions):
         plan.append(("0x8000", partitions))
-    # boot_app0 lives in the framework package, not the build dir; PlatformIO
-    # writes it at 0xe000 on dual-OTA layouts.
-    for boot_app0 in sorted(glob.glob(os.path.join(
+    # boot_app0 resets otadata so the chip boots app0, where firmware.bin goes: a release
+    # profile ships it beside the image, a local build finds it in the framework package.
+    # After an OTA write the board boots the other slot, and skipping this file left it
+    # booting the previous image after a USB flash (scripts/flash_mcu.py, same fix).
+    for boot_app0 in [os.path.join(build_dir, "boot_app0.bin")] + sorted(glob.glob(os.path.join(
             PIO_PACKAGES, "framework-arduinoespressif32*", "tools", "partitions", "boot_app0.bin"))):
-        plan.append(("0xe000", boot_app0))
-        break
+        if os.path.isfile(boot_app0):
+            plan.append(("0xe000", boot_app0))
+            break
     if os.path.isfile(firmware):
         plan.append(("0x10000" if plan else "0x0", firmware))
     return plan
