@@ -310,9 +310,8 @@ def find_robot_board(robot: str, within: float = FRESH_S, port: int = None,
                      ping_port: int = PING_PORT, mdns_name: str = None,
                      pinned_ip: str = None) -> tuple:
     """(uid, entry) of robot `robot`'s board, asked fresh: a ping to the address it
-    was last at, then to `<robot>.local` (mDNS), then a broadcast, then up to a
-    minute of syslog (an image
-    without the responder still sends its banner every 60 s). (uid, {}) when the
+    was last at, then to `<robot>.local` (mDNS), then a broadcast, then a few seconds
+    of syslog -- only an answer given now, as this uid, counts. (uid, {}) when the
     board is known but did not answer; ("", {}) when this host never flashed it."""
     uid = robot_uid(robot)
     if not uid:
@@ -333,11 +332,14 @@ def find_robot_board(robot: str, within: float = FRESH_S, port: int = None,
         return uid, board(uid)
     if uid in ping(None, ping_port):
         return uid, board(uid)
+    # Nothing answered. Only a banner heard from now on counts -- a record from
+    # before the question is not evidence that the board is there: a parked board
+    # (radio off) was "heard 62 s ago" and the write then went to a silent address,
+    # and a stale address can belong to ANOTHER board by now. A short listen catches
+    # a board that is just booting (it sends its banner every 2 s for 30 s).
+    listen(6.0, port)
     entry = board(uid)
-    if float(entry.get("seen") or 0) < t0 - within or not fresh(entry, within=within):
-        listen(min(within, 65.0), port)   # the banner repeats every 60 s
-        entry = board(uid)
-    return uid, (entry if fresh(entry, within=within) else {})
+    return uid, (entry if float(entry.get("seen") or 0) >= t0 else {})
 
 
 # ------------------------------------------------------------------ the terminal

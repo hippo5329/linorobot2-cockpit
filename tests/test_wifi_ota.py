@@ -324,3 +324,16 @@ def test_a_release_flash_that_left_the_old_image_running_fails():
     src = open(os.path.join(root, "scripts", "flash_mcu.py")).read()
     assert "[NOT THE NEW IMAGE]" in src
     assert "args.baud, app_written=True, prebuilt_dir=prebuilt_dir) is False:" in src
+
+
+def test_a_board_that_does_not_answer_now_is_not_found(cfg, monkeypatch):
+    """A record is not presence: a board heard a minute ago and silent now (parked,
+    radio off) is not handed to a writer -- and its old address may be another
+    board's by now."""
+    import time
+    wifi_boards.record_banner(BANNER, "192.0.2.77", now=time.time() - 60)
+    wifi_boards.remember_robot("yb_eet01", "A1B2C3D4E5F6", "esp32s3", "192.0.2.77")
+    monkeypatch.setattr(wifi_boards, "ping", lambda *a, **k: {})
+    monkeypatch.setattr(wifi_boards, "mdns_resolve", lambda *a, **k: "")
+    monkeypatch.setattr(wifi_boards, "listen", lambda *a, **k: 0)
+    assert wifi_boards.find_robot_board("yb_eet01") == ("A1B2C3D4E5F6", {})
