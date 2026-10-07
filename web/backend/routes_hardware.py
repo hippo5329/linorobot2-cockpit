@@ -506,6 +506,11 @@ async def api_firmware_flash(request: Request):
     ctrl = get_controller(params)
     firmware_dir = data.get("firmware_dir") or "firmware"
     refuse_sim_flash(text_field(data, "env") or get_controller_name(params, "pico2"))
+    # Wi-Fi transport selected: the Wi-Fi keys come before any flash (the first flash is
+    # what gives the board its network). The same refusal as the pipeline and flash_mcu.
+    import mcu_env
+    if mcu_env.wifi_keys_missing(get_active_params_path()):
+        raise HTTPException(status_code=400, detail=mcu_env.WIFI_KEYS_MISSING)
     env = mcu_identity.pio_env_for(text_field(data, "env") or get_controller_name(params, "pico2"), "pico2")
     port = text_field(data, "port") or ctrl.get("serial_port", "/dev/ttyUSB0")
     baud = int(data.get("baud") or ctrl.get("upload_baudrate") or 921600)

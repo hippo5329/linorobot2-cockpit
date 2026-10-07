@@ -146,7 +146,7 @@ void setup_()
     initBoard();
 
     initWifis();
-    initOta();
+    initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
 
     i2cScanTable();
 

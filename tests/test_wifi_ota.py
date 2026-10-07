@@ -253,3 +253,34 @@ def test_the_network_name_is_the_users_hostname_else_the_robots_name():
     assert mcu_env.robot_ip_for(p) == ""
     p["base_controller"]["robot_ip"] = "192.0.2.50"
     assert mcu_env.robot_ip_for(p) == "192.0.2.50"
+
+
+def test_a_wifi_robot_needs_its_wifi_keys_before_the_first_flash(cfg):
+    wifi = _robot(cfg, "petbot", "udp4")
+    serial = _robot(cfg, "serialbot", "serial")
+    (cfg / "secrets.yaml").write_text("wifi:\n  ssid: ''\n")
+    assert mcu_env.wifi_keys_missing(wifi, str(cfg / "secrets.yaml"))
+    assert not mcu_env.wifi_keys_missing(serial, str(cfg / "secrets.yaml"))
+    (cfg / "secrets.yaml").write_text("wifi:\n  ssid: YOUR_WIFI_SSID\n")   # the seeded placeholder
+    assert mcu_env.wifi_keys_missing(wifi, str(cfg / "secrets.yaml"))
+    (cfg / "secrets.yaml").write_text("wifi:\n  ssid: home\n  password: x\n")
+    assert not mcu_env.wifi_keys_missing(wifi, str(cfg / "secrets.yaml"))
+
+
+def test_every_flash_entry_point_wants_the_wifi_keys_first():
+    """Wi-Fi transport selected: the keys come before any flash, whichever button starts it."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for rel in ("scripts/one_click_pipeline.py", "scripts/flash_mcu.py", "web/backend/routes_hardware.py"):
+        src = open(os.path.join(root, rel)).read()
+        assert "wifi_keys_missing(" in src and "WIFI_KEYS_MISSING" in src, rel
+
+
+def test_an_ota_transfer_stops_the_base_and_feeds_the_watchdog():
+    """The whole image arrives inside one ArduinoOTA.handle(): loop() does not run, so
+    the wheels must be stopped first and the watchdog fed on every progress step (an
+    8 s watchdog reset a classic ESP32 at 76 % of a 1.1 MB image)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ota = open(os.path.join(root, "firmware", "common", "lib", "wifi", "ota.cpp")).read()
+    main = open(os.path.join(root, "firmware", "src", "main.cpp")).read()
+    assert "if (ota_on_start) ota_on_start();" in ota and "if (ota_feed) ota_feed();" in ota
+    assert "initOta(fullStop, otaFeedWatchdog);" in main

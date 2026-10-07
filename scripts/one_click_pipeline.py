@@ -1755,6 +1755,12 @@ def main():
     # same topics), so a person with nothing plugged in gets a running robot
     # instead of a flash error. Nothing is built, probed or flashed.
     sim_mcu = controller == SIM_MCU
+    # A Wi-Fi robot needs its Wi-Fi keys before its first flash (the order is: Secrets,
+    # then the 1-Click). Refused here, before anything is probed or written.
+    if not sim_mcu and not args.skip_flash:
+        import mcu_env
+        if mcu_env.wifi_keys_missing(params_path):
+            raise SystemExit(f"\n❌ {mcu_env.WIFI_KEYS_MISSING}")
     # A Wi-Fi robot off the USB cable is still a robot with a board: look for it on the
     # network before calling it absent (and never swap it for the Sim MCU when this
     # host knows its board -- that would run another robot under its name).

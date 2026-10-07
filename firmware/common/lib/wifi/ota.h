@@ -26,12 +26,18 @@
 // it is -- on demand, unicast to its address or broadcast to find it -- instead of
 // waiting for the next syslog banner. Read-only: the banner carries no secret.
 // Serviced from runOta(), so everywhere OTA stays responsive, so does this.
+// initOta's hooks (2026-10-07): ArduinoOTA receives a whole image inside one
+// handle() call, so loop() -- the motor command timeout and the watchdog feed --
+// does not run until it is over. `on_start` stops the base before the first byte
+// (the wheels would otherwise keep their last command for the whole transfer) and
+// `feed` keeps the task watchdog fed on every progress step (an 8 s watchdog reset
+// a classic ESP32 at 76 % of a 1.1 MB image). Either may be NULL.
 #if defined(HAS_WIFI)
-void initOta(void);
+void initOta(void (*on_start)(void), void (*feed)(void));
 void runOta(void);
 void initPing(void (*format_banner)(char *buf, size_t n));
 #else
-#define initOta()
+#define initOta(on_start, feed)
 #define runOta()
 #define initPing(f)
 #endif

@@ -134,7 +134,7 @@ void setup_()
     initBoard();
 
     initWifis();
-    initOta();
+    initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
     i2cScanTable();  // default range from 0x03 to 0x77
     initMcuEnv();
     imu = createIMU(envGet("imu", defaultIMUName()));

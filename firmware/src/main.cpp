@@ -877,6 +877,9 @@ static void formatBanner(char *buf, size_t n)
 // the radio has associated, and a probe should not wait a minute after a boot --
 // then every 60 s, so a cockpit started later learns the board within a minute.
 // A no-op without a radio, a syslog server or an association (syslog() decides).
+// The watchdog feed handed to the OTA responder (ota.h): wdtFeed() is inline.
+static void otaFeedWatchdog(void) { wdtFeed(); }
+
 static void announceBanner(void)
 {
     static uint32_t last = 0;
@@ -1137,7 +1140,7 @@ void setup()
     // used to abort every ESP32 that flashed a released image -- which compiles
     // OTA in, because the image is built from a Wi-Fi robot's config.
     if (wifiWanted()) {
-        initOta();
+        initOta(fullStop, otaFeedWatchdog);
         initPing(formatBanner);
     }
 

@@ -434,6 +434,30 @@ def ensure_ota_password(params_path: str, secrets_path: str = None) -> str:
     return data["robots"][name]["ota_password"]
 
 
+def wifi_keys_missing(params_path: str, secrets_path: str = None) -> bool:
+    """A Wi-Fi robot (udp4) whose secrets.yaml has no Wi-Fi SSID. Its first USB flash
+    is the only chance to give the board its network: it leaves the cable afterwards,
+    and a board flashed with the placeholder SSID can never join anything. So the user
+    enters the Wi-Fi keys (Secrets tab) first, then runs the 1-Click -- the pipeline
+    and the flasher refuse before anything is written. A serial robot needs none."""
+    params = load_yaml(params_path)
+    if not transport_is_wifi((params.get("base_controller") or {}).get("transport")):
+        return False
+    wifi = (load_yaml(secrets_path or cockpit_paths.secrets_path()).get("wifi") or {})
+    ssid = str(wifi.get("ssid") or "").strip()
+    # A config directory is seeded from secrets.yaml.example, so its placeholder is
+    # what an untouched secrets.yaml holds: that is no network either.
+    placeholder = str(((load_yaml(cockpit_paths.SECRETS_EXAMPLE_PATH).get("wifi") or {})
+                       .get("ssid")) or "").strip()
+    return not ssid or ssid == placeholder
+
+
+WIFI_KEYS_MISSING = ("[NO WI-FI KEYS] this robot talks micro-ROS over Wi-Fi, and no Wi-Fi network is "
+                     "set: enter the Wi-Fi SSID and password in the Secrets tab (secrets.yaml "
+                     "wifi.ssid / wifi.password) first, then run the 1-Click. The first flash is "
+                     "what gives the board its network; nothing was written.")
+
+
 def transport_is_wifi(transport) -> bool:
     """udp4 and its spellings: the only transports that bring the radio up."""
     return str(transport or "").strip().lower() in ("udp4", "udp", "wifi")

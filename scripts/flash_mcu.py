@@ -1543,6 +1543,14 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
         # not an override, it is the only true description of the hardware.
         params = params or manifest["config"]
 
+    # A Wi-Fi robot needs its network before anything goes on the board: after this
+    # flash it may leave the cable, and the placeholder SSID joins nothing.
+    if params and is_esp_family(getattr(args, "env", "") or ""):
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        import mcu_env
+        if mcu_env.wifi_keys_missing(os.path.abspath(params)):
+            log(f"❌ {mcu_env.WIFI_KEYS_MISSING}")
+            sys.exit(1)
     # A Wi-Fi robot's env carries its OTA password, generated here on its first flash
     # when it has none: every write after this one comes over the air and must
     # authenticate. A serial robot gets none (its radio is off).

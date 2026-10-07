@@ -67,8 +67,17 @@ static void runPing(void)
 // on a listener that was never begun is a call per loop() for nothing.
 static bool ota_started = false;
 
-void initOta(void)
+static void (*ota_on_start)(void) = NULL;
+static void (*ota_feed)(void) = NULL;
+
+void initOta(void (*on_start)(void), void (*feed)(void))
 {
+    // Once only: main.cpp starts OTA (with its hooks) before any tool runs, and a
+    // tool's own setup that calls this again must not restart it or clear them.
+    if (ota_started)
+        return;
+    ota_on_start = on_start;
+    ota_feed = feed;
     // The port is a robot fact like every other address: telemetry.ota_port in
     // the config, `ota_port` in the env. 3232 is ArduinoOTA's own default.
     ArduinoOTA.setPort(envU16("ota_port", 3232));
@@ -84,6 +93,8 @@ void initOta(void)
     }
 
     ArduinoOTA.onStart([]() {
+      if (ota_on_start) ota_on_start();     // the wheels stop before the first byte
+      if (ota_feed) ota_feed();
       String type;
       if (ArduinoOTA.getCommand() == U_FLASH) {
 	type = "sketch";
@@ -98,6 +109,7 @@ void initOta(void)
       Serial.println("\nEnd");
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      if (ota_feed) ota_feed();             // the whole transfer runs inside handle()
       Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     });
     ArduinoOTA.onError([](ota_error_t error) {
