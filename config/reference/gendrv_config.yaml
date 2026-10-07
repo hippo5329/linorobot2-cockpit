@@ -131,15 +131,22 @@ base_controller:
     # used to be here (21/20/1, 5/6/8, 11/12) was the ESP32-S3 one and drove
     # the WROOM's flash bus -- an interrupt-watchdog boot loop before setup()
     # reached the sensors.
+    #
+    # The ORDER within each pair is the BTS7960's, not the generic 2-pin driver's:
+    # the class drives two PWMs and "forward" is the PWM on in_a (default_motor.h),
+    # so in_a is the forward input -- 17 for motor 1, 23 for motor 2, as upstream
+    # linorobot2_hardware's gendrv_config.h has it under USE_BTS7960_MOTOR_DRIVER.
+    # The generic order (21/17, 22/23) shipped here and ran both wheels of a real
+    # GenDrv robot backwards (2026-10-07), every invert false.
     motor1:
       pwm: 25
-      in_a: 21
-      in_b: 17
+      in_a: 17
+      in_b: 21
       invert: false
     motor2:
       pwm: 26
-      in_a: 22
-      in_b: 23
+      in_a: 23
+      in_b: 22
       invert: false
     encoder1:
       pin_a: 34

@@ -24,7 +24,8 @@ def test_gendrv_pins_and_driver(reference):
     m = _header(reference, "gendrv")
     assert m["BAUDRATE"] == "1500000"     # the GenDrv's CP2102N rate; see the config
     assert m["MOTOR_DRIVER_DEFAULT"] == '"bts7960"'
-    assert (m["MOTOR1_PWM"], m["MOTOR1_IN_A"], m["MOTOR1_IN_B"]) == ("25", "21", "17")
+    # BTS7960 order: in_a is the forward PWM (tests/test_gendrv_bts7960_pin_order.py)
+    assert (m["MOTOR1_PWM"], m["MOTOR1_IN_A"], m["MOTOR1_IN_B"]) == ("25", "17", "21")
     assert (m["MOTOR1_ENCODER_A"], m["MOTOR1_ENCODER_B"]) == ("34", "35")
     assert (m["MOTOR2_ENCODER_A"], m["MOTOR2_ENCODER_B"]) == ("16", "27")
     assert (m["SDA_PIN"], m["SCL_PIN"]) == ("32", "33")

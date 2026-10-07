@@ -84,8 +84,9 @@ def test_gendrv_carries_the_boards_facts():
     assert env["baud"] == 1500000    # the runtime micro-ROS rate, not the upload rate
     assert env["transport"] == "serial"
     assert env["motor_driver"] == "bts7960"
-    assert (env["m1_pwm"], env["m1_in_a"], env["m1_in_b"]) == (25, 21, 17)
-    assert (env["m2_pwm"], env["m2_in_a"], env["m2_in_b"]) == (26, 22, 23)
+    # BTS7960 order: in_a is the forward PWM (tests/test_gendrv_bts7960_pin_order.py)
+    assert (env["m1_pwm"], env["m1_in_a"], env["m1_in_b"]) == (25, 17, 21)
+    assert (env["m2_pwm"], env["m2_in_a"], env["m2_in_b"]) == (26, 23, 22)
     assert (env["m1_enc_a"], env["m1_enc_b"], env["m2_enc_a"], env["m2_enc_b"]) == (34, 35, 16, 27)
     assert (env["i2c_sda"], env["i2c_scl"]) == (32, 33)
     assert env["node"] == "gendrv_base_node"
