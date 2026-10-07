@@ -2435,6 +2435,18 @@ def main():
                     # Why it failed is the drive suite's job, below: it runs on every
                     # pass now, right after this, and a base that still does 6/6
                     # puts the fault above the base.
+        else:
+            # Nav2 skipped (--no-nav2, or no scan source) while SLAM runs: a spin on
+            # the spot maps what the robot can see. This `else` closes the step-6
+            # chain. It once hung off `if args.drive_test:` instead, so every run
+            # WITHOUT the drive suite spun the base -- and on 2026-10-07 a real
+            # robot's wheels turned on a `--topics-only --no-drive-test` check, the
+            # one run that must command no motion (tests/test_topics_only_does_not_move.py).
+            print("\n[6/6] [EXPLORE] Nav2 skipped (per argument or no LiDAR). Simulating a mapping rotation...")
+            drive = launch_bg(drive_cmd, log_tag="drive", distro=args.distro)
+            bg_processes.append(drive)
+            time.sleep(args.explore_sec)
+            stop_bg(drive)
         if args.drive_test:
             # Rates prove the board TALKS; only driving proves it MOVES, and moves
             # the way it was told -- the SimEncoder invert and the PID windup each
@@ -2486,12 +2498,6 @@ def main():
                 bg_processes.append(drive)
                 time.sleep(args.explore_sec)
                 stop_bg(drive)
-        else:
-            print("\n[6/6] [EXPLORE] Nav2 skipped (per argument or no LiDAR). Simulating a mapping rotation...")
-            drive = launch_bg(drive_cmd, log_tag="drive", distro=args.distro)
-            bg_processes.append(drive)
-            time.sleep(args.explore_sec)
-            stop_bg(drive)
 
         if args.topics_only:
             print("\n[MAP] Skipped per --topics-only: no SLAM ran, so there is no map.")
@@ -2502,7 +2508,9 @@ def main():
                     print(f"   • {f}")
                 print("==================================================================")
                 return 1
-            print("✅ Topics verified and the base drove: the run did what --topics-only asks.")
+            print("✅ Topics verified" + (" and the base drove" if args.drive_test else
+                                          ", nothing commanded (--no-drive-test)")
+                  + ": the run did what --topics-only asks.")
             print("==================================================================")
             return 0
 
