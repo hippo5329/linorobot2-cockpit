@@ -5,6 +5,7 @@ as an import side effect (main.py imports this module). Shared state and
 helpers come from core.py. See core.py for the split's contract.
 """
 import copy
+import ipaddress
 import os
 import re
 import shutil
@@ -99,10 +100,35 @@ def api_get_hardware_config():
         "geometry": gen_robot_description.effective_geometry(params),
         "geometry_warnings": gen_robot_description.geometry_warnings(params),
         "base_controller": controller,
+        # A Wi-Fi robot's default network name and where this computer last heard it.
+        "mdns_default": _mdns_default(params),
+        "wifi_board": _wifi_board(params),
         # What the pin catalogue thinks of this config (scripts/pin_catalog.py):
         # the Pin Matrix shows these next to the fields they concern.
         "pin_findings": [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)],
     }
+
+
+def _mdns_default(params: dict) -> str:
+    import mcu_env
+    return mcu_env.mdns_hostname(mcu_env.robot_name_of(params))
+
+
+def _wifi_board(params: dict) -> dict:
+    """{uid, ip, age_s} for this robot's board as this computer last heard it; {} if never."""
+    try:
+        import time as _time
+        import mcu_env
+        import wifi_boards
+        name = mcu_env.robot_name_of(params)
+        uid = wifi_boards.robot_uid(name)
+        if not uid:
+            return {}
+        seen = float(wifi_boards.board(uid).get("seen") or 0)
+        return {"uid": uid, "ip": wifi_boards.robot_ip(name),
+                "age_s": int(_time.time() - seen) if seen else None}
+    except Exception:
+        return {}
 
 
 @app.post("/api/hardware/config")
@@ -144,6 +170,28 @@ async def api_save_hardware_config(request: Request):
     # Stored even when blank, because blank is a meaningful value: it means
     # "this is the rig, resolve the box". Written through str() and stripped so
     # a pasted address with stray whitespace cannot become an unreachable URL.
+    # A Wi-Fi robot's name and address on the network, once it is off the USB cable:
+    # telemetry.hostname (its mDNS name) and robot_ip (beside agent_ip; what OTA,
+    # ping and Monitor reach it at). Blank removes the key: the robot's name and the
+    # address detected at its first boot after the USB flash apply then.
+    if isinstance(data.get("network"), dict):
+        host = str(data["network"].get("hostname") or "").strip()
+        ip = str(data["network"].get("robot_ip") or "").strip()
+        if ip:
+            try:
+                ipaddress.IPv4Address(ip)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Robot IP must be an IPv4 address, not {ip!r}")
+            ctrl["robot_ip"] = ip
+        else:
+            ctrl.pop("robot_ip", None)
+        tel = ctrl.setdefault("telemetry", {})
+        if host:
+            tel["hostname"] = host
+        else:
+            tel.pop("hostname", None)
+        if not tel:
+            ctrl.pop("telemetry", None)
     if "mcu" in data:
         ctrl["mcu"] = data["mcu"]
     elif controller_name != previous_name and mcu_identity.env_family(controller_name):

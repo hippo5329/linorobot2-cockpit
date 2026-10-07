@@ -330,6 +330,16 @@
             </select>
             <span class="input-hint">Where the banner and micro-ROS serial go on an ESP32-S3 (env key <code>console</code>); ignored on other MCUs</span>
           </div>
+          <div class="form-group">
+            <label for="cfg-ota-hostname" class="form-label">Network Name (Wi-Fi robot, mDNS)</label>
+            <input type="text" id="cfg-ota-hostname" class="form-input font-mono" placeholder="the robot's name">
+            <span class="input-hint">A Wi-Fi robot (ESP32 / ESP32-S3 on UDP4) answers to <code>&lt;name&gt;.local</code> once it is off the USB cable. Blank: the robot's name, made DNS-safe (<code>telemetry.hostname</code>)</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-robot-ip" class="form-label">Robot IP Address (Wi-Fi robot)</label>
+            <input type="text" id="cfg-robot-ip" class="form-input font-mono" placeholder="detected after the first USB flash">
+            <span id="cfg-robot-ip-hint" class="input-hint">What OTA, ping and Monitor reach the robot at. Detected at its first boot after the USB flash; edit to pin one (<code>base_controller.robot_ip</code>)</span>
+          </div>
         </div>
       </div>
 

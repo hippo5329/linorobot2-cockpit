@@ -379,11 +379,12 @@ def robot_mdns_name(params: dict, params_path: str = None) -> str:
     return str(tel.get("hostname") or robot_name_of(params, params_path))
 
 
-def ota_ip_for(params: dict) -> str:
-    """An address the user pinned for the robot (telemetry.ota_ip, the config
-    engine's `ota.ip`): tried before the one this host learned. "" when unset."""
-    tel = ((params.get("base_controller") or {}).get("telemetry") or {})
-    return str(tel.get("ota_ip") or "")
+def robot_ip_for(params: dict) -> str:
+    """The robot's IP as its config pins it (base_controller.robot_ip, beside
+    agent_ip): what OTA, ping and Monitor reach a Wi-Fi robot at. Unset by default,
+    and then the address detected at its first boot after the USB flash applies
+    (wifi_boards.robot_ip). "" when unset."""
+    return str((params.get("base_controller") or {}).get("robot_ip") or "")
 
 
 def ota_password_for(params: dict, params_path: str = None, secrets: dict = None) -> str:

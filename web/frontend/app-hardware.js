@@ -78,6 +78,31 @@ async function loadHardwareConfig() {
     }
     const elConsole = document.getElementById("cfg-console");
     if (elConsole) elConsole.value = tgt.console || "usb";
+    // A Wi-Fi robot's name and address on the network (base_controller.telemetry).
+    const tel = tgt.telemetry || {};
+    const elHost = document.getElementById("cfg-ota-hostname");
+    if (elHost) {
+      elHost.value = tel.hostname || "";
+      elHost.placeholder = data.mdns_default ? `${data.mdns_default} (the robot's name)` : "the robot's name";
+    }
+    // The default is the address detected at the board's first boot after its USB
+    // flash (and kept current by its answers). Shown as the value, so the user sees
+    // where the robot is; left unchanged it stays automatic, edited it is pinned.
+    const wb = data.wifi_board || {};
+    const elRobotIp = document.getElementById("cfg-robot-ip");
+    if (elRobotIp) {
+      elRobotIp.value = tgt.robot_ip || wb.ip || "";
+      elRobotIp.dataset.detected = tgt.robot_ip ? "" : (wb.ip || "");
+    }
+    const elIpHint = document.getElementById("cfg-robot-ip-hint");
+    if (elIpHint) {
+      elIpHint.textContent = tgt.robot_ip
+        ? `Pinned in this robot's config. Clear it to use the detected address${wb.ip ? ` (${wb.ip})` : ""}.`
+        : wb.uid
+          ? `Detected${wb.ip ? "" : " -- not yet: the board has not answered on Wi-Fi"} (board uid ${wb.uid}` +
+            `${wb.age_s != null ? `, heard ${wb.age_s} s ago` : ""}). Edit to pin another address.`
+          : "Detected at the first boot after the robot's USB flash. Edit to pin an address.";
+    }
 
     const elPort = document.getElementById("hw-flash-port");
     if (elPort && tgt.serial_port) elPort.value = tgt.serial_port;
@@ -1157,6 +1182,17 @@ async function saveCurrentHardwareConfig(opts = {}) {
     baudrate: baudrate,
     serial_port: serialPort,
     console: document.getElementById("cfg-console")?.value || "usb",
+    // Blank fields are sent blank: the backend removes the key, so the robot name
+    // and the learned address apply.
+    network: {
+      hostname: (document.getElementById("cfg-ota-hostname")?.value || "").trim(),
+      // The detected address left as it was stays automatic (not written to the config).
+      robot_ip: (() => {
+        const el = document.getElementById("cfg-robot-ip");
+        const v = (el?.value || "").trim();
+        return v && v === (el?.dataset.detected || "") ? "" : v;
+      })(),
+    },
     geometry: readGeometryForm(kineType),
     simulation: readSimForm(),
     depth_camera: { model: document.getElementById("cfg-depth-camera")?.value || "none" },

@@ -388,7 +388,7 @@ def wireless_board(controller_cfg: dict, params_path: str, params: dict) -> dict
         port=int(env.get("syslog_port") or wifi_boards.syslog_port()),
         ping_port=int(env.get("ping_port") or wifi_boards.PING_PORT),
         mdns_name=mcu_env.robot_mdns_name(params, params_path),
-        pinned_ip=mcu_env.ota_ip_for(params))
+        pinned_ip=mcu_env.robot_ip_for(params))
     if not uid:
         return {}
     return dict(entry, uid=uid) if entry else {"uid": uid}

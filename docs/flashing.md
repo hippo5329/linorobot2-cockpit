@@ -174,6 +174,13 @@ The robot is found by **its name**, the one the user picks it by:
    line to syslog, and Hardware Tests' Monitor streams that board's syslog
    (`scripts/wifi_boards.py monitor <robot config>`).
 
+Config Studio (Hardware) shows both names of the robot on the network: **Network Name**
+(`telemetry.hostname`; blank is the robot's name) and **Robot IP Address**
+(`base_controller.robot_ip`, beside `agent_ip`). The IP defaults to the address detected at
+the robot's first boot after its USB flash, the flasher pings for it for up to 30 s, and
+answers keep it current. Left as detected it stays automatic; an edited one is pinned in
+the config and tried first.
+
 `python3 scripts/wifi_boards.py ping` lists the boards that answer, with the robot each
 one is. An ESP32 board flashed before env-over-the-air (its partition table names `env`
 `0x99`, not `spiffs`) takes an application over the air but not an env: flash it over USB

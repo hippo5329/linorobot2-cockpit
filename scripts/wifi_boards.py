@@ -319,7 +319,7 @@ def find_robot_board(robot: str, within: float = FRESH_S, port: int = None,
         return "", {}
     t0 = time.time()
     # Where it was last, then where its name says it is, then anyone who answers.
-    # The address the user pinned (telemetry.ota_ip), where it was last, where its
+    # The robot IP its config pins (base_controller.robot_ip), where it was last, where its
     # name says it is (mDNS), then anyone who answers.
     tried = set()
     for ip in (pinned_ip, robot_ip(robot)):
@@ -420,7 +420,7 @@ def main() -> int:
     uid, entry = find_robot_board(robot, port=int(env.get("syslog_port") or syslog_port()),
                                   ping_port=int(env.get("ping_port") or PING_PORT),
                                   mdns_name=mcu_env.robot_mdns_name(params, a.params),
-                                  pinned_ip=mcu_env.ota_ip_for(params))
+                                  pinned_ip=mcu_env.robot_ip_for(params))
     if not entry:
         print(f"❌ '{robot}' is not on USB and its board "
               + (f"(uid={uid}) did not answer on Wi-Fi." if uid else

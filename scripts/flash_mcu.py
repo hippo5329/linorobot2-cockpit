@@ -183,6 +183,29 @@ def is_unoq_family(env: str) -> bool:
     return mcu_identity.env_family(env) == "unoq"
 
 
+def detect_wifi_address(uid: str, params_path: str, timeout: float = 30.0) -> str:
+    """The address a Wi-Fi robot takes at its first boot after a USB flash: asked for
+    by uid (a broadcast ping every 2 s) until the board has joined its network and
+    answers. This is the robot's default OTA address, the one Config Studio shows.
+    "" if it has not answered within `timeout` (it is then learned from its first
+    answer later)."""
+    try:
+        import cockpit_paths
+        import mcu_env
+        import wifi_boards
+        env = mcu_env.env_from_config(os.path.abspath(params_path), cockpit_paths.secrets_path())
+        ping_port = int(env.get("ping_port") or wifi_boards.PING_PORT)
+    except Exception:
+        return ""
+    log(f"waiting for board uid={uid} to join Wi-Fi (up to {int(timeout)} s)...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        found = wifi_boards.ping(None, ping_port, timeout=2.0)
+        if uid.upper() in found:
+            return found[uid.upper()].get("ip") or ""
+    return ""
+
+
 def params_wifi_transport(params_path: Optional[str]) -> bool:
     """Does this robot config put micro-ROS on Wi-Fi (udp4)? Only an ESP32/ESP32-S3
     can: the RP2 boards are serial-only, with the radio off."""
@@ -259,7 +282,7 @@ def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
     uid, entry = wifi_boards.find_robot_board(
         robot, port=syslog_port, ping_port=ping_port,
         mdns_name=mcu_env.robot_mdns_name(params, params_path),
-        pinned_ip=mcu_env.ota_ip_for(params))
+        pinned_ip=mcu_env.robot_ip_for(params))
     if not uid:
         log(f"❌ [NO BOARD] this computer has never flashed '{robot}' over USB, so it does not "
             f"know which board is that robot. Plug the board in and flash it once; after "
@@ -1986,10 +2009,12 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
                     import wifi_boards
                     name = mcu_env.robot_name_of(mcu_env.load_yaml(params), params)
                     ip_m = re.search(r"\bip=(\d+\.\d+\.\d+\.\d+)", captured or "")
-                    wifi_boards.remember_robot(name, banner["board_id"], env,
-                                               ip_m.group(1) if ip_m else None)
-                    log(f"Wi-Fi robot '{name}' is board uid={banner['board_id']}: it can be "
-                        f"unplugged now and is written over the air from here on.")
+                    ip = ip_m.group(1) if ip_m else detect_wifi_address(banner["board_id"], params)
+                    wifi_boards.remember_robot(name, banner["board_id"], env, ip)
+                    log(f"Wi-Fi robot '{name}' is board uid={banner['board_id']}"
+                        + (f", on Wi-Fi at {ip}" if ip else
+                           " (not on Wi-Fi yet: its address is learned when it first answers)")
+                        + ": it can be unplugged now and is written over the air from here on.")
                 except Exception as exc:
                     log(f"⚠️  could not record which board '{params}' is: {exc}")
     else:
