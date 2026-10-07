@@ -264,7 +264,6 @@ def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
     params_path = os.path.abspath(args.params)
     params = mcu_env.load_yaml(params_path)
     robot = mcu_env.robot_name_of(params, params_path)
-    env_bin = resolve_env_bin(args, prebuilt_dir)
     try:
         env_vals = mcu_env.env_from_config(params_path, cockpit_paths.secrets_path())
     except SystemExit as exc:
@@ -297,6 +296,10 @@ def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
             log(f"   heard: uid={u} at {e.get('ip')} running {e.get('git')} ({e.get('app')})")
         return 1
     ip = entry["ip"]
+    # Built only once the board is found: building it gives a robot its OTA password
+    # when it has none, which belongs to its USB flash -- a robot never flashed here
+    # was being given one by a failed attempt over the air.
+    env_bin = resolve_env_bin(args, prebuilt_dir)
     log(f"board uid={uid} at {ip}: running {entry.get('git')} {entry.get('distro') or ''} "
         f"app={entry.get('app')}, heard {int(time.time() - float(entry.get('seen') or 0))} s ago")
 
