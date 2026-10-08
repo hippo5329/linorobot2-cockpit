@@ -42,6 +42,14 @@ void initPing(void (*format_banner)(char *buf, size_t n));
 // Unauthenticated on purpose: it can only take motion away. The base application
 // does not act on it; its wheels stop on the /cmd_vel timeout.
 bool hostStopRequested(void);
+// Clears the latch, for a mode that can be started again (base_ident.cpp): a stop
+// that ended one identification must not cancel the next.
+void hostStopClear(void);
+// "lino-ident" on the ping port (2026-10-08, user: "can we call test_acc with base
+// firmware mode?"): the base application runs the drivetrain identification in place,
+// micro-ROS and the LiDAR still up. Read once: true at most once per request. Answered
+// "lino-ident ok <banner>".
+bool hostIdentRequested(void);
 // The watchdog feed initOta() was given (main.cpp's), for a tool that waits a long
 // time outside loop(); a no-op without one.
 void feedWatchdogFromTool(void);
@@ -50,6 +58,8 @@ void feedWatchdogFromTool(void);
 #define runOta()
 #define initPing(f)
 #define hostStopRequested() false
+#define hostStopClear()
+#define hostIdentRequested() false
 #define feedWatchdogFromTool()
 #endif
 

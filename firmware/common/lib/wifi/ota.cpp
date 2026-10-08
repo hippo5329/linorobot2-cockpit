@@ -34,8 +34,16 @@ static WiFiUDP ping_udp;
 static bool ping_started = false;
 static void (*ping_format)(char *, size_t) = NULL;
 static volatile bool stop_requested = false;
+static volatile bool ident_requested = false;
 
 bool hostStopRequested(void) { return stop_requested; }
+void hostStopClear(void) { stop_requested = false; }
+bool hostIdentRequested(void)
+{
+    if (!ident_requested) return false;
+    ident_requested = false;
+    return true;
+}
 
 void initPing(void (*format_banner)(char *buf, size_t n))
 {
@@ -58,13 +66,18 @@ static void runPing(void)
     const int r = ping_udp.read(req, sizeof(req) - 1);
     req[r > 0 ? r : 0] = '\0';
     const bool stop = strncmp(req, "lino-stop", 9) == 0;
-    if (!stop && strncmp(req, "lino?", 5) != 0)
+    const bool ident = strncmp(req, "lino-ident", 10) == 0;
+    if (!stop && !ident && strncmp(req, "lino?", 5) != 0)
         return;
     char line[224];
     if (stop) {
         stop_requested = true;
         strcpy(line, "lino-stop ok ");
         ping_format(line + 13, sizeof(line) - 13);
+    } else if (ident) {
+        ident_requested = true;
+        strcpy(line, "lino-ident ok ");
+        ping_format(line + 14, sizeof(line) - 14);
     } else {
         ping_format(line, sizeof(line));
     }

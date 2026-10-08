@@ -85,6 +85,7 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 #include <WiFi.h>   // the banner's ip= field
 #endif
 #include "ota.h"
+#include "base_ident.h"
 #include "diag.h"
 
 // The local set_microros_net_transports() that used to live here is gone.
@@ -2214,10 +2215,26 @@ void moveBase()
 
     // the required rpm is capped at -/+ MAX_RPM to prevent the PID from having too much error
     // the PWM value sent to the motor driver is the calculated PID based on required RPM vs measured RPM
-    int pwm1 = motor1_pid.compute(req_rpm.motor1, current_rpm1);
-    int pwm2 = motor2_pid.compute(req_rpm.motor2, current_rpm2);
-    int pwm3 = motor3_pid.compute(req_rpm.motor3, current_rpm3);
-    int pwm4 = motor4_pid.compute(req_rpm.motor4, current_rpm4);
+    int pwm1, pwm2, pwm3, pwm4;
+    // The drivetrain identification in place (base_ident.h): when it is running, IT
+    // drives the motors this tick and the /cmd_vel PID is not consulted. Everything
+    // else in this function -- encoders, odometry, the publishers -- carries on, so
+    // the robot computer watches the run live. A non-zero /cmd_vel stops it.
+    const float ident_cur[4] = {current_rpm1, current_rpm2, current_rpm3, current_rpm4};
+    int ident_pwm[4];
+    const bool operator_cmd = (millis() - prev_cmd_time) < 200
+        && (fabs(twist_msg.linear.x) > 1e-3 || fabs(twist_msg.linear.y) > 1e-3 || fabs(twist_msg.angular.z) > 1e-3);
+    const unsigned ident_motors = (kinematics->base_platform_ == Kinematics::DIFFERENTIAL_DRIVE) ? 2 : 4;
+    static const int ident_pwm_max = (1 << envU16("pwm_bits", PWM_BITS)) - 1;   // once: the env is loaded by now
+    if (baseIdentTick(ident_cur, ident_pwm, motor_pids, kinematics, ident_motors, ident_pwm_max,
+                      operator_cmd, sim_wheels)) {
+        pwm1 = ident_pwm[0]; pwm2 = ident_pwm[1]; pwm3 = ident_pwm[2]; pwm4 = ident_pwm[3];
+    } else {
+    pwm1 = motor1_pid.compute(req_rpm.motor1, current_rpm1);
+    pwm2 = motor2_pid.compute(req_rpm.motor2, current_rpm2);
+    pwm3 = motor3_pid.compute(req_rpm.motor3, current_rpm3);
+    pwm4 = motor4_pid.compute(req_rpm.motor4, current_rpm4);
+    }
     motor1_controller.spin(pwm1);
     motor2_controller.spin(pwm2);
     motor3_controller.spin(pwm3);
