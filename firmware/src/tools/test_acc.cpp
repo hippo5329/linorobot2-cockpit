@@ -490,7 +490,9 @@ void deadzone()
 }
 
 // Open-loop step: the plant the PID has to control. Full PWM on every wheel for
-// 1 s -- the robot's own straight-line sprint -- then the same backwards.
+// 0.6 s -- the robot's own straight-line sprint -- then the same backwards. Short
+// for the floor's sake (user, 2026-10-08: "or we need to shorten motor run"): the
+// TS100's tau is 20-40 ms, so 0.6 s is >10 tau and the last sample is steady.
 //
 // tau is the 63.2% crossing, which is the definition for a first-order step, and
 // K is rpm per PWM count -- the units the loop gain is the inverse of.
@@ -498,13 +500,13 @@ void plant()
 {
     const int pwm_max = pwmMax();
     for (int dir = 1; dir >= -1; dir -= 2) {
-        static float samples[4][50];
+        static float samples[4][30];
         float peak[4] = {0, 0, 0, 0};
         int cmd[4];
         for (unsigned i = 0; i < total_motors; i++) readRPM(i);
         for (unsigned i = 0; i < 4; i++) cmd[i] = dir * pwm_max;
         spinAll(cmd);
-        for (unsigned t = 0; t < 50; t++) {          // 1 s at 20 ms
+        for (unsigned t = 0; t < 30; t++) {          // 0.6 s at 20 ms
             waitMs(TICK_MS);
             for (unsigned i = 0; i < total_motors; i++) {
                 samples[i][t] = fabs(readRPM(i));
@@ -513,9 +515,9 @@ void plant()
         }
         stopAll();
         for (unsigned i = 0; i < total_motors; i++) {
-            const float steady = samples[i][49];
+            const float steady = samples[i][29];
             unsigned tau_ticks = 0;
-            for (unsigned t = 0; t < 50; t++) {
+            for (unsigned t = 0; t < 30; t++) {
                 if (samples[i][t] >= steady * 0.632f) { tau_ticks = t; break; }
             }
             REPORT("IDENT %s wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
@@ -530,11 +532,13 @@ void plant()
 //
 // Overshoot alone is not enough -- a loop can creep past the setpoint once and
 // settle, or cross it repeatedly by a hair and never settle. The crossing count
-// is the second test, and it is the one that catches ringing. 2 s, not 3: at
-// 90% of top that is ~0.7 m of floor each way, and the loops settle well inside it.
+// is the second test, and it is the one that catches ringing. 1.5 s, not 3: at
+// 90% of top that is ~0.5 m of floor each way (user, 2026-10-08: "or we need to
+// shorten motor run"), and the TS100's loops settled in ~0.5 s; the steady error
+// is still the last 0.5 s.
 void loopStep(float magnitude_rpm)
 {
-    const unsigned ticks = 100;                      // 2 s
+    const unsigned ticks = 75;                       // 1.5 s
     for (int dir = 1; dir >= -1; dir -= 2) {
         const float setpoint_rpm = dir * magnitude_rpm;
         // Start from a known state. The integral carries between steps, so the
