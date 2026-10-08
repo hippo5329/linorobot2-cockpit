@@ -166,6 +166,23 @@ void poweroffLidar(void)
 #define LIDAR_RX_BUFFER_SIZE 4096
 #endif
 
+// The firmware's lidarUartOpen() hook (src/main.cpp) for the ESP32 family: a real LD19 on
+// `rx_pin`, read by the raw_scan forwarder (pumpRealLidar) and sent to the robot computer as
+// /raw_scan over micro-ROS -- lidar_comm `topic`, on the serial link (the GenDrv's 1.5 Mbaud)
+// or over Wi-Fi. It is the UDP forwarder's own UART: the two are exclusive (initLidar()
+// forwards only for lidar_comm udp), so in topic mode nothing else opens `comm`. Only the RX
+// pin is used; the LD19 needs nothing sent to it. Same 4 KB buffer as the forwarder, for the
+// same reason. Until 2026-10-08 only the UNO Q (Zephyr) had this hook, and a GenDrv set to
+// topic with a real LD19 published no /raw_scan at all.
+Stream *lidarUartOpen(int rx_pin, uint32_t baud)
+{
+  if (rx_pin < 0)
+    return nullptr;
+  comm.setRxBufferSize(LIDAR_RX_BUFFER_SIZE);
+  comm.begin(baud, SERIAL_8N1, rx_pin, -1);
+  return &comm;
+}
+
 void initLidar(void) {
   initMcuEnv();
   lidar_rx = envInt("lidar_rx", LIDAR_RXD);

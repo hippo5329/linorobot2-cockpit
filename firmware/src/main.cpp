@@ -451,7 +451,8 @@ void flushRawScan()
 // on that pin, and the firmware then says so rather than publishing an empty topic.
 // Whole packets only, synced on the 0x54 0x2C header: a byte stream cut at an arbitrary
 // point would leave the host re-syncing on every message.
-#if defined(LINO_ZEPHYR)
+#if defined(LINO_ZEPHYR) || defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+// zephyr/unoq/fw/src/lidar_uart.cpp; common/lib/lidar/lidar.cpp on the ESP32 family
 Stream *lidarUartOpen(int rx_pin, uint32_t baud);
 #else
 static Stream *lidarUartOpen(int, uint32_t) { return nullptr; }
