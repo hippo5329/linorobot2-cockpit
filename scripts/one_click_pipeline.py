@@ -1128,7 +1128,8 @@ def wait_for_nav2_activation(timeout_sec: int = 240, log_tag: str = "nav2") -> t
     return False, f"lifecycle_manager reported neither success nor failure within {timeout_sec}s"
 
 
-def start_nav2(cmd: str, distro: str, bg_processes: list, stack_processes: list) -> tuple:
+def start_nav2(cmd: str, distro: str, bg_processes: list, stack_processes: list,
+               tag: str = "nav2") -> tuple:
     """Launch Nav2 and wait for it to activate, restarting it once if it hangs. Returns (ok, detail, log_path).
 
     lifecycle_manager drives twelve servers through configure and activate,
@@ -1147,7 +1148,7 @@ def start_nav2(cmd: str, distro: str, bg_processes: list, stack_processes: list)
     parameter -- and a restart would only hide it, so that is reported, not
     retried.
     """
-    for attempt, tag in enumerate(("nav2", "nav2_retry")):
+    for attempt, tag in enumerate((tag, f"{tag}_retry")):
         proc = launch_bg(cmd, log_tag=tag, distro=distro)
         bg_processes.append(proc)
         stack_processes.append(("nav2", proc))
@@ -2549,7 +2550,8 @@ def main():
                     print(f"  ❌ {failed}")
                 cfg = tuned or params_path
                 print(f"\n[6.3/6] [NAV2] Restarting Nav2 on {'the measured' if tuned else 'the configured'} limits...")
-                return start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes)
+                return start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes,
+                                  tag="nav2_measured")
 
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             nav2_ok, nav2_detail, nav2_log = start_nav2(nav2_cmd(nav2_cfg), args.distro,
