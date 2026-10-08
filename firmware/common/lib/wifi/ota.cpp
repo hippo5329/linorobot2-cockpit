@@ -33,6 +33,9 @@
 static WiFiUDP ping_udp;
 static bool ping_started = false;
 static void (*ping_format)(char *, size_t) = NULL;
+static volatile bool stop_requested = false;
+
+bool hostStopRequested(void) { return stop_requested; }
 
 void initPing(void (*format_banner)(char *buf, size_t n))
 {
@@ -54,10 +57,17 @@ static void runPing(void)
     char req[16];
     const int r = ping_udp.read(req, sizeof(req) - 1);
     req[r > 0 ? r : 0] = '\0';
-    if (strncmp(req, "lino?", 5) != 0)
+    const bool stop = strncmp(req, "lino-stop", 9) == 0;
+    if (!stop && strncmp(req, "lino?", 5) != 0)
         return;
     char line[224];
-    ping_format(line, sizeof(line));
+    if (stop) {
+        stop_requested = true;
+        strcpy(line, "lino-stop ok ");
+        ping_format(line + 13, sizeof(line) - 13);
+    } else {
+        ping_format(line, sizeof(line));
+    }
     ping_udp.beginPacket(ping_udp.remoteIP(), ping_udp.remotePort());
     ping_udp.write((const uint8_t *)line, strlen(line));
     ping_udp.endPacket();
@@ -69,6 +79,11 @@ static bool ota_started = false;
 
 static void (*ota_on_start)(void) = NULL;
 static void (*ota_feed)(void) = NULL;
+
+void feedWatchdogFromTool(void)
+{
+    if (ota_feed) ota_feed();
+}
 
 void initOta(void (*on_start)(void), void (*feed)(void))
 {

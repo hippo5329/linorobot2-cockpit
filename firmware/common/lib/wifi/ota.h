@@ -36,10 +36,21 @@
 void initOta(void (*on_start)(void), void (*feed)(void));
 void runOta(void);
 void initPing(void (*format_banner)(char *buf, size_t n));
+// The host's stop (2026-10-08): a datagram "lino-stop" to the ping port latches a
+// flag a motion TOOL polls (test_acc halts its motors and stays halted until a new
+// env is written). Answered "lino-stop ok <uid line>" so the sender knows it landed.
+// Unauthenticated on purpose: it can only take motion away. The base application
+// does not act on it; its wheels stop on the /cmd_vel timeout.
+bool hostStopRequested(void);
+// The watchdog feed initOta() was given (main.cpp's), for a tool that waits a long
+// time outside loop(); a no-op without one.
+void feedWatchdogFromTool(void);
 #else
 #define initOta(on_start, feed)
 #define runOta()
 #define initPing(f)
+#define hostStopRequested() false
+#define feedWatchdogFromTool()
 #endif
 
 #endif

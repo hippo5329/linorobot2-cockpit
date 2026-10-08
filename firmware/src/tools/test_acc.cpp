@@ -94,9 +94,9 @@ Kinematics *kinematics = nullptr;
 // The PWM width the motors were built with (createMotor reads the same key).
 static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
 
-// Every result line goes to the console AND to syslog: a robot on the ground
-// has no cable, and the identification is the part of this tool that tunes it.
-#define REPORT(...) do { Serial.printf(__VA_ARGS__); syslog(LOG_INFO, __VA_ARGS__); } while (0)
+// The console. On a Wi-Fi robot main.cpp tees a tool's console to syslog, so a
+// robot on the ground, off its cable, still reports every line.
+#define REPORT(...) Serial.printf(__VA_ARGS__)
 
 // No `Odometry odometry;` here: it was declared and never referenced, 728
 // bytes of .bss out of a 124580-byte static segment, on every board and
@@ -120,6 +120,43 @@ unsigned total_motors = 4;
 // Set when the env says the wheels are simulated. loop_() then prints where to
 // get the answer instead of driving nothing and tabulating the result.
 bool sim_wheels = false;
+
+// The host's stop (ota.h, 2026-10-08: the TS100 ran into a wall during this test
+// and nothing could stop it short of the env). Every wait in this tool goes
+// through waitMs(), which services the radio -- so the stop datagram is read
+// within milliseconds, mid-step -- and halts on it. Halted means motors off and
+// nothing else, for good: the radio and OTA stay up so the host can write
+// app=base, which is the only way out. Not a return: every caller would have to
+// check, and one that forgot would drive on.
+static void halt(const char *why)
+{
+    motor1_controller->spin(0);
+    motor2_controller->spin(0);
+    motor3_controller->spin(0);
+    motor4_controller->spin(0);
+    Serial.printf("[test_acc] STOPPED: %s -- motors off; write app=base to leave\n", why);
+    for (;;) {
+        runWifis();
+        runOta();
+        feedWatchdogFromTool();
+        delay(20);
+    }
+}
+
+static void waitMs(uint32_t ms)
+{
+    const uint32_t end = millis() + ms;
+    for (;;) {
+        runWifis();
+        runOta();
+        if (hostStopRequested())
+            halt("stop from the host");
+        const int32_t left = (int32_t)(end - millis());
+        if (left <= 0)
+            return;
+        delay(left < 5 ? (uint32_t)left : 5u);
+    }
+}
 
 void setup_()
 {
@@ -184,7 +221,7 @@ void setup_()
 
     initBoardLate();
     syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
-    delay(2000);
+    waitMs(2000);
 }
 
 unsigned runs = 12;
@@ -221,9 +258,7 @@ void record(unsigned n, Kinematics::velocities *buf) {
         if (idx < buf_size) {
             buf[idx] = kinematics->getVelocities(rpm1, rpm2, rpm3, rpm4);
         }
-        delay(ticks);
-        runWifis();
-        runOta();
+        waitMs(ticks);
     }
 }
 
@@ -362,7 +397,7 @@ PID *pid(int i)
 void stopAll()
 {
     for (unsigned i = 0; i < total_motors; i++) mot(i)->spin(0);
-    delay(700);                          // let the wheels actually stop
+    waitMs(700);                          // let the wheels actually stop
 }
 
 // The smallest PWM that turns the wheel. SIM_WHEEL_STALL_DUTY is a guess at 4%;
@@ -374,15 +409,15 @@ void deadzone()
         int found = -1;
         for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
             mot(i)->spin(pwm);
-            delay(120);
+            waitMs(120);
             // Two samples: the first getRPM() after a stop can still carry the
             // previous motion on a filtered encoder.
             enc(i)->getRPM();
-            delay(80);
+            waitMs(80);
             if (fabs(enc(i)->getRPM()) > 2.0) found = pwm;
         }
         mot(i)->spin(0);
-        delay(300);
+        waitMs(300);
         REPORT("IDENT deadzone wheel=%u pwm=%d duty=%.3f\n",
                       i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
     }
@@ -402,7 +437,7 @@ void plant()
         unsigned tau_ticks = 0;
         float samples[50];
         for (unsigned t = 0; t < 50; t++) {          // 1 s at 20 ms
-            delay(TICK_MS);
+            waitMs(TICK_MS);
             samples[t] = fabs(enc(i)->getRPM());
             if (samples[t] > peak) peak = samples[t];
         }
@@ -414,7 +449,7 @@ void plant()
         REPORT("IDENT plant wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
                       i + 1, steady, tau_ticks * TICK_MS,
                       pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak);
-        delay(700);
+        waitMs(700);
     }
 }
 
@@ -437,7 +472,7 @@ void loopStep(float setpoint_rpm)
         // so the identification starts where real driving starts.
         for (unsigned t = 0; t < 30; t++) {
             mot(i)->spin((int)pid(i)->compute(0.0f, enc(i)->getRPM()));
-            delay(TICK_MS);
+            waitMs(TICK_MS);
         }
         enc(i)->getRPM();
         float peak = 0.0, last = 0.0, err_sum = 0.0;
@@ -457,7 +492,7 @@ void loopStep(float setpoint_rpm)
                 settle_tick = t + 1;
             if (t >= ticks - 25) err_sum += (setpoint_rpm - rpm);   // last 0.5 s
             last = rpm;
-            delay(TICK_MS);
+            waitMs(TICK_MS);
         }
         mot(i)->spin(0);
         const float over = setpoint_rpm != 0.0f
@@ -470,7 +505,7 @@ void loopStep(float setpoint_rpm)
                       i + 1, setpoint_rpm, over, crossings,
                       settle_tick >= ticks ? -1 : (int)(settle_tick * TICK_MS),
                       err_sum / 25.0f, last);
-        delay(700);
+        waitMs(700);
     }
 }
 
@@ -585,7 +620,7 @@ void loop_() {
         }
     }
 
-    delay(100);
+    waitMs(100);
 }
 
 }  // namespace test_acc
