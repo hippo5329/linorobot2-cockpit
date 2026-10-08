@@ -54,7 +54,11 @@ float Kinematics::rotationRadius(base robot_base, float wheels_y_distance,
 {
     if (robot_base == MECANUM)
         return (wheels_y_distance + wheels_x_distance) / 2.0;
-    if (robot_base == SKID_STEER)
+    // A skid steer scrubs, and so does a TRACKED differential base: two motors, but
+    // each track a long contact patch dragged sideways in a turn. The TS100 turned 0.81
+    // of what its tracks said, judged by its LiDAR (2026-10-08; user: "it is a tracked
+    // tank"). A wheeled 2wd leaves angular_scale at 1.0 and is exactly as before.
+    if (robot_base == SKID_STEER || robot_base == DIFFERENTIAL_DRIVE)
         return (wheels_y_distance / 2.0) * angular_scale;
     return wheels_y_distance / 2.0;
 }

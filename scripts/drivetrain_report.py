@@ -124,10 +124,9 @@ def drivetrain(params):
     # a mecanum's rollers put the wheelbase into the yaw term.
     if base == "mecanum":
         radius = (lr + fr) / 2.0
-    elif base in ("4wd", "skid_steer"):
-        radius = (lr / 2.0) * float(kine.get("angular_scale", 1.0))
     else:
-        radius = lr / 2.0
+        # skid steer, and a tracked 2wd (Kinematics::rotationRadius): both scrub
+        radius = (lr / 2.0) * float(kine.get("angular_scale", 1.0))
     # TWO different ceilings, and conflating them was a real mistake in the
     # first version of this report.
     #
