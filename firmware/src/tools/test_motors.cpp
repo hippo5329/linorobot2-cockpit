@@ -104,7 +104,7 @@ void initLed(void)
 // used. The base type, the wheel and the PWM width come from the env, like
 // main.cpp's: the header's macros named whichever robot the image was generated
 // for, so a 0.056 m wheel was reported through the header's diameter
-// (ts100_gendrv, 2026-10-08: 181 RPM printed as 0.95 m/s).
+// (a tracked GenDrv robot, 2026-10-08: 181 RPM printed as 0.95 m/s).
 
 // No `Odometry odometry;` here: declared, never referenced, 728 bytes of
 // .bss out of a 124580-byte static segment. A motor test has no use for an

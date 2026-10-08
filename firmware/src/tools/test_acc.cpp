@@ -85,7 +85,7 @@ sensor_msgs__msg__Imu *imu_msg = nullptr;
 // The gains, the kinematics and the PWM width come from the env, through the
 // factory, like main.cpp. They were file-scope objects built from the generated
 // header's macros: one image serves every robot of a family, so on a real robot
-// (ts100_gendrv, 2026-10-08) the closed-loop steps ran the header's gains, the
+// (a tracked GenDrv robot, 2026-10-08) the closed-loop steps ran the header's gains, the
 // velocity table used a 0.043 m wheel and 180 RPM, and the base type was the
 // header's -- an identification of a robot that does not exist.
 PID *motor_pids[4] = {};
@@ -122,7 +122,7 @@ unsigned total_motors = 4;
 // get the answer instead of driving nothing and tabulating the result.
 bool sim_wheels = false;
 
-// The host's stop (ota.h, 2026-10-08: the TS100 ran into a wall during this test
+// The host's stop (ota.h, 2026-10-08: the tracked test robot ran into a wall during this test
 // and nothing could stop it short of the env). Every wait in this tool goes
 // through waitMs(), which services the radio -- so the stop datagram is read
 // within milliseconds, mid-step -- and halts on it. Halted means motors off and
@@ -518,7 +518,7 @@ void deadzone()
 // Open-loop step: the plant the PID has to control. Full PWM on every wheel for
 // 0.6 s -- the robot's own straight-line sprint -- then the same backwards. Short
 // for the floor's sake (user, 2026-10-08: "or we need to shorten motor run"): the
-// TS100's tau is 20-40 ms, so 0.6 s is >10 tau and the last sample is steady.
+// The tracked test robot's tau is 20-40 ms, so 0.6 s is >10 tau and the last sample is steady.
 //
 // tau is the 63.2% crossing, which is the definition for a first-order step, and
 // K is rpm per PWM count -- the units the loop gain is the inverse of.
@@ -560,7 +560,7 @@ void plant()
 // settle, or cross it repeatedly by a hair and never settle. The crossing count
 // is the second test, and it is the one that catches ringing. 1.5 s, not 3: at
 // 90% of top that is ~0.5 m of floor each way (user, 2026-10-08: "or we need to
-// shorten motor run"), and the TS100's loops settled in ~0.5 s; the steady error
+// shorten motor run"), and the tracked test robot's loops settled in ~0.5 s; the steady error
 // is still the last 0.5 s.
 void loopStep(float magnitude_rpm)
 {
@@ -706,7 +706,7 @@ void loop_() {
         digitalWrite(LED_PIN, HIGH);
 #endif
         // The spins (even runs) at half the straight runs' PWM: at full PWM the
-        // TS100's tracks skidded the body 10 deg further than they said (2026-10-08).
+        // The tracked test robot's tracks skidded the body 10 deg further than they said (2026-10-08).
         const float spin = (runs & 1) ? 1.0f : 0.5f;
         driveAll((runs & 1) ? current_pwm_max : current_pwm_min * spin, current_pwm_max * spin,
                  (runs & 1) ? current_pwm_max : current_pwm_min * spin, current_pwm_max * spin);

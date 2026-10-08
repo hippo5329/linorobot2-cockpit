@@ -48,7 +48,7 @@ sim_ld19.h -- if it changes there, change it here.
 Each line also judges how FAR the base went, not only how fast it said it was going:
 the path the board's own odometry travelled during the window, against commanded speed
 x time (a spin: the yaw it turned). The speed is the median of the /odom samples that
-ARRIVED, and a link that drops samples drops the stopped ones too: on 2026-10-04 an m21
+ARRIVED, and a link that drops samples drops the stopped ones too: on 2026-10-04 a bench
 GenDrv on Wi-Fi reported forward at +0.250 m/s and passed while it covered 0.67 m of the
 1.25 m commanded -- its 200 ms command watchdog (main.cpp) stopped it every time Wi-Fi
 stalled. And each line names the longest stretch with no /odom at all, judged against

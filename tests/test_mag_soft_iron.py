@@ -1,6 +1,6 @@
 """The magnetometer's soft iron reaches the firmware (2026-10-08).
 
-User: "do 1,2,3 all" -- a slow turn showed the TS100's horizontal field squashed 1.19:1
+User: "do 1,2,3 all" -- a slow turn showed the tracked test robot's horizontal field squashed 1.19:1
 (motors and pack): +-7 deg of heading twice per turn that a bias cannot remove.
 """
 import os

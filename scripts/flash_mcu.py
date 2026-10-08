@@ -1655,7 +1655,7 @@ def wait_for_port_return(port: str, before: str) -> bool:
 
     A native-USB ESP32-S3 drops off the bus on every esptool reset. Inside a
     container its node returns only after the host re-attaches it, and behind a
-    chain of hubs that took ~3 s (m21, 2026-10-05: three re-enumerations in 3 s);
+    chain of hubs that took ~3 s (a bench host, 2026-10-05: three re-enumerations in 3 s);
     both fallback attempts started at once, found no port and the flash failed,
     twice in a row, while the board was fine.
     """
@@ -1678,7 +1678,7 @@ def esptool_before(port: str) -> list:
 
     esptool picks its reset sequence from the USB ids it reads in sysfs for the
     port name. Inside a container the tty is a bind mount, so /sys/class/tty/<name>
-    is whatever the HOST calls that name -- on m21 (2026-10-05) the cell's ttyACM0
+    is whatever the HOST calls that name -- on a bench host (2026-10-05) the cell's ttyACM0
     was the host's Pico 2 W, esptool used the classic UART reset on the S3's
     USB-Serial/JTAG, the board dropped off the bus, and every attempt failed with
     "Could not configure port: Input/output error". mcu_identity resolves the tty by

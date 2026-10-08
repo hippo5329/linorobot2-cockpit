@@ -1,7 +1,7 @@
 """test_acc comes back to where it started (2026-10-08).
 
 User: "we should recenter the robot before each run, verify the trajectory, change it so
-that it return to home." Forward-only identification steps walked the TS100 ~2 m into a
+that it return to home." Forward-only identification steps walked the tracked test robot ~2 m into a
 wall: one wheel forward, then the other, is a robot crawling forward in arcs.
 """
 import os

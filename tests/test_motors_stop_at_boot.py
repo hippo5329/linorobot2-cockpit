@@ -1,7 +1,7 @@
 """A real robot's motors are stopped from the first line of setup() (2026-10-08).
 
 User: "For real robots, the motor output must be initialized to stop immediately" --
-the TS100's wheels ran at boot. The drivetrain came after the banner, the reset reason,
+the tracked test robot's wheels ran at boot. The drivetrain came after the banner, the reset reason,
 the board init and an RP2's USB wait; and a BTS7960 raised its enable pin while IN_A/IN_B
 were still floating inputs.
 """

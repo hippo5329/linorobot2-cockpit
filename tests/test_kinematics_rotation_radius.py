@@ -170,7 +170,7 @@ def test_the_scrub_measurement_widens_the_skid_track(kin_lib):
     """angular_scale is how a measured chassis says "I turn slower than my tape
     measure predicts"."""
     assert Base(kin_lib, SKID_STEER, scale=1.3).radius == pytest.approx(LR / 2 * 1.3)
-    # a TRACKED 2wd scrubs too (the TS100, 2026-10-08: 0.81 of the tracks' yaw by LiDAR);
+    # a TRACKED 2wd scrubs too (the tracked test robot, 2026-10-08: 0.81 of the tracks' yaw by LiDAR);
     # a wheeled one keeps the default 1.0 and is unchanged (test above)
     assert Base(kin_lib, DIFFERENTIAL, scale=1.3).radius == pytest.approx(LR / 2 * 1.3)
     assert Base(kin_lib, DIFFERENTIAL).radius == pytest.approx(LR / 2)

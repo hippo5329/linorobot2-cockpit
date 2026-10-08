@@ -314,7 +314,7 @@ T = _lift_travel()
 
 
 def test_a_base_that_covered_half_the_command_fails_even_when_its_median_speed_passes():
-    # m21 GenDrv on Wi-Fi, forward: median +0.250 m/s, but 0.67 m of the 1.25 m commanded.
+    # a bench GenDrv on Wi-Fi, forward: median +0.250 m/s, but 0.67 m of the 1.25 m commanded.
     assert not T["_travel_ok"](1.25, 0.67)
     # backward: 0.20 m of 1.25.
     assert not T["_travel_ok"](1.25, 0.20)

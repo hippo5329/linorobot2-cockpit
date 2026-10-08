@@ -2422,7 +2422,7 @@ void publishData()
     // Soft iron, after the hard iron: the 2x2 that turns the horizontal field's ellipse
     // back into a circle (env `mag_soft` a,b,c,d row-major; x' = a x + b y, y' = c x + d y).
     // z is left alone -- a turn on the floor, the only calibration a robot can do by
-    // itself, cannot see it. The TS100's motors and pack squash its circle 1.19:1, which
+    // itself, cannot see it. The tracked test robot's motors and pack squash its circle 1.19:1, which
     // is +-7 deg of heading twice per turn (2026-10-08). Absent or the identity: nothing.
     {
         static bool mag_soft_read = false;
