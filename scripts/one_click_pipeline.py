@@ -283,6 +283,8 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
 
 
 SIM_MCU = "sim"
+# Step 4.8: the room a real robot needs round it before anything drives it.
+CLEARANCE_REAL_M = 0.40
 
 
 _DESIGN_NAME_CACHE = {}
@@ -1391,6 +1393,121 @@ def start_slam(cmd: str, distro: str, bg_processes: list, stack_processes: list)
     return ["SLAM: no map was published"]
 
 # ------------------------------------------------------------------- firmware
+def clearance_step(args, params: dict, controller_cfg: dict, need: float, save: str = "",
+                   max_travel: float = None) -> bool:
+    """The room round a real robot (clearance.py): True when nothing is within `need` m,
+    after inching it there when the run moves the robot. A run that commands no motion
+    (--topics-only) only reports, and never fails on it."""
+    import gen_firmware_header
+    radius = gen_firmware_header.nav2_robot_radius(params)
+    stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
+    moves = not args.topics_only
+    verb = "inch" if (moves and args.inch) else "check"
+    cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} {verb} --need {need:.2f} "
+           f"--radius {radius:.2f}{stamped}"
+           + (f" --max-travel {max_travel if max_travel is not None else args.inch_max:.2f}"
+              if verb == "inch" else "")
+           + (f" --save {save}" if save else ""))
+    res = run_ros(cmd, timeout=300, distro=args.distro)
+    for ln in (res.stdout or "").splitlines():
+        print(ln if ln.startswith("  ") else "  " + ln)
+    if res.returncode != 0 and res.stderr:
+        print(f"  STDERR:\n{res.stderr[-1500:]}")
+    if res.returncode != 0 and not moves:
+        print("  (reported only: this run commands no motion)")
+        return True
+    return res.returncode == 0
+
+
+def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
+                   serial_port: str, flash_baud: int, controller: str, robot_name: str,
+                   sim: bool = False) -> tuple:
+    """--test-acc, between the initial map and the goals: (failure, tuned_params_path).
+
+    Nav2 is already stopped. In order: room for full-power runs (test_acc_clearance all
+    round, inching up to 1.5 m to find it) and that scan kept; test_acc over Wi-Fi
+    (test_acc_run.py, which always ends with lino-stop and app=base); back to the kept
+    scan by the LiDAR (clearance.py home) -- the odometry saw none of test_acc, so
+    this is also what keeps SLAM's map consistent; the plant identified and the PID
+    gains and Nav2 limits derived from it (drivetrain_report.tune_from_test_acc) into
+    a copy of the config for the rest of this run; and that copy's env written, so the
+    board runs the new gains. The robot's own config is not rewritten: the command to
+    keep the result is printed."""
+    import gen_firmware_header
+    import mcu_env
+    import drivetrain_report
+    print(f"\n[6.2/6] [TEST_ACC] Measuring the drivetrain on the initial map...")
+    found = {} if sim else wireless_board(controller_cfg, params_path, params)
+    if not sim and not found.get("ip"):
+        return f"test_acc: '{robot_name}' did not answer on Wi-Fi", None
+    snap = os.path.join(tempfile.gettempdir(), f"lino_testacc_start_{os.getpid()}.json")
+    if not clearance_step(args, params, controller_cfg, args.test_acc_clearance, save=snap, max_travel=1.5):
+        return f"test_acc: no room of {args.test_acc_clearance:.2f} m found", None
+    transcript = os.path.join(LOG_DIR, f"test_acc_{time.strftime('%Y%m%d-%H%M%S')}.txt")
+    if sim:
+        # The firmware refuses test_acc on simulated wheels (test_acc.cpp: a table
+        # measured off the simulator would invite tuning from a model); the same
+        # model, stepped on the host on test_acc's own profile, is the honest stand-in.
+        m = drivetrain_report.run_test_acc(drivetrain_report.drivetrain(params))
+        with open(transcript, "w", encoding="utf-8") as fh:
+            fh.write(f"MAX VEL {m['max_vel']:6.2f}   0.00 m/s    0.00 rad/s\n"
+                     f"time to 0.9x max vel {m['t_to_90']:6.2f} sec\n[test_acc] done (host model)\n")
+        print(f"  Sim MCU: test_acc's model on the host -- MAX VEL {m['max_vel']:.2f} m/s, "
+              f"0.9x in {m['t_to_90']:.2f} s (nothing moves)")
+        res = subprocess.CompletedProcess([], 0, "", "")
+    else:
+        res = run_streamed([sys.executable, "-u", os.path.join(REPO_ROOT, "scripts", "test_acc_run.py"),
+                            "--params", params_path, "--env", pio_env, "--port", serial_port,
+                            "--baud", str(flash_baud), "--controller", controller, "--ip", found["ip"],
+                            "--transcript", transcript],
+                           timeout=900, log_tag="test_acc", prefix="  ")
+        # app=base reboots the board: a new micro-ROS session, then the scan again
+        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=args.distro):
+            return "test_acc: micro-ROS did not come back after app=base", None
+        wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
+    radius = gen_firmware_header.nav2_robot_radius(params)
+    stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
+    print("  Back to where test_acc started, by the LiDAR...")
+    home = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} home --snap {snap} "
+                   f"--radius {radius:.2f}{stamped}", timeout=180, distro=args.distro)
+    for ln in (home.stdout or "").splitlines():
+        print(ln if ln.startswith("  ") else "  " + ln)
+    if home.returncode != 0:
+        return "test_acc: not back where it started (the map and the odometry now disagree)", None
+    if res.returncode != 0:
+        return "test_acc: did not finish (see TEST_ACC_FAILED above)", None
+    try:
+        text = open(transcript, encoding="utf-8").read()
+    except OSError:
+        return f"test_acc: no transcript at {transcript}", None
+    tuned = json.loads(json.dumps(params))
+    tuned.setdefault("robot", {}).setdefault("name", robot_name)
+    changed = drivetrain_report.tune_from_test_acc(tuned, text)
+    if changed is None:
+        return "test_acc: the transcript identifies no plant (no IDENT, no MAX VEL)", None
+    step = (tuned.get("kinematics") or {}).get("step_response") or {}
+    print(f"  measured: {step.get('max_vel')} m/s, 0.9x in {step.get('t_to_90')} s ({step.get('source', 'MAX VEL')})")
+    for k, v in changed.items():
+        print(f"    {k}: {v['from']} -> {v['to']}")
+    if not changed:
+        print("    (the derived values are the ones the config already has)")
+    tuned_path = os.path.join(tempfile.gettempdir(), f"{robot_name}_tuned_{os.getpid()}.yaml")
+    with open(tuned_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(tuned, fh, sort_keys=False)
+    print(f"  this run continues on {tuned_path}. To keep it: python3 scripts/drivetrain_report.py "
+          f"--params {params_path} --from-test-acc {transcript} --write")
+    if sim and any(k.startswith("kinematics.") for k in changed):
+        print("  Sim MCU: its env is read at start, so new gains take effect on the next bringup.")
+    elif any(k.startswith("kinematics.") for k in changed):
+        print("  the new gains to the board (env block, app=base)...")
+        if not write_env_only(pio_env, serial_port, flash_baud, tuned_path, controller, timeout=300):
+            return "test_acc: the tuned env block was not written", None
+        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=args.distro):
+            return "test_acc: micro-ROS did not come back after the tuned env", None
+        wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
+    return "", tuned_path
+
+
 def pio_available(distro: str) -> bool:
     return run_ros("command -v pio >/dev/null 2>&1", timeout=15, distro=distro).returncode == 0
 
@@ -1627,6 +1744,25 @@ def main():
                         help="Run the eight-manoeuvre drive suite after the topic gate (default: on)")
     parser.add_argument("--no-drive-test", dest="drive_test", action="store_false",
                         help="Skip the drive suite")
+    # A real robot's room is checked before anything drives it (step 4.8, clearance.py).
+    # A simulated robot is not: its room is the one the simulation draws.
+    parser.add_argument("--clearance", type=float, default=None,
+                        help="Nothing nearer than this (m) before SLAM, Nav2 or test_acc moves the robot; "
+                             "0 skips the check (default: 0.40 on a real robot with a LiDAR, off in "
+                             "simulation -- give it to rehearse the step on the Sim MCU)")
+    parser.add_argument("--no-inch", dest="inch", action="store_false", default=True,
+                        help="When the room is short of --clearance, stop instead of inching the robot "
+                             "slowly to where it is not")
+    parser.add_argument("--inch-max", type=float, default=0.60,
+                        help="Give up inching after this many metres (default: 0.60)")
+    parser.add_argument("--test-acc", action="store_true",
+                        help="Measure the drivetrain between the initial map and the goals: the map is "
+                             "built on conservative Nav2 limits, test_acc runs (a real Wi-Fi robot: the "
+                             "firmware's PID identification and full-power runs; the Sim MCU: the same "
+                             "model run on the host), and Nav2 restarts on the gains and limits derived "
+                             "from it")
+    parser.add_argument("--test-acc-clearance", type=float, default=1.0,
+                        help="The room test_acc needs all round, m (default: 1.0)")
     # The stack STAYS UP. Pressing Start 1-Click is how a person gets a running
     # robot; tearing bringup, SLAM and Nav2 down the instant the pipeline
     # finished handed them one that had just been switched off, with no way to
@@ -2306,6 +2442,23 @@ def main():
                             wait_for_topic("/scan", timeout_sec=scan_wait, require_publisher=True,
                                            distro=args.distro, require_message="header.frame_id")
 
+        # Step 4.8: the room round a real robot, before anything drives it. Nav2's
+        # costmaps start empty, SLAM's first spin and test_acc's full-power runs go
+        # wherever the robot points, and nothing in the stack has looked yet. The
+        # whole circle is read (scan_raw under a lidar.mask) and, when something is
+        # nearer than --clearance, the robot is inched in 5 cm steps to where nothing
+        # is -- slowly, each step closed on /odom and stopped by the LiDAR. A run that
+        # commands no motion (--topics-only) only reports.
+        if args.clearance is None:
+            args.clearance = CLEARANCE_REAL_M if is_real else 0.0
+        if scan_from == "lidar" and has_lidar and args.clearance > 0:
+            print(f"\n[4.8/6] [CLEARANCE] Nothing within {args.clearance:.2f} m of the robot before it moves"
+                  + (" (inching to clear space if needed)" if (args.inch and not args.topics_only) else "") + "...")
+            if not clearance_step(args, params, controller_cfg, args.clearance):
+                failures.append(f"clearance: the room is short of {args.clearance:.2f} m")
+                print(f"❌ The room is short of {args.clearance:.2f} m. Nothing else moves the robot.")
+                return 1
+
         # Step 5: SLAM. A robot with no scan source has nothing to map, and
         # --topics-only has nothing to map it for.
         if args.topics_only:
@@ -2357,12 +2510,54 @@ def main():
                 else:
                     print("  ⚠️ after exploring, the map still does not surround the robot; "
                           "Nav2 may not plan from where it stands.")
+            # --test-acc: the initial map on conservative limits, then the drivetrain
+            # measured on it and Nav2 restarted on what was measured (test_acc_phase).
+            import mcu_env
+            do_test_acc = (args.test_acc and not args.map
+                           and (sim_mcu or (is_real and mcu_env.transport_is_wifi(controller_cfg.get("transport")))))
+            if args.test_acc and not do_test_acc:
+                print("  ⚠️ --test-acc needs the Sim MCU or a real Wi-Fi robot, mapping with SLAM "
+                      "(not --map); skipped.")
+            nav2_cfg = params_path
+            if do_test_acc:
+                import drivetrain_report
+                cons = json.loads(json.dumps(params))
+                cons.setdefault("robot", {}).setdefault("name", robot_name)
+                cut = drivetrain_report.conservative_params(cons)
+                nav2_cfg = os.path.join(tempfile.gettempdir(), f"{robot_name}_conservative_{os.getpid()}.yaml")
+                with open(nav2_cfg, "w", encoding="utf-8") as fh:
+                    yaml.safe_dump(cons, fh, sort_keys=False)
+                print(f"  Conservative limits for the initial map ({drivetrain_report.CONSERVATIVE_FRAC:.0%} "
+                      f"of the config's, {len(cut)} values) until test_acc has measured the drivetrain.")
+
+            def nav2_cmd(cfg):
+                return (f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
+                        f"distro:={args.distro} config_file:={cfg}"
+                        + (f" map:={os.path.abspath(args.map)}" if args.map else ""))
+
+            def measure_and_restart():
+                """Nav2 down, test_acc, Nav2 up again on the measured limits."""
+                for tag, proc in [(t, q) for t, q in stack_processes if t == "nav2"]:
+                    _stop_group_and_wait(proc)
+                    stack_processes[:] = [(t, q) for t, q in stack_processes if q is not proc]
+                    bg_processes[:] = [q for q in bg_processes if q is not proc]
+                failed, tuned = test_acc_phase(args, params, controller_cfg, params_path, pio_env,
+                                               serial_port, flash_baud, controller, robot_name,
+                                               sim=sim_mcu)
+                if failed:
+                    failures.append(failed)
+                    print(f"  ❌ {failed}")
+                cfg = tuned or params_path
+                print(f"\n[6.3/6] [NAV2] Restarting Nav2 on {'the measured' if tuned else 'the configured'} limits...")
+                return start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes)
+
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
-            nav2_ok, nav2_detail, nav2_log = start_nav2(
-                f"ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
-                f"distro:={args.distro} config_file:={params_path}"
-                + (f" map:={os.path.abspath(args.map)}" if args.map else ""),
-                args.distro, bg_processes, stack_processes)
+            nav2_ok, nav2_detail, nav2_log = start_nav2(nav2_cmd(nav2_cfg), args.distro,
+                                                        bg_processes, stack_processes)
+            if do_test_acc and nav2_ok and not args.explore:
+                # the goals run on the measured limits: the initial map is what SLAM has
+                # now (and what the start-up exploration added); measure, then go
+                nav2_ok, nav2_detail, nav2_log = measure_and_restart()
             if not nav2_ok:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
@@ -2384,6 +2579,10 @@ def main():
                     if ex_res.returncode != 0:
                         print(_nav2_complaints(nav2_log))
                         failures.append(f"Explore: exit {ex_res.returncode}")
+                    if do_test_acc:
+                        # the explored map is the initial map: measure on it, and leave
+                        # Nav2 running on what was measured
+                        nav2_ok, nav2_detail, nav2_log = measure_and_restart()
                 else:
                     print(f"  ❌ EXPLORE NOT STARTED: Nav2 never activated ({nav2_detail}).")
                     failures.append("Explore: Nav2 never activated")

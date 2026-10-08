@@ -1127,6 +1127,15 @@ def derived_limits(params):
         return {}
     out = {}
     measured = run_test_acc(d, rotate=False)
+    # A robot that has been measured (kinematics.step_response, a real test_acc run)
+    # is held to the speed it actually reached, not to what the model says it would:
+    # the model knows nothing of a tracked chassis's scrub or a tired pack.
+    step = (params.get("kinematics") or {}).get("step_response") or {}
+    if isinstance(step, dict) and step.get("max_vel"):
+        try:
+            measured = dict(measured, max_vel=float(step["max_vel"]))
+        except (TypeError, ValueError):
+            pass
     ratio = suggest_max_rpm_ratio(d, measured)
     if ratio is not None:
         out["kinematics.max_rpm_ratio"] = ratio
@@ -1172,6 +1181,104 @@ def apply_derived_limits(params):
 # and the bench both call it, and because "nav2 limits" is still what a person
 # means when they turn the feature off.
 apply_nav2_limits = apply_derived_limits
+
+
+def record_step_response(params, ident=None, step=None):
+    """Write a real test_acc run's identification into kinematics.step_response (in
+    place). The IDENT block wins when there is one: per wheel, the median wheel. True
+    when something was recorded."""
+    if ident:
+        plant = plant_from_ident(dr_drivetrain_safe(params), ident)
+        if plant:
+            # The median wheel's plant, recorded the same way the two-number
+            # fallback is -- so a later save re-derives the same gains
+            # without the board being present.
+            params.setdefault("kinematics", {})["step_response"] = {
+                "max_vel": round(plant["steady_rpm"] * math.pi
+                                 * float((params.get("kinematics") or {})
+                                         .get("wheel_diameter", 0)) / 60.0, 4),
+                "t_to_90": round(plant["tau"] * T90_OVER_TAU, 4),
+                "pwm": plant["pwm_step"],
+                "measured": datetime.date.today().isoformat(),
+                "source": "test_acc IDENT, median wheel",
+            }
+            return True
+    if step:
+        # Recorded in the config, not just used: gains are only reproducible
+        # if the two numbers behind them are written down.
+        rec = {"max_vel": step["max_vel"], "t_to_90": step["t_to_90"],
+               "measured": datetime.date.today().isoformat()}
+        if step.get("pwm_step"):
+            rec["pwm"] = step["pwm_step"]
+        params.setdefault("kinematics", {})["step_response"] = rec
+        return True
+    return False
+
+
+def tune_from_test_acc(params, transcript):
+    """A real test_acc transcript -> the measured step recorded and the gains and Nav2
+    limits derived from it, in `params` (in place). Returns what changed, or None when
+    the transcript identifies nothing. `kinematics.auto_nav2_limits: false` is still
+    honoured: a person who tunes the limits by hand keeps them."""
+    if not record_step_response(params, parse_ident(transcript), parse_test_acc(transcript)):
+        return None
+    # recorded, the gains follow the evidence (auto_pid_enabled), unless the config
+    # says auto_pid: false
+    return apply_derived_limits(params)
+
+
+# The share of the robot's own Nav2 limits a run starts with when it is about to
+# measure the drivetrain (the 1-Click's --test-acc): the map is built slowly, on
+# limits the robot certainly meets, and the measured ones replace them afterwards.
+CONSERVATIVE_FRAC = 0.5
+CONSERVATIVE_KEYS = (
+    "nav2.velocity_smoother.ros__parameters.max_velocity",
+    "nav2.velocity_smoother.ros__parameters.min_velocity",
+    "nav2.velocity_smoother.ros__parameters.max_accel",
+    "nav2.velocity_smoother.ros__parameters.max_decel",
+    "nav2.controller_server.ros__parameters.FollowPath.desired_linear_vel",
+    "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel",
+    "nav2.controller_server.ros__parameters.FollowPath.max_angular_accel",
+    "nav2.behavior_server.ros__parameters.max_rotational_vel",
+    "nav2.behavior_server.ros__parameters.min_rotational_vel",
+    "nav2.behavior_server.ros__parameters.rotational_acc_lim",
+)
+
+
+def _nav2_node(params, path):
+    """The dict holding `path`'s last key, honouring nav2's <node>: <node>: nesting."""
+    parts = path.split(".")
+    node = params
+    for part in parts[:-1]:
+        if not isinstance(node, dict):
+            return None, parts[-1]
+        nxt = node.get(part)
+        if nxt is None and part == "ros__parameters":
+            nxt = node                       # flat: <node>: {key: ...}
+        elif isinstance(nxt, dict) and part != "ros__parameters" and isinstance(nxt.get(part), dict):
+            nxt = nxt[part]                  # nested: <node>: <node>: ros__parameters
+        node = nxt
+    return (node if isinstance(node, dict) else None), parts[-1]
+
+
+def conservative_params(params, frac=CONSERVATIVE_FRAC):
+    """Scale the speed and acceleration limits the config already has by `frac` (in
+    place); keys it does not set are left to the template. Returns what changed."""
+    changed = {}
+    for path in CONSERVATIVE_KEYS:
+        node, key = _nav2_node(params, path)
+        if node is None or key not in node:
+            continue
+        old = node[key]
+        if isinstance(old, (int, float)) and not isinstance(old, bool):
+            new = round(old * frac, 3) + 0.0
+        elif isinstance(old, list) and all(isinstance(v, (int, float)) for v in old):
+            new = [round(v * frac, 3) + 0.0 for v in old]
+        else:
+            continue
+        node[key] = new
+        changed[path] = {"from": old, "to": new}
+    return changed
 
 
 def report(params, name=""):
@@ -1384,29 +1491,7 @@ def main():
     for path in args.params:
         with open(path, encoding="utf-8") as fh:
             params = yaml.safe_load(fh) or {}
-        if ident:
-            plant = plant_from_ident(dr_drivetrain_safe(params), ident)
-            if plant:
-                # The median wheel's plant, recorded the same way the two-number
-                # fallback is -- so a later save re-derives the same gains
-                # without the board being present.
-                params.setdefault("kinematics", {})["step_response"] = {
-                    "max_vel": round(plant["steady_rpm"] * math.pi
-                                     * float((params.get("kinematics") or {})
-                                             .get("wheel_diameter", 0)) / 60.0, 4),
-                    "t_to_90": round(plant["tau"] * T90_OVER_TAU, 4),
-                    "pwm": plant["pwm_step"],
-                    "measured": datetime.date.today().isoformat(),
-                    "source": "test_acc IDENT, median wheel",
-                }
-        elif step:
-            # Recorded in the config, not just used: gains are only reproducible
-            # if the two numbers behind them are written down.
-            rec = {"max_vel": step["max_vel"], "t_to_90": step["t_to_90"],
-                   "measured": datetime.date.today().isoformat()}
-            if step.get("pwm_step"):
-                rec["pwm"] = step["pwm_step"]
-            params.setdefault("kinematics", {})["step_response"] = rec
+        record_step_response(params, ident, step)
         if args.write:
             changed = apply_derived_limits(params)
             with open(path, "w", encoding="utf-8") as fh:
