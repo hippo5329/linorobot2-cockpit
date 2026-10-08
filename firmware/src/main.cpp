@@ -982,6 +982,16 @@ void rcSoftFail(int line, int code)
 
 void setup() 
 {
+    // The motors first, before anything else in setup(): every pin of every
+    // motor driven to its stop state (default_motor.h motorPinLow). Until this
+    // line they are floating inputs, and the banner, the reset reason, the board
+    // init and an RP2's USB wait used to come first -- seconds of a real robot's
+    // bridges reading noise (user, 2026-10-08: "For real robots, the motor output
+    // must be initialized to stop immediately"). The env loads on first use, so
+    // the robot's own pins and driver are already known here. What the chip does
+    // before setup() -- ROM boot, the bootloader -- only pull-downs on the board
+    // can cover.
+    initDrivetrain();
     ledInit();
 
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
@@ -1103,9 +1113,8 @@ void setup()
     // SCL_PIN and no BOARD_INIT silently ran the bus on the core defaults.
     initBoard();
 
-    // Before the sensors: fullStop() and the control loop both dereference
-    // these, and a fatal sensor init below reaches fullStop() on its way out.
-    initDrivetrain();
+    // initDrivetrain() ran first thing in setup() -- see there. fullStop() and the
+    // control loop both dereference what it built.
     // Read once. Every use below -- the sensor path, the pose reset, the control
     // loop -- asks this rather than the compiler, so one image serves a bare
     // bench module and the same board with an IMU on it.

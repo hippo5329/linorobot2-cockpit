@@ -52,6 +52,20 @@ inline void analogWriteFrequency(uint8_t pin, double frequency)
 // because that is what the code was written to do.
 bool motorShortBrake();
 
+// A motor pin's first state is LOW, set before it becomes an output: the level is
+// latched first, so the pin goes from floating straight to low with no glitch to
+// whatever the output register held. Every driver below does this for every pin
+// before it enables anything (user, 2026-10-08: "For real robots, the motor output
+// must be initialized to stop immediately" -- a BTS7960 robot's constructor raised
+// its enable pin while IN_A / IN_B were still floating inputs).
+inline void motorPinLow(int pin)
+{
+    if (pin < 0) return;
+    digitalWrite(pin, LOW);
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+}
+
 class Generic2: public MotorInterface
 {
     private:
@@ -84,9 +98,9 @@ class Generic2: public MotorInterface
             pwm_pin_(pwm_pin)
         {
             if (in_a_pin_ < 0) return;
-            pinMode(in_a_pin_, OUTPUT);
-            pinMode(in_b_pin_, OUTPUT);
-            pinMode(pwm_pin_, OUTPUT);
+            motorPinLow(pwm_pin_);
+            motorPinLow(in_a_pin_);
+            motorPinLow(in_b_pin_);
 
             if(pwm_frequency > 0)
             {
@@ -137,8 +151,8 @@ class Generic1: public MotorInterface
             pwm_pin_(pwm_pin)
         {
             if (in_pin_ < 0) return;
-            pinMode(in_pin_, OUTPUT);
-            pinMode(pwm_pin_, OUTPUT);
+            motorPinLow(pwm_pin_);
+            motorPinLow(in_pin_);
 
             if(pwm_frequency > 0)
             {
@@ -210,10 +224,12 @@ class BTS7960: public MotorInterface
             in_b_pin_(in_b_pin)
         {
             if (in_a_pin_ < 0) return;
-            enable(enable_pin);
             pwm_max_ = (1 << pwm_bits) - 1;
-            pinMode(in_a_pin_, OUTPUT);
-            pinMode(in_b_pin_, OUTPUT);
+            // Both inputs low before the bridge is enabled, never after: enabled
+            // with floating inputs, a half-bridge drives the motor.
+            motorPinLow(enable_pin);
+            motorPinLow(in_a_pin_);
+            motorPinLow(in_b_pin_);
 
             if(pwm_frequency > 0)
             {
@@ -226,6 +242,7 @@ class BTS7960: public MotorInterface
             //ensure that the motor is in neutral state during bootup
             analogWrite(in_a_pin_, 0);
             analogWrite(in_b_pin_, 0);
+            enable(enable_pin);
         }
     
         BTS7960(float pwm_frequency, int pwm_bits, bool invert, int in_a_pin, int in_b_pin): 
@@ -235,8 +252,8 @@ class BTS7960: public MotorInterface
         {
             if (in_a_pin_ < 0) return;
             pwm_max_ = (1 << pwm_bits) - 1;
-            pinMode(in_a_pin_, OUTPUT);
-            pinMode(in_b_pin_, OUTPUT);
+            motorPinLow(in_a_pin_);
+            motorPinLow(in_b_pin_);
 
             if(pwm_frequency > 0)
             {
