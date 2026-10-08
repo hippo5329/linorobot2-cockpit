@@ -29,9 +29,11 @@ foreach(d ${DEP_DIRS})
     endif()
   endif()
 endforeach()
+# Every source in src/, as PlatformIO compiles it -- not main.cpp by name (base_ident.cpp).
+file(GLOB APP_SOURCES ${FIRMWARE_ROOT}/src/*.cpp)
 target_sources(app PRIVATE
   src/zephyr_core.cpp src/uart_link.cpp src/pins.cpp src/lidar_uart.cpp
-  ${FIRMWARE_ROOT}/src/main.cpp ${LIB_SOURCES} ${TOOL_SOURCES} ${DEP_SOURCES})
+  ${APP_SOURCES} ${LIB_SOURCES} ${TOOL_SOURCES} ${DEP_SOURCES})
 if(NOT DEFINED FW_GIT_REV)
   set(FW_GIT_REV "unknown")
 endif()

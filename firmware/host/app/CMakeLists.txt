@@ -58,9 +58,12 @@ foreach(d ${DEP_DIRS})
   endif()
 endforeach()
 
+# Every source in src/, not main.cpp by name: base_ident.cpp joined it on a board build
+# (PlatformIO compiles the whole directory) and this link failed on baseIdentTick.
+file(GLOB APP_SOURCES ${FIRMWARE_ROOT}/src/*.cpp)
 add_executable(lino_host_fw
   host_main.cpp
-  ${FIRMWARE_ROOT}/src/main.cpp
+  ${APP_SOURCES}
   ${LIB_SOURCES}
   ${TOOL_SOURCES}
   ${DEP_SOURCES}
