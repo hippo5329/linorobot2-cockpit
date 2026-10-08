@@ -41,4 +41,13 @@ def test_the_identification_drives_the_robot_straight_not_one_track():
 def test_it_drives_home_after_the_identification_and_after_the_runs():
     assert 'returnHome("ident");' in _body("run")
     assert 'ident::returnHome("runs");' in SRC
-    assert "HOME %s net_m=" in SRC
+    assert "HOME %s x=%.3f y=%.3f yaw_imu=" in SRC
+
+
+def test_home_is_a_pose_with_the_imu_heading():
+    # user: "use imu heading to return home" -- the wheels' yaw skids, the gyro does not
+    assert "imu_heading += wz *" in SRC and "trackHeading();" in SRC
+    body = SRC[SRC.index("void returnHome("):]
+    body = body[:body.index("\n}\n")]
+    assert "turnTo(face)" in body and "turnTo(0.0f)" in body
+    assert "heading ran away" in SRC

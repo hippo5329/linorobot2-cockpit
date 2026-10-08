@@ -114,6 +114,7 @@ static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
 // and the one column the test exists to produce is taken from the wrong chip.
 // Same rule and the same two calls as test_sensors and `base`.
 IMUInterface *imu = nullptr;
+bool imu_ok = false;     // init() answered: only then is a gyro heading anything
 MAGInterface *mag = nullptr;
 unsigned total_motors = 4;
 
@@ -143,10 +144,28 @@ static void halt(const char *why)
     }
 }
 
+// The robot's heading, from the IMU's gyro -- not from the wheels (user, 2026-10-08:
+// "use imu heading to return home"). A track skids in a turn, so the wheels' yaw is
+// what they were told, not what the body did: run 3 ended 0.6 deg off by its wheels
+// and 10 deg off by the room. getData() is bias-corrected with a 0.01 rad/s deadband;
+// the board's Z is up (test_sensors: +9 m/s2), so yaw rate is the chip's Z. Sampled
+// from every wait, ~5 ms apart, so a 4.7 rad/s spin is integrated in 1.4 deg steps.
+static float imu_heading = 0.0f;
+static uint32_t heading_us = 0;
+static void trackHeading(void)
+{
+    if (!imu || !imu_ok) return;
+    const uint32_t now = micros();
+    const float wz = (float)imu->getData().angular_velocity.z;
+    if (heading_us) imu_heading += wz * (float)(now - heading_us) * 1e-6f;
+    heading_us = now;
+}
+
 static void waitMs(uint32_t ms)
 {
     const uint32_t end = millis() + ms;
     for (;;) {
+        trackHeading();
         runWifis();
         runOta();
         if (hostStopRequested())
@@ -162,13 +181,13 @@ static void waitMs(uint32_t ms)
 // return to home"). EVERY encoder read in this tool goes through readRPM(): getRPM()
 // is the ticks since the previous call over the time since then, so rpm x interval
 // is exactly the travel, and a read that bypassed this would lose its interval's.
-// The pose is the same travel through the firmware's own Kinematics, one wheel at a
-// time (the identification drives one wheel at a time). It is the wheels' account:
-// a track that slips moved less than it says, which is what the host's LiDAR
-// before/after comparison is for.
+// The position is the wheels' straight-line travel laid along the IMU heading; the
+// wheels' own yaw (odom_th) is kept only to print beside it. A skid turns the body
+// without moving it, so it costs the heading, which the gyro has, and not the
+// position. The host's LiDAR before/after comparison is the judge of both.
 static float wheel_net_rev[4] = {};
 static uint32_t wheel_read_us[4] = {};
-static float home_x = 0.0f, home_y = 0.0f, home_th = 0.0f;
+static float home_x = 0.0f, home_y = 0.0f, odom_th = 0.0f;
 
 static EncoderInterface *encN(int i)
 {
@@ -187,9 +206,10 @@ static float readRPM(int i)
             float r[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             r[i] = rpm;
             const Kinematics::velocities v = kinematics->getVelocities(r[0], r[1], r[2], r[3]);
-            home_th += v.angular_z * dt;
-            home_x += (v.linear_x * cosf(home_th) - v.linear_y * sinf(home_th)) * dt;
-            home_y += (v.linear_x * sinf(home_th) + v.linear_y * cosf(home_th)) * dt;
+            const float th = imu_ok ? imu_heading : odom_th;
+            odom_th += v.angular_z * dt;
+            home_x += (v.linear_x * cosf(th) - v.linear_y * sinf(th)) * dt;
+            home_y += (v.linear_x * sinf(th) + v.linear_y * cosf(th)) * dt;
         }
     }
     wheel_read_us[i] = now;
@@ -203,9 +223,9 @@ static float wheelNetM(int i)
 
 static void reportHome(const char *phase)
 {
-    REPORT("HOME %s net_m=%.3f,%.3f,%.3f,%.3f x=%.3f y=%.3f yaw=%.1f\n", phase,
-           wheelNetM(0), wheelNetM(1), wheelNetM(2), wheelNetM(3),
-           home_x, home_y, home_th * 57.29578f);
+    REPORT("HOME %s x=%.3f y=%.3f yaw_imu=%.1f yaw_wheels=%.1f net_m=%.3f,%.3f,%.3f,%.3f\n", phase,
+           home_x, home_y, imu_heading * 57.29578f, odom_th * 57.29578f,
+           wheelNetM(0), wheelNetM(1), wheelNetM(2), wheelNetM(3));
 }
 
 void setup_()
@@ -247,7 +267,8 @@ void setup_()
     imu = createIMU(imu_name);
     mag = createMAG(mag_name);
 
-    if (!imu->init())
+    imu_ok = imu->init();
+    if (!imu_ok)
         Serial.println("[-] IMU initialization FAILED -- IMU ACC below is not a measurement.");
     else
         Serial.printf("[+] IMU %s initialized.\n", imu_name);
@@ -590,46 +611,103 @@ void loopStep(float magnitude_rpm)
     }
 }
 
-// Home by wheel odometry: every wheel driven back to zero net travel AT ONCE, each
-// on its own PID at a quarter of top speed, so the robot retraces the straight
-// line it drove rather than pivoting. A wheel stops when its travel crosses zero
-// or is inside 5 mm; the phase ends when all have, 15 s at most. What the
-// out-and-back steps leave over -- a wheel faster one way, a dead zone that
-// differs -- is taken out here, so every phase ends where it began as far as the
-// wheels know. HOME lines before and after; the host's LiDAR checks the rest.
+// Home by pose: the position from the wheels, the heading from the IMU (user,
+// 2026-10-08: "use imu heading to return home"). Turn to face home -- or face away
+// from it and reverse, whichever is the smaller turn -- drive the distance holding
+// that heading, then turn back to the heading the test began with. Every wheel on
+// its own PID, the speeds from the firmware's own Kinematics. Run 3 drove each
+// wheel's net travel back to zero instead, and a pivot out plus a pivot back is
+// not the same place: it ended 0.46 m and 10 deg from home by the room.
+static float wrapPi(float a)
+{
+    while (a > (float)PI) a -= 2.0f * (float)PI;
+    while (a < -(float)PI) a += 2.0f * (float)PI;
+    return a;
+}
+
+// One control tick toward (linear m/s, angular rad/s), every wheel on its PID.
+static void driveTick(float vx, float wz)
+{
+    const Kinematics::rpm r = kinematics->getRPM(vx, 0.0f, wz);
+    const float want[4] = {r.motor1, r.motor2, r.motor3, r.motor4};
+    for (unsigned i = 0; i < total_motors; i++)
+        mot(i)->spin((int)pid(i)->compute(want[i], readRPM(i)));
+    waitMs(TICK_MS);
+}
+
+static void pidsFromRest(void)
+{
+    for (unsigned t = 0; t < 30; t++) {          // the PIDs from rest, as loopStep
+        for (unsigned i = 0; i < total_motors; i++)
+            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
+        waitMs(TICK_MS);
+    }
+}
+
+// Turn in place to `target` (rad, IMU heading). false when it could not: no IMU, a
+// timeout, or the heading running AWAY from the target -- a gyro whose sign
+// disagrees with the wheels', which would otherwise spin until the timeout.
+static bool turnTo(float target)
+{
+    if (!imu_ok) return false;
+    pidsFromRest();
+    float worst = fabsf(wrapPi(target - imu_heading));
+    const float start = worst;
+    for (unsigned t = 0; t < 500; t++) {          // 10 s
+        const float err = wrapPi(target - imu_heading);
+        if (fabsf(err) < 0.035f) { stopAll(); return true; }   // 2 deg
+        if (fabsf(err) > start + 0.35f) {                       // 20 deg the wrong way
+            stopAll();
+            REPORT("HOME turn ABORTED: the heading ran away (%.1f deg from target) -- gyro sign?\n",
+                   err * 57.29578f);
+            return false;
+        }
+        if (fabsf(err) < worst) worst = fabsf(err);
+        float wz = 1.5f * err;
+        const float lim = 0.8f, floor_ = 0.35f;   // rad/s: a tracked base needs torque to skid
+        if (wz > lim) wz = lim;
+        if (wz < -lim) wz = -lim;
+        if (fabsf(wz) < floor_) wz = err > 0 ? floor_ : -floor_;
+        driveTick(0.0f, wz);
+    }
+    stopAll();
+    return false;
+}
+
 void returnHome(const char *phase)
 {
     reportHome(phase);
-    const float top = (float)envU16("max_rpm", MOTOR_MAX_RPM) * envFloat("rpm_ratio", MAX_RPM_RATIO);
-    float sign0[4];
-    bool done[4];
-    unsigned left = 0;
-    for (unsigned i = 0; i < 4; i++) {
-        sign0[i] = wheelNetM(i) > 0.0f ? 1.0f : -1.0f;
-        done[i] = (i >= total_motors) || fabsf(wheelNetM(i)) < 0.005f;
-        if (!done[i]) left++;
+    if (!imu_ok) {
+        REPORT("HOME %s: no IMU, not driving home\n", phase);
+        return;
     }
-    if (left) {
-        for (unsigned t = 0; t < 30; t++) {           // the PIDs from rest, as loopStep
-            for (unsigned i = 0; i < total_motors; i++)
-                mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
-            waitMs(TICK_MS);
+    const float dx = -home_x, dy = -home_y;
+    const float dist = sqrtf(dx * dx + dy * dy);
+    if (dist > 0.03f) {
+        const float bearing = atan2f(dy, dx);
+        float face = bearing, dir = 1.0f;
+        if (fabsf(wrapPi(bearing - imu_heading)) > (float)PI / 2) {   // back up to it
+            face = wrapPi(bearing + (float)PI);
+            dir = -1.0f;
         }
-        for (unsigned t = 0; t < 750 && left; t++) {   // 15 s
-            for (unsigned i = 0; i < total_motors; i++) {
-                const float rpm = readRPM(i);
-                const float net = wheelNetM(i);
-                if (!done[i] && (fabsf(net) < 0.005f || net * sign0[i] < 0.0f)) {
-                    done[i] = true;
-                    left--;
-                }
-                mot(i)->spin(done[i] ? 0 : (int)pid(i)->compute(-sign0[i] * top * 0.25f, rpm));
+        if (turnTo(face)) {
+            pidsFromRest();
+            const float ux = cosf(bearing), uy = sinf(bearing);
+            const float x0 = home_x, y0 = home_y;
+            for (unsigned t = 0; t < 750; t++) {   // 15 s
+                // how much of the way is left, along the line it set out on
+                const float left = dist - ((home_x - x0) * ux + (home_y - y0) * uy);
+                if (left < 0.01f) break;
+                const float v = left < 0.10f ? 0.06f : 0.12f;
+                float wz = 2.0f * wrapPi(face - imu_heading);
+                if (wz > 0.4f) wz = 0.4f;
+                if (wz < -0.4f) wz = -0.4f;
+                driveTick(dir * v, wz);
             }
-            waitMs(TICK_MS);
+            stopAll();
         }
-        stopAll();
-        for (unsigned i = 0; i < total_motors; i++) readRPM(i);
     }
+    turnTo(0.0f);
     char tag[32];
     snprintf(tag, sizeof(tag), "%s_returned", phase);
     reportHome(tag);
@@ -713,8 +791,11 @@ void loop_() {
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, HIGH);
 #endif
-        driveAll((runs & 1) ? current_pwm_max : current_pwm_min, current_pwm_max,
-                 (runs & 1) ? current_pwm_max : current_pwm_min, current_pwm_max);
+        // The spins (even runs) at half the straight runs' PWM: at full PWM the
+        // TS100's tracks skidded the body 10 deg further than they said (2026-10-08).
+        const float spin = (runs & 1) ? 1.0f : 0.5f;
+        driveAll((runs & 1) ? current_pwm_max : current_pwm_min * spin, current_pwm_max * spin,
+                 (runs & 1) ? current_pwm_max : current_pwm_min * spin, current_pwm_max * spin);
         record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
@@ -727,8 +808,8 @@ void loop_() {
 #ifdef LED_ACTIVE
         digitalWrite(LED_PIN, HIGH);
 #endif
-        driveAll((runs & 1) ? current_pwm_min : current_pwm_max, current_pwm_min,
-                 (runs & 1) ? current_pwm_min : current_pwm_max, current_pwm_min);
+        driveAll((runs & 1) ? current_pwm_min : current_pwm_max * spin, current_pwm_min * spin,
+                 (runs & 1) ? current_pwm_min : current_pwm_max * spin, current_pwm_min * spin);
         record(run_time / ticks, buf);
 
 #ifdef LED_ACTIVE
@@ -738,8 +819,7 @@ void loop_() {
                  0, 0);
         record(run_time / ticks, buf);
 
-        Serial.printf("MAX PWM %6.1f %6.1f\n", current_pwm_max, current_pwm_min);
-        syslog(LOG_INFO, "MAX PWM %6.1f %6.1f", current_pwm_max, current_pwm_min);
+        Serial.printf("MAX PWM %6.1f %6.1f\n", current_pwm_max * spin, current_pwm_min * spin);
         dump_record(buf);
         if ((runs & 3) == 0) {
             current_pwm_max /= 2;
