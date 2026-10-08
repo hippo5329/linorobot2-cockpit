@@ -854,13 +854,22 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
         depth_topic, info_topic, scan_time = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC, 1.0 / 15.0
     else:
         pkg, launch_rel, launch_args = depth_camera.driver_launch(model, distro, frame)
+        family = depth_camera.DEPTH_MODELS[model][0]
         try:
             from ament_index_python.packages import get_package_share_directory
             share = get_package_share_directory(pkg)
+            # The OpenNI2 family's launch file is ours; the driver is a package of its own.
+            get_package_share_directory(depth_camera.DRIVER_PACKAGE[family])
         except Exception:  # PackageNotFoundError, or no ament index at all
-            family = depth_camera.DEPTH_MODELS[model][0]
-            return [LogInfo(msg=f"[bringup] depth camera {label}: the driver package '{pkg}' is not "
-                                f"installed, so there is no /scan. Install {depth_camera.INSTALL_HINT[family]}.")]
+            return [LogInfo(msg=f"[bringup] depth camera {label}: the driver package "
+                                f"'{depth_camera.DRIVER_PACKAGE[family]}' is not installed, so there is "
+                                f"no /scan. Install {depth_camera.INSTALL_HINT[family]}.")]
+        if depth_camera.orbbec_driver_missing(model):
+            return [LogInfo(msg=f"[bringup] depth camera {label}: Orbbec's OpenNI2 driver "
+                                f"({depth_camera.ORBBEC_DRIVER}) is not installed, so OpenNI2 cannot see the "
+                                f"camera and there is no /scan. Run once on the robot computer: "
+                                f"python3 scripts/install_orbbec_openni2.py -- it fetches Orbbec's own SDK "
+                                f"release; the image does not carry it.")]
         out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
                                f"from the {label} via depthimage_to_laserscan"))
         out.append(IncludeLaunchDescription(
@@ -878,7 +887,8 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                     ("depth_camera_info", info_topic.lstrip("/")),
                     ("scan", scan_topic)],
         parameters=[{"scan_time": scan_time,
-                     "range_min": depth_camera.SCAN_RANGE_MIN,
+                     "range_min": (depth_camera.SCAN_RANGE_MIN if sim
+                                   else depth_camera.scan_range_min(controller)),
                      "range_max": depth_camera.SCAN_RANGE_MAX,
                      "scan_height": depth_camera.SCAN_HEIGHT,
                      "output_frame": frame}],

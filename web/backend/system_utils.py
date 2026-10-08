@@ -141,20 +141,25 @@ DEPTH_SENSORS = {
         ],
     },
     "astra": {
-        "label": "Orbbec Astra / Astra Pro",
+        # The original Astra Pro (depth 2bc5:0403 over OpenNI2, colour 2bc5:0501 as UVC):
+        # openni2_camera, which the robot image carries, plus Orbbec's own OpenNI2 driver,
+        # which it does not redistribute -- install_orbbec_openni2.py fetches Orbbec's
+        # release into the config dir. Orbbec's current ROS 2 driver does not cover this
+        # model, and there is no ros-<distro>-astra-camera package for jazzy or lyrical.
+        "label": "Orbbec Astra Pro",
         "serial": False,
         "symlink": None,
         "docker_key": "astra",
-        "driver_pkg": "astra_camera",
+        "driver_pkg": "openni2_camera",
         "models": [
-            {"code": "astra", "label": "Orbbec Astra"},
-            {"code": "astrapro", "label": "Orbbec Astra Pro"},
+            {"code": "astra_pro", "label": "Orbbec Astra Pro"},
         ],
         "install": [
-            "sudo apt-get update && sudo apt-get install -y ros-$ROS_DISTRO-astra-camera || true",
+            "docker exec linorobot2-cockpit python3 scripts/install_orbbec_openni2.py",
+            "docker restart linorobot2-cockpit",
         ],
         "udev": [
-            'echo \'ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="0401", MODE="0666", GROUP="dialout"\' | sudo tee /etc/udev/rules.d/56-orbbec-usb.rules',
+            'echo \'SUBSYSTEM=="usb", ATTRS{idVendor}=="2bc5", MODE="0666"\' | sudo tee /etc/udev/rules.d/56-orbbec-usb.rules',
             "sudo udevadm control --reload-rules && sudo udevadm trigger",
         ],
     },
@@ -186,7 +191,7 @@ SENSOR_REGISTRY = {
     "depth_camera": [
         {"id": "realsense", "name": "Intel RealSense (D435 / D455)", "pkg": "realsense2_camera"},
         {"id": "oakd", "name": "Luxonis OAK-D / Lite / Pro", "pkg": "depthai_ros"},
-        {"id": "astra", "name": "Orbbec Astra / Astra Pro", "pkg": "astra_camera"},
+        {"id": "astra", "name": "Orbbec Astra Pro", "pkg": "openni2_camera"},
         {"id": "zed", "name": "Stereolabs ZED / ZED2", "pkg": "zed_wrapper"},
     ],
     "imu": [

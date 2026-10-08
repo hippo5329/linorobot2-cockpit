@@ -208,10 +208,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # configured and its wrapper is missing. The simulated camera needs only the
 # converter, so the bench tests the path with no camera attached. laser_filters
 # masks the robot's own structure out of the LiDAR scan (scripts/lidar_mask.py).
+# openni2_camera drives the Orbbec Astra Pro (jazzy 2.2.2, lyrical 2.3.0, 2026-10-08);
+# Orbbec's own OpenNI2 driver, without which OpenNI2 cannot see an Astra, is not
+# redistributed here -- scripts/install_orbbec_openni2.py fetches it on the robot.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-depthimage-to-laserscan \
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-depthai-ros-driver \
+        ros-${ROS_DISTRO}-openni2-camera \
         ros-${ROS_DISTRO}-laser-filters \
     && rm -rf /var/lib/apt/lists/*
 

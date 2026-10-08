@@ -14,7 +14,7 @@ condition.
 Config (base_controller):
 
     depth_camera:
-      model: realsense   # none | realsense | zed | zedm | zed2 | zed2i | oakd | oakdlite | oakdpro
+      model: realsense   # none | realsense | zed | zedm | zed2 | zed2i | oakd | oakdlite | oakdpro | astra_pro
     sensors:
       use_sim_depth: false   # the simulated camera instead of a real one
 
@@ -55,6 +55,12 @@ DEPTH_MODELS = {
                   "/oak/stereo/image_raw", "/oak/stereo/camera_info"),
     "oakdpro":   ("oakd", "Luxonis OAK-D Pro", "camera_link",
                   "/oak/stereo/image_raw", "/oak/stereo/camera_info"),
+    # The original Astra Pro: depth over OpenNI2 (USB 2bc5:0403), colour as a separate
+    # UVC camera (2bc5:0501) that nothing here needs. ros-<distro>-openni2-camera drives
+    # it once Orbbec's own OpenNI2 driver is installed (ORBBEC_DRIVER below); Orbbec's
+    # current ROS 2 driver (OrbbecSDK_ROS2) does not cover this model.
+    "astra_pro": ("openni2", "Orbbec Astra Pro", "camera_link",
+                  "/camera/depth/image_raw", "/camera/depth/camera_info"),
 }
 OAKD_MODEL = {"oakd": "OAK-D", "oakdlite": "OAK-D-LITE", "oakdpro": "OAK-D-PRO"}
 ZED_MODEL = {"zed": "zed", "zedm": "zedm", "zed2": "zed2", "zed2i": "zed2i"}
@@ -70,11 +76,26 @@ SCAN_RANGE_MIN = 0.45
 SCAN_RANGE_MAX = 10.0
 SCAN_HEIGHT = 1
 
+# A real camera's horizontal view (degrees) and near limit (metres), where it is not
+# the simulated D435's (HFOV, SCAN_RANGE_MIN). The Astra Pro: 58.4 x 45.5 deg, 0.6-8 m
+# (Orbbec's datasheet) -- inside 0.6 m it returns nothing, not a short range.
+DEPTH_OPTICS = {"astra_pro": (58.4, 0.6)}
+
+# Orbbec's OpenNI2 driver, which makes OpenNI2 see an Astra. Debian's OpenNI2 loads only
+# VERSIONED driver files from its Drivers directory (it took libPS1080.so.0 and skipped
+# liborbbec.so, 2026-10-08), so it is installed under this name. The image does not carry
+# it: scripts/install_orbbec_openni2.py fetches Orbbec's own SDK release on the robot and
+# keeps it in the config directory (ORBBEC_DRIVER_DIR); the entrypoint copies it in.
+ORBBEC_DRIVER = "liborbbec.so.0"
+ORBBEC_DRIVER_DIR = "drivers/openni2"
+
 # What must be installed for each family, and what to tell someone when it is not.
-DRIVER_PACKAGE = {"realsense": "realsense2_camera", "zed": "zed_wrapper", "oakd": "depthai_ros_driver"}
+DRIVER_PACKAGE = {"realsense": "realsense2_camera", "zed": "zed_wrapper", "oakd": "depthai_ros_driver",
+                  "openni2": "openni2_camera"}
 INSTALL_HINT = {
     "realsense": "sudo apt install ros-$ROS_DISTRO-realsense2-camera (the robot image carries it)",
     "oakd": "sudo apt install ros-$ROS_DISTRO-depthai-ros-driver (the robot image carries it)",
+    "openni2": "sudo apt install ros-$ROS_DISTRO-openni2-camera (the robot image carries it)",
     "zed": ("the ZED SDK (CUDA) and zed-ros2-wrapper, built on the robot: "
             "https://github.com/stereolabs/zed-ros2-wrapper -- no generic image can carry them"),
 }
@@ -231,7 +252,7 @@ def scan_fov_deg(controller: dict):
     """
     src = scan_source(controller)
     if src == "depth":
-        return math.degrees(HFOV)
+        return depth_optics(controller)[0]
     if src == "lidar":
         import lidar_mask
         blocked = sum(w for _, w in lidar_mask.mask_config(controller)["sectors"])
@@ -281,6 +302,44 @@ def use_sim_depth(controller: dict) -> bool:
     return _truthy(((controller or {}).get("sensors") or {}).get("use_sim_depth", False))
 
 
+def depth_optics(controller: dict):
+    """(horizontal view in degrees, near limit in metres) of the camera that makes the scan.
+
+    The configured model's own (DEPTH_OPTICS) when a real one is fitted; the simulated
+    D435's otherwise -- with no model, or with use_sim_depth on. (A pipeline in
+    simulation mode also runs the simulated camera for a fitted model; that camera is a
+    D435 whatever the config names, so on such a run the real model's figures describe
+    the camera the robot will have, not the one simulated.)
+    """
+    model = depth_model(controller)
+    if model in DEPTH_OPTICS and not use_sim_depth(controller):
+        return DEPTH_OPTICS[model]
+    return math.degrees(HFOV), SCAN_RANGE_MIN
+
+
+def scan_range_min(controller: dict) -> float:
+    """depthimage_to_laserscan's and the costmaps' near limit for this robot's camera."""
+    return depth_optics(controller)[1]
+
+
+def openni2_frames(camera_frame: str):
+    """(depth frame, depth optical frame) under an OpenNI2 camera's root frame.
+
+    camera_link -> camera_depth_frame, camera_depth_optical_frame; a prefix stays a
+    prefix (robot1/camera_link -> robot1/camera_depth_frame ...), never a leading "/".
+    """
+    base = camera_frame[:-len("_link")] if camera_frame.endswith("_link") else camera_frame
+    return f"{base}_depth_frame", f"{base}_depth_optical_frame"
+
+
+def orbbec_driver_missing(model: str) -> bool:
+    """True when the model needs Orbbec's OpenNI2 driver and no Drivers directory has it."""
+    if model is None or DEPTH_MODELS[model][0] != "openni2":
+        return False
+    import glob
+    return not glob.glob(f"/usr/lib/*/OpenNI2/Drivers/{ORBBEC_DRIVER}")
+
+
 def driver_launch(model: str, distro: str, frame: str):
     """(package, launch file relative to its share/, launch arguments) for a real camera."""
     family = DEPTH_MODELS[model][0]
@@ -298,6 +357,13 @@ def driver_launch(model: str, distro: str, frame: str):
         return "zed_wrapper", "launch/zed_camera.launch.py", {
             "camera_model": ZED_MODEL[model], "camera_name": "zed",
             "publish_urdf": "true", "publish_tf": "false", "publish_map_tf": "false"}
+    if family == "openni2":
+        # Our own launch file, not the package's camera_only.launch.py: that one turns
+        # depth registration on (an Astra Pro has no OpenNI colour stream to register to)
+        # and its tfs.launch.py joins frame names as tf_prefix + "/" + namespace, so with no
+        # prefix every frame starts with "/" and matches nothing.
+        return "linorobot2_cockpit", "launchers/openni2_depth.launch.py", {
+            "namespace": "camera", "camera_frame": frame}
     # depthai renamed its launch file between 2.x (jazzy) and 3.x (lyrical).
     launch = "launch/camera.launch.py" if distro == "jazzy" else "launch/driver.launch.py"
     return "depthai_ros_driver", launch, {

@@ -179,8 +179,8 @@ def add_camera_obstacle_source(nav2_data, params) -> list:
     SLAM maps on the LiDAR's /scan and the camera's scan arrives on camera/scan
     (depth_camera.camera_role "obstacles"). Every costmap layer that observes
     `scan` gets a `camera` source beside it: a copy of the scan source pointed
-    at the camera's topic, starting where the camera can see (its 0.45 m near
-    limit) so the gap in front of it does not clear what the LiDAR marked.
+    at the camera's topic, starting where the camera can see (its near limit,
+    depth_camera.scan_range_min: 0.45 m, 0.6 m for an Astra Pro) so the gap in front of it does not clear what the LiDAR marked.
     Returns the layers it changed. The topic is written absolute here and the
     namespace pass below prefixes it like every other topic.
     """
@@ -205,8 +205,9 @@ def add_camera_obstacle_source(nav2_data, params) -> list:
                 continue
             cam = dict(lp["scan"])
             cam["topic"] = "/" + depth_camera.CAMERA_SCAN_TOPIC
-            cam["raytrace_min_range"] = max(float(cam.get("raytrace_min_range", 0.0)), depth_camera.SCAN_RANGE_MIN)
-            cam["obstacle_min_range"] = max(float(cam.get("obstacle_min_range", 0.0)), depth_camera.SCAN_RANGE_MIN)
+            near = depth_camera.scan_range_min((params or {}).get("base_controller") or {})
+            cam["raytrace_min_range"] = max(float(cam.get("raytrace_min_range", 0.0)), near)
+            cam["obstacle_min_range"] = max(float(cam.get("obstacle_min_range", 0.0)), near)
             lp["camera"] = cam
             lp["observation_sources"] = (sources + ["camera"]) if isinstance(raw, (list, tuple)) \
                 else " ".join(sources + ["camera"])

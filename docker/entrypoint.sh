@@ -210,6 +210,19 @@ if [ "$(id -u)" = "0" ] && [ "$DROP_PRIVS" = "yes" ]; then
 fi
 # (An empty config dir is seeded from config/reference by the supervisor itself.)
 
+# Orbbec's OpenNI2 driver (the Astra Pro; scripts/depth_camera.py ORBBEC_DRIVER). The
+# image does not redistribute it: scripts/install_orbbec_openni2.py fetches Orbbec's own
+# release once and keeps the driver in the config dir, and every container start copies
+# it into OpenNI2's Drivers directory, which lives in the image and resets with it. Still
+# root here, so the copy can write under /usr/lib.
+CFG="${COCKPIT_CONFIG_DIR:-/config}"
+if ls "$CFG"/drivers/openni2/*.so.0 >/dev/null 2>&1; then
+    for d in /usr/lib/*/OpenNI2/Drivers; do
+        [ -d "$d" ] && cp -f "$CFG"/drivers/openni2/*.so.0 "$CFG"/drivers/openni2/*.ini "$d"/ 2>/dev/null \
+            && echo "[cockpit] Orbbec OpenNI2 driver installed into $d"
+    done
+fi
+
 if [ "$DROP_PRIVS" = "yes" ]; then
     echo "[cockpit] rootful docker — dropping to uid=${HOST_UID} gid=${HOST_GID} (HOME=${HOME})"
 else
