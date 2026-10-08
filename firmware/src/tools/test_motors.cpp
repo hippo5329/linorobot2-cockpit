@@ -100,10 +100,11 @@ void initLed(void)
 
 
 
-PID motor1_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor2_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor3_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor4_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
+// No PIDs here: this tool drives open loop, and the four it declared were never
+// used. The base type, the wheel and the PWM width come from the env, like
+// main.cpp's: the header's macros named whichever robot the image was generated
+// for, so a 0.056 m wheel was reported through the header's diameter
+// (ts100_gendrv, 2026-10-08: 181 RPM printed as 0.95 m/s).
 
 // No `Odometry odometry;` here: declared, never referenced, 728 bytes of
 // .bss out of a 124580-byte static segment. A motor test has no use for an
@@ -142,9 +143,10 @@ void setup_()
     imu->init();
     mag->init();
 
-    if(Kinematics::LINO_BASE == Kinematics::DIFFERENTIAL_DRIVE)
     {
-        total_motors = 2;
+        Kinematics *k = createKinematics();
+        if (k->base_platform_ == Kinematics::DIFFERENTIAL_DRIVE) total_motors = 2;
+        delete k;
     }
     motor1_encoder->getRPM();
     motor2_encoder->getRPM();
@@ -161,7 +163,7 @@ void loop_() {
     const unsigned cycle = run_time * total_motors;
     unsigned current_motor = tk / run_time % total_motors;
     unsigned direction = tk / cycle % 2; // 0 forward, 1 reverse
-    const int pwm_max = (1 << PWM_BITS) - 1;
+    const int pwm_max = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
     static float max_rpm, stopping;
 
     setLed(direction ? LOW : HIGH);
@@ -185,7 +187,7 @@ void loop_() {
     if (current_motor == 3 && tk % run_time == run_time - 1) max_rpm = current_rpm4;
     if (total_motors == 4 && current_motor == 0 && tk % run_time == 0) stopping = current_rpm4;
     if (tk && tk % run_time == 0) {
-        float max_linear_speed = max_rpm / 60.0 * PI * WHEEL_DIAMETER; // m/s = rps * circumference
+        float max_linear_speed = max_rpm / 60.0 * PI * envFloat("wheel_d", WHEEL_DIAMETER); // m/s = rps * circumference
 
         Serial.printf("MOTOR%d SPEED %6.2f m/s STOP %6.3f m\n", current_motor ? current_motor : total_motors,
 	       max_linear_speed, max_linear_speed * stopping / max_rpm);

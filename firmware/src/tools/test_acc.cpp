@@ -82,20 +82,21 @@ sensor_msgs__msg__Imu *imu_msg = nullptr;
 
 
 
-PID motor1_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor2_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor3_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
-PID motor4_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
+// The gains, the kinematics and the PWM width come from the env, through the
+// factory, like main.cpp. They were file-scope objects built from the generated
+// header's macros: one image serves every robot of a family, so on a real robot
+// (ts100_gendrv, 2026-10-08) the closed-loop steps ran the header's gains, the
+// velocity table used a 0.043 m wheel and 180 RPM, and the base type was the
+// header's -- an identification of a robot that does not exist.
+PID *motor_pids[4] = {};
+Kinematics *kinematics = nullptr;
 
-Kinematics kinematics(
-    Kinematics::LINO_BASE,
-    MOTOR_MAX_RPM,
-    MAX_RPM_RATIO,
-    MOTOR_OPERATING_VOLTAGE,
-    MOTOR_POWER_MAX_VOLTAGE,
-    WHEEL_DIAMETER,
-    LR_WHEELS_DISTANCE
-);
+// The PWM width the motors were built with (createMotor reads the same key).
+static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
+
+// Every result line goes to the console AND to syslog: a robot on the ground
+// has no cable, and the identification is the part of this tool that tunes it.
+#define REPORT(...) do { Serial.printf(__VA_ARGS__); syslog(LOG_INFO, __VA_ARGS__); } while (0)
 
 // No `Odometry odometry;` here: it was declared and never referenced, 728
 // bytes of .bss out of a 124580-byte static segment, on every board and
@@ -165,11 +166,14 @@ void setup_()
         Serial.printf("[+] IMU %s initialized.\n", imu_name);
     mag->init();
 
+    for (int i = 0; i < 4; i++) motor_pids[i] = createPID();
+    kinematics = createKinematics();
+
     // A simulated-wheel board has nothing to measure. Checked here, after
     // initMcuEnv(), because it is the env that decides -- not the build.
     sim_wheels = wheelsAreSim();
 
-    if(Kinematics::LINO_BASE == Kinematics::DIFFERENTIAL_DRIVE)
+    if (kinematics->base_platform_ == Kinematics::DIFFERENTIAL_DRIVE)
     {
         total_motors = 2;
     }
@@ -215,7 +219,7 @@ void record(unsigned n, Kinematics::velocities *buf) {
         if (imu_acc_x < imu_min_acc_x) imu_min_acc_x = imu_acc_x;
 
         if (idx < buf_size) {
-            buf[idx] = kinematics.getVelocities(rpm1, rpm2, rpm3, rpm4);
+            buf[idx] = kinematics->getVelocities(rpm1, rpm2, rpm3, rpm4);
         }
         delay(ticks);
         runWifis();
@@ -352,8 +356,7 @@ MotorInterface *mot(int i)
 
 PID *pid(int i)
 {
-    return (i == 0) ? &motor1_pid : (i == 1) ? &motor2_pid
-         : (i == 2) ? &motor3_pid : &motor4_pid;
+    return motor_pids[i];
 }
 
 void stopAll()
@@ -366,7 +369,7 @@ void stopAll()
 // this is the real number, and it differs per wheel because stiction does.
 void deadzone()
 {
-    const int pwm_max = (1 << PWM_BITS) - 1;
+    const int pwm_max = pwmMax();
     for (unsigned i = 0; i < total_motors; i++) {
         int found = -1;
         for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
@@ -380,7 +383,7 @@ void deadzone()
         }
         mot(i)->spin(0);
         delay(300);
-        Serial.printf("IDENT deadzone wheel=%u pwm=%d duty=%.3f\n",
+        REPORT("IDENT deadzone wheel=%u pwm=%d duty=%.3f\n",
                       i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
     }
 }
@@ -391,7 +394,7 @@ void deadzone()
 // K is rpm per PWM count -- the units the loop gain is the inverse of.
 void plant()
 {
-    const int pwm_max = (1 << PWM_BITS) - 1;
+    const int pwm_max = pwmMax();
     for (unsigned i = 0; i < total_motors; i++) {
         enc(i)->getRPM();
         mot(i)->spin(pwm_max);
@@ -408,7 +411,7 @@ void plant()
         for (unsigned t = 0; t < 50; t++) {
             if (samples[t] >= steady * 0.632f) { tau_ticks = t; break; }
         }
-        Serial.printf("IDENT plant wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
+        REPORT("IDENT plant wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
                       i + 1, steady, tau_ticks * TICK_MS,
                       pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak);
         delay(700);
@@ -462,7 +465,7 @@ void loopStep(float setpoint_rpm)
         // -1, not 0, for "never settled". Zero reads as "settled instantly",
         // which is the opposite of what it means and is exactly the wheel you
         // most want to notice.
-        Serial.printf("IDENT loop wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
+        REPORT("IDENT loop wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
                       "settle_ms=%d err=%.2f final=%.1f\n",
                       i + 1, setpoint_rpm, over, crossings,
                       settle_tick >= ticks ? -1 : (int)(settle_tick * TICK_MS),
@@ -473,24 +476,24 @@ void loopStep(float setpoint_rpm)
 
 void run()
 {
-    Serial.printf("IDENT gains kp=%.4f ki=%.4f kd=%.4f pwm_max=%d rate_hz=%u\n",
-                  (float)K_P, (float)K_I, (float)K_D, (1 << PWM_BITS) - 1,
+    REPORT("IDENT gains kp=%.4f ki=%.4f kd=%.4f pwm_max=%d rate_hz=%u\n",
+                  envFloat("kp", K_P), envFloat("ki", K_I), envFloat("kd", K_D), pwmMax(),
                   1000 / TICK_MS);
-    Serial.printf("IDENT robot base=%d wheels=%u max_rpm=%d ratio=%.3f wheel_d=%.4f\n",
-                  (int)Kinematics::LINO_BASE, total_motors, (int)MOTOR_MAX_RPM,
-                  (float)MAX_RPM_RATIO, (float)WHEEL_DIAMETER);
+    REPORT("IDENT robot base=%d wheels=%u max_rpm=%d ratio=%.3f wheel_d=%.4f\n",
+                  (int)kinematics->base_platform_, total_motors, (int)envU16("max_rpm", MOTOR_MAX_RPM),
+                  envFloat("rpm_ratio", MAX_RPM_RATIO), envFloat("wheel_d", WHEEL_DIAMETER));
     stopAll();
     deadzone();
     plant();
     // Three setpoints, because a wheel loop is not linear: stiction and the
     // dead zone dominate at a crawl, the PWM rail and the pack's sag near the
     // top. Gains that are calm at cruise and ring at a crawl are not calm.
-    const float top = (float)MOTOR_MAX_RPM * (float)MAX_RPM_RATIO;
+    const float top = (float)envU16("max_rpm", MOTOR_MAX_RPM) * envFloat("rpm_ratio", MAX_RPM_RATIO);
     loopStep(top * 0.20f);
     loopStep(top * 0.55f);
     loopStep(top * 0.90f);
     stopAll();
-    Serial.println("IDENT done");
+    REPORT("IDENT done\n");
 }
 
 }  // namespace ident
@@ -536,7 +539,7 @@ void loop_() {
     // thing on that task: selecting an app replaces the base loop, it does not
     // run alongside it.
     Kinematics::velocities buf[buf_size] = {};
-    const int pwm_max = (1 << PWM_BITS) - 1;
+    const int pwm_max = pwmMax();
     float current_pwm_max = pwm_max;
     float current_pwm_min = -current_pwm_max;
 
