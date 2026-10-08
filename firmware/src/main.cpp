@@ -2402,6 +2402,34 @@ void publishData()
             mag_msg->magnetic_field.z -= mag_bias[2];
         }
     }
+    // Soft iron, after the hard iron: the 2x2 that turns the horizontal field's ellipse
+    // back into a circle (env `mag_soft` a,b,c,d row-major; x' = a x + b y, y' = c x + d y).
+    // z is left alone -- a turn on the floor, the only calibration a robot can do by
+    // itself, cannot see it. The TS100's motors and pack squash its circle 1.19:1, which
+    // is +-7 deg of heading twice per turn (2026-10-08). Absent or the identity: nothing.
+    {
+        static bool mag_soft_read = false;
+        static bool mag_soft_set = false;
+        static float mag_soft[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+        if (!mag_soft_read)
+        {
+            mag_soft_read = true;
+            float s[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+            if (envFloatVec("mag_soft", s, 4)
+                && !(s[0] == 1.0f && s[1] == 0.0f && s[2] == 0.0f && s[3] == 1.0f)
+                && fabsf(s[0] * s[3] - s[1] * s[2]) > 0.25f)     // a usable, non-collapsing map
+            {
+                for (int k = 0; k < 4; k++) mag_soft[k] = s[k];
+                mag_soft_set = true;
+            }
+        }
+        if (mag_soft_set)
+        {
+            const double x = mag_msg->magnetic_field.x, y = mag_msg->magnetic_field.y;
+            mag_msg->magnetic_field.x = mag_soft[0] * x + mag_soft[1] * y;
+            mag_msg->magnetic_field.y = mag_soft[2] * x + mag_soft[3] * y;
+        }
+    }
 
     // ---- fuse, now that gyro, accel and a hard-iron-corrected field are all in
     //

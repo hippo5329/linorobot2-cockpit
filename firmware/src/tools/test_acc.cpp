@@ -255,6 +255,11 @@ void setup_()
 
     initWifis();
     initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
+    // The LiDAR's UDP forwarder, as in `base` (user, 2026-10-08: "include lidar udp in
+    // the test loop"): the robot computer tracks the whole trajectory from the room while
+    // this tool drives. It forwards from the UART's receive callback, so the tool's loops
+    // do not have to service it; with no real LiDAR in the env it stays off.
+    initLidar();
 
     i2cScanTable();
 
@@ -611,106 +616,15 @@ void loopStep(float magnitude_rpm)
     }
 }
 
-// Home by pose: the position from the wheels, the heading from the IMU (user,
-// 2026-10-08: "use imu heading to return home"). Turn to face home -- or face away
-// from it and reverse, whichever is the smaller turn -- drive the distance holding
-// that heading, then turn back to the heading the test began with. Every wheel on
-// its own PID, the speeds from the firmware's own Kinematics. Run 3 drove each
-// wheel's net travel back to zero instead, and a pivot out plus a pivot back is
-// not the same place: it ended 0.46 m and 10 deg from home by the room.
-static float wrapPi(float a)
-{
-    while (a > (float)PI) a -= 2.0f * (float)PI;
-    while (a < -(float)PI) a += 2.0f * (float)PI;
-    return a;
-}
-
-// One control tick toward (linear m/s, angular rad/s), every wheel on its PID.
-static void driveTick(float vx, float wz)
-{
-    const Kinematics::rpm r = kinematics->getRPM(vx, 0.0f, wz);
-    const float want[4] = {r.motor1, r.motor2, r.motor3, r.motor4};
-    for (unsigned i = 0; i < total_motors; i++)
-        mot(i)->spin((int)pid(i)->compute(want[i], readRPM(i)));
-    waitMs(TICK_MS);
-}
-
-static void pidsFromRest(void)
-{
-    for (unsigned t = 0; t < 30; t++) {          // the PIDs from rest, as loopStep
-        for (unsigned i = 0; i < total_motors; i++)
-            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
-        waitMs(TICK_MS);
-    }
-}
-
-// Turn in place to `target` (rad, IMU heading). false when it could not: no IMU, a
-// timeout, or the heading running AWAY from the target -- a gyro whose sign
-// disagrees with the wheels', which would otherwise spin until the timeout.
-static bool turnTo(float target)
-{
-    if (!imu_ok) return false;
-    pidsFromRest();
-    float worst = fabsf(wrapPi(target - imu_heading));
-    const float start = worst;
-    for (unsigned t = 0; t < 500; t++) {          // 10 s
-        const float err = wrapPi(target - imu_heading);
-        if (fabsf(err) < 0.035f) { stopAll(); return true; }   // 2 deg
-        if (fabsf(err) > start + 0.35f) {                       // 20 deg the wrong way
-            stopAll();
-            REPORT("HOME turn ABORTED: the heading ran away (%.1f deg from target) -- gyro sign?\n",
-                   err * 57.29578f);
-            return false;
-        }
-        if (fabsf(err) < worst) worst = fabsf(err);
-        float wz = 1.5f * err;
-        const float lim = 0.8f, floor_ = 0.35f;   // rad/s: a tracked base needs torque to skid
-        if (wz > lim) wz = lim;
-        if (wz < -lim) wz = -lim;
-        if (fabsf(wz) < floor_) wz = err > 0 ? floor_ : -floor_;
-        driveTick(0.0f, wz);
-    }
-    stopAll();
-    return false;
-}
-
-void returnHome(const char *phase)
+// Where the wheels and the gyro think the robot is, printed after each phase. The
+// robot does NOT drive itself home: that moved to the robot computer (user,
+// 2026-10-08: "move home and trajectory to ros2"), which tracks the whole run from
+// the room with the LiDAR this tool now forwards and drives home on /cmd_vel once the
+// base app is back. These lines are the board's witness beside it -- on tracks the
+// wheels' yaw is fiction (run 4: 49.8 deg by the gyro, 0.4 by the wheels).
+void reportPhase(const char *phase)
 {
     reportHome(phase);
-    if (!imu_ok) {
-        REPORT("HOME %s: no IMU, not driving home\n", phase);
-        return;
-    }
-    const float dx = -home_x, dy = -home_y;
-    const float dist = sqrtf(dx * dx + dy * dy);
-    if (dist > 0.03f) {
-        const float bearing = atan2f(dy, dx);
-        float face = bearing, dir = 1.0f;
-        if (fabsf(wrapPi(bearing - imu_heading)) > (float)PI / 2) {   // back up to it
-            face = wrapPi(bearing + (float)PI);
-            dir = -1.0f;
-        }
-        if (turnTo(face)) {
-            pidsFromRest();
-            const float ux = cosf(bearing), uy = sinf(bearing);
-            const float x0 = home_x, y0 = home_y;
-            for (unsigned t = 0; t < 750; t++) {   // 15 s
-                // how much of the way is left, along the line it set out on
-                const float left = dist - ((home_x - x0) * ux + (home_y - y0) * uy);
-                if (left < 0.01f) break;
-                const float v = left < 0.10f ? 0.06f : 0.12f;
-                float wz = 2.0f * wrapPi(face - imu_heading);
-                if (wz > 0.4f) wz = 0.4f;
-                if (wz < -0.4f) wz = -0.4f;
-                driveTick(dir * v, wz);
-            }
-            stopAll();
-        }
-    }
-    turnTo(0.0f);
-    char tag[32];
-    snprintf(tag, sizeof(tag), "%s_returned", phase);
-    reportHome(tag);
 }
 
 void run()
@@ -732,7 +646,7 @@ void run()
     loopStep(top * 0.55f);
     loopStep(top * 0.90f);
     stopAll();
-    returnHome("ident");
+    reportPhase("ident");
     REPORT("IDENT done\n");
 }
 
@@ -831,7 +745,7 @@ void loop_() {
     static bool homed = false;
     if (!homed) {
         homed = true;
-        ident::returnHome("runs");
+        ident::reportPhase("runs");
         Serial.println("[test_acc] done -- write app=base to leave");
     }
 

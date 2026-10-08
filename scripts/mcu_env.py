@@ -1014,6 +1014,20 @@ def hardware_env(params: dict) -> dict:
         if values and any(v != 0.0 for v in values):
             env["mag_bias"] = ",".join(_num(v) for v in values)
 
+    # Soft iron: the horizontal 2x2 (row-major, or [[a, b], [c, d]]) the firmware applies
+    # after the bias. Four numbers or nothing, and never the identity: that is no
+    # calibration, and the firmware would only spend a multiply on it.
+    soft = tuning.get("mag_soft_iron")
+    if isinstance(soft, (list, tuple)) and len(soft) == 2 and all(isinstance(r, (list, tuple)) for r in soft):
+        soft = [v for r in soft for v in r]
+    if isinstance(soft, (list, tuple)) and len(soft) == 4:
+        try:
+            values = [float(v) for v in soft]
+        except (TypeError, ValueError):
+            values = []
+        if values and values != [1.0, 0.0, 0.0, 1.0]:
+            env["mag_soft"] = ",".join(_num(v) for v in values)
+
     # How long the board may stop feeding its watchdog before it resets, in
     # seconds. 0 disables it; the firmware's own default is 8 s.
     #
