@@ -331,6 +331,14 @@ async function loadHardwareConfig() {
       depthSel.value = [...depthSel.options].some((o) => o.value === m) ? m : "none";
     }
     if (document.getElementById("cfg-lidar-rxd")) document.getElementById("cfg-lidar-rxd").value = lidar.rx_pin !== undefined ? lidar.rx_pin : -1;
+    const elLidarComm = document.getElementById("cfg-lidar-comm");
+    if (elLidarComm) elLidarComm.value = ["serial", "topic", "udp"].includes(String(lidar.comm_mode || "").toLowerCase())
+      ? String(lidar.comm_mode).toLowerCase() : "serial";
+    const elLidarPort = document.getElementById("cfg-lidar-port");
+    if (elLidarPort) elLidarPort.value = lidar.serial_port || "/dev/ttyUSB1";
+    state.transport = tgt.transport || "serial";
+    lidarLinkTouched = false;      // a robot just loaded: nothing of its LiDAR edited yet
+    applyLidarLink(data.lidar_link);
 
     const elSerialPort = document.getElementById("cfg-serial-port");
     if (elSerialPort) {
@@ -1113,6 +1121,64 @@ function validateHardwareSafety() {
 // The sonar enable select. "Disabled (Bare Module Default)" has to mean the
 // pins go to -1, because a bare module that claims a sonar publishes /sonar
 // from a pin nothing is wired to.
+// How the LiDAR reaches the robot computer (scripts/lidar_link.py): Serial (its own port on
+// the robot computer), Topic (/raw_scan over a fast micro-ROS link) or UDP (a Wi-Fi robot).
+// The backend says which this robot can carry -- they follow the micro-ROS transport and the
+// link's speed -- and why not; an option it refuses is disabled, its reason in the hint.
+function applyLidarLink(link) {
+  const sel = document.getElementById("cfg-lidar-comm");
+  if (!sel || !link || !Array.isArray(link.options)) return;
+  const why = {};
+  for (const o of link.options) {
+    const opt = [...sel.options].find((x) => x.value === o.mode);
+    if (opt) { opt.disabled = !o.ok; opt.title = o.ok ? "" : o.why; }
+    if (!o.ok) why[o.mode] = o.why;
+  }
+  const mode = sel.value;
+  const hint = document.getElementById("cfg-lidar-link-hint");
+  const viaWifi = String(state.transport || "serial").toLowerCase() !== "serial";
+  if (hint) {
+    const head = `micro-ROS ${viaWifi ? "over Wi-Fi" : "on the cable"}. `;
+    hint.textContent = head + (why[mode] ? `${mode}: ${why[mode]}`
+      : (link.problems && link.problems.length ? link.problems.join(" ") : "OK for this robot."));
+    hint.style.color = (why[mode] || (link.problems && link.problems.length)) ? "#f87171" : "";
+  }
+  const port = document.getElementById("cfg-lidar-port");
+  if (port) port.disabled = mode !== "serial";
+  const rx = document.getElementById("cfg-lidar-rxd");
+  if (rx) rx.disabled = mode === "serial";
+}
+
+function lidarLinkForm() {
+  return {
+    comm_mode: document.getElementById("cfg-lidar-comm")?.value || "serial",
+    serial_port: (document.getElementById("cfg-lidar-port")?.value || "").trim(),
+    rx_pin: parseInt(document.getElementById("cfg-lidar-rxd")?.value ?? -1, 10),
+  };
+}
+
+async function refreshLidarLink() {
+  try {
+    const res = await fetch("/api/hardware/lidar_link", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        serial_port: document.getElementById("cfg-serial-port")?.value.trim() || undefined,
+        baudrate: parseInt(document.getElementById("cfg-baudrate")?.value || 0, 10) || undefined,
+        console: document.getElementById("cfg-console")?.value || undefined,
+        lidar: lidarLinkForm(),
+      }),
+    });
+    if (res.ok) applyLidarLink(await res.json());
+  } catch (_) { /* the save still validates */ }
+}
+let lidarLinkTouched = false;
+for (const id of ["cfg-lidar-comm", "cfg-lidar-port", "cfg-lidar-rxd"]) {
+  document.getElementById(id)?.addEventListener("change", () => { lidarLinkTouched = true; });
+}
+for (const id of ["cfg-lidar-comm", "cfg-lidar-port", "cfg-lidar-rxd", "cfg-serial-port", "cfg-baudrate", "cfg-console"]) {
+  document.getElementById(id)?.addEventListener("change", refreshLidarLink);
+}
+
 function sonarEnabled() {
   const el = document.getElementById("cfg-sonar");
   if (!el) {
@@ -1210,6 +1276,9 @@ async function saveCurrentHardwareConfig(opts = {}) {
     geometry: readGeometryForm(kineType),
     simulation: readSimForm(),
     depth_camera: { model: document.getElementById("cfg-depth-camera")?.value || "none" },
+    // Only once edited: a saved mode the selector does not list (the Sim MCU's udp_server)
+    // shows as Serial, and must not be written back as Serial.
+    ...(lidarLinkTouched ? { lidar: lidarLinkForm() } : {}),
     kinematics: {
       base_type: kineType,
       wheel_diameter: parseFloat(document.getElementById("cfg-wheel-diameter")?.value || 0.152),

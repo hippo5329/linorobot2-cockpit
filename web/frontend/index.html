@@ -1269,9 +1269,23 @@
           <input type="number" id="pin-sonar-echo" class="form-input pin-input" value="-1">
         </div>
         <div class="form-group">
+          <label for="cfg-lidar-comm" class="form-label">LiDAR Link</label>
+          <select id="cfg-lidar-comm" class="form-select">
+            <option value="serial">Serial: the LiDAR on the robot computer's own USB port</option>
+            <option value="topic">Topic: wired to the MCU, sent as /raw_scan over micro-ROS</option>
+            <option value="udp">UDP: wired to the MCU, sent over Wi-Fi outside micro-ROS</option>
+          </select>
+          <span id="cfg-lidar-link-hint" class="input-hint">Serial needs a second port on the robot computer; Topic a fast link to the MCU (native USB or 1.5 Mbaud); UDP a Wi-Fi robot.</span>
+        </div>
+        <div class="form-group">
+          <label for="cfg-lidar-port" class="form-label">LiDAR Port (robot computer)</label>
+          <input type="text" id="cfg-lidar-port" class="form-input font-mono" value="/dev/ttyUSB1" placeholder="/dev/ttyUSB1">
+          <span class="input-hint">For a Serial link: the LiDAR's own port, not the MCU's</span>
+        </div>
+        <div class="form-group">
           <label for="cfg-lidar-rxd" class="form-label">LiDAR Serial RX Pin</label>
           <input type="number" id="cfg-lidar-rxd" class="form-input pin-input" value="-1">
-          <span class="input-hint">MCU GPIO wired to LiDAR TX (-1 for host USB)</span>
+          <span class="input-hint">For a Topic or UDP link: the MCU GPIO wired to the LiDAR's TX</span>
         </div>
       </div>
 

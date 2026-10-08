@@ -106,7 +106,30 @@ def api_get_hardware_config():
         # What the pin catalogue thinks of this config (scripts/pin_catalog.py):
         # the Pin Matrix shows these next to the fields they concern.
         "pin_findings": [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)],
+        # How the LiDAR may reach the robot computer on this robot (scripts/lidar_link.py).
+        "lidar_link": _lidar_link(controller),
     }
+
+
+def _lidar_link(controller: dict) -> dict:
+    import lidar_link
+    return {"options": lidar_link.options(controller), "problems": lidar_link.problems(controller)}
+
+
+@app.post("/api/hardware/lidar_link")
+async def api_lidar_link(request: Request):
+    """The LiDAR link choices for the robot as the form has it now: the saved base_controller
+    with the posted fields over it (transport, mcu, console, baudrate, serial_port, lidar) --
+    so the choices follow an unsaved change of port or baud."""
+    data = await json_body(request)
+    controller = dict(get_controller(load_params()))
+    if isinstance(data, dict):
+        for k in ("transport", "mcu", "console", "baudrate", "serial_port"):
+            if k in data:
+                controller[k] = data[k]
+        if isinstance(data.get("lidar"), dict):
+            controller["lidar"] = dict(controller.get("lidar") or {}, **data["lidar"])
+    return _lidar_link(controller)
 
 
 def _mdns_default(params: dict) -> str:
@@ -212,6 +235,26 @@ async def api_save_hardware_config(request: Request):
             raise HTTPException(status_code=400, detail=(
                 f"depth_camera.model must be none or one of {', '.join(depth_camera.DEPTH_MODELS)}, not {model!r}"))
         ctrl.setdefault("depth_camera", {})["model"] = "none" if model in depth_camera.NOT_FITTED else model
+    # How the LiDAR reaches the robot computer (scripts/lidar_link.py): comm_mode, the robot
+    # computer's port for a `serial` LiDAR, the MCU pin for a `topic`/`udp` one. A mode this
+    # robot's link cannot carry is refused -- topic over Wi-Fi floods micro-ROS, a cable robot
+    # has no udp scan; a missing port or pin is reported with the pin findings below.
+    if "lidar" in data and isinstance(data["lidar"], dict):
+        import lidar_link
+        lid = ctrl.setdefault("lidar", {})
+        for key in ("comm_mode", "serial_port", "rx_pin"):
+            if key in data["lidar"]:
+                lid[key] = data["lidar"][key]
+        if "rx_pin" in lid:
+            try:
+                lid["rx_pin"] = int(lid["rx_pin"])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"lidar.rx_pin must be a GPIO number, not {lid['rx_pin']!r}")
+        mode = str(lid.get("comm_mode", "serial") or "serial").strip().lower()
+        lid["comm_mode"] = mode
+        reason = lidar_link.why_not(ctrl, mode)
+        if reason:
+            raise HTTPException(status_code=400, detail=f"LiDAR link {mode}: {reason}")
     if "pins" in data and isinstance(data["pins"], dict):
         # One level deep: a pin group the form edits (i2c: sda/scl) keeps the keys it does
         # not show -- the UNO Q design's `i2c.bus` was lost on every save otherwise.
@@ -260,6 +303,8 @@ async def api_save_hardware_config(request: Request):
 
     save_params(params)
     findings = [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)]
+    import lidar_link
+    findings += [{"level": "error", "message": f"LiDAR link: {m}"} for m in lidar_link.problems(ctrl)]
     res = regenerate_firmware_headers(controller_name)
     header_ok = res.returncode == 0
     description = regenerate_robot_description(params)

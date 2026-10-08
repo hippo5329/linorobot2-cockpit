@@ -194,15 +194,30 @@ def raw_scan_over_uart(controller: dict) -> str:
     only when the serial link is fast enough (like cdc or 1.5M/4M) as in
     pico/pico2/esp32s3 cdc/unoq"). Most robots need none of this: the MCU is on serial and the
     LiDAR on the robot computer; Wi-Fi with a udp scan is for a robot with no robot computer.
+    Never over Wi-Fi: the scan floods the micro-ROS session there (measured below).
     """
     lidar = (controller or {}).get("lidar") or {}
     if str(lidar.get("comm_mode", "") or "").strip().lower() != "topic":
         return ""
     if not lidar_fitted(controller):
         return ""
+    return raw_scan_link_problem(controller)
+
+
+def raw_scan_link_problem(controller: dict) -> str:
+    """Why this robot's micro-ROS link cannot carry raw_scan, or "" -- the link alone, whether
+    or not a LiDAR is named yet (lidar_link.py asks it to offer the UI's choices)."""
     transport = str(controller.get("transport", "serial") or "serial").strip().lower()
     if transport not in ("serial", ""):
-        return ""                         # micro-ROS over Wi-Fi: not a serial link
+        # micro-ROS over Wi-Fi. Measured 2026-10-08 on a GenDrv with a real LD19: raw_scan
+        # through the XRCE session over Wi-Fi came at 3.3 Hz, /scan at 0.77 Hz, and it starved
+        # the control topics (/imu 3.4 Hz); the same board on its 1.5 Mbaud cable: raw_scan
+        # 37.5 Hz, /scan 9.98 Hz, /imu 40 Hz. Over Wi-Fi the board sends the scan as udp,
+        # outside micro-ROS (every packet arrived).
+        return ("lidar.comm_mode topic sends the scan as raw_scan over micro-ROS, and this robot's "
+                "micro-ROS runs over Wi-Fi: the scan floods the session (measured: /scan 0.8 Hz, the "
+                "IMU starved). Over Wi-Fi use udp -- the board sends the LiDAR straight to the robot "
+                "computer, outside micro-ROS.")
     if raw_scan_native_usb(controller):
         return ""
     try:

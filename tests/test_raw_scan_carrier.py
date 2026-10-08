@@ -64,11 +64,15 @@ def test_a_fast_uart_carries_raw_scan_the_gendrv_and_the_uno_q():
     assert "921600" in depth_camera.raw_scan_over_uart(slow)
 
 
-def test_wifi_micro_ros_is_not_a_uart():
+def test_wifi_micro_ros_cannot_carry_the_scan_either():
+    # It was allowed as "not a UART". Measured 2026-10-08 on a GenDrv with a real LD19:
+    # raw_scan over Wi-Fi came at 3.3 Hz, /scan at 0.77 Hz, the IMU starved at 3.4 Hz --
+    # the same board on its 1.5 Mbaud cable held 37.5 / 9.98 / 40 Hz. Over Wi-Fi: udp.
     bc = bare("esp32")
     bc.update(transport="udp4")
     bc["lidar"]["comm_mode"] = "topic"
-    assert depth_camera.raw_scan_over_uart(bc) == ""
+    reason = depth_camera.raw_scan_over_uart(bc)
+    assert "Wi-Fi" in reason and "udp" in reason
 
 
 def test_a_serial_scan_with_no_port_reaches_nothing(tmp_path):
