@@ -447,78 +447,94 @@ void stopAll()
     waitMs(700);                          // let the wheels actually stop
 }
 
-// The smallest PWM that turns the wheel. SIM_WHEEL_STALL_DUTY is a guess at 4%;
-// this is the real number, and it differs per wheel because stiction does.
-//
-// Every step below runs forward and then the same in reverse, on one wheel, before
-// the next wheel: each wheel's net travel is about zero after every step, so the
-// robot pivots out and back instead of walking off. Forward-only, the
-// identification walked the TS100 ~2 m into a wall (2026-10-08). The reverse runs
-// report as `<kind>_rev`, which drivetrain_report.py's parser does not read.
+// The identification drives ALL wheels at once, the same command on each: a step
+// is the robot driving straight ahead, then the same straight back, and every
+// wheel is measured in parallel, on its own encoder (user, 2026-10-08: "test acc
+// should fast forward, fast backward, then rotate in both direction ... Fix this
+// with odom"). One wheel at a time, forward only, was a robot pivoting on one
+// track and then the other -- crawling ahead in arcs, ~2 m into a wall. The
+// reverse half reports as `<kind>_rev`, which drivetrain_report.py's parser does
+// not read; wheel odometry (readRPM) brings the robot home after the phase.
+
+static void spinAll(const int *pwm)
+{
+    for (unsigned i = 0; i < total_motors; i++) mot(i)->spin(pwm[i]);
+}
+
+// The smallest PWM that turns each wheel. SIM_WHEEL_STALL_DUTY is a guess at 4%;
+// this is the real number, and it differs per wheel because stiction does. All
+// wheels ramp together; each one's figure is where its OWN encoder first moves.
 void deadzone()
 {
     const int pwm_max = pwmMax();
-    for (unsigned i = 0; i < total_motors; i++) {
-        for (int dir = 1; dir >= -1; dir -= 2) {
-            int found = -1;
-            for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
-                mot(i)->spin(dir * pwm);
-                waitMs(120);
-                // Two samples: the first getRPM() after a stop can still carry the
-                // previous motion on a filtered encoder.
-                readRPM(i);
-                waitMs(80);
-                if (fabs(readRPM(i)) > 2.0) found = pwm;
-            }
-            mot(i)->spin(0);
-            waitMs(300);
-            REPORT("IDENT %s wheel=%u pwm=%d duty=%.3f\n", dir > 0 ? "deadzone" : "deadzone_rev",
-                          i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
+    for (int dir = 1; dir >= -1; dir -= 2) {
+        int found[4] = {-1, -1, -1, -1};
+        unsigned left = total_motors;
+        for (int pwm = 0; pwm <= pwm_max / 2 && left; pwm += pwm_max / 100) {
+            int cmd[4];
+            for (unsigned i = 0; i < 4; i++) cmd[i] = dir * pwm;
+            spinAll(cmd);
+            waitMs(120);
+            // Two samples: the first getRPM() after a stop can still carry the
+            // previous motion on a filtered encoder.
+            for (unsigned i = 0; i < total_motors; i++) readRPM(i);
+            waitMs(80);
+            for (unsigned i = 0; i < total_motors; i++)
+                if (found[i] < 0 && fabs(readRPM(i)) > 2.0) { found[i] = pwm; left--; }
         }
+        stopAll();
+        for (unsigned i = 0; i < total_motors; i++)
+            REPORT("IDENT %s wheel=%u pwm=%d duty=%.3f\n", dir > 0 ? "deadzone" : "deadzone_rev",
+                   i + 1, found[i], found[i] < 0 ? -1.0 : (float)found[i] / (float)pwm_max);
     }
 }
 
-// Open-loop step, per wheel: the plant the PID has to control.
+// Open-loop step: the plant the PID has to control. Full PWM on every wheel for
+// 1 s -- the robot's own straight-line sprint -- then the same backwards.
 //
 // tau is the 63.2% crossing, which is the definition for a first-order step, and
 // K is rpm per PWM count -- the units the loop gain is the inverse of.
 void plant()
 {
     const int pwm_max = pwmMax();
-    for (unsigned i = 0; i < total_motors; i++)
     for (int dir = 1; dir >= -1; dir -= 2) {
-        readRPM(i);
-        mot(i)->spin(dir * pwm_max);
-        float peak = 0.0;
-        unsigned tau_ticks = 0;
-        float samples[50];
+        static float samples[4][50];
+        float peak[4] = {0, 0, 0, 0};
+        int cmd[4];
+        for (unsigned i = 0; i < total_motors; i++) readRPM(i);
+        for (unsigned i = 0; i < 4; i++) cmd[i] = dir * pwm_max;
+        spinAll(cmd);
         for (unsigned t = 0; t < 50; t++) {          // 1 s at 20 ms
             waitMs(TICK_MS);
-            samples[t] = fabs(readRPM(i));
-            if (samples[t] > peak) peak = samples[t];
+            for (unsigned i = 0; i < total_motors; i++) {
+                samples[i][t] = fabs(readRPM(i));
+                if (samples[i][t] > peak[i]) peak[i] = samples[i][t];
+            }
         }
-        mot(i)->spin(0);
-        const float steady = samples[49];
-        for (unsigned t = 0; t < 50; t++) {
-            if (samples[t] >= steady * 0.632f) { tau_ticks = t; break; }
+        stopAll();
+        for (unsigned i = 0; i < total_motors; i++) {
+            const float steady = samples[i][49];
+            unsigned tau_ticks = 0;
+            for (unsigned t = 0; t < 50; t++) {
+                if (samples[i][t] >= steady * 0.632f) { tau_ticks = t; break; }
+            }
+            REPORT("IDENT %s wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
+                   dir > 0 ? "plant" : "plant_rev", i + 1, steady, tau_ticks * TICK_MS,
+                   pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak[i]);
         }
-        REPORT("IDENT %s wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
-                      dir > 0 ? "plant" : "plant_rev",
-                      i + 1, steady, tau_ticks * TICK_MS,
-                      pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak);
-        waitMs(700);
     }
 }
 
-// Closed loop, per wheel: is the PID in this config actually stable on it?
+// Closed loop: is the PID in this config actually stable on each wheel? Every
+// wheel's own loop runs at once, the robot driving straight at the setpoint.
 //
 // Overshoot alone is not enough -- a loop can creep past the setpoint once and
 // settle, or cross it repeatedly by a hair and never settle. The crossing count
-// is the second test, and it is the one that catches ringing.
+// is the second test, and it is the one that catches ringing. 2 s, not 3: at
+// 90% of top that is ~0.7 m of floor each way, and the loops settle well inside it.
 void loopStep(float magnitude_rpm)
 {
-    const unsigned ticks = 150;                      // 3 s
-    for (unsigned i = 0; i < total_motors; i++)
+    const unsigned ticks = 100;                      // 2 s
     for (int dir = 1; dir >= -1; dir -= 2) {
         const float setpoint_rpm = dir * magnitude_rpm;
         // Start from a known state. The integral carries between steps, so the
@@ -530,69 +546,85 @@ void loopStep(float magnitude_rpm)
         // reset method: this is the state the robot is in every time it stops,
         // so the identification starts where real driving starts.
         for (unsigned t = 0; t < 30; t++) {
-            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
+            for (unsigned i = 0; i < total_motors; i++)
+                mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
             waitMs(TICK_MS);
         }
-        readRPM(i);
-        float peak = 0.0, last = 0.0, err_sum = 0.0;
-        int crossings = 0;
-        unsigned settle_tick = ticks;
-        bool was_below = true;
+        float peak[4] = {0, 0, 0, 0}, last[4] = {0, 0, 0, 0}, err_sum[4] = {0, 0, 0, 0};
+        int crossings[4] = {0, 0, 0, 0};
+        unsigned settle_tick[4] = {ticks, ticks, ticks, ticks};
+        bool was_below[4] = {true, true, true, true};
         for (unsigned t = 0; t < ticks; t++) {
-            const float rpm = readRPM(i);
-            mot(i)->spin((int)pid(i)->compute(setpoint_rpm, rpm));
-            if (fabs(rpm) > peak) peak = fabs(rpm);
-            const bool below = rpm < setpoint_rpm;
-            if (t > 0 && below != was_below) crossings++;
-            was_below = below;
-            // Settling: the LAST tick outside the 2% band, so a curve that
-            // wanders back out is not called settled at its first touch.
-            if (fabs(rpm - setpoint_rpm) > fabs(setpoint_rpm) * 0.02f)
-                settle_tick = t + 1;
-            if (t >= ticks - 25) err_sum += (setpoint_rpm - rpm);   // last 0.5 s
-            last = rpm;
+            for (unsigned i = 0; i < total_motors; i++) {
+                const float rpm = readRPM(i);
+                mot(i)->spin((int)pid(i)->compute(setpoint_rpm, rpm));
+                if (fabs(rpm) > peak[i]) peak[i] = fabs(rpm);
+                const bool below = rpm < setpoint_rpm;
+                if (t > 0 && below != was_below[i]) crossings[i]++;
+                was_below[i] = below;
+                // Settling: the LAST tick outside the 2% band, so a curve that
+                // wanders back out is not called settled at its first touch.
+                if (fabs(rpm - setpoint_rpm) > fabs(setpoint_rpm) * 0.02f)
+                    settle_tick[i] = t + 1;
+                if (t >= ticks - 25) err_sum[i] += (setpoint_rpm - rpm);   // last 0.5 s
+                last[i] = rpm;
+            }
             waitMs(TICK_MS);
         }
-        mot(i)->spin(0);
-        const float over = setpoint_rpm != 0.0f
-                         ? (peak - fabs(setpoint_rpm)) / fabs(setpoint_rpm) : 0.0f;
-        // -1, not 0, for "never settled". Zero reads as "settled instantly",
-        // which is the opposite of what it means and is exactly the wheel you
-        // most want to notice.
-        REPORT("IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
-                      "settle_ms=%d err=%.2f final=%.1f\n",
-                      dir > 0 ? "loop" : "loop_rev", i + 1, setpoint_rpm, over, crossings,
-                      settle_tick >= ticks ? -1 : (int)(settle_tick * TICK_MS),
-                      err_sum / 25.0f, last);
-        waitMs(700);
+        stopAll();
+        for (unsigned i = 0; i < total_motors; i++) {
+            const float over = (peak[i] - fabs(setpoint_rpm)) / fabs(setpoint_rpm);
+            // -1, not 0, for "never settled". Zero reads as "settled instantly",
+            // which is the opposite of what it means and is exactly the wheel you
+            // most want to notice.
+            REPORT("IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
+                   "settle_ms=%d err=%.2f final=%.1f\n",
+                   dir > 0 ? "loop" : "loop_rev", i + 1, setpoint_rpm, over, crossings[i],
+                   settle_tick[i] >= ticks ? -1 : (int)(settle_tick[i] * TICK_MS),
+                   err_sum[i] / 25.0f, last[i]);
+        }
     }
 }
 
-// Drive each wheel back to where it started, closed loop at a quarter of top
-// speed, until its net travel crosses zero (or is inside 5 mm already). What the
-// reverse twins leave over -- a wheel that runs faster one way, a dead zone that
-// differs -- is taken out here, so every phase ends where the robot began, as far
-// as its wheels know. 15 s per wheel at most.
+// Home by wheel odometry: every wheel driven back to zero net travel AT ONCE, each
+// on its own PID at a quarter of top speed, so the robot retraces the straight
+// line it drove rather than pivoting. A wheel stops when its travel crosses zero
+// or is inside 5 mm; the phase ends when all have, 15 s at most. What the
+// out-and-back steps leave over -- a wheel faster one way, a dead zone that
+// differs -- is taken out here, so every phase ends where it began as far as the
+// wheels know. HOME lines before and after; the host's LiDAR checks the rest.
 void returnHome(const char *phase)
 {
     reportHome(phase);
     const float top = (float)envU16("max_rpm", MOTOR_MAX_RPM) * envFloat("rpm_ratio", MAX_RPM_RATIO);
-    for (unsigned i = 0; i < total_motors; i++) {
-        if (fabsf(wheelNetM(i)) < 0.005f) continue;
-        const float sign0 = wheelNetM(i) > 0.0f ? 1.0f : -1.0f;
-        for (unsigned t = 0; t < 30; t++) {          // the PID from rest, as loopStep
-            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
+    float sign0[4];
+    bool done[4];
+    unsigned left = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        sign0[i] = wheelNetM(i) > 0.0f ? 1.0f : -1.0f;
+        done[i] = (i >= total_motors) || fabsf(wheelNetM(i)) < 0.005f;
+        if (!done[i]) left++;
+    }
+    if (left) {
+        for (unsigned t = 0; t < 30; t++) {           // the PIDs from rest, as loopStep
+            for (unsigned i = 0; i < total_motors; i++)
+                mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
             waitMs(TICK_MS);
         }
-        for (unsigned t = 0; t < 750; t++) {          // 15 s
-            const float net = wheelNetM(i);
-            if (fabsf(net) < 0.005f || net * sign0 < 0.0f) break;
-            mot(i)->spin((int)pid(i)->compute(-sign0 * top * 0.25f, readRPM(i)));
+        for (unsigned t = 0; t < 750 && left; t++) {   // 15 s
+            for (unsigned i = 0; i < total_motors; i++) {
+                const float rpm = readRPM(i);
+                const float net = wheelNetM(i);
+                if (!done[i] && (fabsf(net) < 0.005f || net * sign0[i] < 0.0f)) {
+                    done[i] = true;
+                    left--;
+                }
+                mot(i)->spin(done[i] ? 0 : (int)pid(i)->compute(-sign0[i] * top * 0.25f, rpm));
+            }
             waitMs(TICK_MS);
         }
-        mot(i)->spin(0);
-        waitMs(500);
-        readRPM(i);
+        stopAll();
+        for (unsigned i = 0; i < total_motors; i++) readRPM(i);
     }
     char tag[32];
     snprintf(tag, sizeof(tag), "%s_returned", phase);

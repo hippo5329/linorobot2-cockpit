@@ -29,6 +29,15 @@ def test_each_identification_step_runs_both_ways():
         assert kind in body, name
 
 
+def test_the_identification_drives_the_robot_straight_not_one_track():
+    # user: "test acc should fast forward, fast backward, then rotate in both direction"
+    for name in ("deadzone", "plant", "loopStep"):
+        body = _body(name)
+        # the direction loop is the OUTER one: each step is the whole robot out, then back
+        assert body.index("for (int dir = 1;") < body.index("for (unsigned i = 0; i < total_motors"), name
+    assert "spinAll(cmd);" in _body("deadzone") and "spinAll(cmd);" in _body("plant")
+
+
 def test_it_drives_home_after_the_identification_and_after_the_runs():
     assert 'returnHome("ident");' in _body("run")
     assert 'ident::returnHome("runs");' in SRC

@@ -96,7 +96,7 @@ def test_never_settled_is_not_reported_as_instant():
     assert never and "never" in never[0], never
     assert "RINGS" in never[0]
     src = open(ACC, encoding="utf-8").read()
-    assert "settle_tick >= ticks ? -1" in src, "the firmware must emit -1, not 0"
+    assert "settle_tick[i] >= ticks ? -1" in src, "the firmware must emit -1, not 0"
 
 
 def test_the_firmware_emits_every_field_the_parser_reads():
