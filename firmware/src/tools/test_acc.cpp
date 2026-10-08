@@ -158,6 +158,56 @@ static void waitMs(uint32_t ms)
     }
 }
 
+// Where the robot is, from its own wheels (user, 2026-10-08: "change it so that it
+// return to home"). EVERY encoder read in this tool goes through readRPM(): getRPM()
+// is the ticks since the previous call over the time since then, so rpm x interval
+// is exactly the travel, and a read that bypassed this would lose its interval's.
+// The pose is the same travel through the firmware's own Kinematics, one wheel at a
+// time (the identification drives one wheel at a time). It is the wheels' account:
+// a track that slips moved less than it says, which is what the host's LiDAR
+// before/after comparison is for.
+static float wheel_net_rev[4] = {};
+static uint32_t wheel_read_us[4] = {};
+static float home_x = 0.0f, home_y = 0.0f, home_th = 0.0f;
+
+static EncoderInterface *encN(int i)
+{
+    return (i == 0) ? motor1_encoder : (i == 1) ? motor2_encoder
+         : (i == 2) ? motor3_encoder : motor4_encoder;
+}
+
+static float readRPM(int i)
+{
+    const float rpm = encN(i)->getRPM();
+    const uint32_t now = micros();
+    if (wheel_read_us[i]) {
+        const float dt = (float)(now - wheel_read_us[i]) * 1e-6f;
+        wheel_net_rev[i] += rpm / 60.0f * dt;
+        if (kinematics) {
+            float r[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            r[i] = rpm;
+            const Kinematics::velocities v = kinematics->getVelocities(r[0], r[1], r[2], r[3]);
+            home_th += v.angular_z * dt;
+            home_x += (v.linear_x * cosf(home_th) - v.linear_y * sinf(home_th)) * dt;
+            home_y += (v.linear_x * sinf(home_th) + v.linear_y * cosf(home_th)) * dt;
+        }
+    }
+    wheel_read_us[i] = now;
+    return rpm;
+}
+
+static float wheelNetM(int i)
+{
+    return wheel_net_rev[i] * (float)PI * envFloat("wheel_d", WHEEL_DIAMETER);
+}
+
+static void reportHome(const char *phase)
+{
+    REPORT("HOME %s net_m=%.3f,%.3f,%.3f,%.3f x=%.3f y=%.3f yaw=%.1f\n", phase,
+           wheelNetM(0), wheelNetM(1), wheelNetM(2), wheelNetM(3),
+           home_x, home_y, home_th * 57.29578f);
+}
+
 void setup_()
 {
     // Allocated when this tool runs, not statically (see test_sensors).
@@ -214,10 +264,7 @@ void setup_()
     {
         total_motors = 2;
     }
-    motor1_encoder->getRPM();
-    motor2_encoder->getRPM();
-    motor3_encoder->getRPM();
-    motor4_encoder->getRPM();
+    for (int i = 0; i < 4; i++) readRPM(i);   // the baseline: travel counts from here
 
     initBoardLate();
     syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
@@ -246,10 +293,10 @@ unsigned idx = 0;
 
 void record(unsigned n, Kinematics::velocities *buf) {
     for (unsigned i = 0; i < n; i++, idx++) {
-        float rpm1 = motor1_encoder->getRPM();
-        float rpm2 = motor2_encoder->getRPM();
-        float rpm3 = motor3_encoder->getRPM();
-        float rpm4 = motor4_encoder->getRPM();
+        float rpm1 = readRPM(0);
+        float rpm2 = readRPM(1);
+        float rpm3 = readRPM(2);
+        float rpm4 = readRPM(3);
         *imu_msg = imu->getData();
         float imu_acc_x = imu_msg->linear_acceleration.x;
         if (imu_acc_x > imu_max_acc_x) imu_max_acc_x = imu_acc_x;
@@ -402,24 +449,32 @@ void stopAll()
 
 // The smallest PWM that turns the wheel. SIM_WHEEL_STALL_DUTY is a guess at 4%;
 // this is the real number, and it differs per wheel because stiction does.
+//
+// Every step below runs forward and then the same in reverse, on one wheel, before
+// the next wheel: each wheel's net travel is about zero after every step, so the
+// robot pivots out and back instead of walking off. Forward-only, the
+// identification walked the TS100 ~2 m into a wall (2026-10-08). The reverse runs
+// report as `<kind>_rev`, which drivetrain_report.py's parser does not read.
 void deadzone()
 {
     const int pwm_max = pwmMax();
     for (unsigned i = 0; i < total_motors; i++) {
-        int found = -1;
-        for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
-            mot(i)->spin(pwm);
-            waitMs(120);
-            // Two samples: the first getRPM() after a stop can still carry the
-            // previous motion on a filtered encoder.
-            enc(i)->getRPM();
-            waitMs(80);
-            if (fabs(enc(i)->getRPM()) > 2.0) found = pwm;
+        for (int dir = 1; dir >= -1; dir -= 2) {
+            int found = -1;
+            for (int pwm = 0; pwm <= pwm_max / 2 && found < 0; pwm += pwm_max / 100) {
+                mot(i)->spin(dir * pwm);
+                waitMs(120);
+                // Two samples: the first getRPM() after a stop can still carry the
+                // previous motion on a filtered encoder.
+                readRPM(i);
+                waitMs(80);
+                if (fabs(readRPM(i)) > 2.0) found = pwm;
+            }
+            mot(i)->spin(0);
+            waitMs(300);
+            REPORT("IDENT %s wheel=%u pwm=%d duty=%.3f\n", dir > 0 ? "deadzone" : "deadzone_rev",
+                          i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
         }
-        mot(i)->spin(0);
-        waitMs(300);
-        REPORT("IDENT deadzone wheel=%u pwm=%d duty=%.3f\n",
-                      i + 1, found, found < 0 ? -1.0 : (float)found / (float)pwm_max);
     }
 }
 
@@ -430,15 +485,16 @@ void deadzone()
 void plant()
 {
     const int pwm_max = pwmMax();
-    for (unsigned i = 0; i < total_motors; i++) {
-        enc(i)->getRPM();
-        mot(i)->spin(pwm_max);
+    for (unsigned i = 0; i < total_motors; i++)
+    for (int dir = 1; dir >= -1; dir -= 2) {
+        readRPM(i);
+        mot(i)->spin(dir * pwm_max);
         float peak = 0.0;
         unsigned tau_ticks = 0;
         float samples[50];
         for (unsigned t = 0; t < 50; t++) {          // 1 s at 20 ms
             waitMs(TICK_MS);
-            samples[t] = fabs(enc(i)->getRPM());
+            samples[t] = fabs(readRPM(i));
             if (samples[t] > peak) peak = samples[t];
         }
         mot(i)->spin(0);
@@ -446,7 +502,8 @@ void plant()
         for (unsigned t = 0; t < 50; t++) {
             if (samples[t] >= steady * 0.632f) { tau_ticks = t; break; }
         }
-        REPORT("IDENT plant wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
+        REPORT("IDENT %s wheel=%u steady_rpm=%.1f tau_ms=%u K=%.5f peak_rpm=%.1f\n",
+                      dir > 0 ? "plant" : "plant_rev",
                       i + 1, steady, tau_ticks * TICK_MS,
                       pwm_max > 0 ? steady / (float)pwm_max : 0.0f, peak);
         waitMs(700);
@@ -458,10 +515,12 @@ void plant()
 // Overshoot alone is not enough -- a loop can creep past the setpoint once and
 // settle, or cross it repeatedly by a hair and never settle. The crossing count
 // is the second test, and it is the one that catches ringing.
-void loopStep(float setpoint_rpm)
+void loopStep(float magnitude_rpm)
 {
     const unsigned ticks = 150;                      // 3 s
-    for (unsigned i = 0; i < total_motors; i++) {
+    for (unsigned i = 0; i < total_motors; i++)
+    for (int dir = 1; dir >= -1; dir -= 2) {
+        const float setpoint_rpm = dir * magnitude_rpm;
         // Start from a known state. The integral carries between steps, so the
         // second setpoint would be measured on a loop that is already wound --
         // and the overshoot figure would belong to the previous step.
@@ -471,16 +530,16 @@ void loopStep(float setpoint_rpm)
         // reset method: this is the state the robot is in every time it stops,
         // so the identification starts where real driving starts.
         for (unsigned t = 0; t < 30; t++) {
-            mot(i)->spin((int)pid(i)->compute(0.0f, enc(i)->getRPM()));
+            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
             waitMs(TICK_MS);
         }
-        enc(i)->getRPM();
+        readRPM(i);
         float peak = 0.0, last = 0.0, err_sum = 0.0;
         int crossings = 0;
         unsigned settle_tick = ticks;
         bool was_below = true;
         for (unsigned t = 0; t < ticks; t++) {
-            const float rpm = enc(i)->getRPM();
+            const float rpm = readRPM(i);
             mot(i)->spin((int)pid(i)->compute(setpoint_rpm, rpm));
             if (fabs(rpm) > peak) peak = fabs(rpm);
             const bool below = rpm < setpoint_rpm;
@@ -500,13 +559,44 @@ void loopStep(float setpoint_rpm)
         // -1, not 0, for "never settled". Zero reads as "settled instantly",
         // which is the opposite of what it means and is exactly the wheel you
         // most want to notice.
-        REPORT("IDENT loop wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
+        REPORT("IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
                       "settle_ms=%d err=%.2f final=%.1f\n",
-                      i + 1, setpoint_rpm, over, crossings,
+                      dir > 0 ? "loop" : "loop_rev", i + 1, setpoint_rpm, over, crossings,
                       settle_tick >= ticks ? -1 : (int)(settle_tick * TICK_MS),
                       err_sum / 25.0f, last);
         waitMs(700);
     }
+}
+
+// Drive each wheel back to where it started, closed loop at a quarter of top
+// speed, until its net travel crosses zero (or is inside 5 mm already). What the
+// reverse twins leave over -- a wheel that runs faster one way, a dead zone that
+// differs -- is taken out here, so every phase ends where the robot began, as far
+// as its wheels know. 15 s per wheel at most.
+void returnHome(const char *phase)
+{
+    reportHome(phase);
+    const float top = (float)envU16("max_rpm", MOTOR_MAX_RPM) * envFloat("rpm_ratio", MAX_RPM_RATIO);
+    for (unsigned i = 0; i < total_motors; i++) {
+        if (fabsf(wheelNetM(i)) < 0.005f) continue;
+        const float sign0 = wheelNetM(i) > 0.0f ? 1.0f : -1.0f;
+        for (unsigned t = 0; t < 30; t++) {          // the PID from rest, as loopStep
+            mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
+            waitMs(TICK_MS);
+        }
+        for (unsigned t = 0; t < 750; t++) {          // 15 s
+            const float net = wheelNetM(i);
+            if (fabsf(net) < 0.005f || net * sign0 < 0.0f) break;
+            mot(i)->spin((int)pid(i)->compute(-sign0 * top * 0.25f, readRPM(i)));
+            waitMs(TICK_MS);
+        }
+        mot(i)->spin(0);
+        waitMs(500);
+        readRPM(i);
+    }
+    char tag[32];
+    snprintf(tag, sizeof(tag), "%s_returned", phase);
+    reportHome(tag);
 }
 
 void run()
@@ -528,6 +618,7 @@ void run()
     loopStep(top * 0.55f);
     loopStep(top * 0.90f);
     stopAll();
+    returnHome("ident");
     REPORT("IDENT done\n");
 }
 
@@ -618,6 +709,14 @@ void loop_() {
             current_pwm_max /= 2;
             current_pwm_min /= 2;
         }
+    }
+    // The runs come back by construction (each drives out and the same back), but
+    // a track that runs faster one way still walks; take out what is left, once.
+    static bool homed = false;
+    if (!homed) {
+        homed = true;
+        ident::returnHome("runs");
+        Serial.println("[test_acc] done -- write app=base to leave");
     }
 
     waitMs(100);
