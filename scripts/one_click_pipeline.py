@@ -2672,8 +2672,12 @@ def main():
             # rather than left to assume a differential one.
             base_type = str((params.get("kinematics") or {}).get("base_type", "2wd")).lower()
             n_moves = 8
+            # And against the room: with a LiDAR, the suite matches scans through each
+            # manoeuvre and judges odometry's distance and turn by them (odom_check.py) --
+            # the one check a wrong wheel diameter or a slipping track cannot pass.
+            drive_lidar = scan_from == "lidar" and has_lidar
             print(f"\n[6.5/6] [DRIVE] {n_moves} manoeuvres ({base_type}), checked against "
-                  f"odometry...")
+                  f"odometry" + (" and odometry against the LiDAR" if drive_lidar else "") + "...")
             stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
             tname = "geometry_msgs/msg/TwistStamped" if stamped_now else "geometry_msgs/msg/Twist"
             # The config and the world, so the suite knows the walls the simulated base is
@@ -2681,8 +2685,9 @@ def main():
             drive_world = ("map" if args.world_map else (args.world or "")) if not is_real else ""
             drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} "
                                 f"{tname} --config {params_path} --base-type {base_type}"
-                                + (f" --world {drive_world}" if drive_world else ""),
-                                timeout=140, distro=args.distro)
+                                + (f" --world {drive_world}" if drive_world else "")
+                                + (" --lidar" if drive_lidar else ""),
+                                timeout=240 if drive_lidar else 140, distro=args.distro)
             if drive_res.stdout:
                 print(drive_res.stdout)
             raw_after, ekf_after = _odom_xy(args.distro), _ekf_xy(args.distro)

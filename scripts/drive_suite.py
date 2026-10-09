@@ -54,6 +54,13 @@ GenDrv on Wi-Fi reported forward at +0.250 m/s and passed while it covered 0.67 
 stalled. And each line names the longest stretch with no /odom at all, judged against
 GAP_LIMIT_S: a link that silent has left the base uncommanded.
 
+With --lidar each line also says how far the robot REALLY went, by its LiDAR: scans
+matched one to the next through the manoeuvre and the stop after it (odom_check.py),
+against odom over the same intervals. The speed loop steers by odometry, so a wrong
+wheel diameter, a wrong track or a slipping track leave every column above agreeing
+with the command; only the room can disagree. The suite ends with the ratios and the
+config values that would match them (wheel_diameter, kinematics.angular_scale).
+
 Exit status 0 when all pass; the verdict line says how many did.
 """
 import math
@@ -68,6 +75,7 @@ from rclpy.qos import qos_profile_sensor_data
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cockpit_paths  # noqa: E402  -- the prefix rule lives in one place
+import odom_check  # noqa: E402  -- odometry against the room, by the LiDAR
 
 
 # The simulated world the clamp holds the robot in, as wall segments, so a manoeuvre can say
@@ -229,6 +237,29 @@ def _statistic(samples: list, want: float) -> float:
     return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
+# The LiDAR reference. A sample every LIDAR_EVERY_S during a manoeuvre (and the stop after
+# it), each cloud thinned to at most LIDAR_POINTS: the matcher is O(N^2) per iteration and
+# also runs on a 4-core robot computer.
+LIDAR_EVERY_S = 0.5
+LIDAR_POINTS = 300
+LIDAR_STOP_S = 1.0
+
+
+def _scan_topic(node, prefix: str, wait: float = 8.0) -> str:
+    """The robot's whole-circle scan: scan_raw when a lidar.mask makes /scan the masked view
+    (scan_match.whole_circle_topic), under the robot's namespace."""
+    ns = f"/{prefix}" if prefix else ""
+    end = time.time() + wait
+    while time.time() < end:
+        names = {n for n, _ in node.get_topic_names_and_types()}
+        if f"{ns}/scan_raw" in names:
+            return f"{ns}/scan_raw"
+        if f"{ns}/scan" in names and time.time() > end - wait / 2:
+            return f"{ns}/scan"
+        rclpy.spin_once(node, timeout_sec=0.2)
+    return f"{ns}/scan"
+
+
 def _topics(prefix: str) -> tuple:
     """(cmd_vel, odom) for a robot whose namespace is `prefix` ("" = plain)."""
     ns = f"/{prefix}" if prefix else ""
@@ -246,6 +277,7 @@ def main() -> int:
     prefix = ""
     base_type = "2wd"
     world_cfg, world_arg = None, None
+    use_lidar = False
     rest = []
     i = 0
     while i < len(argv):
@@ -255,6 +287,9 @@ def main() -> int:
         elif argv[i] == "--world" and i + 1 < len(argv):
             world_arg = argv[i + 1].strip().lower()
             i += 2
+        elif argv[i] == "--lidar":
+            use_lidar = True
+            i += 1
         elif argv[i] == "--prefix" and i + 1 < len(argv):
             prefix = argv[i + 1].strip().strip("/")
             i += 2
@@ -291,7 +326,7 @@ def main() -> int:
               flush=True)
     pub = node.create_publisher(T, cmd_topic, 10)
 
-    seen = {"vx": [], "vy": [], "wz": [], "x": float("nan"), "y": float("nan"),
+    seen = {"vx": [], "vy": [], "wz": [], "x": float("nan"), "y": float("nan"), "th": None,
             "t": [], "px": [], "py": [], "yaw": []}
 
     def _odom(m):
@@ -305,8 +340,45 @@ def main() -> int:
         seen["px"].append(m.pose.pose.position.x)
         seen["py"].append(m.pose.pose.position.y)
         seen["yaw"].append(_yaw(m.pose.pose.orientation.z, m.pose.pose.orientation.w))
+        seen["th"] = seen["yaw"][-1]
 
     node.create_subscription(Odometry, odom_topic, _odom, qos_profile_sensor_data)
+
+    # The LiDAR reference: while `rec` is set, a scan every LIDAR_EVERY_S is kept with the
+    # odom pose seen when it arrived, so both measure the same intervals.
+    lid = {"on": use_lidar, "rec": None, "last": None, "next": 0.0, "laser": None,
+           "comps": []}
+    if use_lidar:
+        import scan_match
+        from sensor_msgs.msg import LaserScan
+        scan_topic = _scan_topic(node, prefix)
+
+        def _scan(m):
+            # Kept raw with the odom pose of the moment; converted after the window, so
+            # the callback stays cheap and never spins (the laser's TF lookup does).
+            lid["last"] = m
+            if lid["rec"] is None or time.time() < lid["next"] or seen["th"] is None:
+                return
+            lid["next"] = time.time() + LIDAR_EVERY_S
+            lid["rec"].append((m, seen["x"], seen["y"], seen["th"]))
+
+        def _samples(raw):
+            if lid["laser"] is None and raw:
+                lid["laser"] = scan_match.laser_pose(node, raw[0][0].header.frame_id, tries=10)
+                if lid["laser"] is None:
+                    print("[drive_suite] no TF for the laser frame: its scans are taken as "
+                          "centred on base_link", flush=True)
+                    lid["laser"] = (0.0, 0.0, 0.0)
+            out = []
+            for m, x, y, th in raw:
+                P = scan_match.scan_points(scan_match.scan_dict(m), laser=lid["laser"])
+                if len(P) > LIDAR_POINTS:
+                    P = P[::int(math.ceil(len(P) / LIDAR_POINTS))]
+                out.append(odom_check.Sample(P, x, y, th))
+            return out
+
+        node.create_subscription(LaserScan, scan_topic, _scan, qos_profile_sensor_data)
+        print(f"[drive_suite] LiDAR reference on {scan_topic}", flush=True)
 
     def command(lin: float, ang: float, secs: float, lat: float = 0.0) -> None:
         m = T()
@@ -339,7 +411,30 @@ def main() -> int:
         x0, y0 = seen["x"], seen["y"]
         for k in ("vx", "vy", "wz", "t", "px", "py", "yaw"):
             seen[k].clear()
+        if lid["on"]:
+            lid["rec"], lid["next"] = [], 0.0
+            if lid["last"] is not None and seen["th"] is not None:   # standing still, before the command
+                lid["rec"].append((lid["last"], seen["x"], seen["y"], seen["th"]))
         command(lin, ang, secs, lat)
+        lidar_col, lidar_ok = "", True
+        if lid["on"]:
+            # On through the stop: the base coasts, and odom and LiDAR both count it.
+            # The window's own columns are judged on what arrived in the window only.
+            snap = {k: list(seen[k]) for k in ("vx", "vy", "wz", "t", "px", "py", "yaw")}
+            xw, yw = seen["x"], seen["y"]
+            command(0.0, 0.0, LIDAR_STOP_S)
+            if lid["last"] is not None and seen["th"] is not None:
+                lid["rec"].append((lid["last"], seen["x"], seen["y"], seen["th"]))
+            raw, lid["rec"] = lid["rec"], None
+            samples = _samples(raw)
+            for k, v in snap.items():
+                seen[k][:] = v
+            seen["x"], seen["y"] = xw, yw
+            turning = not lin and not lat and bool(ang)
+            comp = odom_check.compare(odom_check.chain(samples), turning)
+            lid["comps"].append((label, lin, ang, lat, comp))
+            lidar_col = odom_check.column(comp)
+            lidar_ok = comp.verdict != "BAD"
         vx = seen["vx"] or [0.0]
         vy = seen["vy"] or [0.0]
         wz = seen["wz"] or [0.0]
@@ -384,6 +479,7 @@ def main() -> int:
         if held:
             ok_d = True
             dist_col = "   dist %.2f/%.2f m held" % (got_d, want_d)
+            lidar_ok = True     # the clamp moved the pose; the room is no reference there
         # vy is only printed when it is part of the question: on a differential
         # base every line would carry a column that is always zero, and a column
         # that is always zero stops being read.
@@ -395,11 +491,15 @@ def main() -> int:
                    % (got_vy, pk_vy, lat, "ok" if ok_vy else "BAD")) if lat or STRAFES else ""
         print("%-12s cmd(%+.2f,%+.2f)  odom vx %+.3f (pk %+.3f, want %+.2f) %s%s"
               "   wz %+.3f (pk %+.3f, want %+.2f) %s%s%s"
-              "   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
+              "%s   pose (%+.2f,%+.2f)->(%+.2f,%+.2f) %s"
               % (label, lin, ang, got_vx, pk_vx, lin, "ok" if ok_vx else "BAD", lat_col,
                  got_wz, pk_wz, ang, "ok" if ok_wz else "BAD", dist_col, gap_col,
-                 x0, y0, x1, y1, where), flush=True)
-        ok = ok_vx and ok_vy and ok_wz and ok_d and ok_gap
+                 lidar_col, x0, y0, x1, y1, where), flush=True)
+        ok = ok_vx and ok_vy and ok_wz and ok_d and ok_gap and lidar_ok
+        if not lidar_ok:
+            print("             ^ the LiDAR saw the base go another distance (or turn another angle) "
+                  "than its odometry says: the odometry is wrong, whatever the speeds say.",
+                  flush=True)
         if not ok_gap:
             print("             ^ /odom went silent for %.2f s (limit %.1f s): the link dropped "
                   "the base; it stops 200 ms after its last cmd_vel." % (gap, GAP_LIMIT_S),
@@ -448,6 +548,12 @@ def main() -> int:
             print("             ^ %s is not a mecanum base: a sideways command must "
                   "produce no vy and no motion." % BASE_TYPE, flush=True)
     command(0.0, 0.0, 2.5)
+    if lid["on"]:
+        straight = [c for (lb, ln, an, lt, c) in lid["comps"] if ln and not an and not lt]
+        spins = [c for (lb, ln, an, lt, c) in lid["comps"] if an and not ln and not lt]
+        kine = (world_cfg or {}).get("kinematics") or {"base_type": BASE_TYPE}
+        for line in odom_check.summary(odom_check.corrections(straight, spins, kine), kine):
+            print(line, flush=True)
     print("VERDICT: %d/%d manoeuvres correct (%s)"
           % (sum(results), len(results), BASE_TYPE), flush=True)
     rclpy.shutdown()
