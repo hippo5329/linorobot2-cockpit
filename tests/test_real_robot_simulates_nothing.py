@@ -42,7 +42,9 @@ def test_orientation_stddev_reaches_the_env(reference):
     assert "ori_sd" not in mcu_env.hardware_env(params), "unset: the firmware's 0.01 rad"
     params["base_controller"].setdefault("sensors", {})["orientation_stddev"] = 0.5
     assert mcu_env.hardware_env(params)["ori_sd"] == 0.5
-    for bad in (0, -1, 4.0, "wide"):
+    params["base_controller"]["sensors"]["orientation_stddev"] = 50
+    assert mcu_env.hardware_env(params)["ori_sd"] == 50, "a weight, not an angle: past pi is fine"
+    for bad in (0, -1, 1e4, "wide"):
         params["base_controller"]["sensors"]["orientation_stddev"] = bad
         with pytest.raises(ValueError, match="orientation_stddev"):
             mcu_env.hardware_env(params)

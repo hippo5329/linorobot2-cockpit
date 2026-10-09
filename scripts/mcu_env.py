@@ -727,8 +727,11 @@ def hardware_env(params: dict) -> dict:
             ori_sd = float(ori_sd)
         except (TypeError, ValueError):
             raise ValueError(f"sensors.orientation_stddev must be a number of radians, not {ori_sd!r}")
-        if not 0.0 < ori_sd <= math.pi:
-            raise ValueError(f"sensors.orientation_stddev must be in (0, pi] rad, not {ori_sd}")
+        # A weight more than an angle: the EKF follows the field with a time constant of
+        # about 1 / (rate * sqrt(q / sd^2)) -- at 34 Hz against robot_localization's default
+        # yaw process noise, ~0.7 s at sd 1 and ~35 s at sd 50. So it may exceed pi.
+        if not 0.0 < ori_sd <= 1000.0:
+            raise ValueError(f"sensors.orientation_stddev must be in (0, 1000] rad, not {ori_sd}")
         env["ori_sd"] = round(ori_sd, 6)
 
     # `imu: auto` / `mag: auto` mean the same thing one level down: take whatever
