@@ -239,6 +239,28 @@ def image_takes_env_over_air(prebuilt_dir: Optional[str]) -> bool:
         return False
 
 
+PORT_RETURN_S = float(os.environ.get("LINO_PORT_RETURN_S", "15"))
+
+
+def wait_for_stamped_port(args, timeout: float = None, poll: float = 0.25) -> bool:
+    """When args.port is absent but this port's stamp records a board flashed through it,
+    wait up to `timeout` s for the port to come back. True when the port is there."""
+    if os.path.exists(args.port):
+        return True
+    if not stamp_for(args.env, args.port):
+        return False
+    timeout = PORT_RETURN_S if timeout is None else timeout
+    log(f"⏳ {args.port} is absent, but a board was flashed through it: waiting up to "
+        f"{timeout:.0f} s for it to come back before going over the air")
+    end = time.time() + timeout
+    while time.time() < end:
+        if os.path.exists(args.port):
+            log(f"   {args.port} is back")
+            return True
+        time.sleep(poll)
+    return False
+
+
 def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
     """Write a Wi-Fi robot that is not on USB: the application (unless --env-only) and
     then the env block, both over ArduinoOTA, each confirmed by the board's own banner
@@ -2181,6 +2203,16 @@ def main() -> int:
     # USB identity, BOOTSEL or port handling below applies.
     if is_unoq_family(args.env):
         return flash_unoq(args, prebuilt_dir)
+
+    # A board this port has flashed over USB is ON USB, even when its node is gone for
+    # a moment: the probe just reset it, it re-enumerated within a second on the host,
+    # and a cell's passthrough re-adds the node seconds later. Going over the air then
+    # cannot work -- a Wi-Fi leg parks its board on a serial env, so it is not on the
+    # network -- and four S3 Wi-Fi legs of one gate failed exactly so, [NO BOARD]
+    # before anything ran. Wait for the port first; a robot that has really left the
+    # cable costs PORT_RETURN_S once.
+    if is_esp_family(args.env) and params_wifi_transport(args.params) and not args.ota:
+        wait_for_stamped_port(args)
 
     # A Wi-Fi robot that has left the USB cable (or --ota): everything below is USB.
     # Only an ESP32/ESP32-S3 carries micro-ROS over Wi-Fi; an RP2's radio is off.
