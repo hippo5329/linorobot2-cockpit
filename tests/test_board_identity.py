@@ -97,3 +97,54 @@ def test_the_banner_appends_the_identity_after_git():
     )
     # The Wi-Fi fields (envota, envcrc) are appended too, after the identity.
     assert f.index("git=%s") < f.index("envcrc="), "envcrc must follow git= and the identity"
+
+
+class _FakeSerial:
+    """A port that hands out the given chunks, one per read, then nothing."""
+    chunks = []
+
+    def __init__(self, *a, **k):
+        self._chunks = list(type(self).chunks)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def setDTR(self, v):
+        pass
+
+    def setRTS(self, v):
+        pass
+
+    def read(self, n):
+        return self._chunks.pop(0).encode() if self._chunks else b""
+
+
+def _listen(monkeypatch, chunks, timeout=0.3):
+    import types
+    _FakeSerial.chunks = chunks
+    monkeypatch.setitem(sys.modules, "serial", types.SimpleNamespace(Serial=_FakeSerial))
+    return mcu_probe.listen_for_banner("/dev/null", 115200, timeout)
+
+
+def test_a_banner_split_mid_uid_is_read_to_the_end_of_its_line(monkeypatch):
+    # The gate's Yahboom: a read ended inside the uid, `uid=C83` was stamped, and
+    # every later flash of that board was refused as a different board.
+    line = BANNER.format(app="base", tail=" uid=C8300B16A398")
+    cut = line.index("uid=C83") + len("uid=C83")
+    got = _listen(monkeypatch, ["boot\r\n" + line[:cut], line[cut:] + "\r\n", "after\r\n"])
+    assert mcu_probe.parse_banner(got)["board_id"] == "C8300B16A398"
+
+
+def test_a_capture_that_ends_inside_a_banner_reports_no_banner(monkeypatch):
+    line = BANNER.format(app="base", tail=" uid=C8300B16A398")
+    got = _listen(monkeypatch, ["boot\r\n" + line[:line.index("uid=C83") + 7]])
+    assert mcu_probe.parse_banner(got) == {}, "no banner, so the caller asks again -- never a wrong id"
+    assert got == "boot\r\n"
+
+
+def test_text_after_the_last_line_that_is_not_a_banner_is_kept():
+    assert mcu_probe.drop_unfinished_banner("rst:0x1\nGuru Meditation") == "rst:0x1\nGuru Meditation"
+    assert mcu_probe.drop_unfinished_banner("") == ""

@@ -167,6 +167,25 @@ def write_stamp(env: str, port: str, data: dict) -> bool:
         return False
 
 
+# A banner counts once its line has ENDED. The read used to stop at the first match
+# of BANNER_RE, whose identity field takes any run of hex digits: a read that ended
+# mid-line saw `uid=C83` of `uid=C8300B16A398`, that went into the port's stamp, and
+# every later flash of that same board was refused as [BOARD MISMATCH] -- three Nav2
+# legs of a gate lost before they started. So the read waits for the line's end, and
+# a capture that times out on a banner still being written drops that fragment: no
+# banner (the caller asks again) rather than a wrong one.
+BANNER_LINE_RE = re.compile(BANNER_RE.pattern + r"[^\r\n]*\r?\n")
+
+
+def drop_unfinished_banner(text: str) -> str:
+    """`text` without a trailing, unterminated banner fragment (anything else kept)."""
+    text = text or ""
+    tail = text.rsplit("\n", 1)[-1]
+    if tail and BANNER_RE.search(tail):
+        return text[:len(text) - len(tail)]
+    return text
+
+
 def parse_banner(text: str) -> dict:
     """The LAST banner in a capture, so a board that rebooted twice reports the
     boot that is actually running rather than the one before it."""
@@ -252,9 +271,9 @@ def listen_for_banner(port: str, baud: int, timeout: float, reset: bool = False)
                 data = ser.read(4096)
                 if data:
                     chunks.append(data.decode("utf-8", "replace"))
-                    if BANNER_RE.search("".join(chunks)):
+                    if BANNER_LINE_RE.search("".join(chunks)):
                         break
-            return "".join(chunks)
+            return drop_unfinished_banner("".join(chunks))
     except Exception as exc:
         return f"[mcu_probe] serial: {exc}"
 
