@@ -1785,12 +1785,16 @@ bool createEntities()
     syslog(LOG_INFO, "%s %lu", __FUNCTION__, millis());
     allocator = rcl_get_default_allocator();
     // The DDS domain the agent creates this client's participant in: the env's
-    // `domain_id`, 0 when unset, as every board has always been. It has to be
-    // said rather than left to rcl: on the host target (the Sim MCU) Jazzy's
-    // rcl took ROS_DOMAIN_ID from the process and Lyrical's does not, so the
-    // same firmware landed on the stack's domain on one distro and on 0 on the
-    // other. The pattern is rclc_support_init()'s own: rcl_init copies the
-    // options, which are finalised straight after.
+    // `domain_id`, 0 when unset, as every board has always been. The CLIENT
+    // decides it: rmw_microxrcedds sends it in the create-participant request and
+    // the agent obeys, whatever the agent's own ROS_DOMAIN_ID (it never reads that
+    // variable; only a request for 255 is redirected, to XRCE_DOMAIN_ID_OVERRIDE).
+    // It is said here rather than left to rcl, which on a board has no environment
+    // and on the host target (the Sim MCU) would read the process's ROS_DOMAIN_ID
+    // -- the same rcl_get_default_domain_id() on every distro. The env is the one
+    // place the domain is set, board and host alike. The pattern is
+    // rclc_support_init()'s own: rcl_init copies the options, which are finalised
+    // straight after.
     rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
     RCCHECK(rcl_init_options_init(&init_options, allocator));
     const rcl_ret_t domain_rc = rcl_init_options_set_domain_id(&init_options, (size_t)envInt("domain_id", 0));

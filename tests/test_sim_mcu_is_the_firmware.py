@@ -112,10 +112,11 @@ def test_the_browser_leaves_the_sim_mcus_agent_to_bringup():
 
 
 def test_the_domain_is_the_envs_on_every_distro(tmp_path, monkeypatch):
-    """Jazzy's rcl took ROS_DOMAIN_ID from the process and Lyrical's does not:
-    the same host firmware published on the stack's domain on one and on 0 on
-    the other. The firmware reads `domain_id` from the env (0 when unset, as
-    every board has always been), and the host writes the stack's in."""
+    """The client decides its DDS domain (the agent never reads ROS_DOMAIN_ID),
+    so the firmware takes `domain_id` from the env (0 when unset, as every board
+    has always been) on every distro, and the host writes the stack's in. Measured
+    on Jazzy and Lyrical alike: a client asking for 73 publishes on 73 with the
+    agent on 0, and one asking for 0 stays on 0 with the agent on 73."""
     src = read("firmware", "src", "main.cpp")
     assert 'rcl_init_options_set_domain_id(&init_options, (size_t)envInt("domain_id", 0))' in src
     import cockpit_paths
