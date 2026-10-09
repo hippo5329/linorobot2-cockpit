@@ -223,6 +223,24 @@ if ls "$CFG"/drivers/openni2/*.so.0 >/dev/null 2>&1; then
     done
 fi
 
+# Fast DDS's shared-memory segments outlive a stack that was killed: every 1-Click
+# that ends with a kill leaves its /dev/shm/fastdds_* behind, and /dev/shm is the
+# host's (ipc: host). On a robot computer that is never rebooted they pile up in RAM:
+# 2,632 files, 676 MB on an Arduino UNO Q and 2,782 / 698 MB on a Raspberry Pi 5 after
+# four days of runs -- and a participant created among them took longer than the
+# micro-ROS client's 1 s, so the Sim MCU's node was refused and the robot was silent.
+# `fastdds shm clean` removes only segments whose owner is dead (it checks each lock),
+# so a stack still running beside us keeps its own. Still root here: another user's
+# zombie (or root's) can only be removed as root.
+if command -v fastdds >/dev/null 2>&1 || [ -x "/opt/ros/${ROS_DISTRO:-}/bin/fastdds" ]; then
+    before=$(ls /dev/shm 2>/dev/null | grep -c '^fastdds_' || true)
+    if [ "${before:-0}" -gt 0 ]; then
+        ( . "/opt/ros/${ROS_DISTRO}/setup.sh" 2>/dev/null; timeout 300 fastdds shm clean >/dev/null 2>&1 ) || true
+        after=$(ls /dev/shm 2>/dev/null | grep -c '^fastdds_' || true)
+        echo "[cockpit] Fast DDS shared memory: ${before} files before, ${after} after removing dead stacks' segments"
+    fi
+fi
+
 if [ "$DROP_PRIVS" = "yes" ]; then
     echo "[cockpit] rootful docker — dropping to uid=${HOST_UID} gid=${HOST_GID} (HOME=${HOME})"
 else

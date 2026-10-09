@@ -1674,6 +1674,32 @@ def flash_firmware(pio_env: str, port: str, baud: int, params_path: str, control
 
 
 # ----------------------------------------------------------------------- main
+def _dds_shm_files() -> int:
+    try:
+        return sum(1 for f in os.listdir("/dev/shm") if f.startswith("fastdds_"))
+    except OSError:
+        return 0
+
+
+def clean_dds_shm(distro: str) -> None:
+    """Remove the Fast DDS shared-memory segments of stacks that are dead.
+
+    A stack that ends with a kill leaves its /dev/shm/fastdds_* behind, and on a robot
+    computer that is not rebooted they pile up in RAM (2,632 files, 676 MB on an Arduino
+    UNO Q after four days); a participant created among them took longer than the
+    micro-ROS client's 1 s and the Sim MCU's node was refused. `fastdds shm clean` checks
+    each segment's lock, so a stack still running keeps its own. The container's
+    entrypoint does the same at every start; this covers a container that stays up."""
+    before = _dds_shm_files()
+    if not before:
+        return
+    run_ros("fastdds shm clean", timeout=300, distro=distro)
+    after = _dds_shm_files()
+    if after < before:
+        print(f"[0/6] [DDS] removed {before - after} dead Fast DDS shared-memory files "
+              f"({before} -> {after})")
+
+
 def main():
     _default_distro = detect_default_distro()
     parser = argparse.ArgumentParser(
@@ -1867,6 +1893,7 @@ def main():
         print(f"[0/6] [DOMAIN] ROS_DOMAIN_ID {os.environ.get('ROS_DOMAIN_ID', 'unset')} -> {domain} "
               f"(base_controller.domain_id in {os.path.basename(params_path)})")
     os.environ["ROS_DOMAIN_ID"] = str(domain)
+    clean_dds_shm(args.distro)
     # Before anything touches the board: a config from before the fake->sim rename
     # is refused later by mcu_env, deep inside the flash step, and the UI then
     # reports only "Flashing or verification failed". Say it here, plainly, with
