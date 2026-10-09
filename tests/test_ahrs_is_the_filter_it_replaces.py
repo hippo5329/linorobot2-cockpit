@@ -42,6 +42,10 @@ void ah_update(void *h, float gx, float gy, float gz, float ax, float ay,
 void ah_update_imu(void *h, float gx, float gy, float gz, float ax, float ay,
                    float az, float dt)
 { ((AHRS *)h)->updateIMU(gx, gy, gz, ax, ay, az, dt); }
+int ah_seed(void *h, float ax, float ay, float az, float mx, float my, float mz)
+{ return ((AHRS *)h)->seed(ax, ay, az, mx, my, mz) ? 1 : 0; }
+int ah_seed_imu(void *h, float ax, float ay, float az)
+{ return ((AHRS *)h)->seedIMU(ax, ay, az) ? 1 : 0; }
 void ah_quat(void *h, double *out) {
     ((AHRS *)h)->quaternion(out[0], out[1], out[2], out[3]);
 }
@@ -103,6 +107,8 @@ def ours(tmp_path_factory):
     lib.ah_update.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 10
     lib.ah_update_imu.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 7
     lib.ah_quat.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
+    lib.ah_seed.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 6
+    lib.ah_seed_imu.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
     lib.ah_gravity.argtypes = [ctypes.c_void_p, ctypes.c_float,
                                ctypes.POINTER(ctypes.c_float)]
     lib.ah_gravity_from.argtypes = [ctypes.c_double] * 4 + [
@@ -308,3 +314,93 @@ def test_the_real_path_does_not_borrow_a_simulation_constant():
     ahrs = open(AHRS_H, encoding="utf-8").read()
     assert "#define AHRS_GRAVITY 9.80665f" in ahrs, \
         "standard gravity is no longer stated where the filter can see it"
+
+
+# ---- the first orientation (2026-10-09). imu_filter_madgwick seeds itself from
+# gravity and the field before its first update; the port did not, so the board's
+# first imu/data was the identity -- yaw 0 -- and the filter then walked to the
+# field's heading. The EKF fuses yaw relatively (imu0_relative) and takes the FIRST
+# message as its zero, so it fused that walk as a turn: a real tracked robot "turned" -91 deg
+# standing still and Nav2 drove it the wrong way.
+
+def _yaw(q):
+    x, y, z, w = q
+    return math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+
+def _field_seen_at(heading_deg):
+    """FIELD as a level robot turned `heading_deg` about +Z (ENU) measures it."""
+    c, s = math.cos(math.radians(heading_deg)), math.sin(math.radians(heading_deg))
+    fx, fy, fz = FIELD
+    return (c * fx + s * fy, -s * fx + c * fy, fz)
+
+
+def _wrap(d):
+    return (d + 180.0) % 360.0 - 180.0
+
+
+@pytest.mark.parametrize("heading", [0.0, 37.0, -91.0, 179.0])
+def test_the_seed_is_the_heading_the_filter_converges_to(ours, heading):
+    """The seed must land where the filter itself goes -- the same convention, so
+    the first message and the thousandth agree about which way the robot faces."""
+    mag = _field_seen_at(heading)
+    walk = ours.ah_new(0.1, 0.0)
+    for _ in range(3000):                      # 60 s from the identity, at rest
+        ours.ah_update(walk, 0.0, 0.0, 0.0, *LEVEL_ACCEL, *mag, 0.02)
+    seeded = ours.ah_new(0.1, 0.0)
+    assert ours.ah_seed(seeded, *LEVEL_ACCEL, *mag) == 1
+    got, want = _yaw(_quat(ours, seeded, ours.ah_quat)), _yaw(_quat(ours, walk, ours.ah_quat))
+    assert abs(_wrap(got - want)) < 0.5, (
+        f"facing {heading} deg: the seed says {got:.2f}, the filter settles at {want:.2f}")
+
+
+@pytest.mark.parametrize("heading", [0.0, -91.0, 150.0])
+def test_a_seeded_filter_does_not_walk(ours, heading):
+    """The bug itself: from the identity the heading walks for seconds at rest. A
+    seeded filter starts at its fixed point, so ten seconds standing still move it
+    by nothing -- an EKF taking the first message as zero sees no phantom turn."""
+    mag = _field_seen_at(heading)
+    a = ours.ah_new(0.1, 0.0)
+    assert ours.ah_seed(a, *LEVEL_ACCEL, *mag) == 1
+    first = _yaw(_quat(ours, a, ours.ah_quat))
+    for _ in range(500):
+        ours.ah_update(a, 0.0, 0.0, 0.0, *LEVEL_ACCEL, *mag, 0.02)
+    drift = _wrap(_yaw(_quat(ours, a, ours.ah_quat)) - first)
+    assert abs(drift) < 0.5, f"facing {heading} deg: the seeded filter walked {drift:.2f} deg at rest"
+    unseeded = ours.ah_new(0.1, 0.0)
+    for _ in range(5):
+        ours.ah_update(unseeded, 0.0, 0.0, 0.0, *LEVEL_ACCEL, *mag, 0.02)
+    if abs(_wrap(heading)) > 10.0:
+        assert abs(_wrap(_yaw(_quat(ours, unseeded, ours.ah_quat)) - heading)) > 5.0, (
+            "an unseeded filter is already at the heading after 0.1 s -- this test no "
+            "longer shows the walk it exists to prevent")
+
+
+def test_the_seed_refuses_a_field_along_gravity(ours):
+    """No horizontal field, no heading: the reference returns false and keeps its
+    estimate; so must the port, or it would publish a NaN orientation."""
+    a = ours.ah_new(0.1, 0.0)
+    assert ours.ah_seed(a, *LEVEL_ACCEL, 0.0, 0.0, -40.0) == 0
+    assert ours.ah_seed(a, 0.0, 0.0, 0.0, *FIELD) == 0
+    assert all(math.isfinite(v) for v in _quat(ours, a, ours.ah_quat))
+
+
+def test_the_six_axis_seed_levels_a_tilted_robot(ours):
+    """With no magnetometer the seed only levels it -- roll and pitch from gravity."""
+    a = ours.ah_new(0.1, 0.0)
+    roll = math.radians(10.0)
+    assert ours.ah_seed_imu(a, 0.0, 9.81 * math.sin(roll), 9.81 * math.cos(roll)) == 1
+    x, y, z, w = _quat(ours, a, ours.ah_quat)
+    got_roll = math.degrees(math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)))
+    assert got_roll == pytest.approx(10.0, abs=0.5)
+
+
+def test_the_board_seeds_on_its_first_sample_and_claims_nothing_before():
+    src = open(MAIN, encoding="utf-8").read()
+    branch = _fusion_branch(src)
+    first = branch[branch.index("if (!ahrs_seeded)"):branch.index("else", branch.index("if (!ahrs_seeded)"))]
+    assert "ahrs.seed(" in first and "ahrs.seedIMU(" in first, (
+        "the first sample does not seed the filter: the first imu/data is the identity")
+    assert "orientation_covariance[0] = -1.0" in branch, (
+        "an unseeded message is not marked 'no orientation' (REP 145), so a "
+        "consumer can fuse the identity as a heading")

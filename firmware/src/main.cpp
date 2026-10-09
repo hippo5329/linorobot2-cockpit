@@ -2480,9 +2480,22 @@ void publishData()
         static bool ahrs_seeded = false;
         static uint32_t ahrs_prev_us = 0;
         const uint32_t ahrs_now_us = micros();
+        const float ax = (float)imu_msg->linear_acceleration.x;
+        const float ay = (float)imu_msg->linear_acceleration.y;
+        const float az = (float)imu_msg->linear_acceleration.z;
+        bool fused = false;
         if (!ahrs_seeded)
         {
-            ahrs_seeded = true;
+            // The first sample SEEDS the estimate from gravity and the field, as
+            // imu_filter_madgwick does, so the first orientation published is the
+            // heading the robot has -- not the identity, which an EKF fusing yaw
+            // relatively (imu0_relative) would take as its zero (ahrs.h seed()).
+            // Not seeded (free fall, no field yet): nothing is fused, and the next
+            // sample tries again.
+            fused = ahrs_seeded = publish_mag
+                ? ahrs.seed(ax, ay, az, (float)mag_msg->magnetic_field.x,
+                            (float)mag_msg->magnetic_field.y, (float)mag_msg->magnetic_field.z)
+                : ahrs.seedIMU(ax, ay, az);
             ahrs_prev_us = ahrs_now_us;
         }
         else
@@ -2496,9 +2509,6 @@ void publishData()
                 const float gx = (float)imu_msg->angular_velocity.x;
                 const float gy = (float)imu_msg->angular_velocity.y;
                 const float gz = (float)imu_msg->angular_velocity.z;
-                const float ax = (float)imu_msg->linear_acceleration.x;
-                const float ay = (float)imu_msg->linear_acceleration.y;
-                const float az = (float)imu_msg->linear_acceleration.z;
                 if (publish_mag)
                     ahrs.update(gx, gy, gz, ax, ay, az,
                                 (float)mag_msg->magnetic_field.x,
@@ -2506,21 +2516,30 @@ void publishData()
                                 (float)mag_msg->magnetic_field.z, dt);
                 else
                     ahrs.updateIMU(gx, gy, gz, ax, ay, az, dt);
-
-                ahrs.quaternion(imu_msg->orientation.x, imu_msg->orientation.y,
-                                imu_msg->orientation.z, imu_msg->orientation.w);
-
-                // What the EKF is told about that heading: the env's ori_sd squared,
-                // as the madgwick node's orientation_stddev (0.01 rad, a variance of
-                // 1e-4, unless the config says otherwise -- a bent field wants a large
-                // one). With no field there is no absolute heading at all:
-                // bringup.launch.py clears imu0_config[5] so it is not fused, and the
-                // covariance must not claim otherwise either.
-                const double ori_var = publish_mag ? ori_var_mag : 1.0e6;
-                imu_msg->orientation_covariance[0] = ori_var;
-                imu_msg->orientation_covariance[4] = ori_var;
-                imu_msg->orientation_covariance[8] = ori_var;
+                fused = true;
             }
+        }
+        if (fused)
+        {
+            ahrs.quaternion(imu_msg->orientation.x, imu_msg->orientation.y,
+                            imu_msg->orientation.z, imu_msg->orientation.w);
+
+            // What the EKF is told about that heading: the env's ori_sd squared,
+            // as the madgwick node's orientation_stddev (0.01 rad, a variance of
+            // 1e-4, unless the config says otherwise -- a bent field wants a large
+            // one). With no field there is no absolute heading at all:
+            // bringup.launch.py clears imu0_config[5] so it is not fused, and the
+            // covariance must not claim otherwise either.
+            const double ori_var = publish_mag ? ori_var_mag : 1.0e6;
+            imu_msg->orientation_covariance[0] = ori_var;
+            imu_msg->orientation_covariance[4] = ori_var;
+            imu_msg->orientation_covariance[8] = ori_var;
+        }
+        else if (!ahrs_seeded)
+        {
+            // REP 145's "no orientation estimate": until the seed takes, the
+            // message's quaternion is the identity, and a consumer must not fuse it.
+            imu_msg->orientation_covariance[0] = -1.0;
         }
     }
 

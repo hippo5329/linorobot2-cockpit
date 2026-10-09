@@ -67,6 +67,58 @@ public:
     void setZeta(float zeta) { zeta_ = zeta; }
     bool converged() const { return seeded_; }
 
+    // The FIRST orientation, from gravity and the field alone -- what
+    // imu_filter_madgwick does before its first update (ImuFilterRos::imuMagCallback,
+    // StatelessOrientation::computeOrientation, ENU). Without it the filter starts
+    // at the identity and walks to the field's heading over seconds, and the first
+    // imu/data it publishes is yaw 0: the EKF (imu0_relative) takes that message
+    // as its zero, and then fuses the walk as a turn -- a real tracked robot "turned" -91 deg
+    // standing still and Nav2 drove it the wrong way (2026-10-09). False, and the
+    // estimate untouched, in free fall or with the field parallel to gravity.
+    bool seed(float ax, float ay, float az, float mx, float my, float mz)
+    {
+        // H = E x A (east), M = A x H (north); world ENU = (H, M, A).
+        float hx = my * az - mz * ay, hy = mz * ax - mx * az, hz = mx * ay - my * ax;
+        const float nh = sqrtf(hx * hx + hy * hy + hz * hz);
+        const float na = sqrtf(ax * ax + ay * ay + az * az);
+        if (!(nh >= 1e-7f) || !(na > 0.0f) || !isfinite(nh)) return false;   // the reference's threshold (T x m/s^2)
+        hx /= nh; hy /= nh; hz /= nh;
+        ax /= na; ay /= na; az /= na;
+        const float nx = ay * hz - az * hy, ny = az * hx - ax * hz, nz = ax * hy - ay * hx;
+        // R's columns are H, M, A (local -> world); its rotation, inverted, is
+        // the orientation (the reference negates it: coordinate systems, not vectors).
+        const float r[3][3] = {{hx, nx, ax}, {hy, ny, ay}, {hz, nz, az}};
+        float q[4];   // x, y, z, w -- tf2::Matrix3x3::getRotation
+        const float trace = r[0][0] + r[1][1] + r[2][2];
+        if (trace > 0.0f) {
+            float s = sqrtf(trace + 1.0f);
+            q[3] = s * 0.5f; s = 0.5f / s;
+            q[0] = (r[2][1] - r[1][2]) * s;
+            q[1] = (r[0][2] - r[2][0]) * s;
+            q[2] = (r[1][0] - r[0][1]) * s;
+        } else {
+            const int i = r[0][0] < r[1][1] ? (r[1][1] < r[2][2] ? 2 : 1) : (r[0][0] < r[2][2] ? 2 : 0);
+            const int j = (i + 1) % 3, k = (i + 2) % 3;
+            float s = sqrtf(r[i][i] - r[j][j] - r[k][k] + 1.0f);
+            q[i] = s * 0.5f; s = 0.5f / s;
+            q[3] = (r[k][j] - r[j][k]) * s;
+            q[j] = (r[j][i] + r[i][j]) * s;
+            q[k] = (r[k][i] + r[i][k]) * s;
+        }
+        q0_ = q[3]; q1_ = -q[0]; q2_ = -q[1]; q3_ = -q[2];   // the inverse
+        normalize4(q0_, q1_, q2_, q3_);
+        return true;
+    }
+
+    // 6-axis: gravity levels it; the heading is arbitrary (the reference's own
+    // choice of a field orthogonal to gravity), so nothing absolute is claimed.
+    bool seedIMU(float ax, float ay, float az)
+    {
+        if (fabsf(ax) > 0.1f || fabsf(ay) > 0.1f) return seed(ax, ay, az, ay, ax, 0.0f);
+        if (fabsf(az) > 0.1f) return seed(ax, ay, az, 0.0f, az, ay);
+        return false;
+    }
+
     void quaternion(double &x, double &y, double &z, double &w) const
     {
         x = q1_; y = q2_; z = q3_; w = q0_;
