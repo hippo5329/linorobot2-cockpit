@@ -103,6 +103,11 @@ def api_get_hardware_config():
         # A Wi-Fi robot's default network name and where this computer last heard it.
         "mdns_default": _mdns_default(params),
         "wifi_board": _wifi_board(params),
+        # The DDS domain the stack and the board use (cockpit_paths.robot_domain_id),
+        # and the container's own, which applies while the robot names none.
+        "domain": {"effective": cockpit_paths.robot_domain_id(params),
+                   "inherited": cockpit_paths.robot_domain_id({}),
+                   "max": cockpit_paths.DOMAIN_ID_MAX},
         # What the pin catalogue thinks of this config (scripts/pin_catalog.py):
         # the Pin Matrix shows these next to the fields they concern.
         "pin_findings": [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)],
@@ -208,6 +213,14 @@ async def api_save_hardware_config(request: Request):
             ctrl["robot_ip"] = ip
         else:
             ctrl.pop("robot_ip", None)
+        # The robot's DDS domain (base_controller.domain_id): the board is flashed
+        # for it and every stack process joins it. Blank removes the key, and the
+        # container's ROS_DOMAIN_ID applies (cockpit_paths.set_domain_id).
+        if "domain_id" in data["network"]:
+            try:
+                cockpit_paths.set_domain_id(ctrl, data["network"].get("domain_id"))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         tel = ctrl.setdefault("telemetry", {})
         if host:
             tel["hostname"] = host

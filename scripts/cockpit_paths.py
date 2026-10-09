@@ -291,6 +291,58 @@ def robot_namespace(params: dict) -> str:
     return ""
 
 
+# The DDS domains a robot may name. Fast DDS's default port mapping ends at 232
+# (port 7400 + 250 * domain + offsets must stay under 65536), and so does ROS 2's
+# own documentation of ROS_DOMAIN_ID.
+DOMAIN_ID_MAX = 232
+
+
+def valid_domain_id(raw):
+    """`raw` as a DDS domain (int, 0..232), or None when it is blank or not one."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    s = str(raw).strip().strip('"')
+    if not s.isdigit():
+        return None
+    n = int(s)
+    return n if 0 <= n <= DOMAIN_ID_MAX else None
+
+
+def set_domain_id(controller: dict, raw) -> None:
+    """Store a domain typed by the user into a base_controller block: a whole
+    number 0..232 is kept, blank (None or "") removes the key so the container's
+    ROS_DOMAIN_ID applies, and anything else raises ValueError naming the range.
+    233 and up have no port on Fast DDS's default mapping: the agent refuses the
+    participant ("Calculated port number is too high") and the robot is silent."""
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        controller.pop("domain_id", None)
+        return
+    dom = valid_domain_id(text)
+    if dom is None:
+        raise ValueError(f"ROS domain ID must be a whole number 0..{DOMAIN_ID_MAX}, not {text!r}")
+    controller["domain_id"] = dom
+
+
+def robot_domain_id(params: dict, environ=None) -> int:
+    """The DDS domain a robot's whole stack lives in: the board's participant (the
+    firmware env's `domain_id`, which the agent obeys -- the agent never reads
+    ROS_DOMAIN_ID), the Sim MCU, and every host node, rosbridge included.
+
+    The robot's config decides (`base_controller.domain_id`); a robot that names
+    none takes the process's ROS_DOMAIN_ID (the compose file's), then 0. One
+    answer for the board and the host, so the two can never land apart: a board
+    flashed with 0 under a stack started on another domain shows nothing at all,
+    and says nothing about why. An invalid value counts as unset."""
+    bc = (params or {}).get("base_controller", {}) or {}
+    own = valid_domain_id(bc.get("domain_id"))
+    if own is not None:
+        return own
+    env = os.environ if environ is None else environ
+    inherited = valid_domain_id(env.get("ROS_DOMAIN_ID"))
+    return inherited if inherited is not None else 0
+
+
 def namespace_params(data: dict, ns: str) -> dict:
     """Re-key a params file's node sections to their fully-qualified names.
 

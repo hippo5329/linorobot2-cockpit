@@ -45,6 +45,25 @@ BRINGUP_TF_CHAIN = [
 ]
 
 
+# The active robot's DDS domain, as a callable returning an int (core.py installs
+# cockpit_paths.robot_domain_id over the active config). Read per command, so a
+# domain saved in the UI applies to the next process started -- a running stack
+# stays where it started until it is restarted.
+DOMAIN_RESOLVER: Optional[Callable[[], int]] = None
+
+
+def domain_export() -> str:
+    """`export ROS_DOMAIN_ID=<n>` for the active robot, or "" with no resolver."""
+    if DOMAIN_RESOLVER is None:
+        return ""
+    try:
+        n = int(DOMAIN_RESOLVER())
+    except Exception as e:  # a broken config must not stop every ROS command
+        print(f"[cockpit] could not resolve the robot's ROS domain, keeping the inherited one: {e}")
+        return ""
+    return f"export ROS_DOMAIN_ID={n}"
+
+
 def ros_setup_shell(distro: str = "auto") -> str:
     """Shell prefix that sources whichever ROS 2 is installed here.
 
@@ -76,7 +95,10 @@ def ros_setup_shell(distro: str = "auto") -> str:
     qos = os.path.join(repo_root, "config", "fastdds_service_qos.xml")
     qos_export = (f'if [ -z "$FASTDDS_DEFAULT_PROFILES_FILE" ] && [ -f "{qos}" ]; '
                   f'then export FASTDDS_DEFAULT_PROFILES_FILE="{qos}"; fi')
-    return f"{ros}; {uros}; {nav2}; {ws}; {qos_export}; true"
+    # The robot's domain last: every node, the pipeline and rosbridge alike join
+    # the domain its board is flashed for (cockpit_paths.robot_domain_id).
+    dom = domain_export()
+    return f"{ros}; {uros}; {nav2}; {ws}; {qos_export}; {dom + '; ' if dom else ''}true"
 
 
 class ProcessRunner:

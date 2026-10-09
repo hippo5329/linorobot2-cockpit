@@ -340,6 +340,11 @@
             <input type="text" id="cfg-robot-ip" class="form-input font-mono" placeholder="detected after the first USB flash">
             <span id="cfg-robot-ip-hint" class="input-hint">What OTA, ping and Monitor reach the robot at. Detected at its first boot after the USB flash; edit to pin one (<code>base_controller.robot_ip</code>)</span>
           </div>
+          <div class="form-group">
+            <label for="cfg-domain-id" class="form-label">ROS Domain ID</label>
+            <input type="number" id="cfg-domain-id" class="form-input font-mono" min="0" max="232" step="1" inputmode="numeric" placeholder="0">
+            <span id="cfg-domain-id-hint" class="input-hint">The DDS domain this robot's board and stack share: the board is flashed for it, and bringup, SLAM, Nav2 and the Web UI's own view join it. Two robots on one network stay apart on different domains. 0&ndash;232; blank uses the container's <code>ROS_DOMAIN_ID</code> (<code>base_controller.domain_id</code>)</span>
+          </div>
         </div>
       </div>
 

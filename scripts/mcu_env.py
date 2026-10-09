@@ -882,10 +882,17 @@ def hardware_env(params: dict) -> dict:
     # --- transport and radio
     env["transport"] = tgt.get("transport", "serial")
     # The DDS domain the agent puts this board's participant in (main.cpp,
-    # createEntities). Absent means 0, which is what every board has always
-    # used; only written when the config names one.
-    if tgt.get("domain_id") is not None:
-        env["domain_id"] = int(tgt["domain_id"])
+    # createEntities; the agent obeys the client and never reads ROS_DOMAIN_ID).
+    # The robot's own `domain_id`, else the stack's ROS_DOMAIN_ID -- the same
+    # answer the host side gets (cockpit_paths.robot_domain_id), so a board can
+    # never be flashed onto another domain than the stack that drives it. Absent
+    # means 0, which is what every board has always used; only written when not 0.
+    if tgt.get("domain_id") is not None and cockpit_paths.valid_domain_id(tgt["domain_id"]) is None:
+        raise ValueError(f"base_controller.domain_id must be a whole number 0..{cockpit_paths.DOMAIN_ID_MAX}, "
+                         f"not {tgt['domain_id']!r}")
+    domain = cockpit_paths.robot_domain_id(params)
+    if domain:
+        env["domain_id"] = domain
     # Which port is the console on an ESP32-S3: its native USB (the DevKit) or
     # UART0 through a bridge (the Yahboom YB-EET01, whose only USB is a CP2102
     # on GPIO 43/44). Same MCU, same image; the env decides. Absent means usb.

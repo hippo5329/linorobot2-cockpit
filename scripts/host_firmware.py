@@ -55,10 +55,12 @@ def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889, world=
     e = mcu_env.env_from_config(config_file, cockpit_paths.secrets_path(), "127.0.0.1")
     mcu_env.apply_sensor_mode(e, "sim", config_file, holds_map=bool(world and world[0]))
     e.update({
-        # The stack's own domain: several Sim MCUs run side by side on one
-        # machine (host_matrix.sh, a leg per ROS_DOMAIN_ID), and a board's
-        # default of 0 would put them all in one graph.
-        "domain_id": int(os.environ.get("ROS_DOMAIN_ID", "0") or 0),
+        # The stack's own domain: the robot's `domain_id`, else this process's
+        # ROS_DOMAIN_ID (cockpit_paths.robot_domain_id, which mcu_env already
+        # applied). Several Sim MCUs run side by side on one machine
+        # (host_matrix.sh, a leg per ROS_DOMAIN_ID), and a board's default of 0
+        # would put them all in one graph.
+        "domain_id": int(e.get("domain_id", 0)),
         "transport": "udp4",
         "agent_ip": "127.0.0.1",
         "agent_port": int(agent_port),

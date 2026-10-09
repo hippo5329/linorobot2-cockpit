@@ -187,6 +187,7 @@ from fastapi.responses import JSONResponse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import patcher
 import yaml_merge
+import runners  # runners.DOMAIN_RESOLVER is installed below
 from runners import (
     BRINGUP_HEALTH_TOPICS,
     BRINGUP_TF_CHAIN,
@@ -578,6 +579,21 @@ def set_active_params_path(path: str, remember: bool = True):
             pass
         if remember:
             _remember_active_robot(path)
+
+
+def active_domain_id() -> int:
+    """The DDS domain the active robot's stack runs in (cockpit_paths.robot_domain_id):
+    its config's base_controller.domain_id, else the container's ROS_DOMAIN_ID."""
+    try:
+        params = load_params()
+    except Exception:
+        params = {}
+    return cockpit_paths.robot_domain_id(params)
+
+
+# Every ROS command the supervisor starts goes through runners.ros_setup_shell,
+# which exports this; the flash path reads the same resolver through mcu_env.
+runners.DOMAIN_RESOLVER = active_domain_id
 
 
 # Start where the last run left off, if that robot's config is still there.

@@ -117,6 +117,24 @@ async function loadHardwareConfig() {
           : "Detected at the first boot after the robot's USB flash. Edit to pin an address.";
     }
 
+    // The robot's DDS domain (base_controller.domain_id). Blank = the container's
+    // ROS_DOMAIN_ID, shown as the placeholder so the user sees what applies.
+    const dom = data.domain || {};
+    const elDomain = document.getElementById("cfg-domain-id");
+    if (elDomain) {
+      elDomain.value = tgt.domain_id ?? "";
+      elDomain.placeholder = String(dom.inherited ?? 0);
+    }
+    const elDomainHint = document.getElementById("cfg-domain-id-hint");
+    if (elDomainHint && dom.effective != null) {
+      elDomainHint.textContent =
+        (tgt.domain_id != null
+          ? `Domain ${dom.effective}, set for this robot. `
+          : `Domain ${dom.effective}, the container's ROS_DOMAIN_ID (no domain set for this robot). `) +
+        "The board is flashed for it and the stack joins it: after a change, reflash (or rewrite the env) " +
+        `and restart the stack. 0-${dom.max ?? 232}; blank uses the container's.`;
+    }
+
     const elPort = document.getElementById("hw-flash-port");
     if (elPort && tgt.serial_port) elPort.value = tgt.serial_port;
 
@@ -1272,6 +1290,8 @@ async function saveCurrentHardwareConfig(opts = {}) {
         const v = (el?.value || "").trim();
         return v && v === (el?.dataset.detected || "") ? "" : v;
       })(),
+      // Blank removes the key: the container's ROS_DOMAIN_ID applies.
+      domain_id: (document.getElementById("cfg-domain-id")?.value || "").trim(),
     },
     geometry: readGeometryForm(kineType),
     simulation: readSimForm(),

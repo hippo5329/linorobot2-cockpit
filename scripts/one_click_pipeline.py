@@ -1858,6 +1858,15 @@ def main():
     if not controller_cfg:
         raise SystemExit(f"{os.path.basename(params_path)} has no base_controller: block. "
                          "Run scripts/migrate_config_schema.py to convert it.")
+    # One DDS domain for the whole run: the robot's base_controller.domain_id, else
+    # the ROS_DOMAIN_ID this was started with. The board is flashed for it
+    # (mcu_env), the Sim MCU asks for it (host_firmware), and every child -- the
+    # launches, rosbridge, the gates' readers -- inherits it from here.
+    domain = cockpit_paths.robot_domain_id(params)
+    if str(domain) != os.environ.get("ROS_DOMAIN_ID", "0"):
+        print(f"[0/6] [DOMAIN] ROS_DOMAIN_ID {os.environ.get('ROS_DOMAIN_ID', 'unset')} -> {domain} "
+              f"(base_controller.domain_id in {os.path.basename(params_path)})")
+    os.environ["ROS_DOMAIN_ID"] = str(domain)
     # Before anything touches the board: a config from before the fake->sim rename
     # is refused later by mcu_env, deep inside the flash step, and the UI then
     # reports only "Flashing or verification failed". Say it here, plainly, with
