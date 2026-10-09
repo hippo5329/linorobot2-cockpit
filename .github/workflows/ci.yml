@@ -34,7 +34,7 @@ jobs:
       # measured at 11m30s, per job, on every job. The firmware matrix is eight
       # jobs. --break-system-packages is what PEP 668 needs to pip into the
       # system interpreter, which is fine in a throwaway CI container.
-      - run: pip install --break-system-packages pyyaml pytest
+      - run: pip install --break-system-packages pyyaml pytest numpy
       - name: Syntax
         run: python3 -m py_compile scripts/*.py launchers/*.py web/backend/*.py
       # The LD19 driver, so the two tests that COMPILE it and run it are not
@@ -110,7 +110,7 @@ jobs:
       # python3-serial into the SYSTEM interpreter, which setup-python's
       # tool-cache Python cannot see. That mismatch is what sent the first
       # run of this job into the dependency loop.
-      - run: pip install --break-system-packages pyyaml pytest fastapi uvicorn pyserial
+      - run: pip install --break-system-packages pyyaml pytest numpy fastapi uvicorn pyserial
       # The web UI is a different code path from the pipeline, and it is the
       # one users touch. Every defect the 2026-09-19 UI pass found was
       # server-side -- the header generator, the prebuilt cache swap, the flash
