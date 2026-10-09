@@ -1972,7 +1972,13 @@ def main():
     # of the agent, its scan through the LiDAR driver's udp_server. Otherwise
     # the rclpy sim_base_node, with no micro-ROS in the loop.
     sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
-    is_real = not sim_mcu and ((args.mode == "real") or (args.mode == "auto" and controller == "gendrv"))
+    # Auto is Real for a robot built from a reference design (or a design itself), not
+    # only the GenDrv: rover-unoq, from the unoq design, ran as SIM and was never asked
+    # for its sensors. A robot that is real only by its pins (a bench board with one real
+    # chip, its base and LiDAR simulated) keeps auto as it was.
+    designed = bool((params.get("robot") or {}).get("reference")) or robot_name in reference_design_names()
+    is_real = not sim_mcu and ((args.mode == "real")
+                               or (args.mode == "auto" and (controller == "gendrv" or designed)))
     if is_real:
         if args.world or args.world_map:
             print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "

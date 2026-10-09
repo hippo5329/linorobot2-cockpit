@@ -731,7 +731,7 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
     lines.extend([
         "// --- Serial & micro-ROS Communication ---",
         f"#define BAUDRATE {baudrate}",
-        f'#define NODE_NAME "{params.get("robot", {}).get("name", "linorobot2")}_base_node"',
+        f'#define NODE_NAME "{cockpit_paths.base_node_name(params.get("robot", {}).get("name"))}"',
         "",
     ])
 

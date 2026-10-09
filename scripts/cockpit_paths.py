@@ -24,6 +24,7 @@ Every script, launcher and the supervisor resolve the directory through this
 module. Do not build the path anywhere else.
 """
 import os
+import re
 import shutil
 import subprocess
 
@@ -294,6 +295,19 @@ def robot_namespace(params: dict) -> str:
 # The DDS domains a robot may name. Fast DDS's default port mapping ends at 232
 # (port 7400 + 250 * domain + offsets must stay under 65536), and so does ROS 2's
 # own documentation of ROS_DOMAIN_ID.
+def base_node_name(robot_name):
+    """The board's ROS node name, `<robot>_base_node`, made legal for rcl.
+
+    A robot's name may hold `-` or `.` (the web UI allows both: `rover-unoq`), but a
+    ROS node name is letters, digits and `_` only, and must not start with a digit.
+    rcl refused `rover-unoq_base_node`, so the board flashed, read its env back and
+    then never created its node: no session at the agent, nothing on /odom."""
+    name = re.sub(r"[^A-Za-z0-9_]", "_", str(robot_name or "linorobot2"))
+    if name[0].isdigit():
+        name = "_" + name
+    return f"{name}_base_node"
+
+
 DOMAIN_ID_MAX = 232
 
 

@@ -658,7 +658,7 @@ def hardware_env(params: dict) -> dict:
     # `linorobot_base_node`.
     robot_name = (params.get("robot", {}) or {}).get("name")
     if robot_name:
-        env["node"] = f"{robot_name}_base_node"
+        env["node"] = cockpit_paths.base_node_name(robot_name)
 
     # Which sensor topics this robot publishes. A chip answering the I2C probe
     # is not on its own a reason to spend link budget on it: `mag: NONE` in the
