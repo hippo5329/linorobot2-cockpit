@@ -245,3 +245,44 @@ def summary(corr: dict, kinematics: dict) -> List[str]:
                     float(k.get("lr_wheels_distance") or 0) + float(k.get("fr_wheels_distance") or 0))
         lines.append("LIDAR: spins turned x%.3f of what odom reported%s" % (ang, tail))
     return lines
+
+
+def room_for(points, lin: float, ang: float, lat: float, secs: float,
+             radius: float, margin: float):
+    """How long a manoeuvre may run in the room a scan shows (--guard, a real robot).
+
+    `points` are the scan in base_link (x ahead, y left). A straight move is shortened
+    so that it stops `margin` short of the first return in its corridor (the robot's
+    width), and skipped if that leaves less than MIN_DIST_M to measure; an
+    arc is skipped if anything lies within the circle it sweeps (plus the margin); a
+    spin is skipped if anything is inside the footprint. Returns (secs, note): secs
+    None means skip; note says why, "" when the full manoeuvre fits.
+    """
+    if lin and ang:
+        r = abs(lin / ang)
+        cy = r if ang * lin > 0 else -r          # the turn's centre, left or right
+        # The arc runs past a half circle, so it sweeps the whole disc round its centre.
+        near = [math.hypot(px, py - cy) for px, py in points]
+        if near and min(near) < r + radius + margin:
+            return None, "a return %.2f m from the arc's centre, inside its sweep" % min(near)
+        return secs, ""
+    if ang and not (lin or lat):
+        inside = [math.hypot(px, py) for px, py in points if math.hypot(px, py) < radius + 0.05]
+        if inside:
+            return None, "a return %.2f m away, inside the footprint" % min(inside)
+        return secs, ""
+    speed = math.hypot(lin, lat)
+    if not speed:
+        return secs, ""
+    ux, uy = lin / speed, lat / speed
+    ahead = [px * ux + py * uy for px, py in points
+             if px * ux + py * uy > 0 and abs(-px * uy + py * ux) <= radius]
+    free = (min(ahead) - radius) if ahead else float("inf")
+    room = free - margin
+    want = speed * secs
+    if room >= want:
+        return secs, ""
+    if room < MIN_DIST_M:
+        return None, "only %.2f m clear %s" % (max(free, 0.0), "ahead" if lin > 0 else
+                                                ("behind" if lin < 0 else "sideways"))
+    return room / speed, "shortened to %.2f m: %.2f m clear" % (room, free)

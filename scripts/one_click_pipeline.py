@@ -2542,8 +2542,12 @@ def main():
                 # would -- and start Nav2 once the map shows it.
                 print("\n[5.5/6] [SLAM] The map does not surround the robot yet (limited field of "
                       "view): exploring -- out 0.8 m, a turn, back, a turn...")
+                import gen_firmware_header
                 nudge = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_nudge.py')}"
-                                + (" --stamped" if stamped_cmd else ""), timeout=200, distro=args.distro)
+                                + (" --stamped" if stamped_cmd else "")
+                                + (f" --guard {CLEARANCE_REAL_M} --radius "
+                                   f"{gen_firmware_header.nav2_robot_radius(params):.3f}" if is_real else ""),
+                                timeout=200, distro=args.distro)
                 print((nudge.stdout or "").rstrip())
                 t_map = time.time()
                 while not map_surrounds_origin(args.distro, say=True) and time.time() - t_map < 60:
@@ -2644,6 +2648,8 @@ def main():
                              f"--round-trips {args.goal_round_trips}")
                 if args.require_goal or args.goal_round_trips:
                     goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
+                if is_real:
+                    goal_args += " --no-wall"     # the room's own obstacles, not the sim's wall
                 if nav2_ok:
                     test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
                                        + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
@@ -2719,7 +2725,10 @@ def main():
             drive_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'drive_suite.py')} "
                                 f"{tname} --config {params_path} --base-type {base_type}"
                                 + (f" --world {drive_world}" if drive_world else "")
-                                + (" --lidar" if drive_lidar else ""),
+                                + (" --lidar" if drive_lidar else "")
+                                # a real room: no simulated walls, and the scan checked
+                                # before every manoeuvre (shortened or skipped, never blind)
+                                + (f" --real --guard {CLEARANCE_REAL_M}" if is_real else ""),
                                 timeout=240 if drive_lidar else 140, distro=args.distro)
             if drive_res.stdout:
                 print(drive_res.stdout)

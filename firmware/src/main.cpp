@@ -184,6 +184,9 @@ extern void rcSoftFail(int line, int code);
 // simulated heading -- hard-iron bias and all -- and is exactly what a
 // calibration run needs even though no chip is present.
 static bool publish_mag = false;
+// /imu/data's orientation variance while a field anchors the heading: the env's ori_sd
+// (imu_filter_madgwick's orientation_stddev, rad) squared; 0.01 rad if it names none.
+static double ori_var_mag = 1.0e-4;
 // QoS of every topic the board publishes (odom/unfiltered, imu/data, imu/mag,
 // battery, safety_stop, sonar, pressure, temperature, humidity):
 // best effort, the ROS convention for sensor data, and measured to matter.
@@ -1446,6 +1449,10 @@ void setup()
     // conjure one without the emulator.
     safety_stop_on = envFlag("safety_stop", false);
     safety_stop_range = (float)atof(envGet("safety_stop_m", "0.25"));
+    {
+        const double sd = atof(envGet("ori_sd", "0.01"));
+        ori_var_mag = (sd > 0.0) ? sd * sd : 1.0e-4;
+    }
     rpm_track_voltage = envFlag("rpm_track_voltage", false);
     stall_detect_on = envFlag("stall_detect", false);
     stall_ms = (uint16_t)constrain(atoi(envGet("stall_ms", "1500")), 200, 10000);
@@ -2503,12 +2510,13 @@ void publishData()
                 ahrs.quaternion(imu_msg->orientation.x, imu_msg->orientation.y,
                                 imu_msg->orientation.z, imu_msg->orientation.w);
 
-                // What the EKF is told about that heading. The madgwick node was
-                // passed orientation_stddev 0.01, i.e. a variance of 1e-4. With no
-                // field there is no absolute heading at all: bringup.launch.py
-                // clears imu0_config[5] so it is not fused, and the covariance
-                // must not claim otherwise either.
-                const double ori_var = publish_mag ? 1.0e-4 : 1.0e6;
+                // What the EKF is told about that heading: the env's ori_sd squared,
+                // as the madgwick node's orientation_stddev (0.01 rad, a variance of
+                // 1e-4, unless the config says otherwise -- a bent field wants a large
+                // one). With no field there is no absolute heading at all:
+                // bringup.launch.py clears imu0_config[5] so it is not fused, and the
+                // covariance must not claim otherwise either.
+                const double ori_var = publish_mag ? ori_var_mag : 1.0e6;
                 imu_msg->orientation_covariance[0] = ori_var;
                 imu_msg->orientation_covariance[4] = ori_var;
                 imu_msg->orientation_covariance[8] = ori_var;

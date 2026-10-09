@@ -272,12 +272,14 @@ STRAFE_SPEED = 0.20
 
 
 def main() -> int:
-    global BASE_TYPE, MECANUM, STRAFES
+    global BASE_TYPE, MECANUM, STRAFES, SEGMENTS, OBSTACLE, ROBOT_R
     argv = sys.argv[1:]
     prefix = ""
     base_type = "2wd"
     world_cfg, world_arg = None, None
     use_lidar = False
+    guard = None
+    real = False
     rest = []
     i = 0
     while i < len(argv):
@@ -290,6 +292,16 @@ def main() -> int:
         elif argv[i] == "--lidar":
             use_lidar = True
             i += 1
+        elif argv[i] == "--real":
+            # A real robot: no simulated room at all -- nothing "holds" it against a wall
+            # that is only in the simulation's config.
+            real = True
+            i += 1
+        elif argv[i] == "--guard" and i + 1 < len(argv):
+            # A real robot in a real room: each manoeuvre checks the scan first (room_for).
+            guard = float(argv[i + 1])
+            use_lidar = True
+            i += 2
         elif argv[i] == "--prefix" and i + 1 < len(argv):
             prefix = argv[i + 1].strip().strip("/")
             i += 2
@@ -305,7 +317,12 @@ def main() -> int:
         else:
             rest.append(argv[i])
             i += 1
-    if world_cfg is not None or world_arg:
+    if real:
+        SEGMENTS, OBSTACLE = [], False
+        if world_cfg is not None:
+            import gen_firmware_header
+            ROBOT_R = float(gen_firmware_header.nav2_robot_radius(world_cfg))
+    elif world_cfg is not None or world_arg:
         set_world(world_cfg or {}, world_arg)
     BASE_TYPE = base_type
     MECANUM = base_type == "mecanum"
@@ -406,8 +423,22 @@ def main() -> int:
                 rclpy.spin_once(node, timeout_sec=max(0.0, due - time.time()))
 
     def run(label: str, lin: float, ang: float, secs: float = 5.0,
-            lat: float = 0.0) -> bool:
+            lat: float = 0.0):
         command(0.0, 0.0, 2.5)
+        if guard is not None:
+            if lid["last"] is None:
+                print("%-12s SKIPPED: no scan to check the room by (--guard)" % label, flush=True)
+                return None
+            if lid["laser"] is None:
+                lid["laser"] = scan_match.laser_pose(node, lid["last"].header.frame_id, tries=10) \
+                    or (0.0, 0.0, 0.0)
+            pts = scan_match.scan_points(scan_match.scan_dict(lid["last"]), laser=lid["laser"])
+            secs, note = odom_check.room_for(pts, lin, ang, lat, secs, ROBOT_R, guard)
+            if secs is None:
+                print("%-12s SKIPPED: %s (--guard %.2f m)" % (label, note, guard), flush=True)
+                return None
+            if note:
+                print("%-12s %s (--guard %.2f m)" % (label, note, guard), flush=True)
         x0, y0 = seen["x"], seen["y"]
         for k in ("vx", "vy", "wz", "t", "px", "py", "yaw"):
             seen[k].clear()
@@ -554,10 +585,13 @@ def main() -> int:
         kine = (world_cfg or {}).get("kinematics") or {"base_type": BASE_TYPE}
         for line in odom_check.summary(odom_check.corrections(straight, spins, kine), kine):
             print(line, flush=True)
-    print("VERDICT: %d/%d manoeuvres correct (%s)"
-          % (sum(results), len(results), BASE_TYPE), flush=True)
+    done = [r for r in results if r is not None]
+    skipped = len(results) - len(done)
+    print("VERDICT: %d/%d manoeuvres correct (%s)%s"
+          % (sum(done), len(done), BASE_TYPE,
+             ", %d skipped: no room" % skipped if skipped else ""), flush=True)
     rclpy.shutdown()
-    return 0 if all(results) else 1
+    return 0 if done and all(done) else 1
 
 
 if __name__ == "__main__":

@@ -33,6 +33,8 @@ one of them a particular robot is here:
                 lidar_ip   lidar_port  lidar_rx  lidar_baud
 
     runtime     dual_core  i2c_scan  pub_mag  pub_battery  pub_env  best_effort  console
+                ori_sd  (/imu/data's orientation stddev, rad, when a field anchors
+                         the heading: sensors.orientation_stddev)
                 sim_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
                 ota_port  ping_port
@@ -72,6 +74,7 @@ board booted on such a block is running an env nobody chose. `--set` overrides a
 value in a NEW block.
 """
 import argparse
+import math
 import os
 import sys
 import zlib
@@ -713,6 +716,21 @@ def hardware_env(params: dict) -> dict:
     if sensors.get("use_sim_battery"):
         env["pub_battery"] = 1
 
+    # How much the EKF trusts the board's field-anchored heading: imu_filter_madgwick's
+    # orientation_stddev (rad), which the board publishes squared as /imu/data's
+    # orientation covariance. Left out, the firmware's 0.01 (a variance of 1e-4, what the
+    # madgwick node was given). A garage bends the field 11-18 degrees: there a large
+    # stddev keeps the heading anchored without letting the bend steer the robot.
+    ori_sd = sensors.get("orientation_stddev")
+    if ori_sd not in (None, ""):
+        try:
+            ori_sd = float(ori_sd)
+        except (TypeError, ValueError):
+            raise ValueError(f"sensors.orientation_stddev must be a number of radians, not {ori_sd!r}")
+        if not 0.0 < ori_sd <= math.pi:
+            raise ValueError(f"sensors.orientation_stddev must be in (0, pi] rad, not {ori_sd}")
+        env["ori_sd"] = round(ori_sd, 6)
+
     # `imu: auto` / `mag: auto` mean the same thing one level down: take whatever
     # answered the bus. The probe is what decides, so ask for it explicitly --
     # otherwise a board with simulated wheels skips the scan (see all_sim in
@@ -1275,7 +1293,29 @@ def hardware_env(params: dict) -> dict:
                      ("power_v", "motor_power_max_voltage")):
         if kin.get(src) is not None:
             env[key] = kin[src]
+
+    # A real robot simulates NOTHING (user, 2026-10-09: "make sure sim wall or other sim
+    # things are totally off on real robots"). Every simulation switch the firmware reads
+    # is written off, and every model key -- room, walls, mass, drivetrain losses, the
+    # clamp radius -- is left out, so no default can switch one back on: a real robot's
+    # env had sim_sonar 1 (the default) beside sim_ld19 0, held off only by a firmware gate.
+    # A bench board that simulates its base round one real chip asks for that with its
+    # use_sim_* flags and is not a real robot here (depth_camera.is_real_robot).
+    import depth_camera
+    if depth_camera.is_real_robot({"base_controller": tgt}):
+        for key in [k for k in env if k.startswith("sim_")]:
+            if key in SIM_SWITCHES:
+                env[key] = "0"
+            else:
+                env.pop(key)
+        for key in SIM_SWITCHES:
+            env[key] = "0"
     return env
+
+
+# The env keys that turn a simulation on in the firmware (main.cpp, battery.cpp,
+# sim_ld19.h); every other sim_* key only parameterises one.
+SIM_SWITCHES = ("sim_wheel", "sim_ld19", "sim_sonar", "sim_battery", "sim_env")
 
 
 # Diagnostic applications that exercise real hardware, and the env key that says

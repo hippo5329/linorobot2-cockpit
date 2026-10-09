@@ -76,8 +76,17 @@ def test_the_radius_reaches_the_board_as_an_env_key_instead(tmp_path):
     the lethal-cell failure that started all this."""
     import mcu_env
     secrets = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
+    import yaml
     for f in sorted(glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml"))):
+        # A reference design is a real robot and simulates nothing, so its env has no
+        # clamp radius at all (test_real_robot_simulates_nothing); the same robot asking
+        # for simulated wheels -- a bench board -- carries its own.
+        with open(f) as fh:
+            cfg = yaml.safe_load(fh)
         env = mcu_env.env_from_config(f, secrets, "192.0.2.1")
+        assert "sim_radius" not in env, os.path.basename(f)
+        cfg["base_controller"].setdefault("sensors", {})["use_sim_wheel"] = True
+        env = mcu_env.hardware_env(cfg)
         assert "sim_radius" in env, os.path.basename(f)
         assert float(env["sim_radius"]) > 0, os.path.basename(f)
 

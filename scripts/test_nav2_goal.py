@@ -79,6 +79,10 @@ def _status_name(status: int) -> str:
 # The obstacle wall of the simulated room (sim_ld19.h defaults).
 WALL_X = 2.0
 WALL_HALF_SPAN = 1.5
+# A real robot's room has no simulated wall (--no-wall): its obstacles are whatever is
+# there, Nav2 plans round them from the LiDAR, and a leg is judged on arriving. Judged
+# against the sim's x=2.0 wall, a real detour past x=2.0 read "DROVE INTO THE WALL".
+NO_WALL = False
 # How close to an end a crossing may be and still be a robot rounding the
 # corner rather than one driving through the face. A disc of SIM_ROBOT_RADIUS
 # cannot pass nearer than that to the endpoint, and a board that clipped it at
@@ -1071,6 +1075,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         the detour is required in both directions. A leg that starts with no
         odom sample yet is assumed to begin at home.
         """
+        if NO_WALL:
+            return False
         sx, sy = getattr(node, "leg_start_xy", None) or (home_x, home_y)
         gx, gy = getattr(node, "goal_x", goal_x), getattr(node, "goal_y", goal_y)
         if (sx - WALL_X) * (gx - WALL_X) >= 0:
@@ -1691,6 +1697,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
 
 
 def main():
+    global NO_WALL
     parser = argparse.ArgumentParser(description="Test Nav2 Goal Behind Obstacle Wall")
     parser.add_argument("--goal-x", type=float, default=3.0, help="Goal X coordinate (m)")
     parser.add_argument("--goal-y", type=float, default=0.0, help="Goal Y coordinate (m)")
@@ -1730,7 +1737,10 @@ def main():
                              "a host-side stack up with no board attached; never for a release "
                              "test, where a firmware that ignores /cmd_vel is exactly the fault "
                              "this catches.")
+    parser.add_argument("--no-wall", action="store_true",
+                        help="a real room: no simulated wall to detour round or to judge against")
     args = parser.parse_args()
+    NO_WALL = args.no_wall
 
     success = run_test(goal_x=args.goal_x, goal_y=args.goal_y, timeout=args.timeout,
                        min_cmds=args.min_cmds, cmd_vel_type=args.cmd_vel_type,

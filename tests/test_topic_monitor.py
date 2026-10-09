@@ -52,7 +52,9 @@ def test_the_monitor_shows_the_mcus_topics_only():
     assert "/api/ros2/mcu_topics?" in js and "/api/ros2/topics?" not in js
     src = open(os.path.join(ROOT, "scripts", "topic_stream.py")).read()
     env = open(os.path.join(ROOT, "scripts", "mcu_env.py")).read()
-    assert 'MCU_NODE_SUFFIX = "_base_node"' in src and 'f"{robot_name}_base_node"' in env
+    import cockpit_paths
+    assert 'MCU_NODE_SUFFIX = "_base_node"' in src and "cockpit_paths.base_node_name(robot_name)" in env
+    assert cockpit_paths.base_node_name("any-robot").endswith("_base_node")
 
 
 def test_the_monitor_passes_the_type_it_already_knows():
