@@ -2,7 +2,7 @@
 
 The verdict used to be position alone, and it cancelled each goal the moment the robot
 was inside the gate's radius -- before Nav2's goal checker had turned it to the goal's
-heading. The TS100 came home on 2026-10-10 within 0.15 m and facing -120 deg, and the run
+heading. A tracked robot came home on 2026-10-10 within 0.15 m and facing -120 deg, and the run
 passed; the next run would have started SLAM in a frame turned by 120 deg.
 """
 import math
@@ -33,7 +33,7 @@ def test_home_facing_the_start_heading_passes_and_says_so(monkeypatch, capsys):
 
 
 def test_home_by_position_but_turned_fails(monkeypatch, capsys):
-    """The TS100's case: at home, facing -120 deg, the goal closed."""
+    """The tracked robot's case: at home, facing -120 deg, the goal closed."""
     node = _home_node(math.radians(-120.0), status=5)
     assert _run(monkeypatch, node, timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
                 home_yaw_tolerance=0.20) is False
@@ -65,7 +65,7 @@ def test_the_pipeline_derives_it_from_the_robots_goal_checker_and_passes_it():
 
 def test_home_inside_the_bound_waits_for_nav2_to_finish_turning(monkeypatch):
     """Inside the looser bound with the goal still running is not yet a pass: the
-    test cancelled there and stopped the TS100 mid-turn, every home leg 10-11 deg
+    test cancelled there and stopped a tracked robot mid-turn, every home leg 10-11 deg
     off (2026-10-10). With the goal never resolving, the leg times out first."""
     node = _home_node(math.radians(9.0), status=2)
     assert _run(monkeypatch, node, timeout=1.0, round_trips=1, goal_x=3.0, goal_y=0.0,

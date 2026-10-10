@@ -1414,7 +1414,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                         return True
                     # The leg home waits for Nav2's own goal checker: cancelling
                     # the moment the heading came inside this looser bound stopped
-                    # the TS100 mid-turn, every home leg 10-11 deg off (2026-10-10).
+                    # a tracked robot mid-turn, every home leg 10-11 deg off (2026-10-10).
                     # A goal that stays inside but never resolves still passes once
                     # it has held there for HOME_SETTLE_SEC.
                     if settled_since is None:
@@ -1426,7 +1426,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 # Home by position but not by heading, and Nav2 has finished with the
                 # goal: it will not turn the robot any more. (A position-only verdict
                 # used to cancel the goal here, before Nav2's goal checker had turned
-                # it: the TS100 came home 2026-10-10 facing -120 deg and passed.)
+                # it: a tracked robot came home 2026-10-10 facing -120 deg and passed.)
                 if heading_leg and reached_goal() and not heading_ok() \
                         and node.goal_status in (4, 5, 6):
                     if unturned_since is None:
