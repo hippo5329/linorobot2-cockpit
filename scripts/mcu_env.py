@@ -1121,7 +1121,8 @@ def hardware_env(params: dict) -> dict:
                           ("sim_drv_r", float), ("sim_stall_a", float),
                           ("sim_ilimit_a", float),
                           ("sim_imu_mount_roll", float),
-                          ("sim_imu_mount_pitch", float)):
+                          ("sim_imu_mount_pitch", float),
+                          ("sim_mag_hdg", float)):
             src = {"sim_map_w": "map_width", "sim_map_h": "map_height",
                    "sim_wall": "wall_obstacle", "sim_wall_x1": "wall_x1",
                    "sim_wall_y1": "wall_y1", "sim_wall_x2": "wall_x2",
@@ -1151,7 +1152,10 @@ def hardware_env(params: dict) -> dict:
                    # unconditionally until 2026-09-25, and no simulated robot
                    # could reach the code that exists to correct for it.
                    "sim_imu_mount_roll": "imu_mount_roll_deg",
-                   "sim_imu_mount_pitch": "imu_mount_pitch_deg"}[key]
+                   "sim_imu_mount_pitch": "imu_mount_pitch_deg",
+                   # Which way the robot faces the field at boot, degrees (firmware
+                   # default 37): fixed and random starts for the heading fusion.
+                   "sim_mag_hdg": "mag_heading_deg"}[key]
             if sim.get(src) is None:
                 continue
             try:

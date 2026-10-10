@@ -105,6 +105,7 @@ base_controller:
     # sits a degree or two off and leans gravity into the ax/ay the EKF fuses.
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
+    mag_heading_deg: 37.0
   pins:
     motor1:            # channel 1, front-left
       pwm: -1

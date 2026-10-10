@@ -738,9 +738,28 @@ public:
 #define SIM_MAG_FIELD_T 50e-6f     // Simulated field strength (Tesla, ~Earth)
 #endif
 
-#ifndef SIM_MAG_ROOM_HEADING
-#define SIM_MAG_ROOM_HEADING 0.0f  // Heading (rad) of the room's +X axis vs the field
+#ifndef SIM_MAG_ROOM_HEADING_DEG
+// The room's +X axis against the field, degrees: where the robot faces at boot,
+// magnetically. NOT 0. A real robot almost never starts facing the field's axis,
+// and at 0 the board's heading at boot and the yaw 0 everything else starts from
+// coincide -- which hid an unseeded AHRS from every simulated run: its first
+// imu/data was the identity, the EKF (imu0_relative) took that as zero and fused
+// the walk to the field's heading as a turn, and on a real robot Nav2 drove off
+// the wrong way (2026-10-09). The env's sim_mag_hdg overrides it per run, so a
+// test can start from fixed and random headings without a build.
+#define SIM_MAG_ROOM_HEADING_DEG 37.0f
 #endif
+
+static inline float simMagRoomHeading()   // radians
+{
+    static float v = -1000.0f;
+    if (v < -900.0f) {
+        float d = envFloat("sim_mag_hdg", (float)SIM_MAG_ROOM_HEADING_DEG);
+        if (!(d >= -720.0f && d <= 720.0f)) d = (float)SIM_MAG_ROOM_HEADING_DEG;
+        v = d * 0.017453292519943295f;
+    }
+    return v;
+}
 
 #ifndef SIM_MAG_NOISE_T
 #define SIM_MAG_NOISE_T 3.464e-7f  // +/- peak mag noise (T) = typical 4.0e-14 var
@@ -888,12 +907,12 @@ public:
     // would disagree with the yaw the wheels report and drag any heading fusion
     // (AHRS, EKF) away from the truth. Rotate a fixed world field into the
     // body frame instead, so the mag agrees with the simulated room: the field
-    // points along the room's +X axis, offset by SIM_MAG_ROOM_HEADING.
+    // points along the room's +X axis, offset by simMagRoomHeading().
     void setHeading(float heading) { heading_ = heading; }
 
     void applyMag(sensor_msgs__msg__MagneticField &mag_msg)
     {
-        const float theta = heading_ - (float)SIM_MAG_ROOM_HEADING;
+        const float theta = heading_ - simMagRoomHeading();
         const float b = (float)SIM_MAG_FIELD_T;
         // The world field points along +Y, i.e. North in the ENU frame ROS uses,
         // because that is the direction the AHRS (ahrs.h, ported from

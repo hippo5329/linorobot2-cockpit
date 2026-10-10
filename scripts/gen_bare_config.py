@@ -156,6 +156,7 @@ SIM_DEFAULTS = (
     # tilts it does not need a firmware build.
     ("imu_mount_roll_deg",  "encoder/sim_wheel.h"     , "SIM_IMU_MOUNT_ROLL_DEG",  float),
     ("imu_mount_pitch_deg", "encoder/sim_wheel.h"     , "SIM_IMU_MOUNT_PITCH_DEG", float),
+    ("mag_heading_deg",     "encoder/sim_wheel.h"     , "SIM_MAG_ROOM_HEADING_DEG", float),
 )
 
 

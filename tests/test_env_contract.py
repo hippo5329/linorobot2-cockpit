@@ -80,7 +80,8 @@ MAXIMAL_CONFIG = {
                        # fr_wheels_distance and angular_scale above -- this is the
                        # only place the contract can see these two written.
                        "imu_mount_roll_deg": 2.0,
-                       "imu_mount_pitch_deg": -1.5},
+                       "imu_mount_pitch_deg": -1.5,
+                       "mag_heading_deg": 37.0},
     },
 }
 

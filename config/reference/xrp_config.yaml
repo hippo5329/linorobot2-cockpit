@@ -85,6 +85,7 @@ base_controller:
     driver_current_limit: 0.0
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
+    mag_heading_deg: 37.0
   pins:
     motor1:
       pwm: -1

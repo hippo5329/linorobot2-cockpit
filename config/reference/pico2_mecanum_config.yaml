@@ -65,6 +65,7 @@ base_controller:
     # sits a degree or two off and leans gravity into the ax/ay the EKF fuses.
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
+    mag_heading_deg: 37.0
   pins:
     # Two-PWM (AT8236 / BTS7960 scheme) drivers: in_a / in_b carry the complementary PWM,
     # pwm is the driver's enable. One GPIO (GP22) enables all four bridges -- the

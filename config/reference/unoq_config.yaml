@@ -74,6 +74,7 @@ base_controller:
     driver_current_limit: 0.0
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
+    mag_heading_deg: 37.0
   # Pins are the UNO Q's Arduino header numbers (D0-D13, A0-A5 = 14-19), which
   # the Zephyr shim maps to the STM32 pins of Zephyr's own board file
   # (boards/arduino/uno_q/arduino_r3_connector.dtsi).
