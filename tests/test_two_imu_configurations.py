@@ -214,6 +214,23 @@ def test_the_patch_turns_the_ekfs_own_gravity_removal_off_either_way():
         assert rp["imu0_remove_gravitational_acceleration"] is False, use_mag
 
 
+def test_a_magnetometer_robot_fuses_yaw_relative_to_its_start_pose():
+    """Absolute, the EKF aligned odom and the map to magnetic east, so a goal set
+    from the start pose landed wherever east was (2026-10-10: the Sim MCU at a
+    90 deg field stopped 0.6 m short against the room's side; a real robot at -90
+    was sent sideways)."""
+    assert _patch(BASE, use_mag=True)["imu0_relative"] is True
+
+
+def test_relative_yaw_is_left_out_without_a_magnetometer():
+    assert "imu0_relative" not in _patch(BASE, use_mag=False)
+
+
+def test_an_explicit_imu0_relative_is_kept():
+    src = _read(LAUNCH)
+    assert 'rp.get("imu0_relative") is None' in src, "a config's own imu0_relative is overwritten"
+
+
 def test_the_patch_is_written_before_the_params_file_is_dumped():
     """It was originally computed after the temp file was written, which made it
     a no-op with no symptom."""

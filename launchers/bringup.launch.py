@@ -491,6 +491,20 @@ def launch_setup(context, *args, **kwargs):
     if has_imu and rp.get("imu0_remove_gravitational_acceleration") is None:
         rp["imu0_remove_gravitational_acceleration"] = False
 
+    # THE START POSE IS THE FRAME, NOT MAGNETIC EAST.
+    #
+    # The board's imu/data yaw is the field's heading in ENU. robot_localization
+    # fuses it as given unless imu0_relative is set, so odom -- and the map SLAM
+    # builds on it -- came out aligned to magnetic east, not to the way the robot
+    # faced at start, and every goal stated from the start pose ("2.3 m ahead")
+    # landed wherever east happened to be: a real tracked robot, reading -90 deg, was sent
+    # to its side. Relative, the first message is the zero and the field still
+    # holds the heading from drifting after it. That first message is a real
+    # heading because ahrs.h seeds itself before publishing one (it says it has
+    # no orientation until then). Same rule as above: only when absent.
+    if has_imu and use_mag and rp.get("imu0_relative") is None:
+        rp["imu0_relative"] = True
+
     # rcl matches a params section against the node's FULLY-QUALIFIED name, so
     # under a namespace `ekf_filter_node:` matches nothing and the EKF starts on
     # its own defaults -- no odom0, no imu0, nothing published, no complaint.

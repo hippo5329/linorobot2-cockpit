@@ -440,7 +440,10 @@ The board also removes gravity before publishing, because the EKF fuses `ax` and
 horizontal axes and be read as acceleration. It is removed once, from whatever quaternion the
 message carries — the AHRS's, or a BNO085's own — and `bringup.launch.py` sets
 `robot_localization`'s `imu0_remove_gravitational_acceleration` to false, so nothing subtracts it
-twice. The topic gate (`verify_topics.py`) adds the same gravity back to prove a real
+twice. With a magnetometer it also sets `imu0_relative` to true (when the config leaves it
+out): the board's yaw is the field's heading, and fused as is it would align `odom` and the map
+to magnetic east rather than to the robot's start pose. The first message is the zero, and the
+field keeps the heading from drifting after it. The topic gate (`verify_topics.py`) adds the same gravity back to prove a real
 accelerometer is reading: a dead one leaves a specific force of zero.
 
 Both the IMU and the magnetometer must be **calibrated** or the pose rotates. The simulated

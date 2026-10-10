@@ -319,9 +319,9 @@ def test_the_real_path_does_not_borrow_a_simulation_constant():
 # ---- the first orientation (2026-10-09). imu_filter_madgwick seeds itself from
 # gravity and the field before its first update; the port did not, so the board's
 # first imu/data was the identity -- yaw 0 -- and the filter then walked to the
-# field's heading. The EKF fuses yaw relatively (imu0_relative) and takes the FIRST
-# message as its zero, so it fused that walk as a turn: a real tracked robot "turned" -91 deg
-# standing still and Nav2 drove it the wrong way.
+# field's heading. The EKF fused that walk as a turn: a real tracked robot "turned" -91 deg
+# standing still. Since bringup fuses the yaw relatively (imu0_relative), the
+# FIRST message is the EKF's zero, so it must already be the real heading.
 
 def _yaw(q):
     x, y, z, w = q
