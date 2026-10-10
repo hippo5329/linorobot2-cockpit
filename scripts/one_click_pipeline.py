@@ -1822,6 +1822,11 @@ def main():
                              "for tighter than Nav2's xy_goal_tolerance asks for something "
                              "Nav2 never promised, and a leg that ends inside its checker but "
                              "outside the gate leaves the next leg starting on top of its goal.")
+    parser.add_argument("--home-yaw-tolerance", type=float, default=None,
+                        help="radians: the leg home must also end facing the start heading "
+                             "within this. Default: the robot's own Nav2 yaw_goal_tolerance "
+                             "plus 0.05 -- a home reached facing elsewhere starts the next run "
+                             "in a turned frame.")
     parser.add_argument("--goal-timeout", type=int, default=None,
                         help="seconds each Nav2 goal leg waits. Default: 180 when the goal "
                              "must be reached (--require-goal, or --goal-round-trips > 0, "
@@ -1881,6 +1886,13 @@ def main():
         checker = ((((params.get("nav2") or {}).get("controller_server") or {})
                     .get("ros__parameters") or {}).get("general_goal_checker") or {})
         args.goal_tolerance = round(float(checker.get("xy_goal_tolerance", 0.25)) + 0.05, 3)
+    if args.home_yaw_tolerance is None:
+        # The leg home is judged on heading as well, by the same rule: Nav2's own
+        # yaw_goal_tolerance plus a margin (0.05 rad) for the pose being sampled
+        # a moment off the goal checker's.
+        checker = ((((params.get("nav2") or {}).get("controller_server") or {})
+                    .get("ros__parameters") or {}).get("general_goal_checker") or {})
+        args.home_yaw_tolerance = round(float(checker.get("yaw_goal_tolerance", 0.25)) + 0.05, 3)
     if not controller_cfg:
         raise SystemExit(f"{os.path.basename(params_path)} has no base_controller: block. "
                          "Run scripts/migrate_config_schema.py to convert it.")
@@ -2650,6 +2662,8 @@ def main():
                              f"--round-trips {args.goal_round_trips}")
                 if args.require_goal or args.goal_round_trips:
                     goal_args += f" --require-goal --goal-tolerance {args.goal_tolerance}"
+                if args.goal_round_trips:
+                    goal_args += f" --home-yaw-tolerance {args.home_yaw_tolerance}"
                 if is_real:
                     goal_args += " --no-wall"     # the room's own obstacles, not the sim's wall
                 if nav2_ok:

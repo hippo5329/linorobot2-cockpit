@@ -559,13 +559,17 @@ class Nav2GoalTester(Node):
         try:
             if self.tf_buffer is None:
                 raise RuntimeError("no tf2_ros")
-            tr = self.tf_buffer.lookup_transform(self.goal_frame, self.base_frame,
-                                                 rclpy.time.Time()).transform.translation
+            tf = self.tf_buffer.lookup_transform(self.goal_frame, self.base_frame,
+                                                 rclpy.time.Time()).transform
+            tr = tf.translation
             self.tf_ok = True
+            # The heading in the same frame, for the home leg's heading verdict.
+            self.world_yaw = _yaw(tf.rotation)
             return tr.x, tr.y
         except Exception:
             self.tf_ok = False
             p = msg.pose.pose.position
+            self.world_yaw = _yaw(msg.pose.pose.orientation)
             return p.x, p.y
 
     def map_odom_offset(self):
@@ -1141,7 +1145,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
              noise_ang: float = 0.10, require_motion: bool = True,
              min_traverse: float = 0.10, require_goal: bool = False,
              goal_tolerance: float = 0.30, min_start_gap: float = 1.0,
-             round_trips: int = 0, home_x: float = 0.0, home_y: float = 0.0) -> bool:
+             round_trips: int = 0, home_x: float = 0.0, home_y: float = 0.0,
+             home_yaw_tolerance: float = None) -> bool:
     rclpy.init()
     node = Nav2GoalTester(goal_x=goal_x, goal_y=goal_y, timeout_sec=timeout,
                           cmd_vel_type=cmd_vel_type)
@@ -1357,6 +1362,19 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 asked_twice = True
         return node.goal_status != -1
 
+    def heading_err() -> float:
+        """Radians between the robot's heading and the goal's. Every goal is sent
+        facing +x (orientation w=1), which on the home leg is the heading the run
+        started with: map is SLAM's frame from the start pose."""
+        yaw = getattr(node, "world_yaw", None)
+        if yaw is None:
+            return float("nan")
+        return math.atan2(math.sin(yaw), math.cos(yaw))
+
+    def heading_ok() -> bool:
+        err = heading_err()
+        return err == err and abs(err) <= home_yaw_tolerance
+
     def run_legs(legs) -> bool:
         """Drive every leg in turn; each must arrive, and each that crosses the
         wall must have planned around it. One failure ends the run -- the
@@ -1375,6 +1393,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             a runaway on a retry would have been reported as a plain timeout.
             """
             phantom_since = None
+            unturned_since = None
             while time.time() - t0 < timeout:
                 rclpy.spin_once(node, timeout_sec=0.2)
                 # Sampled here rather than in a callback: the point is how long
@@ -1384,8 +1403,19 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if node.goal_rejected:
                     return False
                 if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
-                        and (moved() or not require_motion):
+                        and (moved() or not require_motion) \
+                        and (not heading_leg or heading_ok()):
                     return True
+                # Home by position but not by heading, and Nav2 has finished with the
+                # goal: it will not turn the robot any more. (A position-only verdict
+                # used to cancel the goal here, before Nav2's goal checker had turned
+                # it: the TS100 came home 2026-10-10 facing -120 deg and passed.)
+                if heading_leg and reached_goal() and not heading_ok() \
+                        and node.goal_status in (4, 5, 6):
+                    if unturned_since is None:
+                        unturned_since = time.time()
+                    elif time.time() - unturned_since > PHANTOM_CONFIRM_SEC:
+                        return False
                 if _runaway(node):
                     return False         # gone; see the report below
                 if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
@@ -1402,6 +1432,10 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             return False
 
         for i, (gx, gy) in enumerate(legs, 1):
+            # The leg home is judged on heading too: back to the start POSE, not
+            # just the spot, or the next run starts in a turned frame.
+            heading_leg = (home_yaw_tolerance is not None and round_trips >= 1
+                           and (gx, gy) == (home_x, home_y))
             node.begin_leg(gx, gy)
             if not node.send_goal():
                 return False
@@ -1514,6 +1548,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                     print(f"❌ NAV2 LEG {i}/{n} IS VACUOUS: began {node.goal_dist_start:.3f} m "
                           f"from ({gx:.2f}, {gy:.2f}), inside the {min_start_gap:.2f} m this gate "
                           f"needs before arriving proves anything.")
+                elif heading_leg and reached_goal() and wall_path_ok() and not heading_ok():
+                    print(f"❌ NAV2 LEG {i}/{n} HOME WITHOUT ITS HEADING: within "
+                          f"{node.goal_dist_min:.3f} m of ({gx:.2f}, {gy:.2f}) but facing "
+                          f"{math.degrees(heading_err()):+.1f} deg from the start heading, needed "
+                          f"within {math.degrees(home_yaw_tolerance):.1f} deg; ended as "
+                          f"{_status_name(node.goal_status)}{_why(node)} after {took:.0f} s"
+                          f"{_map_odom_offset_note(node)}")
                 elif reached_goal() and not wall_path_ok():
                     if went_through():
                         _cross, _whose = crossings()
@@ -1594,7 +1635,10 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 around, route_word = route_note(), "around the wall"
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
                   f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
-                  f"{route_word}: {around}; {node.cmd_vel_count} cmd_vel so far")
+                  f"{route_word}: {around}; "
+                  + (f"heading {math.degrees(heading_err()):+.1f} deg from the start's "
+                     f"(within {math.degrees(home_yaw_tolerance):.1f}); " if heading_leg else "")
+                  + f"{node.cmd_vel_count} cmd_vel so far")
             if estimator_cut_the_corner():
                 fy = ", ".join(f"{y:+.2f} ±{gap:.2f}"
                                for y, gap in getattr(node, "wall_cross_y", ()))
@@ -1629,12 +1673,16 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         # comfortable or whether every green leg was one hiccup from red.
         if NO_WALL:
             judged, behind = getattr(node, "legs_judged", 0), getattr(node, "legs_behind", 0)
-            where = (f"to ({goal_x:.2f}, {goal_y:.2f}) and back home (within {goal_tolerance:.2f} m); "
+            where = (f"to ({goal_x:.2f}, {goal_y:.2f}) and back home (within {goal_tolerance:.2f} m"
+                     + (f", heading within {math.degrees(home_yaw_tolerance):.1f} deg"
+                        if home_yaw_tolerance is not None else "") + "); "
                      f"{behind} of {judged} judged legs behind an obstacle on /map"
                      + ("" if judged and behind == judged else
                         " -- ⚠️ NOT EVERY LEG HAD AN OBSTACLE IN THE WAY"))
         else:
-            where = (f"behind the obstacle wall and back home (within {goal_tolerance:.2f} m)")
+            where = (f"behind the obstacle wall and back home (within {goal_tolerance:.2f} m"
+                     + (f", heading within {math.degrees(home_yaw_tolerance):.1f} deg"
+                        if home_yaw_tolerance is not None else "") + ")")
         return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) {where}"
                        f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}{_scan_gap_note(node)}")
 
@@ -1856,6 +1904,9 @@ def main():
                              "implies --require-goal.")
     parser.add_argument("--home-x", type=float, default=0.0, help="home X for the return legs (m)")
     parser.add_argument("--home-y", type=float, default=0.0, help="home Y for the return legs (m)")
+    parser.add_argument("--home-yaw-tolerance", type=float, default=None,
+                        help="radians: the leg home (--round-trips) must also end facing the "
+                             "start heading within this. Unset: position only.")
     parser.add_argument("--min-traverse", type=float, default=0.10,
                         help="metres the base must actually cover before the path-verified "
                              "headline is allowed; displacement from the start pose, not "
@@ -1880,7 +1931,8 @@ def main():
                        min_traverse=args.min_traverse, require_goal=args.require_goal,
                        goal_tolerance=args.goal_tolerance,
                        min_start_gap=args.min_start_gap,
-                       round_trips=args.round_trips, home_x=args.home_x, home_y=args.home_y)
+                       round_trips=args.round_trips, home_x=args.home_x, home_y=args.home_y,
+                       home_yaw_tolerance=args.home_yaw_tolerance)
     sys.exit(0 if success else 1)
 
 
