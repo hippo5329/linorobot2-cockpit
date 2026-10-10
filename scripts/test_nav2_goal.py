@@ -1235,6 +1235,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         # Say that the route is unproven rather than pretending either way.
         return True
 
+    def _room_note() -> str:
+        """The real room's verdict for a single goal, as the round-trip legs give it."""
+        if not NO_WALL:
+            return ""
+        _behind, words = room_route_note(getattr(node, "room_grid", None),
+                                         getattr(node, "leg_start_xy", None), (goal_x, goal_y),
+                                         getattr(node, "leg_track", ()))
+        return f"; behind an obstacle: {words}"
+
     def route_note() -> str:
         if not leg_crosses_wall():
             return "not needed"
@@ -1718,7 +1727,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
 
             if require_goal and start_gap_is_meaningful() and reached_goal() \
                     and wall_path_ok() and (moved() or not require_motion):
-                return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
+                return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m){_room_note()}")
 
             if node.goal_rejected:
                 print(f"❌ NAV2 GOAL REJECTED by bt_navigator{_why(node)}: it was reachable "
@@ -1779,7 +1788,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                   f"on the near side or it went through the wall; neither is a pass.")
             return False
         if require_goal:
-            return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m)")
+            return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m){_room_note()}")
         if node.goal_accepted and node.path_avoids_wall:
             return verdict("NAV2 PATH PLANNING AROUND THE OBSTACLE WALL VERIFIED")
         return False

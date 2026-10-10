@@ -77,3 +77,8 @@ def test_only_a_real_room_run_subscribes_to_the_map():
 def test_the_headline_counts_the_legs_behind_an_obstacle():
     assert "judged legs behind an obstacle on /map" in SRC
     assert "NOT EVERY LEG HAD AN OBSTACLE IN THE WAY" in SRC
+
+
+def test_a_single_goal_gets_the_room_verdict_too():
+    """Only the round-trip legs printed it; a single goal with nothing in the way said nothing."""
+    assert SRC.count('verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m){_room_note()}")') == 2
