@@ -1407,22 +1407,21 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 _sample_map_odom(node)
                 if node.goal_rejected:
                     return False
-                if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
-                        and (moved() or not require_motion) \
-                        and (not heading_leg or heading_ok()):
-                    if not heading_leg or node.goal_status == 4:
-                        return True
-                    # The leg home waits for Nav2's own goal checker: cancelling
-                    # the moment the heading came inside this looser bound stopped
-                    # a tracked robot mid-turn, every home leg 10-11 deg off (2026-10-10).
-                    # A goal that stays inside but never resolves still passes once
-                    # it has held there for HOME_SETTLE_SEC.
-                    if settled_since is None:
-                        settled_since = time.time()
-                    elif time.time() - settled_since > HOME_SETTLE_SEC:
-                        return True
-                else:
+                arrived = (start_gap_is_meaningful() and reached_goal() and wall_path_ok()
+                           and (moved() or not require_motion)
+                           and (not heading_leg or heading_ok()))
+                # The leg home waits for Nav2's own goal checker: cancelling the
+                # moment the heading came inside this looser bound stopped a tracked
+                # robot mid-turn, every home leg 10-11 deg off (2026-10-10). A goal
+                # that stays inside but never resolves still passes once it has held
+                # there for HOME_SETTLE_SEC.
+                if arrived and heading_leg and node.goal_status != 4:
+                    settled_since = settled_since or time.time()
+                    arrived = time.time() - settled_since > HOME_SETTLE_SEC
+                elif not arrived:
                     settled_since = None
+                if arrived:
+                    return True
                 # Home by position but not by heading, and Nav2 has finished with the
                 # goal: it will not turn the robot any more. (A position-only verdict
                 # used to cancel the goal here, before Nav2's goal checker had turned

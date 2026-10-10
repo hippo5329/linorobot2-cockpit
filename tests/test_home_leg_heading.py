@@ -8,7 +8,7 @@ passed; the next run would have started SLAM in a frame turned by 120 deg.
 import math
 import os
 
-from test_nav2_goal_motion import StubNode, _run
+from test_nav2_goal_motion import MOD, StubNode, _run
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIPELINE = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
@@ -73,8 +73,7 @@ def test_home_inside_the_bound_waits_for_nav2_to_finish_turning(monkeypatch):
 
 
 def test_home_held_inside_the_bound_passes_after_the_settle_time(monkeypatch):
-    import test_nav2_goal
-    monkeypatch.setattr(test_nav2_goal, "HOME_SETTLE_SEC", 0.3)
+    monkeypatch.setattr(MOD, "HOME_SETTLE_SEC", 0.3)
     node = _home_node(math.radians(9.0), status=2)
     assert _run(monkeypatch, node, timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
                 home_yaw_tolerance=0.20) is True
