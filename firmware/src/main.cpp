@@ -2521,7 +2521,16 @@ void publishData()
                 fused = true;
             }
         }
-        if (fused)
+        // EVERY seeded sample carries the estimate -- advanced when this sample was
+        // fused, HELD when it was not. The message is rewritten from the driver on
+        // every sample (identity orientation), so a skipped sample used to go out as
+        // yaw 0 with a valid covariance: the first sample of a new agent session
+        // follows a gap of minutes, the stall guard skips it, and an EKF fusing yaw
+        // relatively took that identity as its zero and then the compass heading as
+        // the robot's -- a real tracked robot's map came up 31-91 deg off its start pose
+        // (2026-10-10). The Sim MCU never showed it: its session starts at boot.
+        (void)fused;
+        if (ahrs_seeded)
         {
             ahrs.quaternion(imu_msg->orientation.x, imu_msg->orientation.y,
                             imu_msg->orientation.z, imu_msg->orientation.w);

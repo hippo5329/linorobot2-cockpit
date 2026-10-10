@@ -404,3 +404,15 @@ def test_the_board_seeds_on_its_first_sample_and_claims_nothing_before():
     assert "orientation_covariance[0] = -1.0" in branch, (
         "an unseeded message is not marked 'no orientation' (REP 145), so a "
         "consumer can fuse the identity as a heading")
+
+
+def test_a_skipped_sample_still_carries_the_estimate():
+    """The driver rewrites imu_msg every sample, identity orientation included. The
+    quaternion was written only on FUSED samples, so the first sample of a new agent
+    session (after a gap the stall guard skips) went out as yaw 0 with a real
+    covariance, and the relative-yaw EKF took it as its zero (a real tracked robot, 2026-10-10)."""
+    main = open(os.path.join(REPO_ROOT, "firmware", "src", "main.cpp")).read()
+    i = main.index("ahrs.quaternion(imu_msg->orientation.x")
+    guard = main[main.rindex("if (", 0, i):i]
+    assert guard.startswith("if (ahrs_seeded)"), guard
+    assert main.index("*imu_msg = imu->getData();") < i, "the estimate must be written after the driver's copy"
