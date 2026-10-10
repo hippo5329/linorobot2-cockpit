@@ -57,10 +57,12 @@ DEPTH_MODELS = {
                   "/oak/stereo/image_raw", "/oak/stereo/camera_info"),
     # The original Astra Pro: depth over OpenNI2 (USB 2bc5:0403), colour as a separate
     # UVC camera (2bc5:0501) that nothing here needs. ros-<distro>-openni2-camera drives
-    # it once Orbbec's own OpenNI2 driver is installed (ORBBEC_DRIVER below); Orbbec's
-    # current ROS 2 driver (OrbbecSDK_ROS2) does not cover this model.
+    # it once Orbbec's own OpenNI2 is installed (ORBBEC_SDK_DIR below); Orbbec's current
+    # ROS 2 driver (OrbbecSDK_ROS2) does not cover this model. openni2_camera 2.x
+    # publishes depth as depth_raw/image (16UC1, millimetres) with depth_raw/camera_info,
+    # and depth/image (32FC1, metres) -- there is no depth/image_raw (2026-10-10).
     "astra_pro": ("openni2", "Orbbec Astra Pro", "camera_link",
-                  "/camera/depth/image_raw", "/camera/depth/camera_info"),
+                  "/camera/depth_raw/image", "/camera/depth_raw/camera_info"),
 }
 OAKD_MODEL = {"oakd": "OAK-D", "oakdlite": "OAK-D-LITE", "oakdpro": "OAK-D-PRO"}
 ZED_MODEL = {"zed": "zed", "zedm": "zedm", "zed2": "zed2", "zed2i": "zed2i"}
@@ -81,13 +83,21 @@ SCAN_HEIGHT = 1
 # (Orbbec's datasheet) -- inside 0.6 m it returns nothing, not a short range.
 DEPTH_OPTICS = {"astra_pro": (58.4, 0.6)}
 
-# Orbbec's OpenNI2 driver, which makes OpenNI2 see an Astra. Debian's OpenNI2 loads only
-# VERSIONED driver files from its Drivers directory (it took libPS1080.so.0 and skipped
-# liborbbec.so, 2026-10-08), so it is installed under this name. The image does not carry
-# it: scripts/install_orbbec_openni2.py fetches Orbbec's own SDK release on the robot and
-# keeps it in the config directory (ORBBEC_DRIVER_DIR); the entrypoint copies it in.
-ORBBEC_DRIVER = "liborbbec.so.0"
-ORBBEC_DRIVER_DIR = "drivers/openni2"
+# Orbbec's OpenNI2, which makes openni2_camera see an Astra. Orbbec's driver
+# (liborbbec.so) is built for OpenNI 2.3 and segfaults inside Debian's 2.2.0.33
+# (XnOniDriver::deviceOpen, 2026-10-10), so the driver node runs on the libOpenNI2 of
+# Orbbec's own SDK instead, with the driver beside it. The image does not carry either:
+# scripts/install_orbbec_openni2.py fetches Orbbec's SDK release on the robot and keeps
+# them under the config directory; openni2_depth.launch.py puts that directory first on
+# the node's LD_LIBRARY_PATH.
+ORBBEC_SDK_DIR = "drivers/openni2/sdk"
+ORBBEC_SDK_FILES = ("libOpenNI2.so.0", "OpenNI.ini", "OpenNI2/Drivers/liborbbec.so")
+
+
+def orbbec_sdk_dir(config_dir: str = None) -> str:
+    """Where install_orbbec_openni2.py keeps Orbbec's OpenNI2 for this cockpit."""
+    import os
+    return os.path.join(config_dir or os.environ.get("COCKPIT_CONFIG_DIR", "/config"), ORBBEC_SDK_DIR)
 
 # What must be installed for each family, and what to tell someone when it is not.
 DRIVER_PACKAGE = {"realsense": "realsense2_camera", "zed": "zed_wrapper", "oakd": "depthai_ros_driver",
@@ -347,12 +357,13 @@ def openni2_frames(camera_frame: str):
     return f"{base}_depth_frame", f"{base}_depth_optical_frame"
 
 
-def orbbec_driver_missing(model: str) -> bool:
-    """True when the model needs Orbbec's OpenNI2 driver and no Drivers directory has it."""
+def orbbec_driver_missing(model: str, config_dir: str = None) -> bool:
+    """True when the model needs Orbbec's OpenNI2 and the config dir lacks any part of it."""
     if model is None or DEPTH_MODELS[model][0] != "openni2":
         return False
-    import glob
-    return not glob.glob(f"/usr/lib/*/OpenNI2/Drivers/{ORBBEC_DRIVER}")
+    import os
+    d = orbbec_sdk_dir(config_dir)
+    return not all(os.path.isfile(os.path.join(d, f)) for f in ORBBEC_SDK_FILES)
 
 
 def driver_launch(model: str, distro: str, frame: str):

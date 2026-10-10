@@ -3,9 +3,10 @@
 The original Astra Pro (depth 2bc5:0403 over OpenNI2, colour 2bc5:0501 as UVC) is not
 covered by Orbbec's current ROS 2 driver, and its old one (ros2_astra_camera) declares
 no license. ros-<distro>-openni2-camera is released for jazzy and lyrical, but Debian's
-OpenNI2 has only PrimeSense's drivers: the robot fetches Orbbec's liborbbec.so from
-Orbbec's own release (scripts/install_orbbec_openni2.py), and Debian's OpenNI2 loads it
-only under a versioned name (2026-10-08: it took libPS1080.so.0, skipped liborbbec.so).
+OpenNI2 has only PrimeSense's drivers, and Orbbec's liborbbec.so segfaults inside it
+(2026-10-10). The robot fetches Orbbec's SDK release (scripts/install_orbbec_openni2.py)
+and the driver node runs on the SDK's own libOpenNI2, put first on its LD_LIBRARY_PATH:
+30 Hz depth on both distros on that library.
 """
 import hashlib
 import os
@@ -33,7 +34,8 @@ def _read(*parts):
 def test_the_astra_pro_is_an_openni2_camera():
     family, label, frame, depth, info = dc.DEPTH_MODELS["astra_pro"]
     assert family == "openni2" and frame == "camera_link"
-    assert (depth, info) == ("/camera/depth/image_raw", "/camera/depth/camera_info")
+    # openni2_camera 2.x: depth_raw/image (16UC1, mm); there is no depth/image_raw
+    assert (depth, info) == ("/camera/depth_raw/image", "/camera/depth_raw/camera_info")
     assert dc.DRIVER_PACKAGE["openni2"] == "openni2_camera"
     assert dc.depth_model(ASTRA) == "astra_pro"
 
@@ -71,32 +73,61 @@ def test_bringup_and_nav2_take_the_near_limit_from_the_model():
     assert "depth_camera.scan_range_min(" in _read("launchers", "nav2.launch.py")
 
 
-def test_one_name_for_the_driver_everywhere():
-    assert dc.ORBBEC_DRIVER == inst.DRIVER_NAME == "liborbbec.so.0"
-    assert dc.ORBBEC_DRIVER_DIR == inst.SUBDIR.replace(os.sep, "/") == "drivers/openni2"
-    entry = _read("docker", "entrypoint.sh")
-    assert 'drivers/openni2/*.so.0' in entry and "/usr/lib/*/OpenNI2/Drivers" in entry
+def test_one_place_for_orbbecs_openni2_everywhere():
+    assert dc.ORBBEC_SDK_DIR == inst.SDK_DIR.replace(os.sep, "/") == "drivers/openni2/sdk"
+    for arch, files in inst.FILES.items():
+        assert set(dc.ORBBEC_SDK_FILES) <= set(files), arch
+    assert dc.orbbec_sdk_dir("/cfg") == "/cfg/drivers/openni2/sdk"
     assert "install_orbbec_openni2.py" in _read("launchers", "bringup.launch.py")
 
 
-def test_only_the_astra_needs_orbbecs_driver():
+def test_nothing_goes_into_debians_openni2_any_more():
+    """Orbbec's driver in Debian's Drivers directory is what crashed the device open."""
+    assert "OpenNI2/Drivers" not in _read("docker", "entrypoint.sh")
+    assert "/usr/lib" not in _read("scripts", "install_orbbec_openni2.py").split('"""', 2)[2]
+
+
+def test_the_driver_node_runs_on_orbbecs_libopenni2():
+    src = _read("launchers", "openni2_depth.launch.py")
+    assert 'additional_env={"LD_LIBRARY_PATH": ld_path}' in src
+    assert "sdk = depth_camera.orbbec_sdk_dir()" in src
+    assert 'ld_path = ":".join(p for p in (sdk, os.environ.get("LD_LIBRARY_PATH", "")) if p)' in src
+
+
+def test_only_the_astra_needs_orbbecs_driver(tmp_path):
     assert dc.orbbec_driver_missing(None) is False
     assert dc.orbbec_driver_missing("realsense") is False
+    assert dc.orbbec_driver_missing("astra_pro", str(tmp_path)) is True
+    sdk = tmp_path / "drivers" / "openni2" / "sdk"
+    for f in dc.ORBBEC_SDK_FILES[:-1]:
+        (sdk / f).parent.mkdir(parents=True, exist_ok=True)
+        (sdk / f).write_bytes(b"x")
+    assert dc.orbbec_driver_missing("astra_pro", str(tmp_path)) is True, "a part is missing"
+    (sdk / dc.ORBBEC_SDK_FILES[-1]).parent.mkdir(parents=True, exist_ok=True)
+    (sdk / dc.ORBBEC_SDK_FILES[-1]).write_bytes(b"x")
+    assert dc.orbbec_driver_missing("astra_pro", str(tmp_path)) is False
 
 
 def test_the_installer_pins_orbbecs_own_release():
     assert inst.SDK_URL.startswith("https://github.com/orbbec/OpenNI_SDK/releases/download/")
-    for h in [inst.SDK_SHA256, inst.INI[1]] + [d[1] for d in inst.DRIVERS.values()]:
-        assert re.fullmatch(r"[0-9a-f]{64}", h)
-    assert set(inst.DRIVERS) == {"x86_64", "aarch64"}
+    assert re.fullmatch(r"[0-9a-f]{64}", inst.SDK_SHA256)
+    assert set(inst.FILES) == {"x86_64", "aarch64"}
+    for files in inst.FILES.values():
+        for _, h in files.values():
+            assert re.fullmatch(r"[0-9a-f]{64}", h)
+    # the libraries differ per CPU; the settings files are shared
+    x, a = inst.FILES["x86_64"], inst.FILES["aarch64"]
+    assert x["libOpenNI2.so.0"] != a["libOpenNI2.so.0"]
+    assert x["OpenNI2/Drivers/liborbbec.so"] != a["OpenNI2/Drivers/liborbbec.so"]
+    assert x["OpenNI.ini"] == a["OpenNI.ini"]
 
 
-def _fake_sdk(tmp_path, payload=b"\x7fELF fake driver"):
+def _fake_sdk(tmp_path, payload=b"\x7fELF fake"):
     z = tmp_path / "sdk.zip"
+    members = {m for files in inst.FILES.values() for m, _ in files.values()}
     with zipfile.ZipFile(z, "w") as zf:
-        for member, _ in inst.DRIVERS.values():
+        for member in sorted(members):
             zf.writestr(member, payload)
-        zf.writestr(inst.INI[0], b"[Device]\n")
     return str(z), payload
 
 
@@ -106,18 +137,22 @@ def test_the_installer_refuses_files_that_are_not_orbbecs(tmp_path):
         inst.extract(z, "x86_64")
 
 
-def test_the_installer_keeps_the_driver_under_its_versioned_name(tmp_path, monkeypatch):
+def test_the_installer_lays_out_the_sdk_with_the_versioned_library(tmp_path, monkeypatch):
     z, payload = _fake_sdk(tmp_path)
     ok = hashlib.sha256(payload).hexdigest()
-    monkeypatch.setattr(inst, "DRIVERS", {k: (m, ok) for k, (m, _) in inst.DRIVERS.items()})
-    monkeypatch.setattr(inst, "INI", (inst.INI[0], hashlib.sha256(b"[Device]\n").hexdigest()))
+    monkeypatch.setattr(inst, "FILES", {k: {n: (m, ok) for n, (m, _) in f.items()}
+                                        for k, f in inst.FILES.items()})
     files = inst.extract(z, "aarch64")
-    assert set(files) == {"liborbbec.so.0", "orbbec.ini"}
+    assert set(files) == {"libOpenNI2.so.0", "OpenNI.ini", "OpenNI2/Drivers/liborbbec.so",
+                          "OpenNI2/Drivers/orbbec.ini"}
     cfg = tmp_path / "config"
-    written = inst.install(files, str(cfg))
-    assert (cfg / "drivers" / "openni2" / "liborbbec.so.0").read_bytes() == payload
-    assert any(p.endswith("liborbbec.so.0") for p in written)
-    with pytest.raises(SystemExit, match="no Orbbec OpenNI2 driver"):
+    inst.install(files, str(cfg))
+    inst.install(files, str(cfg))          # a second run replaces, never fails on the link
+    sdk = cfg / "drivers" / "openni2" / "sdk"
+    assert (sdk / "OpenNI2" / "Drivers" / "liborbbec.so").read_bytes() == payload
+    assert os.readlink(sdk / "libOpenNI2.so") == "libOpenNI2.so.0"
+    assert dc.orbbec_driver_missing("astra_pro", str(cfg)) is False
+    with pytest.raises(SystemExit, match="no Orbbec OpenNI2 for CPU"):
         inst.extract(z, "riscv64")
 
 

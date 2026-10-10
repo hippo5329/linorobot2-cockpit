@@ -9,14 +9,16 @@ with "/" and matches nothing in the robot's tree.
 
 Arguments:
   namespace      the driver's namespace (default camera): it publishes
-                 <namespace>/depth/image_raw (16UC1, millimetres) and
-                 <namespace>/depth/camera_info -- the topics DEPTH_MODELS names
+                 <namespace>/depth_raw/image (16UC1, millimetres) and
+                 <namespace>/depth_raw/camera_info -- the topics DEPTH_MODELS names --
+                 and <namespace>/depth/image (32FC1, metres)
   camera_frame   the camera's root frame, which the robot's URDF parents to base_link
                  at geometry.depth_camera (default camera_link)
 
 The driver opens the depth stream only while something subscribes to it
-(depthimage_to_laserscan does), and needs Orbbec's OpenNI2 driver
-(depth_camera.ORBBEC_DRIVER) to see an Astra at all.
+(depthimage_to_laserscan does). It runs on Orbbec's own libOpenNI2, not Debian's:
+Orbbec's driver crashes in Debian's OpenNI2 2.2, so the node's LD_LIBRARY_PATH starts
+with the directory install_orbbec_openni2.py fills (depth_camera.orbbec_sdk_dir()).
 """
 import os
 import sys
@@ -34,6 +36,8 @@ def _actions(context):
     namespace = context.launch_configurations["namespace"]
     camera_frame = context.launch_configurations["camera_frame"]
     depth_frame, depth_optical = depth_camera.openni2_frames(camera_frame)
+    sdk = depth_camera.orbbec_sdk_dir()
+    ld_path = ":".join(p for p in (sdk, os.environ.get("LD_LIBRARY_PATH", "")) if p)
     return [
         Node(
             package="openni2_camera",
@@ -41,6 +45,7 @@ def _actions(context):
             name="driver",
             namespace=namespace,
             output="screen",
+            additional_env={"LD_LIBRARY_PATH": ld_path},
             parameters=[{"depth_registration": False,
                          "use_device_time": True,
                          "depth_frame_id": depth_optical}],

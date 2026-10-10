@@ -879,8 +879,8 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                                 f"'{depth_camera.DRIVER_PACKAGE[family]}' is not installed, so there is "
                                 f"no /scan. Install {depth_camera.INSTALL_HINT[family]}.")]
         if depth_camera.orbbec_driver_missing(model):
-            return [LogInfo(msg=f"[bringup] depth camera {label}: Orbbec's OpenNI2 driver "
-                                f"({depth_camera.ORBBEC_DRIVER}) is not installed, so OpenNI2 cannot see the "
+            return [LogInfo(msg=f"[bringup] depth camera {label}: Orbbec's OpenNI2 is not installed "
+                                f"in {depth_camera.orbbec_sdk_dir()}, so openni2_camera cannot see the "
                                 f"camera and there is no /scan. Run once on the robot computer: "
                                 f"python3 scripts/install_orbbec_openni2.py -- it fetches Orbbec's own SDK "
                                 f"release; the image does not carry it.")]
