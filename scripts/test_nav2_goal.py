@@ -479,7 +479,7 @@ class Nav2GoalTester(Node):
                 if info.topic_type.endswith("Twist"):
                     return "twist"
             time.sleep(0.2)
-        self.get_logger().warn("No /cmd_vel publisher found; assuming unstamped Twist.")
+        self.get_logger().warning("No /cmd_vel publisher found; assuming unstamped Twist.")
         return "twist"
 
     def _map_cb(self, msg) -> None:

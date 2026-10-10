@@ -591,7 +591,7 @@ class SimBaseNode(Node):
                 # against the intervals it actually saw, rather than assumed to
                 # have run at its nominal rate.
                 if dt > 0.1:
-                    self.get_logger().warn(
+                    self.get_logger().warning(
                         f"control interval {dt * 1000:.0f} ms "
                         f"(nominal {self.dt * 1000:.0f}); the model is sliced at "
                         "a quarter of tau, so this is integrated, not skipped")
