@@ -36,12 +36,13 @@ BOXES = _room([(1.0, -0.3, 1.4, 0.5)])          # a box between home and (2.3, 0
 def test_a_box_on_the_straight_line_makes_the_leg_behind_an_obstacle():
     behind, words = tng.room_route_note(BOXES, (0.0, 0.0), (2.3, 0.1), [(0.0, 0.0), (1.2, 0.9), (2.3, 0.1)])
     assert behind is True
-    assert "0.4" in words and "driven track stayed clear" in words, words
-    assert 0.35 <= tng.blocked_length(BOXES, (0.0, 0.0), (2.3, 0.1)) <= 0.45
+    assert "driven track stayed clear" in words, words
+    # the box is 0.4 m deep; the 0.16 m disc meets it for that plus a radius each side
+    assert 0.65 <= tng.blocked_length(BOXES, (0.0, 0.0), (2.3, 0.1)) <= 0.80
 
 
 def test_a_clear_line_says_the_leg_tested_no_detour():
-    behind, words = tng.room_route_note(BOXES, (0.0, 1.0), (2.3, 1.0), [])
+    behind, words = tng.room_route_note(BOXES, (0.0, 1.2), (2.3, 1.2), [])
     assert behind is False and "NOTHING IN THE WAY" in words
 
 
@@ -82,3 +83,39 @@ def test_the_headline_counts_the_legs_behind_an_obstacle():
 def test_a_single_goal_gets_the_room_verdict_too():
     """Only the round-trip legs printed it; a single goal with nothing in the way said nothing."""
     assert SRC.count('verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m){_room_note()}")') == 2
+
+
+def _panel(value):
+    """A 0.1 m panel of cells at `value`, as a real tracked robot's box panel ended up in /map."""
+    g = _room([])
+    res, ox, oy, w, h, data = g
+    data = list(data)
+    for j in range(h):
+        for i in range(w):
+            x, y = ox + (i + 0.5) * res, oy + (j + 0.5) * res
+            if 1.6 <= x <= 1.7 and -0.25 <= y <= 0.35:
+                data[j * w + i] = value
+    return (res, ox, oy, w, h, data)
+
+
+def test_a_thin_panel_that_slam_let_fade_still_counts():
+    """From leg 12 of a 20/20 run the panel's cells sat below 65 % and every line read
+    "nothing in the way" with the panel standing (camera, 2026-10-10)."""
+    behind, words = tng.room_route_note(_panel(55), (0.0, 0.0), (2.3, 0.1), [])
+    assert behind is True, words
+
+
+def test_a_line_that_grazes_the_panels_end_counts_but_a_clear_one_does_not():
+    assert tng.room_route_note(_panel(100), (0.0, 0.45), (2.3, 0.45), [])[0] is True   # 0.10 m off its end
+    assert tng.room_route_note(_panel(100), (0.0, 0.60), (2.3, 0.60), [])[0] is False  # 0.25 m off
+
+
+def test_free_and_unknown_cells_are_not_in_the_way():
+    assert tng.room_route_note(_panel(25), (0.0, 0.0), (2.3, 0.1), [])[0] is False
+    assert tng.room_route_note(_panel(-1), (0.0, 0.0), (2.3, 0.1), [])[0] is False
+
+
+def test_the_track_is_still_judged_strictly():
+    """A pose that only passes NEAR a faded panel is not a pose inside an obstacle."""
+    assert tng.track_hits(_panel(55), [(1.65, 0.0)]) == 0
+    assert tng.track_hits(_panel(100), [(1.65, 0.0)]) == 1

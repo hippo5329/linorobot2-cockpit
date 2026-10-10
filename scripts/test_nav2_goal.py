@@ -96,6 +96,13 @@ WALL_END_MARGIN = 0.30
 # SLAM put in /map: a leg is BEHIND ONE when the straight line from where it began
 # to its goal crosses occupied cells, and the driven track should cross none.
 MAP_OCCUPIED = 65            # trinary occupancy, map_server's occupied_thresh 0.65
+# What counts as IN THE WAY is looser than what counts as hit. A 0.1 m box panel is one or
+# two cells, and SLAM let them sink below 65 % as the robot drove past: from leg 12 of a
+# 20/20 real-robot run every line read "nothing in the way" with the panel still standing
+# (camera, 2026-10-10). In the way = a cell of 50 % or more within the robot's radius of
+# the line -- what Nav2 would have to plan round, not only what it would collide with.
+MAP_IN_THE_WAY = 50
+ROOM_ROBOT_RADIUS = 0.16     # the default chassis' Nav2 robot_radius
 TRACK_STEP = 0.05            # m between the track samples a leg keeps
 
 
@@ -109,21 +116,35 @@ def grid_from_msg(msg):
             msg.data)
 
 
-def grid_occupied(grid, x: float, y: float) -> bool:
+def grid_occupied(grid, x: float, y: float, thresh: int = MAP_OCCUPIED) -> bool:
     res, ox, oy, w, h, data = grid
     i, j = int(math.floor((x - ox) / res)), int(math.floor((y - oy) / res))
     if not (0 <= i < w and 0 <= j < h):
         return False
-    return data[j * w + i] >= MAP_OCCUPIED
+    return data[j * w + i] >= thresh
 
 
-def blocked_length(grid, start, goal) -> float:
-    """Metres of the straight start->goal line that lie in occupied cells."""
+def grid_near(grid, x: float, y: float, radius: float, thresh: int) -> bool:
+    """Is any cell at `thresh` or more within `radius` of (x, y)?"""
+    res = grid[0]
+    k = int(math.ceil(radius / res))
+    for dj in range(-k, k + 1):
+        for di in range(-k, k + 1):
+            if math.hypot(di * res, dj * res) <= radius and \
+                    grid_occupied(grid, x + di * res, y + dj * res, thresh):
+                return True
+    return False
+
+
+def blocked_length(grid, start, goal, radius: float = ROOM_ROBOT_RADIUS) -> float:
+    """Metres of the straight start->goal line along which the robot's disc would
+    overlap a cell that is in the way (MAP_IN_THE_WAY)."""
     (sx, sy), (gx, gy) = start, goal
     L = math.hypot(gx - sx, gy - sy)
     step = grid[0] / 2.0
     n = max(1, int(L / step))
-    hits = sum(grid_occupied(grid, sx + (gx - sx) * k / n, sy + (gy - sy) * k / n)
+    hits = sum(grid_near(grid, sx + (gx - sx) * k / n, sy + (gy - sy) * k / n,
+                         radius, MAP_IN_THE_WAY)
                for k in range(n + 1))
     return hits * L / (n + 1)
 
@@ -146,8 +167,8 @@ def room_route_note(grid, start, goal, track):
                        "occupied cell of /map, so this leg tested no detour")
     driven = ("the driven track stayed clear" if hits == 0 else
               f"the pose Nav2 steers by sat in an occupied cell {hits} time(s)")
-    return True, (f"yes, round the room's own obstacle (the straight line crosses "
-                  f"{blocked:.2f} m of it on /map; {driven})")
+    return True, (f"yes, round the room's own obstacle (the robot's disc on the straight "
+                  f"line meets it for {blocked:.2f} m on /map; {driven})")
 
 # An abort inside this window, having moved less than this far and planned
 # nothing, is read as the stack still coming up and is retried once per run.
