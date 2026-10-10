@@ -2637,12 +2637,14 @@ def main():
             else:
                 cmd_vel_type = "twist_stamped" if stamped_cmd else "twist"
                 n_legs = 2 * args.goal_round_trips if args.goal_round_trips else 1
+                behind = ("past the room's own obstacles (judged on /map)" if is_real
+                          else "behind the obstacle wall")
                 if args.goal_round_trips:
-                    print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y}) and back "
+                    print(f"  Nav2 goal {behind} ({args.goal_x}, {args.goal_y}) and back "
                           f"home, {args.goal_round_trips} round trips ({n_legs} legs, "
                           f"{args.goal_timeout} s each)...")
                 else:
-                    print(f"  Nav2 goal behind the obstacle wall ({args.goal_x}, {args.goal_y})...")
+                    print(f"  Nav2 goal {behind} ({args.goal_x}, {args.goal_y})...")
                 goal_args = (f"--goal-x {args.goal_x} --goal-y {args.goal_y} "
                              f"--timeout {args.goal_timeout} --cmd-vel-type {cmd_vel_type} "
                              f"--round-trips {args.goal_round_trips}")

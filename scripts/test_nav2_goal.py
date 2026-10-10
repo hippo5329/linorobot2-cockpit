@@ -89,6 +89,66 @@ NO_WALL = False
 # y = -1.40 was reported as driving through a solid wall.
 WALL_END_MARGIN = 0.30
 
+# A REAL ROOM IS JUDGED AGAINST ITS OWN MAP. With --no-wall the sim's x=2.0 wall is
+# meaningless, and judging nothing let a goal with nothing in front of it pass as
+# "behind the wall" -- and every leg of a real tracked robot warned that its pose "crossed x=2.0
+# inside the obstacle" of a room it is not in (2026-10-10). The obstacles are what
+# SLAM put in /map: a leg is BEHIND ONE when the straight line from where it began
+# to its goal crosses occupied cells, and the driven track should cross none.
+MAP_OCCUPIED = 65            # trinary occupancy, map_server's occupied_thresh 0.65
+TRACK_STEP = 0.05            # m between the track samples a leg keeps
+
+
+def grid_from_msg(msg):
+    """(resolution, origin x, origin y, width, height, data) from an OccupancyGrid.
+
+    slam_toolbox publishes its map unrotated, so the origin's yaw is not used."""
+    info = msg.info
+    return (float(info.resolution), float(info.origin.position.x),
+            float(info.origin.position.y), int(info.width), int(info.height),
+            msg.data)
+
+
+def grid_occupied(grid, x: float, y: float) -> bool:
+    res, ox, oy, w, h, data = grid
+    i, j = int(math.floor((x - ox) / res)), int(math.floor((y - oy) / res))
+    if not (0 <= i < w and 0 <= j < h):
+        return False
+    return data[j * w + i] >= MAP_OCCUPIED
+
+
+def blocked_length(grid, start, goal) -> float:
+    """Metres of the straight start->goal line that lie in occupied cells."""
+    (sx, sy), (gx, gy) = start, goal
+    L = math.hypot(gx - sx, gy - sy)
+    step = grid[0] / 2.0
+    n = max(1, int(L / step))
+    hits = sum(grid_occupied(grid, sx + (gx - sx) * k / n, sy + (gy - sy) * k / n)
+               for k in range(n + 1))
+    return hits * L / (n + 1)
+
+
+def track_hits(grid, track) -> int:
+    """How many of the driven track's samples sit in an occupied cell."""
+    return sum(grid_occupied(grid, x, y) for x, y in track)
+
+
+def room_route_note(grid, start, goal, track):
+    """(behind an obstacle?, the words) for one leg of a real-room run."""
+    if grid is None:
+        return None, "unjudged: no /map received"
+    if start is None:
+        return None, "unjudged: the leg's start was never seen"
+    blocked = blocked_length(grid, start, goal)
+    hits = track_hits(grid, track)
+    if blocked <= 0.0:
+        return False, ("NOTHING IN THE WAY: the straight line to the goal crosses no "
+                       "occupied cell of /map, so this leg tested no detour")
+    driven = ("the driven track stayed clear" if hits == 0 else
+              f"the pose Nav2 steers by sat in an occupied cell {hits} time(s)")
+    return True, (f"yes, round the room's own obstacle (the straight line crosses "
+                  f"{blocked:.2f} m of it on /map; {driven})")
+
 # An abort inside this window, having moved less than this far and planned
 # nothing, is read as the stack still coming up and is retried once per run.
 STARTUP_ABORT_SEC = 5.0
@@ -245,6 +305,11 @@ class Nav2GoalTester(Node):
         # that only the LiDAR believes in. A plan can also simply be missed --
         # the tester subscribes after the first plans are published.
         self.wall_cross_y = []
+        # The real room's map and this leg's track in it (NO_WALL only).
+        self.room_grid = None
+        self.leg_track = []
+        self.legs_behind = 0
+        self.legs_judged = 0
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -258,6 +323,15 @@ class Nav2GoalTester(Node):
         )
 
         self.create_subscription(Path, "/plan", self._plan_cb, reliable_qos)
+        if NO_WALL:
+            # Imported here: only a real-room run needs them, and the unit tests
+            # stub the message modules with what the sim checks use.
+            from nav_msgs.msg import OccupancyGrid
+            from rclpy.qos import DurabilityPolicy
+            map_qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                                 history=HistoryPolicy.KEEP_LAST, depth=1,
+                                 durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.create_subscription(OccupancyGrid, "/map", self._map_cb, map_qos)
 
         # /cmd_vel carries exactly ONE type per run -- Twist on Jazzy, TwistStamped on
         # Lyrical (and on Jazzy when the config asks for it). Subscribing to both in
@@ -346,6 +420,7 @@ class Nav2GoalTester(Node):
         self.leg_id += 1
         self._goal_handle = None
         self.wall_cross_y = []
+        self.leg_track = []
         self.raw_max_x = float("-inf")
         self.raw_cross_y = []
         self._raw_prev = None
@@ -386,6 +461,9 @@ class Nav2GoalTester(Node):
         self.get_logger().warn("No /cmd_vel publisher found; assuming unstamped Twist.")
         return "twist"
 
+    def _map_cb(self, msg) -> None:
+        self.room_grid = grid_from_msg(msg)
+
     def _plan_cb(self, msg: Path):
         self.path_received = msg
         # Inspect path to verify it routes around obstacle wall (x=2.0, y in [-1.5, 1.5])
@@ -401,7 +479,7 @@ class Nav2GoalTester(Node):
             if px >= 2.5:
                 reaches_behind = True
 
-        if routes_around and reaches_behind:
+        if routes_around and reaches_behind and not NO_WALL:
             self.path_avoids_wall = True
             self.get_logger().info(f"✅ Verified global path ({len(msg.poses)} waypoints) routes around obstacle wall!")
 
@@ -517,6 +595,11 @@ class Nav2GoalTester(Node):
                                                               wy - self.leg_start_xy[1]))
         prev = getattr(self, "_last_xy", None)
         self._last_xy = (wx, wy)
+        if NO_WALL:
+            track = getattr(self, "leg_track", None)
+            if track is not None and (not track or math.hypot(wx - track[-1][0], wy - track[-1][1]) >= TRACK_STEP):
+                track.append((wx, wy))
+            return
         if prev is not None and (prev[0] - WALL_X) * (wx - WALL_X) < 0:
             # Interpolate, but only believe it when the two samples bracketing
             # the crossing are close together. /odom is 50 Hz and the robot does
@@ -1130,6 +1213,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         Not a collision -- nothing hit anything -- but worth saying, because
         Nav2 steered by a pose that was inside an obstacle.
         """
+        if NO_WALL:
+            return False
         filt = getattr(node, "wall_cross_y", ())
         return (not went_through()) and any(
             abs(y) + gap < WALL_HALF_SPAN - WALL_END_MARGIN for y, gap in filt)
@@ -1467,10 +1552,19 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                           f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}"
                           f"{_scan_gap_note(node, since=t0)}")
                 return False
-            around = route_note()
+            if NO_WALL:
+                behind, around = room_route_note(getattr(node, "room_grid", None),
+                                                 getattr(node, "leg_start_xy", None), (gx, gy),
+                                                 getattr(node, "leg_track", ()))
+                if behind is not None:
+                    node.legs_judged = getattr(node, "legs_judged", 0) + 1
+                    node.legs_behind = getattr(node, "legs_behind", 0) + bool(behind)
+                route_word = "behind an obstacle"
+            else:
+                around, route_word = route_note(), "around the wall"
             print(f"   leg {i}/{n} -> ({gx:.2f}, {gy:.2f}): reached in {took:.0f} s, closest "
                   f"{node.goal_dist_min:.3f} m, from {node.goal_dist_start:.3f} m; "
-                  f"around the wall: {around}; {node.cmd_vel_count} cmd_vel so far")
+                  f"{route_word}: {around}; {node.cmd_vel_count} cmd_vel so far")
             if estimator_cut_the_corner():
                 fy = ", ".join(f"{y:+.2f} ±{gap:.2f}"
                                for y, gap in getattr(node, "wall_cross_y", ()))
@@ -1503,8 +1597,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         # reporting 601 ms only says the stall happened; how close a healthy
         # run comes to the 0.5 s tolerance is what says whether the margin is
         # comfortable or whether every green leg was one hiccup from red.
-        return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) behind "
-                       f"the obstacle wall and back home (within {goal_tolerance:.2f} m)"
+        if NO_WALL:
+            judged, behind = getattr(node, "legs_judged", 0), getattr(node, "legs_behind", 0)
+            where = (f"to ({goal_x:.2f}, {goal_y:.2f}) and back home (within {goal_tolerance:.2f} m); "
+                     f"{behind} of {judged} judged legs behind an obstacle on /map"
+                     + ("" if judged and behind == judged else
+                        " -- ⚠️ NOT EVERY LEG HAD AN OBSTACLE IN THE WAY"))
+        else:
+            where = (f"behind the obstacle wall and back home (within {goal_tolerance:.2f} m)")
+        return verdict(f"NAV2 GOAL REACHED {n}/{n} legs: {round_trips} round trip(s) {where}"
                        f"{_map_odom_gap_note(node)}{_map_odom_offset_note(node)}{_scan_gap_note(node)}")
 
     def verdict(headline: str) -> bool:
