@@ -61,3 +61,20 @@ def test_no_heading_measured_is_not_a_pass(monkeypatch):
 def test_the_pipeline_derives_it_from_the_robots_goal_checker_and_passes_it():
     assert 'checker.get("yaw_goal_tolerance", 0.25)) + 0.05' in PIPELINE
     assert '--home-yaw-tolerance {args.home_yaw_tolerance}' in PIPELINE
+
+
+def test_home_inside_the_bound_waits_for_nav2_to_finish_turning(monkeypatch):
+    """Inside the looser bound with the goal still running is not yet a pass: the
+    test cancelled there and stopped the TS100 mid-turn, every home leg 10-11 deg
+    off (2026-10-10). With the goal never resolving, the leg times out first."""
+    node = _home_node(math.radians(9.0), status=2)
+    assert _run(monkeypatch, node, timeout=1.0, round_trips=1, goal_x=3.0, goal_y=0.0,
+                home_yaw_tolerance=0.20) is False
+
+
+def test_home_held_inside_the_bound_passes_after_the_settle_time(monkeypatch):
+    import test_nav2_goal
+    monkeypatch.setattr(test_nav2_goal, "HOME_SETTLE_SEC", 0.3)
+    node = _home_node(math.radians(9.0), status=2)
+    assert _run(monkeypatch, node, timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
+                home_yaw_tolerance=0.20) is True

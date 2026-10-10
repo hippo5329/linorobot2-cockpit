@@ -195,6 +195,10 @@ STARTUP_SETTLE_SEC = 15.0
 # once more per run. If the second attempt drives, the first was a phantom and
 # the line says so; if it fails again, the leg fails on its own evidence.
 PHANTOM_CONFIRM_SEC = 2.0
+
+# How long the leg home may sit inside its position and heading bounds with the
+# goal still running before the test stops waiting for Nav2 to call it done.
+HOME_SETTLE_SEC = 15.0
 PHANTOM_SETTLE_SEC = 5.0
 
 # Breathing room between one leg's terminal status and the next leg's dispatch.
@@ -1394,6 +1398,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             """
             phantom_since = None
             unturned_since = None
+            settled_since = None
             while time.time() - t0 < timeout:
                 rclpy.spin_once(node, timeout_sec=0.2)
                 # Sampled here rather than in a callback: the point is how long
@@ -1405,7 +1410,19 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if start_gap_is_meaningful() and reached_goal() and wall_path_ok() \
                         and (moved() or not require_motion) \
                         and (not heading_leg or heading_ok()):
-                    return True
+                    if not heading_leg or node.goal_status == 4:
+                        return True
+                    # The leg home waits for Nav2's own goal checker: cancelling
+                    # the moment the heading came inside this looser bound stopped
+                    # the TS100 mid-turn, every home leg 10-11 deg off (2026-10-10).
+                    # A goal that stays inside but never resolves still passes once
+                    # it has held there for HOME_SETTLE_SEC.
+                    if settled_since is None:
+                        settled_since = time.time()
+                    elif time.time() - settled_since > HOME_SETTLE_SEC:
+                        return True
+                else:
+                    settled_since = None
                 # Home by position but not by heading, and Nav2 has finished with the
                 # goal: it will not turn the robot any more. (A position-only verdict
                 # used to cancel the goal here, before Nav2's goal checker had turned
