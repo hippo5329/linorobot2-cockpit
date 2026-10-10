@@ -780,7 +780,7 @@ function updateMotorPinVisibility() {
   let p1Used = true, p2Used = true, p3Used = true;
   let p1Label = "PWM (Speed)", p2Label = "IN_A (Dir 1)", p3Label = "IN_B (Dir 2)";
 
-  if (drv === "BTS7960" || drv === "AT8236" || drv === "DRV8411A" || drv === "BDC30P") {
+  if (drv === "BTS7960" || drv === "AT8236" || drv === "DRV8411A" || drv === "BDC30P" || drv === "TB67H450" || drv === "RZ7889" || drv === "AT8833") {
     // Two-PWM drivers: RPWM (IN_A) and LPWM (IN_B) carry the speed, and the
     // pin the config calls `pwm` is the driver's ENABLE (R_EN/L_EN on a
     // BTS7960 module, PWMA/PWMB on the Waveshare General Driver's TB6612),
@@ -1106,7 +1106,7 @@ function validateHardwareSafety() {
   const drvType = document.getElementById("cfg-driver-type")?.value || "";
   for (const [pin, names] of Object.entries(assigned)) {
     if (names.length < 2) continue;
-    if ((drvType === "BTS7960" || drvType === "AT8236" || drvType === "DRV8411A" || drvType === "BDC30P") && names.every((n) => /^Motor \d PWM$/.test(n))) continue;
+    if ((drvType === "BTS7960" || drvType === "AT8236" || drvType === "DRV8411A" || drvType === "BDC30P" || drvType === "TB67H450" || drvType === "RZ7889" || drvType === "AT8833") && names.every((n) => /^Motor \d PWM$/.test(n))) continue;
     errors.push(`GPIO Pin ${pin} is assigned to multiple devices: ${names.join(", ")}`);
   }
 
