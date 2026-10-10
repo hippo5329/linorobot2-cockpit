@@ -283,7 +283,21 @@ def test_an_ota_transfer_stops_the_base_and_feeds_the_watchdog():
     ota = open(os.path.join(root, "firmware", "common", "lib", "wifi", "ota.cpp")).read()
     main = open(os.path.join(root, "firmware", "src", "main.cpp")).read()
     assert "if (ota_on_start) ota_on_start();" in ota and "if (ota_feed) ota_feed();" in ota
-    assert "initOta(fullStop, otaFeedWatchdog);" in main
+    assert "initOta(otaStart, otaFeedWatchdog);" in main
+    assert "static void otaStart() { fullStop(); pauseLidar(); }" in main
+
+
+def test_an_ota_transfer_has_the_radio_to_itself():
+    """A real LiDAR forwarded over UDP kept sending during the update, and the UART's
+    overflow errors went out one syslog packet each: a real tracked robot's OTA died at 69 % and
+    97 % (2026-10-10). The forwarder pauses, and the error line is once a second."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    lidar = open(os.path.join(root, "firmware", "common", "lib", "lidar", "lidar.cpp")).read()
+    assert "if (!forwarding || paused || WiFi.status() != WL_CONNECTED) {" in lidar
+    cb = lidar[lidar.index("void rx_err_callback("):lidar.index("void pauseLidar(void)")]
+    assert "if (paused)\n    return;" in cb and "now - last_ms < 1000" in cb, \
+        "every UART error is a syslog packet again"
+    assert lidar.count("void pauseLidar(void)") == 2, "the stub for boards with no forwarder is gone"
 
 
 def test_the_pet_comes_up_as_a_bare_esp32_and_its_design_brings_wifi_and_no_i2c(cfg):

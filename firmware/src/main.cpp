@@ -650,6 +650,8 @@ struct timespec getTime();
 bool createEntities();
 bool destroyEntities();
 void fullStop();
+// The wheels stop and the LiDAR forwarder goes quiet before the first OTA byte.
+[[maybe_unused]] static void otaStart() { fullStop(); pauseLidar(); }
 void moveBase();
 void publishData();
 static void reportSampleAge();
@@ -1154,7 +1156,7 @@ void setup()
     // used to abort every ESP32 that flashed a released image -- which compiles
     // OTA in, because the image is built from a Wi-Fi robot's config.
     if (wifiWanted()) {
-        initOta(fullStop, otaFeedWatchdog);
+        initOta(otaStart, otaFeedWatchdog);
         initPing(formatBanner);
     }
 

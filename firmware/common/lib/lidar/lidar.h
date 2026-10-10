@@ -17,5 +17,6 @@
 void poweronLidar(void);
 void poweroffLidar(void);
 void initLidar(void);
+void pauseLidar(void);   // an OTA update owns the radio until the reboot
 
 #endif

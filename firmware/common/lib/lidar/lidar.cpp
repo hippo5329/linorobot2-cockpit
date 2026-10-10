@@ -115,9 +115,30 @@ static void sendLidarInit(void)
 
 
 
+// One line per second at most, with the count. Every error was a syslog packet,
+// and an OTA write stalls this UART long enough to overflow its FIFO hundreds of
+// times a second: a real tracked robot's flood of "err 3" over Wi-Fi starved the update,
+// which died at 69 % and 97 % (2026-10-10).
+static volatile bool paused = false;
 void rx_err_callback(hardwareSerial_error_t err)
 {
-  syslog(LOG_INFO, "%s err %d", __FUNCTION__, err);
+  static uint32_t last_ms = 0, count = 0;
+  count++;
+  if (paused)
+    return;
+  const uint32_t now = millis();
+  if (last_ms && now - last_ms < 1000)
+    return;
+  syslog(LOG_INFO, "%s err %d (x%u)", __FUNCTION__, err, (unsigned)count);
+  last_ms = now;
+  count = 0;
+}
+
+// The OTA hook: nothing goes out on the radio but the update. The UART is still
+// drained (rx_callback drops the bytes) so the driver never blocks on it.
+void pauseLidar(void)
+{
+  paused = true;
 }
 
 size_t len = 0;
@@ -130,7 +151,7 @@ void rx_callback(void)
   // receive callback the moment a LiDAR is wired up. Keep draining the UART --
   // dropping the bytes is right, blocking the callback is not. The radio can
   // arrive after setup() now that initWifis() no longer waits for it.
-  if (!forwarding || WiFi.status() != WL_CONNECTED) {
+  if (!forwarding || paused || WiFi.status() != WL_CONNECTED) {
     len = 0;
     return;
   }
@@ -227,4 +248,5 @@ void initLidar(void) {
 void initLidar(void) {};
 void poweronLidar(void) {};
 void poweroffLidar(void) {};
+void pauseLidar(void) {};
 #endif
