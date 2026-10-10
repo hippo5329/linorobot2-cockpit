@@ -5,7 +5,8 @@
 # mecanum here, or a 4WD skid steer by setting kinematics.base_type -- the pins are
 # the same. UNVERIFIED ON HARDWARE: checked through the header and env generators only.
 #
-#   * MCU: ESP32-WROOM-32E, 4 MB flash, CH340G USB serial (auto-reset on DTR/RTS).
+#   * MCU: ESP32-WROOM-32E, 4 MB flash, CH340G USB serial at 1.5 Mbaud (auto-reset
+#     on DTR/RTS).
 #   * Motors: four RZ7889 bridges (BI/FI, PWM on both inputs, no enable: our dual-PWM
 #     `bts7960` scheme), 3 A per motor. M2 and M3 (17/12, 14/15) are on the motor
 #     side of the DIP switch SW1 only when it is set to "Motor"; on "IO" they are
@@ -34,7 +35,9 @@ base_controller:
   driver_type: RZ7889
   transport: serial
   serial_port: /dev/ttyUSB0
-  baudrate: 921600
+  # The CH340G runs to 2 Mbaud; 1.5 Mbaud is the rate this firmware and the agent
+  # already carry on the GenDrv's bridge.
+  baudrate: 1500000
   wifi:
     enabled: true
   telemetry:

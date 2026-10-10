@@ -5,7 +5,8 @@
 # Arduino Uno R3 footprint. UNVERIFIED ON HARDWARE: checked through the header and
 # env generators only.
 #
-#   * MCU: ESP32-D0WD-V3, 4 MB flash, CH340G USB serial (auto-reset on DTR/RTS).
+#   * MCU: ESP32-D0WD-V3, 4 MB flash, CH340G USB serial at 1.5 Mbaud (auto-reset
+#     on DTR/RTS).
 #   * Motors: one AT8833CR dual bridge, IN1/IN2 with PWM on both inputs and no enable
 #     (our dual-PWM `bts7960` scheme), 1.2 A per channel: M0 (27/13) and M1 (4/2).
 #     The DIP switch SW1 must be on the motor side; on the other side those four
@@ -34,7 +35,9 @@ base_controller:
   driver_type: AT8833
   transport: serial
   serial_port: /dev/ttyUSB0
-  baudrate: 921600
+  # The CH340G runs to 2 Mbaud; 1.5 Mbaud is the rate this firmware and the agent
+  # already carry on the GenDrv's bridge.
+  baudrate: 1500000
   wifi:
     enabled: true
   telemetry:

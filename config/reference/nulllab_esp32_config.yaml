@@ -4,7 +4,8 @@
 # NULLLAB Maker-ESP32 (github.com/nulllaborg/maker-esp32, schematic V1.7), 2WD.
 # UNVERIFIED ON HARDWARE: checked through the header and env generators only.
 #
-#   * MCU: ESP32-WROOM-32E, 4 MB flash, CH340G USB serial (auto-reset on DTR/RTS).
+#   * MCU: ESP32-WROOM-32E, 4 MB flash, CH340G USB serial at 1.5 Mbaud (auto-reset
+#     on DTR/RTS).
 #   * Motors: four Toshiba TB67H450FNG bridges, IN1/IN2 with PWM on both inputs and no
 #     enable (our dual-PWM `bts7960` scheme). This design uses M1 (27/13) and M2 (4/2).
 #     M3/M4 (17/12, 14/15) sit behind the DIP switch SW1 and stay free.
@@ -33,7 +34,9 @@ base_controller:
   driver_type: TB67H450
   transport: serial
   serial_port: /dev/ttyUSB0
-  baudrate: 921600
+  # The CH340G runs to 2 Mbaud; 1.5 Mbaud is the rate this firmware and the agent
+  # already carry on the GenDrv's bridge.
+  baudrate: 1500000
   wifi:
     enabled: true
   telemetry:

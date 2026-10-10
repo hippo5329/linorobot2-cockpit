@@ -618,8 +618,8 @@ not by the build.
 Three NULLLAB (emakefun) ESP32 motor boards are reference designs. Each is an ESP32 with a CH340G
 on USB and dual-PWM motor bridges, and runs `esp32-jazzy` / `esp32-lyrical` with its own env block;
 the pins are from the vendor's schematics (`github.com/nulllaborg`). None has an IMU or a battery
-sense pin, and the LD19 plugs into the robot computer. Transport is serial micro-ROS at 921600 baud,
-with Wi-Fi for syslog and OTA. They are controller designs on the one default chassis.
+sense pin, and the LD19 plugs into the robot computer. Transport is serial micro-ROS at 1.5 Mbaud
+over the CH340G (the GenDrv's rate; the chip runs to 2 Mbaud), with Wi-Fi for syslog and OTA. They are controller designs on the one default chassis.
 
 | | Maker-ESP32 (`nulllab_esp32`) | Maker-ESP32 PRO (`nulllab_esp32_pro`) | ESP32-UNO (`nulllab_esp32_uno`) |
 |---|---|---|---|
