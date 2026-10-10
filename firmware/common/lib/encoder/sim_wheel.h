@@ -750,6 +750,29 @@ public:
 #define SIM_MAG_ROOM_HEADING_DEG 37.0f
 #endif
 
+// The robot's heading in the WORLD at boot, radians: the yaw of sim_world_start
+// ("x,y,yaw", a saved-map world on the Sim MCU), else 0. Odometry starts at yaw 0
+// wherever the robot stands; the field does not -- it is fixed to the world. Without
+// this a robot started rotated in the map read the same compass heading as one that
+// was not (2026-10-10), so no start pose could exercise the heading fusion.
+static inline float simWorldStartYaw()
+{
+    static float v = -1000.0f;
+    if (v < -900.0f) {
+        v = 0.0f;
+        const char *p = envGet("sim_world_start", "");
+        for (int k = 0; p && *p && k < 3; k++) {
+            char *end = NULL;
+            const float f = strtof(p, &end);
+            if (end == p) break;
+            if (k == 2 && isfinite(f)) v = f;
+            p = end;
+            while (*p == ',' || *p == ' ') p++;
+        }
+    }
+    return v;
+}
+
 static inline float simMagRoomHeading()   // radians
 {
     static float v = -1000.0f;
@@ -912,7 +935,7 @@ public:
 
     void applyMag(sensor_msgs__msg__MagneticField &mag_msg)
     {
-        const float theta = heading_ - simMagRoomHeading();
+        const float theta = heading_ + simWorldStartYaw() - simMagRoomHeading();
         const float b = (float)SIM_MAG_FIELD_T;
         // The world field points along +Y, i.e. North in the ENU frame ROS uses,
         // because that is the direction the AHRS (ahrs.h, ported from
