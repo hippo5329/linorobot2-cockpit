@@ -1,0 +1,664 @@
+# pimoroni_motor2040 -- single source of truth for this robot.
+# One robot per file, one base controller per robot.
+#
+# Pimoroni Motor 2040 (RP2040, 2 MB flash), four motors: mecanum here, or a 4WD
+# skid steer by setting kinematics.base_type -- the pins are the same. Pins from
+# Pimoroni's own board header (pimoroni-pico, libraries/motor2040/motor2040.hpp).
+# UNVERIFIED ON HARDWARE: checked through the header and env generators only.
+#
+#   * MCU: RP2040, micro-ROS over its native USB serial. No radio.
+#   * Motors: two DRV8833 dual bridges, IN1/IN2 with PWM on both inputs and no enable
+#     (our dual-PWM `bts7960` scheme), motors A-D on 4/5, 6/7, 8/9, 10/11 -- one PWM
+#     slice each. The DRV8833 is rated to 10.8 V: check the motors' supply against it.
+#   * Encoders: the four JST-SH encoder ports, A-D on 0/1, 2/3, 12/13, 14/15 (the PIO
+#     encoder needs B = A + 1, so a reversed count is an invert, not a pin swap).
+#   * I2C: SDA 20 / SCL 21 (I2C0) on the Qw/ST connector. Nothing is fitted on the board.
+#   * Battery: the supply reaches GPIO 29 through the board's sense mux and a 10k / 3.9k
+#     divider. gpio_out selects the mux's voltage channel (address 0b100: GPIO 25 high,
+#     22 and 24 low) at boot; the other channels (motor currents, fault) stay unread.
+#   * LED: the board's only LED is a WS2812 on GPIO 18, which the status blink cannot
+#     drive, and GPIO 25 (a Pico's LED) is a mux address line here. The blink goes out
+#     GPIO 16, the sensor header's TRIG, where nothing is fitted: plug an LED in there
+#     to see it, and move it before wiring an HC-SR04 to that header.
+#   * IMAGE RISK, check on the first boot: the RP2040 release image is the Pico W build.
+#     arduino-pico decides at boot whether a radio is fitted from GPIO 25 and the ADC on
+#     GPIO 29, which on this board are the sense mux; a misread starts the CYW43 driver
+#     on GPIO 23/24/25/29 (the user switch and the mux) and it fails on a board that has
+#     no radio. If the board does not come up, flash the plain `pico` build instead.
+#   * The LD19 plugs into the robot computer; the MCU never sees the scan.
+robot:
+  name: pimoroni_motor2040
+  description: Pimoroni Motor 2040 (mecanum or 4WD, real hardware)
+base_controller:
+  name: pimoroni_motor2040
+  description: 'Pimoroni Motor 2040: RP2040 + DRV8833 x2, four encoder ports, supply sense
+    (micro-ROS over USB serial)'
+  mcu: pico
+  board: rpipico
+  driver_type: DRV8833
+  transport: serial
+  serial_port: /dev/ttyACM0
+  baudrate: 921600
+  lidar:
+    model: ld19
+    comm_mode: serial
+    serial_port: /dev/ttyUSB0
+    baudrate: 230400
+  sensors:
+    imu: NONE
+    mag: NONE
+    current: NONE
+    env: NONE
+    use_sim_imu: false
+    use_sim_mag: false
+    use_sim_wheel: false
+    use_sim_ld19: false
+    use_sim_env: false
+    use_sim_sonar: false
+    use_sim_battery: false
+  # The simulated world. Every key is optional -- absent, the firmware keeps its
+  # compiled default, which is the value shown here. A design is real, so this
+  # block only matters to a robot built from it and later cleared to a bare module.
+  simulation:
+    map_width: 10.0                   # the simulated room, metres, centred on the origin
+    map_height: 6.0
+    wall_obstacle: true               # the obstacle the Nav2 test goal sits behind
+    wall_x1: 2.0
+    wall_y1: -1.5
+    wall_x2: 2.0
+    wall_y2: 1.5
+    robot_mass: 3.5                   # kg -- sets the wheels' spin-up time constant
+    wheel_noise_rpm: 1.0              # +/- peak white noise on the reported RPM
+    gear_efficiency: 0.75             # fraction of motor torque the reduction returns
+    gear_drag_rpm: 12.0               # constant (Coulomb) drag, RPM/s, while turning
+    battery_sag: 0.25                 # fraction of V_oc lost at four-wheel stall current
+    battery_sag_tau_ms: 400           # the pack sags, and recovers, over this long
+    driver_drop: 0.03                 # bridge's fixed voltage floor, present at any current
+    driver_resistance: 0.1            # bridge's current-proportional loss, instant
+    motor_stall_amps: 2.5             # datasheet stall current at the motor's rated voltage
+    driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
+    imu_mount_roll_deg: 0.0
+    imu_mount_pitch_deg: 0.0
+    mag_heading_deg: 37.0
+  pins:
+    # Dual PWM: in_a / in_b are Pimoroni's P / N pins, no enable pin. Numbering is
+    # linorobot2's: 1 front-left, 2 front-right, 3 rear-left, 4 rear-right = the
+    # board's motors and encoders A-D. Correct a reversed motor with invert, not by
+    # swapping wires.
+    motor1:
+      pwm: -1
+      in_a: 4
+      in_b: 5
+      invert: false
+    motor2:
+      pwm: -1
+      in_a: 6
+      in_b: 7
+      invert: false
+    motor3:
+      pwm: -1
+      in_a: 8
+      in_b: 9
+      invert: false
+    motor4:
+      pwm: -1
+      in_a: 10
+      in_b: 11
+      invert: false
+    encoder1:
+      pin_a: 0
+      pin_b: 1
+      invert: false
+    encoder2:
+      pin_a: 2
+      pin_b: 3
+      invert: false
+    encoder3:
+      pin_a: 12
+      pin_b: 13
+      invert: false
+    encoder4:
+      pin_a: 14
+      pin_b: 15
+      invert: false
+    i2c:
+      sda: 20
+      scl: 21
+    led: 16           # the sensor header's TRIG, nothing fitted (see the header)
+    # GPIO 29 = the sense mux's output; VOLTAGE_GAIN 3.9 / 13.9 in Pimoroni's header.
+    battery:
+      pin: 29
+      r1: 10000
+      r2: 3900
+    gpio_out: 22=0,24=0,25=1   # the sense mux on its voltage channel (0b100)
+kinematics:
+  base_type: mecanum
+  stamped_cmd_vel: auto
+  # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
+  # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
+  # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
+  wheel_diameter: 0.1
+  lr_wheels_distance: 0.271
+  fr_wheels_distance: 0.18   # the shared footprint (robot_radius 0.26) has to contain the body
+                          # AND the wheels, which stick out past it -- see
+                          # gen_robot_description.config_warnings()
+  max_rpm: 140
+  counts_per_rev: 4000
+  # DERIVED -- the driver margin, not a hand-picked derating.
+  #
+  # The share of the motor's no-load speed that survives the gearbox, the gear
+  # drag, the friction, the pack's sag and the bridge. Measured off the
+  # drivetrain model on test_acc's 1 s profile and rewritten by
+  # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
+  # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
+  max_rpm_ratio: 0.8
+  # The parts, not the product: counts_per_rev = encoder_ppr x quadrature x
+  # gear_ratio = 11 x 4 x 30 = 1320, computed by the generators. Give
+  # counts_per_rev directly instead if that is the number you have.
+  encoder_ppr: 11
+  quadrature: 4
+  gear_ratio: 30
+  pwm_bits: 10
+  pwm_frequency: 20000
+  motor_operating_voltage: 12
+  motor_power_max_voltage: 12
+  pid:
+    kp: 0.6
+    ki: 0.8
+    kd: 0.5
+# The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
+# (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
+# axle positions come from kinematics above; this block is what kinematics does not say.
+geometry: {}   # the default chassis: derived by gen_robot_description.effective_geometry()
+               # from the kinematics above -- same body and mounts as every bare module,
+               # laser at the base origin. A real chassis gets measured values in October.
+ekf:
+  ekf_filter_node:
+    ros__parameters:
+      frequency: 50.0
+      two_d_mode: true
+      publish_tf: true
+      map_frame: map
+      odom_frame: odom
+      base_link_frame: base_link
+      world_frame: odom
+      odom0: odom/unfiltered
+      odom0_config:
+      - false
+      - false
+      - false
+      - false
+      - false
+      - false
+      - true    # vx
+      - true    # vy: the firmware publishes it with TWIST_COV 1e-5 -- on a
+      - false    #     differential base that zero is the non-holonomic constraint
+      - false
+      - false
+      - true    # yaw rate
+      - false
+      - false
+      - false
+      imu0: imu/data
+      imu0_config:
+      - false
+      - false
+      - false
+      - false
+      - false
+      - true    # absolute yaw: the board's AHRS, anchored by the magnetometer
+      - false
+      - false
+      - false
+      - false
+      - false
+      - true    # yaw rate
+      - true    # ax
+      - true    # ay
+      - false
+slam:
+  # A scan that sees less than 270 deg -- a depth camera (~87), a masked LiDAR --
+  # takes these over slam_toolbox's values below (slam.launch.py). Matching is held
+  # hard to the odometry and only strong loop closures count: with ~90 deg of wall
+  # the matcher rotated maps that odometry had right. Replayed on recorded camera
+  # runs, max position / max yaw error against the true pose (2026-10-03):
+  #   camera mecanum 3.33 m / 30.0 deg -> 0.21 m / 2.5 deg
+  #   camera skid    4.06 m / 38.9 deg -> 0.15 m / 2.1 deg
+  # A 360 deg LiDAR keeps slam_toolbox's defaults: on the 1280 m2 warehouse the
+  # same values cost 1.9 m (lyrical replay) and two live maps came out rotated 1 deg.
+  # Strong closures still let a false one through in the rooms world: a 2.4-3.3 m
+  # jump, all translation, to a look-alike room inside slam_toolbox's 3.0 m loop
+  # search, after which home sat behind a wall (gate, 2026-10-03, three camera
+  # legs). Replayed, a 2.0 m search took the camera skid run from 2.68 m to 0.20 m.
+  # The coarse angular search is halved (20 -> 10 deg): with ~90 deg of wall the
+  # best match sat at the window's EDGE, and the map turned 20.8, 41.2, 61.4 deg
+  # in steps of one window until a room was sealed (rc65, camera mecanum: 4 of 6
+  # bags, both distros; loop closing off did not stop it). With 10 deg, 12 of 12
+  # camera mecanum legs returned home, the largest turn 10.4 deg (2026-10-07).
+  # Odometry cannot be 10 deg off within minimum_travel_heading (0.5 rad).
+  narrow_fov_overrides:
+    angle_variance_penalty: 0.02
+    minimum_angle_penalty: 0.3
+    distance_variance_penalty: 0.1
+    minimum_distance_penalty: 0.3
+    loop_match_minimum_response_coarse: 0.6
+    loop_match_minimum_response_fine: 0.7
+    loop_match_minimum_chain_size: 15
+    loop_search_maximum_distance: 2.0
+    coarse_search_angle_offset: 0.175
+  slam_toolbox:
+    ros__parameters:
+      solver_plugin: solver_plugins::CeresSolver
+      ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+      ceres_preconditioner: SCHUR_JACOBI
+      ceres_trust_strategy: LEVENBERG_MARQUARDT
+      ceres_dogleg_type: TRADITIONAL_DOGLEG
+      ceres_loss_function: None
+      odom_frame: odom
+      map_frame: map
+      base_frame: base_link
+      scan_topic: /scan
+      mode: mapping
+      debug_logging: false
+      throttle_scans: 1
+      transform_publish_period: 0.02
+      # The map->odom correction is stamped with the CLOCK, not with the scan
+      # that produced it.
+      #
+      # slam_toolbox's publishTransformLoop runs at transform_publish_period
+      # (50 Hz here) but, with restamp_tf false, stamps every message
+      # scan_timestamp + transform_timeout -- and scan_header is assigned on
+      # every incoming scan. So the stamp advances only as fast as /scan
+      # ARRIVES, and the loop republishes the same stamp in between.
+      #
+      # That makes every TF consumer hostage to scan latency. Our Wi-Fi is
+      # strong but shared, so datagrams queue behind other traffic and a scan
+      # lands late; its stamp is then old, map->odom inherits the age, and a
+      # controller asking for the transform at "now" is asking into the future.
+      # That is the whole of error_code=102: measured 601 ms of frozen stamp on
+      # a SERIAL leg, and the Wi-Fi legs fail more often for the same reason
+      # with latency on top.
+      #
+      # Stamping with now() is what AMCL does with its own map->odom, and it is
+      # right for the same reason: this is a slowly-varying CORRECTION, not an
+      # observation. Its value is unchanged between scans, so asserting it is
+      # current is true.
+      #
+      # It does not hide a dead LiDAR. nav2_collision_monitor's `scan` source
+      # has source_timeout 1.0 and stops the robot when the topic goes quiet --
+      # which is the component whose job that is, and it says so out loud.
+      restamp_tf: true
+      map_update_interval: 5.0
+      resolution: 0.05
+      max_laser_range: 10.0
+      minimum_time_interval: 0.5
+      transform_timeout: 0.2
+      tf_buffer_duration: 30.0
+      stack_size_to_use: 40000000
+      enable_interactive_mode: true
+      use_scan_matching: true
+      use_scan_barycenter: true
+      minimum_travel_distance: 0.5
+      minimum_travel_heading: 0.5
+      check_min_dist_and_heading_precisely: true
+      scan_buffer_size: 10
+      scan_buffer_maximum_scan_distance: 10.0
+      link_match_minimum_response_fine: 0.1
+      link_scan_maximum_distance: 1.5
+      loop_search_maximum_distance: 3.0
+      do_loop_closing: true
+      loop_match_minimum_chain_size: 10
+      loop_match_maximum_variance_coarse: 3.0
+      loop_match_minimum_response_coarse: 0.35
+      loop_match_minimum_response_fine: 0.45
+      correlation_search_space_dimension: 0.5
+      correlation_search_space_resolution: 0.01
+      correlation_search_space_smear_deviation: 0.1
+      # How far one loop closure may move the map: the matcher searches this square
+      # around the candidate (slam_toolbox's 8.0 is +-4 m). The rooms world repeats
+      # every ~2.9 m and closures matched the next room over: 2.4-3.3 m jumps, all
+      # translation, then home sat behind a wall (gate 2026-10-03/04, LiDAR and camera
+      # alike; a 2.0 m candidate radius still let a 2.76 m one through). 3.0 (+-1.5 m)
+      # cannot reach the next room. Replayed: the camera run that jumped 3.04 m held
+      # 0.17 m, as with loop closing off; on the 1280 m2 warehouse LiDAR replay it
+      # matched the default (jazzy 0.21 m worst either way, lyrical 0.33 vs 0.34 m).
+      loop_search_space_dimension: 3.0
+      loop_search_space_resolution: 0.05
+      loop_search_space_smear_deviation: 0.03
+      distance_variance_penalty: 0.5
+      angle_variance_penalty: 1.0
+      fine_search_angle_offset: 0.00349
+      coarse_search_angle_offset: 0.349
+      coarse_angle_resolution: 0.0349
+      minimum_angle_penalty: 0.9
+      minimum_distance_penalty: 0.5
+      use_response_expansion: true
+nav2:
+  bt_navigator:
+    ros__parameters:
+      global_frame: map
+      robot_base_frame: base_link
+      odom_topic: /odom
+      bt_loop_duration: 10
+      # 20 ms is Nav2's own default and it is how long a BT action node waits for
+      # a server to ACKNOWLEDGE a goal -- not to do the work. On a loaded bench a
+      # 20 ms hiccup in controller_server therefore aborts the whole navigation
+      # with error_code=107 'Behavior Tree action client timed out waiting.', and
+      # the leg is scored as a navigation failure with the robot untouched at home
+      # (traversed 0.001 m). Measured twice in 261 rounds of the 2026-09-24 soak
+      # (rounds 157 and 258), both on follow_path:
+      #
+      #   Begin navigating from current location (0.20, -0.21) to (3.00, 0.00)
+      #   Timed out while waiting for action server to acknowledge goal request
+      #     for follow_path
+      #   goalCompleted error 107: Behavior Tree action client timed out waiting..
+      #
+      # ~0.8% of legs. That is small in a soak and NOT small in a gate: over 30
+      # legs it is better than a one-in-five chance of a spurious red per matrix,
+      # which is a plausible share of this project's unexplained gate flakiness.
+      # 200 ms costs nothing real -- it delays noticing a genuinely dead server by
+      # 180 ms, and a server that never appears is caught by
+      # wait_for_service_timeout below, not by this.
+      default_server_timeout: 200
+      wait_for_service_timeout: 30000
+      action_server_result_timeout: 900.0
+      navigators:
+      - navigate_to_pose
+      - navigate_through_poses
+      navigate_to_pose:
+        plugin: nav2_bt_navigator::NavigateToPoseNavigator
+      navigate_through_poses:
+        plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
+      error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+  controller_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      controller_frequency: 20.0
+      costmap_update_timeout: 0.3
+      min_x_velocity_threshold: 0.001
+      min_y_velocity_threshold: 0.001   # mecanum: lateral velocity is real
+      min_theta_velocity_threshold: 0.001
+      failure_tolerance: 0.3
+      progress_checker_plugins:
+      - progress_checker
+      goal_checker_plugins:
+      - general_goal_checker
+      controller_plugins:
+      - FollowPath
+      use_realtime_priority: false
+      progress_checker:
+        plugin: nav2_controller::SimpleProgressChecker
+        required_movement_radius: 0.5
+        movement_time_allowance: 10.0
+      general_goal_checker:
+        stateful: true
+        plugin: nav2_controller::SimpleGoalChecker
+        xy_goal_tolerance: 0.35
+        yaw_goal_tolerance: 0.35
+      FollowPath:
+        plugin: nav2_rotation_shim_controller::RotationShimController
+        transform_tolerance: 0.3   # a throttled robot PC runs this loop at 7-8 Hz; 0.1 s aborted a goal mid-route
+        primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+        angular_dist_threshold: 0.785
+        angular_disengage_threshold: 0.3925
+        forward_sampling_distance: 0.5
+        rotate_to_heading_angular_vel: 0.57
+        max_angular_accel: 0.87
+        simulate_ahead_time: 1.0
+        rotate_to_goal_heading: false
+        rotate_to_heading_once: true
+        use_path_orientations: false
+        desired_linear_vel: 0.24
+        lookahead_dist: 0.6
+        min_lookahead_dist: 0.3
+        max_lookahead_dist: 0.9
+  planner_server:
+    ros__parameters:
+      expected_planner_frequency: 20.0
+      planner_plugins:
+      - GridBased
+      costmap_update_timeout: 1.0
+      GridBased:
+        plugin: nav2_navfn_planner::NavfnPlanner
+        tolerance: 0.5
+        use_astar: false
+        allow_unknown: true
+  smoother_server:
+    ros__parameters:
+      smoother_plugins:
+      - simple_smoother
+      simple_smoother:
+        plugin: nav2_smoother::SimpleSmoother
+        tolerance: 1.0e-10
+        max_its: 1000
+        do_refinement: true
+  behavior_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      local_costmap_topic: local_costmap/costmap_raw
+      global_costmap_topic: global_costmap/costmap_raw
+      local_footprint_topic: local_costmap/published_footprint
+      global_footprint_topic: global_costmap/published_footprint
+      cycle_frequency: 10.0
+      behavior_plugins:
+      - spin
+      - backup
+      - drive_on_heading
+      - wait
+      spin:
+        plugin: nav2_behaviors::Spin
+      backup:
+        plugin: nav2_behaviors::BackUp
+      drive_on_heading:
+        plugin: nav2_behaviors::DriveOnHeading
+      wait:
+        plugin: nav2_behaviors::Wait
+      local_frame: odom
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.3
+      simulate_ahead_time: 2.0
+      max_rotational_vel: 0.46
+      min_rotational_vel: 0.23
+      rotational_acc_lim: 1.74
+  velocity_smoother:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      smoothing_frequency: 20.0
+      scale_velocities: false
+      feedback: OPEN_LOOP
+      # DERIVED from the motors, not typed in. Do not hand-edit.
+      #
+      #   python3 scripts/drivetrain_report.py --params <this file>
+      #
+      # regenerates these, and saving the robot in the cockpit rewrites them,
+      # unless kinematics.auto_nav2_limits is false. The numbers come from the
+      # drivetrain model in firmware/common/lib/encoder/sim_wheel.h, run on
+      # test_acc's own 1 s profile -- so they follow the wheels, the load, the
+      # gearing and the pack rather than somebody's judgement about one chassis.
+      #
+      # Why it is done this way: a combined translate-and-rotate costs linear +
+      # rotational wheel speed at the outer wheel, and each limit looked
+      # survivable alone. The old ceiling of 0.5 m/s with 2.5 rad/s asked 203 rpm
+      # of a mecanum base -- 171% of what the motors have. The controller then
+      # commands what it cannot get, Kinematics scales the whole request down to
+      # fit, and tracking degrades: three mecanum legs left the room on
+      # 2026-09-23 (stamp 20260923-205120), all at leg 4/8, on both distros. It
+      # had always been over budget (0.4 m/s with 1.8 rad/s is 123 rpm, 103%),
+      # and correcting the mecanum rotation radius to the textbook (lx + ly) made
+      # the same request cost 154 rpm, which is where it stopped being marginal.
+      #
+      # The angular figure is per-drivetrain now, for that reason: mecanum turns
+      # on (lr + fr)/2 = 0.2255 m where a differential base turns on lr/2 =
+      # 0.1355 m, so the same yaw rate costs it 66% more wheel speed and it is
+      # given a correspondingly lower ceiling.
+      max_velocity:
+      - 0.29
+      - 0.29
+      - 0.69
+      min_velocity:
+      - -0.29
+      - -0.29
+      - -0.69
+      max_accel:
+      - 0.8
+      - 0.8
+      - 0.87
+      max_decel:
+      - -0.8
+      - -0.8
+      - -0.87
+      odom_topic: odom
+      odom_duration: 0.1
+      deadband_velocity:
+      - 0.0
+      - 0.0
+      - 0.0
+      velocity_timeout: 1.0
+  collision_monitor:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      base_frame_id: base_link
+      odom_frame_id: odom
+      cmd_vel_in_topic: cmd_vel_smoothed
+      cmd_vel_out_topic: cmd_vel
+      state_topic: collision_monitor_state
+      transform_tolerance: 0.2
+      source_timeout: 1.0
+      base_shift_correction: true
+      stop_pub_timeout: 2.0
+      polygons:
+      - FootprintApproach
+      FootprintApproach:
+        type: polygon
+        action_type: approach
+        footprint_topic: /local_costmap/published_footprint
+        time_before_collision: 1.2
+        simulation_time_step: 0.1
+        min_points: 6
+        visualize: false
+        enabled: true
+      observation_sources:
+      - scan
+      scan:
+        type: scan
+        topic: scan
+        min_height: 0.15
+        max_height: 2.0
+        enabled: true
+  docking_server:
+    ros__parameters:
+      enable_stamped_cmd_vel: false
+      controller_frequency: 20.0
+      initial_perception_timeout: 5.0
+      wait_charge_timeout: 5.0
+      dock_approach_timeout: 30.0
+      undock_linear_tolerance: 0.05
+      undock_angular_tolerance: 0.1
+      max_retries: 3
+      base_frame: base_link
+      fixed_frame: odom
+      dock_backwards: false
+      dock_prestaging_tolerance: 0.5
+      dock_plugins:
+      - simple_charging_dock
+      simple_charging_dock:
+        plugin: opennav_docking::SimpleChargingDock
+        docking_threshold: 0.05
+        staging_x_offset: -0.7
+        use_external_detection_pose: true
+        use_battery_status: false
+        use_stall_detection: false
+  waypoint_follower:
+    ros__parameters:
+      loop_rate: 20
+      stop_on_failure: false
+      action_server_result_timeout: 900.0
+      waypoint_task_executor_plugin: wait_at_waypoint
+      wait_at_waypoint:
+        plugin: nav2_waypoint_follower::WaitAtWaypoint
+        enabled: true
+        waypoint_pause_duration: 200
+  local_costmap:
+    local_costmap:
+      ros__parameters:
+        update_frequency: 5.0
+        publish_frequency: 2.0
+        global_frame: odom
+        robot_base_frame: base_link
+        transform_tolerance: 0.5   # a throttled robot PC delivers TF late; the planner aborted a goal with 'Failed to transform end pose to global frame'
+        rolling_window: true
+        width: 3
+        height: 3
+        resolution: 0.05
+        robot_radius: 0.26
+        plugins:
+        - voxel_layer
+        - inflation_layer
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.70   # nav2_bringup nav2_params.yaml, jazzy and lyrical
+        voxel_layer:
+          plugin: nav2_costmap_2d::VoxelLayer
+          enabled: true
+          publish_voxel_map: true
+          origin_z: 0.0
+          z_resolution: 0.05
+          z_voxels: 16
+          max_obstacle_height: 2.0
+          mark_threshold: 0
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        always_send_full_costmap: true
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        update_frequency: 1.0
+        publish_frequency: 1.0
+        global_frame: map
+        robot_base_frame: base_link
+        transform_tolerance: 1.0   # the PLANNER transforms the goal with this one, and 0.5 still lost a goal to 'Failed to transform end pose to global frame'; the global costmap updates at 1 Hz, so a second of slack is consistent with it
+        robot_radius: 0.26
+        resolution: 0.05
+        track_unknown_space: true
+        plugins:
+        - static_layer
+        - obstacle_layer
+        - inflation_layer
+        obstacle_layer:
+          plugin: nav2_costmap_2d::ObstacleLayer
+          enabled: true
+          observation_sources: scan
+          scan:
+            topic: /scan
+            max_obstacle_height: 2.0
+            clearing: true
+            marking: true
+            data_type: LaserScan
+            raytrace_max_range: 3.0
+            raytrace_min_range: 0.0
+            obstacle_max_range: 2.5
+            obstacle_min_range: 0.0
+        static_layer:
+          plugin: nav2_costmap_2d::StaticLayer
+          map_subscribe_transient_local: true
+        inflation_layer:
+          plugin: nav2_costmap_2d::InflationLayer
+          cost_scaling_factor: 3.0
+          inflation_radius: 0.70   # nav2_bringup nav2_params.yaml, jazzy and lyrical
+        always_send_full_costmap: true
+supervisor:
+  rosbridge_port: 9090
+  micro_ros_port: 8888

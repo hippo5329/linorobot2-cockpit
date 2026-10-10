@@ -210,6 +210,7 @@ _DRIVER_ENV_NAMES = {
     "TB67H450": "bts7960",   # IN1/IN2, PWM on both inputs (NULLLAB Maker-ESP32)
     "RZ7889": "bts7960",     # BI/FI, PWM on both inputs (NULLLAB Maker-ESP32 PRO)
     "AT8833": "bts7960",     # IN1/IN2, PWM on both inputs (NULLLAB ESP32-UNO)
+    "DRV8833": "bts7960",    # IN1/IN2, PWM on both inputs (Pimoroni Motor 2040)
     "ESC": "esc",
 }
 

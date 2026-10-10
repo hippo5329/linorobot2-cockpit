@@ -634,6 +634,26 @@ be on the motor side for the motors it shares with header pins. The encoder port
 the ESP32 takes 3.3 V, so use encoders with open-collector or 3.3 V outputs; GPIO 34-39 have no
 internal pull-ups. Directions are confirmed by driving a robot, not by the build.
 
+### The Pimoroni Motor 2040 runs the Pico image
+`config/reference/pimoroni_motor2040_config.yaml` is the Pimoroni Motor 2040: an RP2040 with two DRV8833
+dual bridges, four encoder ports and a supply sense, on micro-ROS over its native USB. Pins are from
+Pimoroni's board header (`pimoroni-pico`, `libraries/motor2040/motor2040.hpp`). A controller design on
+the one default chassis, mecanum (or 4WD with `kinematics.base_type: skid_steer`).
+
+| part | wiring |
+|---|---|
+| motors | DRV8833 x2, IN1/IN2 with PWM on both and no enable (`DRV8833` maps to the dual-PWM scheme): A-D 4/5, 6/7, 8/9, 10/11 |
+| encoders | A-D 0/1, 2/3, 12/13, 14/15 (B = A + 1, as the PIO encoder needs) |
+| I2C | SDA 20 / SCL 21 (I2C0), the Qw/ST connector |
+| battery | GPIO29, the sense mux's output, through 10k / 3.9k; `gpio_out: 22=0,24=0,25=1` puts the mux on its voltage channel at boot |
+| LED | GPIO16, the sensor header's TRIG (the board's LED is a WS2812 on 18, and 25 is a mux address line) |
+
+The RP2040 release image is the Pico W build, and arduino-pico decides at boot whether a radio is
+fitted by reading GPIO 25 and the ADC on GPIO 29 -- the sense mux on this board. A misread starts the
+CYW43 driver on GPIO 23/24/25/29, which a board with no radio does not answer; if the board does not
+come up on the release image, flash the plain `pico` build. Directions are confirmed by driving a
+robot, not by the build.
+
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
 addresses all reach the firmware through the `env` flash partition (`scripts/mcu_env.py`, read by

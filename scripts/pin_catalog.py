@@ -36,11 +36,14 @@ _RP2350B_I2C = {
 CATALOG: Dict[str, dict] = {
     "rp2040": {
         "label": "RP2040 (Pico)",
-        "gpio": _RP2_HEADER_GPIO | {25},
+        # GPIO 29 is ADC3: VSYS/3 on a Pico, the CYW43's clock on a Pico W (refused
+        # there below), and a board's own sense input elsewhere (the Pimoroni Motor
+        # 2040's sense mux).
+        "gpio": _RP2_HEADER_GPIO | {25, 29},
         "never": set(),
         "input_only": set(),
         "strapping": set(),
-        "adc": {26, 27, 28},
+        "adc": {26, 27, 28, 29},
         "adc_wifi_conflict": set(),
         "led": 25,
         "i2c": _RP2_I2C,
@@ -197,6 +200,9 @@ def check_config(params: dict) -> List[Finding]:
         if gpio not in cat["gpio"]:
             findings.append(("error", f"{role}: GPIO {gpio} does not exist on the {cat['label']}"))
             continue
+        if gpio == 29 and board == "picow":
+            findings.append(("error", f"{role}: GPIO 29 is the Pico W's CYW43 clock; the Wi-Fi chip owns it"))
+            continue
         if gpio in cat["never"]:
             findings.append(("error", f"{role}: GPIO {gpio} is the {cat['label']}'s flash/PSRAM bus; driving it resets or bricks the board"))
             continue
@@ -231,7 +237,7 @@ def check_config(params: dict) -> List[Finding]:
         if len(roles) < 2:
             continue
         if all(r.endswith(".pwm") for r in roles) and \
-                str(tgt.get("driver_type", "")).upper() in ("BTS7960", "AT8236", "DRV8411A", "BDC30P", "TB67H450", "RZ7889", "AT8833"):
+                str(tgt.get("driver_type", "")).upper() in ("BTS7960", "AT8236", "DRV8411A", "BDC30P", "TB67H450", "RZ7889", "AT8833", "DRV8833"):
             continue
         findings.append(("error", f"GPIO {gpio} is used by {', '.join(roles)}"))
 

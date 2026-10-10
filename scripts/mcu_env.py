@@ -960,6 +960,7 @@ def hardware_env(params: dict) -> dict:
         "TB67H450": "bts7960",
         "RZ7889": "bts7960",
         "AT8833": "bts7960",
+        "DRV8833": "bts7960",
         "ESC": "esc",
     }.get(driver, "generic2")
     env["sim_wheel"] = _bool(sensors.get("use_sim_wheel", False))
