@@ -654,6 +654,22 @@ CYW43 driver on GPIO 23/24/25/29, which a board with no radio does not answer; i
 come up on the release image, flash the plain `pico` build. Directions are confirmed by driving a
 robot, not by the build.
 
+### The Cytron Maker Pi RP2040 runs the Pico image
+`config/reference/cytron_maker_pi_rp2040_config.yaml` is the Cytron Maker Pi RP2040: an RP2040 with an
+MX1508 dual bridge, seven Grove ports and a supply sense, on micro-ROS over its native USB. Pins are
+from Cytron's datasheet. A 2WD controller design on the one default chassis.
+
+| part | wiring |
+|---|---|
+| motors | MX1508, IN1/IN2 with PWM on both and no enable (`MX1508` maps to the dual-PWM scheme): M1 8/9, M2 10/11, 1 A per channel at the supply voltage (3.6-6 V) |
+| encoders | no port on the board: Grove 2 (2/3) and Grove 3 (4/5) |
+| I2C | SDA 16 / SCL 17 (I2C0), Grove 4 |
+| battery | GPIO29, the board's 1:1 divider (VM/2) |
+| LED | GPIO0, shown by its blue GPIO-status LED |
+
+It runs the same Pico W release image as the Motor 2040, whose boot-time radio check reads GPIO 25
+(not connected here) and GPIO 29; if the board does not come up on it, flash the plain `pico` build.
+
 ### A board is a configuration, not a build
 Pin matrix, I2C bus and clock, boot-time output pins, which IMU is fitted, transport, credentials and
 addresses all reach the firmware through the `env` flash partition (`scripts/mcu_env.py`, read by
