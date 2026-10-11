@@ -49,6 +49,9 @@ one of them a particular robot is here:
                 tm_only  tm_secs  (test_motors: only motor N, forward, until the env
                           changes or tm_secs pass, 120 when absent; a person
                           names the wheel that turns. Bench keys, --set only)
+                ta_ms    (test_acc: each run phase in ms, 300-1000, 1000 when
+                          absent; the closed-loop step scales with it. A faster
+                          robot covers less floor. --set only)
 
     board       i2c_sda  i2c_scl  i2c_clock  i2c_bus (a bus fixed in hardware)
                 gpio_out  gpio_out_late  boot_delay

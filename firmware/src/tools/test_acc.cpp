@@ -300,8 +300,23 @@ void setup_()
 unsigned runs = 12;
 const unsigned ticks = 20;
 const float dt = ticks * 0.001f;
-const unsigned run_time = 1000; // 1s
-const unsigned buf_size = run_time / ticks * 4;
+// Each run's four phases (drive, coast, reverse, coast) last run_time ms. 1 s unless the
+// env's `ta_ms` says less (user, 2026-10-12: a robot that runs faster than the tracked
+// test robot covers more floor in the same second): 300-1000, in 20 ms ticks. buf_size is
+// the 1 s maximum, so the trace keeps its fixed size on the stack; a shorter run fills
+// `trace_n` of it.
+unsigned run_time = 1000;
+const unsigned buf_size = 1000 / ticks * 4;
+unsigned trace_n = buf_size;
+
+static void setRunTime()
+{
+    unsigned ms = envU16("ta_ms", 1000);
+    if (ms > 1000) ms = 1000;
+    if (ms < 300) ms = 300;
+    run_time = ms / ticks * ticks;
+    trace_n = run_time / ticks * 4;
+}
 // The 2400-byte velocity trace is a LOCAL in loop_(), passed to the two
 // functions that touch it -- see loop_(). It used to be a file-scope array,
 // which put it in .bss, where it was charged against a static segment of just
@@ -328,7 +343,7 @@ void record(unsigned n, Kinematics::velocities *buf) {
         if (imu_acc_x > imu_max_acc_x) imu_max_acc_x = imu_acc_x;
         if (imu_acc_x < imu_min_acc_x) imu_min_acc_x = imu_acc_x;
 
-        if (idx < buf_size) {
+        if (idx < trace_n) {
             buf[idx] = kinematics->getVelocities(rpm1, rpm2, rpm3, rpm4);
         }
         waitMs(ticks);
@@ -340,7 +355,7 @@ void dump_record(const Kinematics::velocities *buf) {
     float max_vel_y = 0, min_vel_y = 0, max_acc_y = 0, min_acc_y = 0;
     float max_vel_z = 0, min_vel_z = 0, max_acc_z = 0, min_acc_z = 0;
     float dist = 0;
-    for (idx = 0; idx < buf_size; idx++) {
+    for (idx = 0; idx < trace_n; idx++) {
         float vel_x = buf[idx].linear_x;
         float vel_y = buf[idx].linear_y;
         float vel_z = buf[idx].angular_z;
@@ -351,7 +366,7 @@ void dump_record(const Kinematics::velocities *buf) {
         if (vel_z > max_vel_z) max_vel_z = vel_z;
         if (vel_z < min_vel_z) min_vel_z = vel_z;
     }
-    for (idx = 0; idx < buf_size; idx++) {
+    for (idx = 0; idx < trace_n; idx++) {
         unsigned prev = idx ? (idx - 1) : 0;
         float acc_x = (buf[idx].linear_x - buf[prev].linear_x) / dt;
         float acc_y = (buf[idx].linear_y - buf[prev].linear_y) / dt;
@@ -364,14 +379,14 @@ void dump_record(const Kinematics::velocities *buf) {
         if (acc_z < min_acc_z) min_acc_z = acc_z;
     }
     if (runs & 1) {
-        for (idx = buf_size / 4; idx < buf_size / 2; idx++)
+        for (idx = trace_n / 4; idx < trace_n / 2; idx++)
             dist += buf[idx].linear_x * dt;
-        for (idx = 0; idx < buf_size / 4; idx++)
+        for (idx = 0; idx < trace_n / 4; idx++)
             if (buf[idx].linear_x > max_vel_x * 0.9f) break;
     } else {
-        for (idx = buf_size / 4; idx < buf_size / 2; idx++)
+        for (idx = trace_n / 4; idx < trace_n / 2; idx++)
             dist += buf[idx].angular_z * dt;
-        for (idx = 0; idx < buf_size / 4; idx++)
+        for (idx = 0; idx < trace_n / 4; idx++)
             if (buf[idx].angular_z > max_vel_z * 0.9f) break;
     }
 
@@ -561,10 +576,12 @@ void plant()
 // is the second test, and it is the one that catches ringing. 1.5 s, not 3: at
 // 90% of top that is ~0.5 m of floor each way (user, 2026-10-08: "or we need to
 // shorten motor run"), and the tracked test robot's loops settled in ~0.5 s; the steady error
-// is still the last 0.5 s.
+// is still the last 0.5 s. A shorter `ta_ms` shortens it in proportion, to no less than
+// 0.7 s: the 0.5 s error window plus 0.2 s to get there.
 void loopStep(float magnitude_rpm)
 {
-    const unsigned ticks = 75;                       // 1.5 s
+    unsigned ticks = 75 * run_time / 1000;           // 1.5 s at ta_ms 1000
+    if (ticks < 35) ticks = 35;
     for (int dir = 1; dir >= -1; dir -= 2) {
         const float setpoint_rpm = dir * magnitude_rpm;
         // Start from a known state. The integral carries between steps, so the
@@ -629,9 +646,9 @@ void reportPhase(const char *phase)
 
 void run()
 {
-    REPORT("IDENT gains kp=%.4f ki=%.4f kd=%.4f pwm_max=%d rate_hz=%u\n",
+    REPORT("IDENT gains kp=%.4f ki=%.4f kd=%.4f pwm_max=%d rate_hz=%u step_ms=%u\n",
                   envFloat("kp", K_P), envFloat("ki", K_I), envFloat("kd", K_D), pwmMax(),
-                  1000 / TICK_MS);
+                  1000 / TICK_MS, run_time);
     REPORT("IDENT robot base=%d wheels=%u max_rpm=%d ratio=%.3f wheel_d=%.4f\n",
                   (int)kinematics->base_platform_, total_motors, (int)envU16("max_rpm", MOTOR_MAX_RPM),
                   envFloat("rpm_ratio", MAX_RPM_RATIO), envFloat("wheel_d", WHEEL_DIAMETER));
@@ -684,6 +701,7 @@ void loop_() {
     // they go and a plant fitted across different step sizes is not a plant.
     static bool identified = false;
     if (!identified) {
+        setRunTime();
         identified = true;
         ident::run();
     }

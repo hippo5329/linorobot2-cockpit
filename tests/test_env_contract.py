@@ -20,7 +20,7 @@ SECRETS_EXAMPLE = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 # `mcu_env.py build --set`, the flasher writes them, or a tool application
 # (adc_calibrate: dac_pin) takes them from the operator.
 BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait",
-              "banner_hold", "tm_pct", "tm_only", "tm_secs"}
+              "banner_hold", "tm_pct", "tm_only", "tm_secs", "ta_ms"}
 
 # A config exercising every optional key the writer knows, so the reference
 # set need not carry each one for it to count as written.

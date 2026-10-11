@@ -38,10 +38,11 @@ def _d(name="gendrv", **sim):
 
 
 def test_the_timing_matches_the_tool_it_simulates():
-    """20 ms ticks and 1 s phases are test_acc's, not ours to pick."""
+    """20 ms ticks and 1 s phases are test_acc's, not ours to pick. The phase is
+    the default of the `ta_ms` key (a bench run may shorten it; the model does not)."""
     src = open(ACC_CPP, encoding="utf-8").read()
     ticks = int(re.search(r"const unsigned ticks = (\d+)", src).group(1))
-    run_time = int(re.search(r"const unsigned run_time = (\d+)", src).group(1))
+    run_time = int(re.search(r'envU16\("ta_ms", (\d+)\)', src).group(1))
     assert dr.TICK_S == pytest.approx(ticks / 1000.0), "tick length drifted from test_acc.cpp"
     assert dr.PHASE_SAMPLES == run_time // ticks, "phase length drifted from test_acc.cpp"
 

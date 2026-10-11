@@ -346,7 +346,9 @@ def _velocities(d, rpm):
 
 
 # test_acc's own timing: `const unsigned ticks = 20`, `run_time = 1000`, and four
-# phases per run (drive, coast, reverse, coast) -> buf_size = 200 samples.
+# phases per run (drive, coast, reverse, coast) -> buf_size = 200 samples. A board
+# run with a shorter `ta_ms` (its IDENT gains line says step_ms=) reports shorter
+# phases; this model stays at the 1 s default.
 TICK_S = 0.020
 PHASE_SAMPLES = 50
 
