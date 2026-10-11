@@ -459,6 +459,19 @@ def launch_setup(context, *args, **kwargs):
                 "rotate_to_heading_min_angle": 0.785,
                 "max_angular_accel": follow_path.get("max_angular_accel", 3.2),
             }
+            # The shim turns to the goal's heading itself once the robot is within
+            # the goal checker's xy tolerance. Lyrical's shim decides whether the goal
+            # changed by comparing the whole PoseStamped, and the controller server
+            # restamps the goal every cycle (FeasiblePathHandler::getTransformedGoal),
+            # so rotate_to_heading_once never holds: every cycle the shim re-aims at a
+            # point on the plan. At the goal that point is a few centimetres off to the
+            # side, and the shim and RPP's rotate-to-goal-heading took turns: the
+            # robot swung through a full circle, "Failed to make progress" fired, and
+            # a replan that pruned to nothing aborted the goal ("Resulting plan has 0
+            # poses in it"), the robot left 50-90 deg off. Measured 2026-10-11 on the
+            # 2wd Sim MCU: one leg home in four stalled 20-25 s; with this, none did
+            # (0 progress failures, every leg home 33-34 s, as Jazzy).
+            follow_path["rotate_to_goal_heading"] = True
         # 3. bt_navigator has to discover the action servers it calls, and on a
         #    loaded box it loses that race at the 1 s default: it gave up on
         #    compute_path_to_pose while planner_server was alive and logging

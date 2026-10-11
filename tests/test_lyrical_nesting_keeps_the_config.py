@@ -106,3 +106,19 @@ def test_the_nesting_leaves_the_shim_its_own_keys():
         if isinstance(k, ast.Constant) and isinstance(v, ast.Call)
         and isinstance(v.func, ast.Attribute) and v.func.attr == "pop" and k.value in SHIM_READS)
     assert not popped, f"the Lyrical nesting takes {popped} off FollowPath, where the shim reads them"
+
+
+def test_lyricals_shim_turns_to_the_goal_heading_itself():
+    """Lyrical's shim compares the whole goal PoseStamped, which the controller server
+    restamps every cycle, so rotate_to_heading_once never holds and the shim re-aims at
+    the plan every cycle. At the goal that fought RPP's own turn to the goal heading: a
+    full circle, "Failed to make progress", and an aborted leg home (2026-10-11). The
+    shim's rotate_to_goal_heading takes the turn before the path check runs."""
+    src = open(os.path.join(ROOT, "launchers", "nav2.launch.py")).read()
+    lyr = src[src.index('if distro == "lyrical":'):]
+    lyr = lyr[:lyr.index("# 3. bt_navigator")]
+    assert 'follow_path["rotate_to_goal_heading"] = True' in lyr
+    # set after the nesting, so no later step can put the config's false back
+    assert lyr.index('follow_path["primary_controller"] = {') < lyr.index(
+        'follow_path["rotate_to_goal_heading"] = True')
+    assert "rotate_to_goal_heading" in SHIM_READS
