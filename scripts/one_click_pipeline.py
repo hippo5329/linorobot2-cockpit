@@ -982,8 +982,11 @@ def _slam_complaints(log_path: str, keep: int = 6, lifecycle: str = None) -> str
     # was missed and the node is sitting in `inactive` -- the case the manual
     # `lifecycle set activate` above exists to rescue. Reaching "Activating"
     # and still publishing no map is a different fault entirely.
+    # slam_toolbox's OWN transition lines only ("[slam_toolbox]: Activating"): the activation
+    # guard's "... Activating it." matched the bare word, and a node that never activated was
+    # reported as "Configuring -> Activating" (2026-10-11).
     seen = [s for s in ("Creating", "Configuring", "Activating", "Deactivating", "Cleaning up")
-            if any(s in ln for ln in lines)]
+            if any(re.search(r"\[slam_toolbox\]: " + s + r"\b", ln) for ln in lines)]
     out = []
     if seen:
         out.append(f"     --- slam_toolbox reached: {' -> '.join(seen)}")

@@ -223,7 +223,18 @@ for i in $(seq 1 12); do
   case "$s" in
     *inactive*)
       echo "[Linorobot2 Cockpit] slam_toolbox is still inactive -- its launch file missed the transition event. Activating it."
-      ros2 lifecycle set --no-daemon "$NODE" activate
+      # The set is a service call and meets the same discovery race as the event did: on a
+      # real robot (lyrical, 2026-10-11) the one call got "Node not found", SLAM stayed
+      # inactive, no map came, and Nav2's planner never configured. Ask until it is active.
+      for j in 1 2 3 4 5; do
+        ros2 lifecycle set --no-daemon "$NODE" activate >/dev/null 2>&1
+        s=$(ros2 lifecycle get --no-daemon "$NODE" 2>/dev/null)
+        case "$s" in
+          active*) echo "[Linorobot2 Cockpit] slam_toolbox is active (activation call $j)."; exit 0 ;;
+        esac
+        sleep 2
+      done
+      echo "[Linorobot2 Cockpit] slam_toolbox did not activate after 5 calls: it is '${s:-not answering}'. No map will come."
       exit 0 ;;
     *active*)
       exit 0 ;;
