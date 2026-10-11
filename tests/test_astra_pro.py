@@ -9,6 +9,7 @@ and the driver node runs on the SDK's own libOpenNI2, put first on its LD_LIBRAR
 30 Hz depth on both distros on that library.
 """
 import hashlib
+import math
 import os
 import re
 import sys
@@ -61,9 +62,9 @@ def test_the_scan_uses_the_astra_pro_optics():
     assert dc.depth_optics(ASTRA) == (58.4, 0.6)
     assert dc.scan_range_min(ASTRA) == 0.6
     assert dc.scan_fov_deg(ASTRA) == pytest.approx(58.4)
-    # the simulated camera is a D435 whatever the config names
+    # the simulated camera renders the configured model, so its figures hold in simulation too
     sim = {"depth_camera": {"model": "astra_pro"}, "sensors": {"use_sim_depth": True}}
-    assert dc.depth_optics(sim) == pytest.approx((87.0, dc.SCAN_RANGE_MIN))
+    assert dc.depth_optics(sim) == (58.4, 0.6)
     # a model with no entry keeps the D435 figures
     assert dc.depth_optics({"depth_camera": {"model": "realsense"}}) == pytest.approx((87.0, 0.45))
 
@@ -166,3 +167,34 @@ def test_every_model_can_be_chosen_in_the_ui():
     block = block[:block.index("</select>")]
     offered = set(re.findall(r'<option value="([a-z0-9_]+)"', block)) - {"none"}
     assert offered == set(dc.DEPTH_MODELS)
+
+
+def test_the_simulated_camera_is_the_astra_pro_when_the_robot_has_one():
+    """A simulated Astra sees what the real one will: 58.4 x 45.5 deg, 0.6-8 m,
+    640x480 at 30 Hz -- and nothing at all inside 0.6 m."""
+    pytest.importorskip("numpy")
+    sim = {"depth_camera": {"model": "astra_pro"}, "sensors": {"use_sim_depth": True}}
+    assert dc.sim_camera_key(sim) == "astra_pro"
+    assert dc.sim_camera_key({"sensors": {"use_sim_depth": True}}) == "d435"
+    assert dc.sim_camera_key({"depth_camera": {"model": "realsense"}}) == "d435"
+    cam = dc.SIM_CAMERAS["astra_pro"]
+    assert (cam.width, cam.height, cam.rate_hz) == (640, 480, 30.0)
+    angles = dc.column_angles(cam)
+    assert math.degrees(angles[0] - angles[-1]) == pytest.approx(58.4, abs=0.2)
+    segs = dc.room_segments(dc.sim_room({}))
+    # the obstacle wall 2 m ahead is seen; from 0.5 m away it vanishes, where the D435 still reads it
+    far = dc.depth_row(0.0, 0.0, 0.0, segs, angles, cam=cam)
+    near = dc.depth_row(1.5, 0.0, 0.0, segs, angles, cam=cam)
+    d435 = dc.depth_row(1.5, 0.0, 0.0, segs, dc.column_angles())
+    centre = cam.width // 2
+    assert far[centre] == pytest.approx(2.0)
+    assert near[centre] == 0.0
+    assert d435[len(d435) // 2] == pytest.approx(0.5)
+
+
+def test_bringup_tells_the_simulated_camera_which_camera_to_be():
+    launch = _read("launchers", "bringup.launch.py")
+    assert '"camera": cam_key' in launch
+    assert "depth_camera.SIM_CAMERAS[cam_key].rate_hz" in launch
+    node = _read("scripts", "sim_depth_node.py")
+    assert 'declare_parameter("camera", "d435")' in node

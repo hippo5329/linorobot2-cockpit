@@ -330,14 +330,12 @@ def use_sim_depth(controller: dict) -> bool:
 def depth_optics(controller: dict):
     """(horizontal view in degrees, near limit in metres) of the camera that makes the scan.
 
-    The configured model's own (DEPTH_OPTICS) when a real one is fitted; the simulated
-    D435's otherwise -- with no model, or with use_sim_depth on. (A pipeline in
-    simulation mode also runs the simulated camera for a fitted model; that camera is a
-    D435 whatever the config names, so on such a run the real model's figures describe
-    the camera the robot will have, not the one simulated.)
+    The configured model's own (DEPTH_OPTICS), real or simulated: the simulated camera
+    renders that model's optics (SIM_CAMERAS). The D435's for no model, or a model
+    with no entry.
     """
     model = depth_model(controller)
-    if model in DEPTH_OPTICS and not use_sim_depth(controller):
+    if model in DEPTH_OPTICS:
         return DEPTH_OPTICS[model]
     return math.degrees(HFOV), SCAN_RANGE_MIN
 
@@ -635,15 +633,47 @@ NOISE_K = SUBPIXEL / (FX * BASELINE_M)        # sigma_z = NOISE_K * z^2
 RATE_HZ = 15.0
 
 
-def column_angles():
+class SimCamera:
+    """The optics the simulated camera renders with: one per model it can stand in for."""
+
+    def __init__(self, name, width, height, hfov_deg, vfov_deg, min_z, max_z, noise_k, rate_hz):
+        self.name, self.width, self.height = name, width, height
+        self.hfov, self.vfov = math.radians(hfov_deg), math.radians(vfov_deg)
+        self.fx = (width / 2.0) / math.tan(self.hfov / 2.0)
+        self.fy = (height / 2.0) / math.tan(self.vfov / 2.0)
+        self.cx, self.cy = (width - 1) / 2.0, (height - 1) / 2.0
+        self.min_z, self.max_z, self.noise_k, self.rate_hz = min_z, max_z, noise_k, rate_hz
+
+
+# The simulated camera is the configured model's when it has an entry here, so a robot
+# simulated with an Astra Pro sees what the Astra will: 58.4 x 45.5 deg, nothing inside
+# 0.6 m or past 8 m (Orbbec's datasheet), 640x480 at 30 Hz (openni2_camera's default
+# mode). Its noise is a structured-light camera's, sigma_z ~ 1.5 mm x z^2 (a Kinect v1's,
+# Khoshelham & Elberink 2012; Orbbec gives +-1-3 mm at 1 m). Any other model, or none,
+# is the D435 above.
+SIM_CAMERAS = {
+    "d435": SimCamera("D435", WIDTH, HEIGHT, 87.0, 58.0, MIN_Z, MAX_Z, NOISE_K, RATE_HZ),
+    "astra_pro": SimCamera("Astra Pro", 640, 480, 58.4, 45.5, 0.6, 8.0, 0.0015, 30.0),
+}
+
+
+def sim_camera_key(controller: dict) -> str:
+    """Which SIM_CAMERAS entry the simulated camera renders for this robot."""
+    model = depth_model(controller)
+    return model if model in SIM_CAMERAS else "d435"
+
+
+def column_angles(cam=None):
     """Each column's horizontal angle from the optical axis, left positive (robot convention)."""
-    return [math.atan2(CX - u, FX) for u in range(WIDTH)]
+    cam = cam or SIM_CAMERAS["d435"]
+    return [math.atan2(cam.cx - u, cam.fx) for u in range(cam.width)]
 
 
-def depth_row(ox, oy, yaw, segments, angles, rng=None):
+def depth_row(ox, oy, yaw, segments, angles, rng=None, cam=None):
     """One row of z-depth in metres (0 = no return), with the camera's noise when rng is given."""
     import numpy as np
-    z = np.zeros(WIDTH, dtype=np.float64)
+    cam = cam or SIM_CAMERAS["d435"]
+    z = np.zeros(len(angles), dtype=np.float64)
     if isinstance(segments, GridWorld):
         # a saved map as the world: every column in one pass, in the map frame
         wx, wy, wyaw = segments.to_world(ox, oy, yaw)
@@ -654,7 +684,7 @@ def depth_row(ox, oy, yaw, segments, angles, rng=None):
             continue
         zz = t * math.cos(a)                  # range along the ray -> depth along the optical axis
         if rng is not None:
-            zz += rng.normal(0.0, NOISE_K * zz * zz)
-        if MIN_Z <= zz <= MAX_Z:
+            zz += rng.normal(0.0, cam.noise_k * zz * zz)
+        if cam.min_z <= zz <= cam.max_z:
             z[u] = zz
     return z

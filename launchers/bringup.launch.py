@@ -847,8 +847,10 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
     if sim:
         room = depth_camera.sim_room(params)
         wm, ws = depth_camera.world_map(params)
+        cam_key = depth_camera.sim_camera_key(controller)
         out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
-                               f"from the SIMULATED depth camera (standing in for the {label})"))
+                               f"from the SIMULATED depth camera ({depth_camera.SIM_CAMERAS[cam_key].name} optics, "
+                               f"standing in for the {label})"))
         out.append(Node(
             executable=sys.executable,
             arguments=[os.path.join(REPO_ROOT, "scripts", "sim_depth_node.py")],
@@ -863,9 +865,11 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                          "wall_x2": float(room["wall_x2"]), "wall_y2": float(room["wall_y2"]),
                          "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
                          **({"world_map": wm, "world_start": list(ws)} if wm else {}),
-                         "pose_topic": "odom/unfiltered"}],
+                         "pose_topic": "odom/unfiltered",
+                         "camera": cam_key}],
         ))
-        depth_topic, info_topic, scan_time = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC, 1.0 / 15.0
+        depth_topic, info_topic = depth_camera.SIM_DEPTH_TOPIC, depth_camera.SIM_INFO_TOPIC
+        scan_time = 1.0 / depth_camera.SIM_CAMERAS[cam_key].rate_hz
     else:
         pkg, launch_rel, launch_args = depth_camera.driver_launch(model, distro, frame)
         family = depth_camera.DEPTH_MODELS[model][0]
@@ -901,8 +905,7 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
                     ("depth_camera_info", info_topic.lstrip("/")),
                     ("scan", scan_topic)],
         parameters=[{"scan_time": scan_time,
-                     "range_min": (depth_camera.SCAN_RANGE_MIN if sim
-                                   else depth_camera.scan_range_min(controller)),
+                     "range_min": depth_camera.scan_range_min(controller),
                      "range_max": depth_camera.SCAN_RANGE_MAX,
                      "scan_height": depth_camera.SCAN_HEIGHT,
                      "output_frame": frame}],

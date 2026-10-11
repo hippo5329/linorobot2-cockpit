@@ -19,6 +19,11 @@ Z, 10 m maximum, 15 fps. Its depth noise is the stereo formula
 with the D435's 50 mm baseline, 0.08 subpixel and f = 212 / tan(43.5 deg) =
 223 px at this width: 0.0072 * z^2 m, 7 mm at 1 m and 29 mm at 2 m.
 
+A robot whose config names a model with its own optics in depth_camera.SIM_CAMERAS
+gets that camera instead (bringup passes `camera`): the Orbbec Astra Pro is
+640x480 at 30 fps, 58.4 x 45.5 degrees, 0.6-8 m, structured-light noise
+0.0015 * z^2 m -- and nothing inside 0.6 m, which is the point of simulating it.
+
 The walls are vertical and the room has no floor or ceiling in the model, so a
 column's depth is the same in every row; the image is one raycast per column,
 broadcast down. The converter reads the centre rows, where that is exact.
@@ -42,8 +47,7 @@ except ImportError as exc:
 
 import depth_camera as dc
 
-from depth_camera import (WIDTH, HEIGHT, HFOV, VFOV, FX, FY, CX, CY,  # noqa: E402,F401
-                          RATE_HZ, column_angles, depth_row)
+from depth_camera import column_angles, depth_row  # noqa: E402
 
 
 class SimDepthNode(Node):
@@ -55,6 +59,8 @@ class SimDepthNode(Node):
         for k, v in dc.ROOM_DEFAULTS.items():
             self.declare_parameter(k, v)
         self.declare_parameter("pose_topic", "odom/unfiltered")
+        # Which camera to render (depth_camera.SIM_CAMERAS): the robot's model, or the D435.
+        self.declare_parameter("camera", "d435")
         g = lambda k: self.get_parameter(k).value  # noqa: E731
         self.frame = str(g("frame_id"))
         self.optical = f"{self.frame}_sim_depth_optical_frame"
@@ -69,7 +75,12 @@ class SimDepthNode(Node):
         if wm:
             self.segments = dc.GridWorld(wm, tuple(self.get_parameter("world_start").value))
             self.get_logger().info(f"world: the saved map {wm}, start {tuple(self.get_parameter('world_start').value)}")
-        self.angles = column_angles()
+        key = str(g("camera") or "d435")
+        if key not in dc.SIM_CAMERAS:
+            self.get_logger().warning(f"no simulated camera {key!r}; rendering the D435")
+            key = "d435"
+        self.cam = cam = dc.SIM_CAMERAS[key]
+        self.angles = column_angles(cam)
         self.rng = np.random.default_rng()
         self.pose = (0.0, 0.0, 0.0)
 
@@ -92,10 +103,11 @@ class SimDepthNode(Node):
         t.transform.rotation.z, t.transform.rotation.w = -0.5, 0.5
         self.static.sendTransform(t)
 
-        self.create_timer(1.0 / RATE_HZ, self._tick)
+        self.create_timer(1.0 / cam.rate_hz, self._tick)
         self.get_logger().info(
-            f"Simulated depth camera: D435 {WIDTH}x{HEIGHT} @ {RATE_HZ:.0f} Hz, "
-            f"{math.degrees(HFOV):.0f}x{math.degrees(VFOV):.0f} deg, room "
+            f"Simulated depth camera: {cam.name} {cam.width}x{cam.height} @ {cam.rate_hz:.0f} Hz, "
+            f"{math.degrees(cam.hfov):.1f}x{math.degrees(cam.vfov):.1f} deg, "
+            f"{cam.min_z:.2f}-{cam.max_z:.1f} m, room "
             f"{room['map_width']}x{room['map_height']} m, obstacle {'on' if room['wall_obstacle'] else 'off'}.")
 
     def _odom(self, msg):
@@ -108,7 +120,8 @@ class SimDepthNode(Node):
         x, y, yaw = self.pose
         ox = x + self.off_x * math.cos(yaw) - self.off_y * math.sin(yaw)
         oy = y + self.off_x * math.sin(yaw) + self.off_y * math.cos(yaw)
-        row = depth_row(ox, oy, yaw + self.off_yaw, self.segments, self.angles, self.rng)
+        cam = self.cam
+        row = depth_row(ox, oy, yaw + self.off_yaw, self.segments, self.angles, self.rng, cam)
         mm = np.clip(np.rint(row * 1000.0), 0, 65535).astype(np.uint16)
         # The image shows the world from the pose it was rendered at, so it
         # carries that pose's time -- as a real camera stamps the exposure, not
@@ -121,21 +134,21 @@ class SimDepthNode(Node):
 
         img = Image()
         img.header.stamp, img.header.frame_id = stamp, self.optical
-        img.height, img.width = HEIGHT, WIDTH
+        img.height, img.width = cam.height, cam.width
         img.encoding = "16UC1"                 # millimetres, as a RealSense publishes
         img.is_bigendian = 0
-        img.step = WIDTH * 2
-        img.data = np.tile(mm, (HEIGHT, 1)).tobytes()
+        img.step = cam.width * 2
+        img.data = np.tile(mm, (cam.height, 1)).tobytes()
         self.img_pub.publish(img)
 
         info = CameraInfo()
         info.header = img.header
-        info.height, info.width = HEIGHT, WIDTH
+        info.height, info.width = cam.height, cam.width
         info.distortion_model = "plumb_bob"
         info.d = [0.0] * 5
-        info.k = [FX, 0.0, CX, 0.0, FY, CY, 0.0, 0.0, 1.0]
+        info.k = [cam.fx, 0.0, cam.cx, 0.0, cam.fy, cam.cy, 0.0, 0.0, 1.0]
         info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-        info.p = [FX, 0.0, CX, 0.0, 0.0, FY, CY, 0.0, 0.0, 0.0, 1.0, 0.0]
+        info.p = [cam.fx, 0.0, cam.cx, 0.0, 0.0, cam.fy, cam.cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         self.info_pub.publish(info)
 
 
