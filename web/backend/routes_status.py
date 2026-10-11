@@ -221,7 +221,7 @@ def get_status(controller: Optional[str] = None):
             distro_override = (f"config says {configured}, which is not installed here; "
                                f"using {active_distro}")
     else:
-        active_distro = configured or os.environ.get("ROS_DISTRO", "jazzy")
+        active_distro = configured or os.environ.get("ROS_DISTRO", "lyrical")
 
     return {
         "status": "online",
@@ -398,12 +398,12 @@ def api_sensor_driver_status(sensor: str = "", ws: str = ""):
 
 
 @app.get("/api/package/check")
-def api_package_check(pkg: str = "", distro: str = "jazzy", ws: str = ""):
+def api_package_check(pkg: str = "", distro: str = "lyrical", ws: str = ""):
     return get_package_install_info(pkg, distro=distro, ws=ws)
 
 
 @app.get("/api/nav2/stack")
-def api_nav2_stack(distro: str = "jazzy", ws: Optional[str] = None):
+def api_nav2_stack(distro: str = "lyrical", ws: Optional[str] = None):
     return nav2_stack_status(distro=distro, ws=ws)
 
 

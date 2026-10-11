@@ -155,7 +155,7 @@ def _packages(value, name: str) -> list:
 def _agent_start(a: Dict) -> str:
     engine = _enum(a.get("engine"), "engine", {"native", "docker", "podman", "podman_systemd"}, "native")
     transport = _enum(a.get("transport"), "transport", {"serial", "udp4"}, "serial")
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     device = _device(a.get("device"), "device", "/dev/ttyACM0")
     port = _int(a.get("port"), "port", 1, 65535, 8888)
     baud = _int(a.get("baud"), "baud", 1200, 6000000, 921600)
@@ -194,7 +194,7 @@ def _agent_prepare(a: Dict) -> str:
     reproduces findOrBuildAgentCommand(); the registry host, if any, is a
     validated hostname the operator typed, never anything hardcoded."""
     engine = _enum(a.get("engine"), "engine", {"native", "docker", "podman", "podman_systemd"}, "native")
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     img = f"microros/micro-ros-agent:{distro}"
     if engine in ("docker", "podman", "podman_systemd"):
         bin_ = "docker" if engine == "docker" else "podman"
@@ -242,7 +242,7 @@ def _bringup(a: Dict) -> str:
     robot's config itself, so the browser passes only which config, which
     distro, and whether bringup should start its own agent.
     """
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     cfg = _path(a.get("config_path"), "config_path")
     micro_ros = "true" if _bool(a.get("micro_ros", True)) else "false"
     return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit bringup.launch.py "
@@ -263,7 +263,7 @@ def _bringup_docker(a: Dict) -> str:
 
 def _slam(a: Dict) -> str:
     """slam_toolbox with the robot's own slam block (launchers/slam.launch.py)."""
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     cfg = _path(a.get("config_path"), "config_path")
     return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit slam.launch.py "
             f"config_file:={shlex.quote(cfg)}")
@@ -272,7 +272,7 @@ def _slam(a: Dict) -> str:
 def _nav2(a: Dict) -> str:
     """Nav2 with the robot's own nav2 block (launchers/nav2.launch.py), as 1-Click
     launches it; with a saved map it localises on that map instead of SLAM's."""
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     cfg = _path(a.get("config_path"), "config_path")
     map_arg = f" map:={shlex.quote(_path(a.get('map'), 'map'))}" if a.get("map") else ""
     return (f"{ros_setup_shell(distro)}; ros2 launch linorobot2_cockpit nav2.launch.py autostart:=true "
@@ -301,7 +301,7 @@ def _distro_stamps_cmd_vel(distro: str) -> bool:
 
 
 def _teleop(a: Dict) -> str:
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     axis_lin = _int(a.get("axis_linear"), "axis_linear", 0, 31, 1)
     scale_lin = _num(a.get("scale_linear"), "scale_linear", 0.0, 100.0, 0.5)
     axis_ang = _int(a.get("axis_angular"), "axis_angular", 0, 31, 0)
@@ -334,7 +334,7 @@ def _teleop(a: Dict) -> str:
 
 
 def _map_save(a: Dict) -> str:
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     maps_dir = _path(a.get("maps_dir"), "maps_dir")
     name = _ident(a.get("name"), "name")
     return (f"{ros_setup_shell(distro)}; mkdir -p {shlex.quote(maps_dir)} && "
@@ -372,7 +372,7 @@ def _docker_build(a: Dict) -> str:
     the device overlay, and run `$COMPOSE build`. The two files are heredocs, so
     the steps are newline-joined (a heredoc terminator must stand alone) with
     `set -e` for fail-fast."""
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     workspace = _path(a.get("workspace"), "workspace")
     docker_dir = _path(a.get("docker_dir"), "docker_dir")
     base_image = _ident(a.get("base_image"), "base_image")
@@ -442,7 +442,7 @@ def _ld_node_params(a: Dict, overrides: Dict) -> str:
 
 
 def _laser_driver(a: Dict) -> str:
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     prefix = ros_setup_shell(distro)
     if not _bool(a.get("is_ld")):
         code = _ident(a.get("code"), "code")
@@ -485,7 +485,7 @@ def _laser_driver(a: Dict) -> str:
 
 
 def _mag_calibrate(a: Dict) -> str:
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     return (f"{ros_setup_shell(distro)}; "
             "dpkg -s ros-$ROS_DISTRO-robot-calibration >/dev/null 2>&1 || "
             "sudo apt-get install -y ros-$ROS_DISTRO-robot-calibration; "
@@ -495,7 +495,7 @@ def _mag_calibrate(a: Dict) -> str:
 def _rviz_novnc(a: Dict) -> str:
     """RViz on a headless Xvfb, streamed to the browser through x11vnc + noVNC.
     A host-side viewer for a machine with no screen."""
-    distro = _ident(a.get("distro"), "distro", "jazzy")
+    distro = _ident(a.get("distro"), "distro", "lyrical")
     display = a.get("display", ":99")
     if not re.match(r"^:\d+$", str(display)):
         raise ValueError(f"display: {display!r} is not an X display like :99")

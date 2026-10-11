@@ -353,7 +353,7 @@ def launch_setup(context, *args, **kwargs):
     use_sim_time = context.launch_configurations.get("use_sim_time", "false")
     autostart = context.launch_configurations.get("autostart", "true")
     map_file = context.launch_configurations.get("map", "")
-    distro = context.launch_configurations.get("distro", os.environ.get("ROS_DISTRO", "jazzy")).strip().lower()
+    distro = context.launch_configurations.get("distro", os.environ.get("ROS_DISTRO", "lyrical")).strip().lower()
 
     params = load_yaml(config_file)
     nav2_data = copy.deepcopy(params.get("nav2", {}))
@@ -842,7 +842,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "distro",
-            default_value=os.environ.get("ROS_DISTRO", "jazzy"),
+            default_value=os.environ.get("ROS_DISTRO", "lyrical"),
             description="ROS 2 distribution (jazzy, lyrical)",
         ),
         DeclareLaunchArgument(

@@ -443,7 +443,7 @@ def update_params(data: Dict[str, Any]):
 
 
 @app.get("/api/robot_config")
-def get_robot_config(distro: str = "jazzy"):
+def get_robot_config(distro: str = "lyrical"):
     active_path = get_active_params_path()
     raw_yaml = ""
     if os.path.isfile(active_path):

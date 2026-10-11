@@ -26,7 +26,7 @@
 #
 # Images default to the public release on Docker Hub; `docker compose build`
 # builds them from this checkout instead. COCKPIT_IMAGE / COCKPIT_PIO_IMAGE
-# pin another registry. ROS_DISTRO picks jazzy (default) or lyrical.
+# pin another registry. ROS_DISTRO picks lyrical (default) or jazzy.
 #
 # Docker Hub, and only Docker Hub. The images were on ghcr first; pulling the
 # SAME blob from one machine a minute apart measured 86 KiB/s there against
@@ -41,11 +41,11 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        ROS_DISTRO: ${ROS_DISTRO:-jazzy}
+        ROS_DISTRO: ${ROS_DISTRO:-lyrical}
         # Optional apt cache for sites that run one (both Dockerfiles accept it):
         #   APT_PROXY=http://cache:3142 docker compose build
         APT_PROXY: ${APT_PROXY:-}
-    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-jazzy}}
+    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-lyrical}}
     container_name: linorobot2-cockpit
     # An init as PID 1, so a launch's orphaned children are reaped. The backend
     # was PID 1 and reaps nothing: a stopped bringup left its agent <defunct>,
@@ -168,7 +168,7 @@ services:
   # viewer cannot see a stack that has them: the failure is an empty window,
   # not an error.
   rviz:
-    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-jazzy}}
+    image: ${COCKPIT_IMAGE:-docker.io/hippo5329/linorobot2-cockpit-robot:${ROS_DISTRO:-lyrical}}
     profiles: ["rviz"]
     network_mode: host
     ipc: host

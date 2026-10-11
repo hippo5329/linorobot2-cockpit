@@ -552,7 +552,7 @@ def launch_setup(context, *args, **kwargs):
             parameters=[{"params": config_file,
                          "stamped_cmd_vel": (
                              context.launch_configurations.get(
-                                 "distro", os.environ.get("ROS_DISTRO", "jazzy")
+                                 "distro", os.environ.get("ROS_DISTRO", "lyrical")
                              ).strip().lower() == "lyrical")}],
         ),
         # 3. Micro-ROS Agent (Serial or UDP)
@@ -841,7 +841,7 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
     frame = frame_prefix + str(cam["frame"])
     sim_arg = str(context.launch_configurations.get("sim_depth", "false")).strip().lower() in ("true", "1", "yes")
     sim = sim_arg or boardless or depth_camera.use_sim_depth(controller) or model is None
-    distro = os.environ.get("ROS_DISTRO", "jazzy")
+    distro = os.environ.get("ROS_DISTRO", "lyrical")
     label = depth_camera.DEPTH_MODELS[model][1] if model else "depth camera"
     out = []
     if sim:

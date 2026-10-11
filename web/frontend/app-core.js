@@ -555,7 +555,7 @@ function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgen
 
 // ---------- workspace / ros-env prefix ----------
 function getDistro() {
-  return (state.config && state.config.ros_distro) || (state.status && state.status.ros_distro) || "jazzy";
+  return (state.config && state.config.ros_distro) || (state.status && state.status.ros_distro) || "lyrical";
 }
 
 function envPrefix() {

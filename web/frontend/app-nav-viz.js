@@ -411,7 +411,7 @@ function setLidarViewerStatus(message, level) {
 
 document.getElementById("btn-lidar-start").addEventListener("click", async () => {
   if (lidarSource) lidarSource.close();
-  const distro = document.getElementById("hdr-distro-select")?.value || "jazzy";
+  const distro = document.getElementById("hdr-distro-select")?.value || "lyrical";
   const topic = document.getElementById("laser-driver-topic")?.value?.trim() || "/scan";
   const qs = new URLSearchParams({ distro, topic });
   // EventSource cannot carry the access-token header, so it carries a one-shot
@@ -616,7 +616,7 @@ if (hdrDistroSelect) {
 const btnSaveDistro = document.getElementById("btn-save-distro");
 if (btnSaveDistro) {
   btnSaveDistro.addEventListener("click", () => {
-    const distro = document.getElementById("cfg-ros-distro")?.value || "jazzy";
+    const distro = document.getElementById("cfg-ros-distro")?.value || "lyrical";
     const autoBringup = Boolean(document.getElementById("cfg-auto-bringup")?.checked);
     fetch("/api/config", {
       method: "POST",

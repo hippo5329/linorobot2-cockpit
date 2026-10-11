@@ -86,7 +86,7 @@ function findOrBuildAgentCommand() {
 
     return `echo ">>> micro-ROS agent: using ${bin} container image (skipping build from source)"; ` +
       `if ! command -v ${bin} >/dev/null 2>&1; then echo "ERROR: ${bin} is not installed" >&2; exit 1; fi; ` +
-      `IMG="microros/micro-ros-agent:${state.status?.ros_distro || "jazzy"}"; ` +
+      `IMG="microros/micro-ros-agent:${state.status?.ros_distro || "lyrical"}"; ` +
       pullBlock +
       `echo AGENT_DOCKER_READY`;
   }
@@ -114,7 +114,7 @@ function agentLaunchCommand() {
   const port = document.getElementById("cfg-agent-port").value || c.agent_port || "8888";
   const baud = document.getElementById("cfg-agent-baud").value || c.agent_baud || "921600";
   const engine = getAgentEngine();
-  const distro = state.status?.ros_distro || "jazzy";
+  const distro = state.status?.ros_distro || "lyrical";
 
   const preClean = transport === "udp4" ? "" : `fuser -k -TERM ${device} 2>/dev/null || true; sleep 0.5; `;
   const devFlags = transport === "udp4" ? "" : `--device ${device}`;
@@ -169,7 +169,7 @@ function _unused_old_agentLaunchCommand() {
     const agentArgs = transport === "udp4"
       ? `udp4 --port ${port}`
       : `serial --dev ${device} -b ${baud}`;
-    return `${engine} run --rm --net=host --privileged -v /dev:/dev ${devFlags} -e ROS_DOMAIN_ID=0 microros/micro-ros-agent:${state.status?.ros_distro || "jazzy"} ${agentArgs}`;
+    return `${engine} run --rm --net=host --privileged -v /dev:/dev ${devFlags} -e ROS_DOMAIN_ID=0 microros/micro-ros-agent:${state.status?.ros_distro || "lyrical"} ${agentArgs}`;
   }
   const runLine = transport === "udp4"
     ? `ros2 run micro_ros_agent micro_ros_agent udp4 -p ${port}`

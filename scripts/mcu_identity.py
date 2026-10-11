@@ -380,7 +380,7 @@ def image_distro() -> str:
     for d in ("lyrical", "jazzy"):
         if os.path.exists(f"/opt/ros/{d}"):
             return d
-    return os.environ.get("ROS_DISTRO", "jazzy")
+    return os.environ.get("ROS_DISTRO", "lyrical")
 
 
 def env_for_distro(env: str, distro: str) -> str:

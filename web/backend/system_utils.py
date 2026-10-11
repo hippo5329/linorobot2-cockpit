@@ -585,7 +585,7 @@ def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
     return {"sensor": sensor, "pkg": pkg, "installed": installed}
 
 
-def build_sensor_install_cmd(sensor: str, distro: str = "jazzy", ws: str = "") -> Dict[str, Any]:
+def build_sensor_install_cmd(sensor: str, distro: str = "lyrical", ws: str = "") -> Dict[str, Any]:
     pkg = ""
     for k, v in {**LASER_SENSORS, **DEPTH_SENSORS}.items():
         if k == sensor or any(m.get("code") == sensor for m in v.get("models", [])):
@@ -602,11 +602,11 @@ def build_sensor_install_cmd(sensor: str, distro: str = "jazzy", ws: str = "") -
     return {"sensor": sensor, "command": cmd, "pkg": pkg}
 
 
-def build_ros2_install_cmd(distro: str = "jazzy") -> str:
+def build_ros2_install_cmd(distro: str = "lyrical") -> str:
     return f"sudo apt-get update && sudo apt-get install -y ros-{distro}-ros-base python3-colcon-common-extensions"
 
 
-def build_base_install_cmd(ws: str, distro: str = "jazzy") -> str:
+def build_base_install_cmd(ws: str, distro: str = "lyrical") -> str:
     return f"cd {ws} && colcon build --symlink-install --packages-select linorobot2_cockpit"
 
 
@@ -626,12 +626,12 @@ def ros_pkg_installed(pkg: str, distro: str = "auto") -> bool:
         return False
 
 
-def get_package_install_info(pkg: str, distro: str = "jazzy", ws: str = "") -> Dict[str, Any]:
+def get_package_install_info(pkg: str, distro: str = "lyrical", ws: str = "") -> Dict[str, Any]:
     return {"pkg": pkg, "installed": ros_pkg_installed(pkg, distro), "distro": distro}
 
 
-def nav2_stack_status(distro: Optional[str] = "jazzy", ws: Optional[str] = None) -> Dict[str, Any]:
-    dist = distro or "jazzy"
+def nav2_stack_status(distro: Optional[str] = "lyrical", ws: Optional[str] = None) -> Dict[str, Any]:
+    dist = distro or "lyrical"
     nav2_installed = ros_pkg_installed("nav2_bringup", dist)
     slam_installed = ros_pkg_installed("slam_toolbox", dist)
     return {
@@ -669,7 +669,7 @@ def list_dir(dir_path: str, only: str = "any", exts: str = "") -> Dict[str, Any]
     return {"path": p, "entries": items}
 
 
-def analyze_robotics_ai(prompt: str, base: str = "2wd", distro: str = "jazzy", model: Any = None) -> Dict[str, Any]:
+def analyze_robotics_ai(prompt: str, base: str = "2wd", distro: str = "lyrical", model: Any = None) -> Dict[str, Any]:
     p = prompt.lower()
     diagnosis = []
     recommendations = []

@@ -328,7 +328,7 @@ document.getElementById("btn-docker-build").addEventListener("click", () => {
   const serialPort = document.getElementById("docker-base-serial-port").value.trim() || "/dev/ttyACM0";
   const domainId = document.getElementById("docker-ros-domain-id").value.trim() || "0";
   const gpuId = document.getElementById("docker-gpu-id").value.trim() || "0";
-  const distro = (state.status && state.status.ros_distro) || "jazzy";
+  const distro = (state.status && state.status.ros_distro) || "lyrical";
 
   // The whole build (clone + .env + device overlay + compose build) is assembled
   // SERVER-SIDE now (actions.py docker_build); here we only pass the fields.

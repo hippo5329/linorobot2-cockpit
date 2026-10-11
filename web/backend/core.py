@@ -1377,7 +1377,7 @@ def get_robots_list(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, A
 
 
 
-def get_ros_exec_cmd(cmd_str: str, distro: str = "jazzy") -> List[str]:
+def get_ros_exec_cmd(cmd_str: str, distro: str = "lyrical") -> List[str]:
     """A ROS 2 command on this machine, with the installed ROS sourced.
 
     The PlatformIO venv dirs go last on PATH on purpose: a venv bin dir also

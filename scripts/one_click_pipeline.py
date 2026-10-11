@@ -196,7 +196,7 @@ def detect_default_distro() -> str:
     for d in ("lyrical", "jazzy", "rolling"):
         if os.path.exists(f"/opt/ros/{d}"):
             return d
-    return "jazzy"
+    return "lyrical"
 
 
 # ------------------------------------------------------------------- shell env
@@ -814,7 +814,7 @@ def run_streamed(full_cmd: list, timeout: int, log_tag: str = None,
     return subprocess.CompletedProcess(full_cmd, rc, "".join(lines), err)
 
 
-def run_ros(cmd_str: str, timeout: int = 60, distro: str = "jazzy") -> subprocess.CompletedProcess:
+def run_ros(cmd_str: str, timeout: int = 60, distro: str = "lyrical") -> subprocess.CompletedProcess:
     """A short ROS 2 command, under the run's environment, output captured."""
     full_cmd = ["bash", "-c", f"{get_ros_env(distro)} && {cmd_str}"]
     try:
@@ -828,7 +828,7 @@ def run_ros(cmd_str: str, timeout: int = 60, distro: str = "jazzy") -> subproces
 open_log_files = []
 
 
-def launch_bg(cmd_str: str, log_tag: str = "launch", distro: str = "jazzy") -> subprocess.Popen:
+def launch_bg(cmd_str: str, log_tag: str = "launch", distro: str = "lyrical") -> subprocess.Popen:
     """A long step (bringup, SLAM, Nav2) in its own process group, logged to logs/<tag>.log."""
     f = open(run_log_path(log_tag), "w")
     open_log_files.append(f)
@@ -1242,7 +1242,7 @@ def _ekf_xy(distro: str):
 
 
 def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bool = False,
-                   distro: str = "jazzy", require_message: str = None) -> bool:
+                   distro: str = "lyrical", require_message: str = None) -> bool:
     """Wait for a topic to exist, to have a publisher, or to actually carry data.
 
     `require_message` is a field path to echo, and it is the only one of the

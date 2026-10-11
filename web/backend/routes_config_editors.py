@@ -24,7 +24,7 @@ from core import (
 
 
 @app.get("/api/nav2_config")
-def api_get_nav2_config(distro: str = "jazzy"):
+def api_get_nav2_config(distro: str = "lyrical"):
     params = load_params()
     kine = params.get("kinematics", {})
     base = kine.get("base_type", "2wd")
@@ -199,14 +199,14 @@ async def api_ai_tune(request: Request):
     data = await json_body(request)
     prompt = data.get("prompt", "")
     base = data.get("base", "2wd")
-    distro = data.get("distro", "jazzy")
+    distro = data.get("distro", "lyrical")
     return analyze_robotics_ai(prompt, base=base, distro=distro)
 
 
 @app.post("/api/ai/apply")
 async def api_ai_apply(request: Request):
     data = await json_body(request)
-    distro = data.get("distro", "jazzy")
+    distro = data.get("distro", "lyrical")
     nav2_p = data.get("nav2_patch") or {}
     ekf_p = data.get("ekf_patch") or {}
     slam_p = data.get("slam_patch") or {}

@@ -238,7 +238,7 @@ async def api_presets_apply(request: Request):
 
 @app.get("/api/sensor_install_cmd")
 @app.post("/api/sensor_install_cmd")
-def api_sensor_install_cmd(sensor: str = "", distro: str = "jazzy", ws: str = ""):
+def api_sensor_install_cmd(sensor: str = "", distro: str = "lyrical", ws: str = ""):
     # A plain apt install -- no ROS sourcing or cd needed, so the handle is the
     # command as-is. The browser runs the handle instead of re-composing it.
     result = build_sensor_install_cmd(sensor, distro=distro, ws=ws)
@@ -248,7 +248,7 @@ def api_sensor_install_cmd(sensor: str = "", distro: str = "jazzy", ws: str = ""
 
 
 @app.get("/api/workspace/build_cmd")
-def api_workspace_build_cmd(ws: str = REPO_ROOT, distro: str = "jazzy"):
+def api_workspace_build_cmd(ws: str = REPO_ROOT, distro: str = "lyrical"):
     # colcon needs a sourced ROS, so the handle carries the sourcing the browser
     # used to prepend -- the page runs the handle verbatim, adding nothing.
     base_cmd = build_base_install_cmd(ws, distro=distro)
@@ -257,7 +257,7 @@ def api_workspace_build_cmd(ws: str = REPO_ROOT, distro: str = "jazzy"):
 
 
 @app.get("/api/ros2/install_cmd")
-def api_ros2_install_cmd(distro: str = "jazzy"):
+def api_ros2_install_cmd(distro: str = "lyrical"):
     ros2_cmd = build_ros2_install_cmd(distro)
     return {
         "distro": distro,
@@ -271,7 +271,7 @@ def api_ros2_install_cmd(distro: str = "jazzy"):
 # Topic Monitor & LiDAR SSE APIs
 # ==============================================================================
 @app.get("/api/ros2/topics")
-def api_ros2_topics(distro: str = "jazzy"):
+def api_ros2_topics(distro: str = "lyrical"):
     cmd = get_ros_exec_cmd("ros2 topic list -t", distro=distro)
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -310,7 +310,7 @@ def _topic_stream_cmd(topic: str, mode: str, distro: str, extra: str = "") -> li
 
 
 @app.get("/api/ros2/mcu_topics")
-def api_ros2_mcu_topics(distro: str = "jazzy"):
+def api_ros2_mcu_topics(distro: str = "lyrical"):
     """The MCU's view: the topics its node (`<robot>_base_node`) publishes or subscribes to.
     The Topic monitor shows only these (user, 2026-10-06); an absent device has none."""
     cmd = _topic_stream_cmd("", "mcu", distro, "--wait 4")
@@ -329,7 +329,7 @@ def api_ros2_mcu_topics(distro: str = "jazzy"):
 
 
 @app.get("/api/ros2/hz_single")
-def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0, type: str = ""):
+def api_ros2_hz_single(topic: str, distro: str = "lyrical", secs: float = 6.0, type: str = ""):
     """One topic's rate over `secs` (3-20 s: a 1 Hz topic needs several to average).
 
     Measured by scripts/topic_stream.py's rclpy subscription, not `ros2 topic hz`,
@@ -353,7 +353,7 @@ def api_ros2_hz_single(topic: str, distro: str = "jazzy", secs: float = 6.0, typ
 
 
 @app.get("/api/ros2/stream")
-def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz: float = 5.0,
+def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "lyrical", max_hz: float = 5.0,
                     type: str = ""):
     """SSE: a topic's live rate (`hz`, once a second) or its messages (`echo`).
 
@@ -392,7 +392,7 @@ def api_ros2_stream(topic: str, mode: str = "hz", distro: str = "jazzy", max_hz:
 
 
 @app.get("/api/lidar_stream")
-def api_lidar_stream(distro: str = "jazzy", topic: str = "/scan", max_points: int = 360):
+def api_lidar_stream(distro: str = "lyrical", topic: str = "/scan", max_points: int = 360):
     """
     SSE feed of LaserScan messages for the canvas viewer.
 
@@ -589,7 +589,7 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
         elif os.path.exists("/opt/ros/jazzy"):
             d_str = "jazzy"
         else:
-            d_str = os.environ.get("ROS_DISTRO", "jazzy")
+            d_str = os.environ.get("ROS_DISTRO", "lyrical")
 
     cmd = [
         sys.executable, pipeline_script,
@@ -660,7 +660,7 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
         elif os.path.exists("/opt/ros/jazzy"):
             d_str = "jazzy"
         else:
-            d_str = os.environ.get("ROS_DISTRO", "jazzy")
+            d_str = os.environ.get("ROS_DISTRO", "lyrical")
 
     cmd = [
         sys.executable, "-u", pipeline_script,
@@ -774,7 +774,7 @@ def stop_one_click_workflow():
 
 
 @app.get("/api/topics/verify")
-def api_verify_topics(no_scan: bool = False, distro: str = "jazzy"):
+def api_verify_topics(no_scan: bool = False, distro: str = "lyrical"):
     verify_script = os.path.join(REPO_ROOT, "scripts", "verify_topics.py")
     flag = " --no-scan" if no_scan else ""
     cmd = get_ros_exec_cmd(f"python3 {verify_script} --json{flag}", distro=distro)
