@@ -211,17 +211,19 @@ static bool singleMotor(void)
     const bool running = millis() - t0 < limit;
     for (int m = 0; m < 4; m++)
         mot[m]->spin(running && (only == 5 || m == only - 1) ? testPwm() : 0);
+    if (only == 5) {
+        // Interrupts only: no polling beside them, so the counts show what the pin interrupts
+        // keep up with on their own with every encoder line toggling.
+        delay(1000);
+        float r[4];
+        for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
+        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f\n",
+                      running ? "FWD" : "STOPPED", r[0], r[1], r[2], r[3]);
+        return true;
+    }
     unsigned edges[4][2];
     int level[4][2];
     pollEncoders(1000, edges, level);
-    if (only == 5) {
-        float r[4];
-        for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
-        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n",
-                      running ? "FWD" : "STOPPED", r[0], r[1], r[2], r[3], edges[0][0], edges[0][1],
-                      edges[1][0], edges[1][1], edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
-        return true;
-    }
     const float rpm = enc[only - 1]->getRPM();
     Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only,
                   running ? "FWD" : "STOPPED", rpm, edges[0][0], edges[0][1], edges[1][0], edges[1][1],
