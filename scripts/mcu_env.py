@@ -43,6 +43,9 @@ one of them a particular robot is here:
                 diag_tx  diag_baud   (a second UART that prints the loop's
                                       counters once a second; a bench tool,
                                       set with --set, never from the config)
+                tm_pct   (test_motors' drive as a percent of full PWM, 25 when
+                          absent: a first run turns the wheels slowly; set with
+                          --set tm_pct=100 for full power, never from the config)
 
     board       i2c_sda  i2c_scl  i2c_clock  i2c_bus (a bus fixed in hardware)
                 gpio_out  gpio_out_late  boot_delay

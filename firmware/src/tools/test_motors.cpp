@@ -157,14 +157,59 @@ void setup_()
     syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
 }
 
+// The drive: a quarter of full PWM unless the env's tm_pct says otherwise. A first run on a new
+// robot turns the wheels slowly, where a wrong wire, a reversed motor or a loose wheel is seen
+// before it is felt; full power is one env write away (tm_pct=100).
+static int testPwm(void)
+{
+    const int full = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
+    int pct = envInt("tm_pct", 25);
+    if (pct < 1) pct = 1;
+    if (pct > 100) pct = 100;
+    return full * pct / 100;
+}
+
+// The encoder lines, read directly: each pin polled every 100 us for the second the motor runs,
+// its level changes counted. Independent of the Encoder class and its pin interrupts, so a
+// line that moves while the count stays 0 is the counting, and a line that never moves is the
+// wiring or the encoder's supply (a mecanum robot's first run, 2026-10-11: two wheels turned
+// and every count read 0).
+static int encPin[4][2];
+static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
+{
+    for (int m = 0; m < 4; m++)
+        for (int c = 0; c < 2; c++) {
+            edges[m][c] = 0;
+            level[m][c] = encPin[m][c] >= 0 ? digitalRead(encPin[m][c]) : -1;
+        }
+    const unsigned long t0 = millis();
+    while (millis() - t0 < ms) {
+        for (int m = 0; m < 4; m++)
+            for (int c = 0; c < 2; c++) {
+                if (encPin[m][c] < 0) continue;
+                const int v = digitalRead(encPin[m][c]);
+                if (v != level[m][c]) { edges[m][c]++; level[m][c] = v; }
+            }
+        delayMicroseconds(100);
+    }
+}
+
 void loop_() {
     static unsigned tk = 0; // tick
     const unsigned run_time = 8; // run time of each motor
     const unsigned cycle = run_time * total_motors;
     unsigned current_motor = tk / run_time % total_motors;
     unsigned direction = tk / cycle % 2; // 0 forward, 1 reverse
-    const int pwm_max = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
+    const int pwm_max = testPwm();
     static float max_rpm, stopping;
+    if (tk == 0) {
+        static const char *k[4][2] = {{"m1_enc_a", "m1_enc_b"}, {"m2_enc_a", "m2_enc_b"},
+                                      {"m3_enc_a", "m3_enc_b"}, {"m4_enc_a", "m4_enc_b"}};
+        for (int m = 0; m < 4; m++)
+            for (int c = 0; c < 2; c++) encPin[m][c] = envInt(k[m][c], -1);
+        Serial.printf("MOTOR TEST pwm %d of %d (tm_pct %d)\n", pwm_max,
+                      (1 << envU16("pwm_bits", PWM_BITS)) - 1, envInt("tm_pct", 25));
+    }
 
     setLed(direction ? LOW : HIGH);
     motor1_controller->spin((current_motor == 0) ? (direction ? -pwm_max : pwm_max) : 0);
@@ -172,7 +217,9 @@ void loop_() {
     motor3_controller->spin((current_motor == 2) ? (direction ? -pwm_max : pwm_max) : 0);
     motor4_controller->spin((current_motor == 3) ? (direction ? -pwm_max : pwm_max) : 0);
 
-    delay(1000);
+    unsigned edges[4][2];
+    int level[4][2];
+    pollEncoders(1000, edges, level);
     float current_rpm1 = motor1_encoder->getRPM();
     float current_rpm2 = motor2_encoder->getRPM();
     float current_rpm3 = motor3_encoder->getRPM();
@@ -200,6 +247,12 @@ void loop_() {
     syslog(LOG_INFO, "MOTOR%d %s RPM %8.1f %8.1f %8.1f %8.1f\n",
 	   current_motor + 1, direction ? "REV" : "FWD",
 	   current_rpm1, current_rpm2, current_rpm3, current_rpm4);
+    // Level changes per line in that second (A/B) and the levels at its end.
+    Serial.printf("ENC POLL %u/%u %u/%u %u/%u %u/%u  levels %d%d %d%d %d%d %d%d\n",
+           edges[0][0], edges[0][1], edges[1][0], edges[1][1],
+           edges[2][0], edges[2][1], edges[3][0], edges[3][1],
+           level[0][0], level[0][1], level[1][0], level[1][1],
+           level[2][0], level[2][1], level[3][0], level[3][1]);
     tk++;
 }
 
