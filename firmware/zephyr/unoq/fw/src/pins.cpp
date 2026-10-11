@@ -119,6 +119,13 @@ int analogRead(int pin)
 {
     const int i = pin - LINO_UNOQ_A0;
     if (i < 0 || i >= (int)ARRAY_SIZE(adcs) || !adc_is_ready_dt(&adcs[i])) return 0;
+    // The STM32 converts a pin correctly only in analog mode. The ADC driver sets that once,
+    // at boot, and a pinMode(pin, INPUT) -- the battery monitor's, as on any Arduino --
+    // leaves the pin a digital input: A0 then read 0.824 V where a meter showed 1.038 (a
+    // real robot's 10k/1k divider on a 3S pack, 9.06 V reported for 11.41, 2026-10-11).
+    // GPIO_DISCONNECTED is analog mode in Zephyr's STM32 GPIO driver, so every read puts
+    // the pin back first, as Arduino's own STM32 core does. A timer pin (A2, A3) is left alone.
+    if (pwmIndex(pin) < 0 && validPin(pin)) gpio_pin_configure_dt(&pins[pin], GPIO_DISCONNECTED);
     if (adc_channel_setup_dt(&adcs[i])) return 0;
     int16_t raw = 0;
     struct adc_sequence seq = {};
