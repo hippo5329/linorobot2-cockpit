@@ -28,3 +28,14 @@ def test_every_read_restores_analog_mode_first():
 def test_a_timer_pin_keeps_its_pwm():
     # A2/A3 carry motor PWM (pwmIndex); turning them analog would stop the motor.
     assert "pwmIndex(pin) < 0" in _analog_read()
+
+
+def test_attaching_an_encoder_twice_returns_its_counter():
+    """setup() builds the robot's four encoders before a tool runs; test_motors built four more
+    and every attach failed on the four slots, so it read 0 RPM while the lines toggled."""
+    src = open(PINS, encoding="utf-8").read()
+    body = src[src.index('extern "C" int linoZephyrQuadAttach'):]
+    body = body[:body.index("\n}\n")]
+    reuse = body.index("for (int h = 0; h < nquads; h++)")
+    assert reuse < body.index("nquads >= (int)ARRAY_SIZE(quads)"), "look up the pair before refusing"
+    assert "return h;" in body

@@ -192,6 +192,21 @@ static void quadEdge(void *arg)
 
 extern "C" int linoZephyrQuadAttach(int pin_a, int pin_b)
 {
+    // A pin pair already counting is the same encoder asked for again: hand back its counter.
+    // setup() builds the robot's four encoders before any tool runs, so a tool that builds its
+    // own (test_motors) found all four slots taken, got -1 and read 0 RPM forever while the
+    // edges went on being counted in the robot's counters (a mecanum robot's first motor test,
+    // 2026-10-11: 270 edges/s on the lines, 0.0 RPM). The direction follows the latest caller.
+    for (int h = 0; h < nquads; h++) {
+        Quad &q = quads[h];
+        if ((q.a == pin_a && q.b == pin_b) || (q.a == pin_b && q.b == pin_a)) {
+            const unsigned int key = irq_lock();
+            q.a = pin_a; q.b = pin_b;
+            q.state = (uint8_t)((gpio_pin_get_dt(&pins[pin_a]) << 1) | gpio_pin_get_dt(&pins[pin_b]));
+            irq_unlock(key);
+            return h;
+        }
+    }
     if (!validPin(pin_a) || !validPin(pin_b) || nquads >= (int)ARRAY_SIZE(quads)) {
         printk("[encoder] pins %d/%d: not usable on this board\n", pin_a, pin_b);
         return -1;
