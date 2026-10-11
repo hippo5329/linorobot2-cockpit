@@ -6,7 +6,7 @@
 # 1. Payload validity (non-empty, valid frame_id, valid timestamps)
 # 2. Measured topic frequency (Hz) meets minimum thresholds:
 #    - /odom      >= 10.0 Hz (nav_msgs/msg/Odometry)
-#    - /imu/data  >=  7.0 Hz (sensor_msgs/msg/Imu)
+#    - /imu/data  >= 20.0 Hz (sensor_msgs/msg/Imu)
 #    - /scan      >=  5.0 Hz (sensor_msgs/msg/LaserScan)
 #
 # Must pass before proceeding to SLAM mapping or Nav2 navigation.
@@ -229,7 +229,7 @@ class TopicVerifier(Node):
         }
         self.thresholds: Dict[str, float] = {
             "/odom": 10.0,
-            "/imu/data": 7.0,
+            "/imu/data": 20.0,   # every board publishes it at 50 Hz; under 20 the EKF is starved
         }
 
         if self.check_scan:

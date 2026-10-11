@@ -41,7 +41,10 @@ base_controller:
   # Two PWM lines per motor (M?A / M?B), no enable pin: the AT8236 dual-PWM scheme,
   # RPWM on in_a and LPWM on in_b, pwm (the enable) at -1.
   driver_type: AT8236
-  transport: serial
+  # No robot computer on this board: micro-ROS runs over Wi-Fi (udp4) to the agent on a PC
+  # or laptop, and the LiDAR is on the board's own header, forwarded over UDP (lidar below).
+  # A 921600-baud cable cannot carry a Nav2 run on this board; the USB port is for flashing.
+  transport: udp4
   # Yahboom's USB is a CP2102 bridge on GPIO 43/44 (UART0): it enumerates as
   # ttyUSBn (USB serial "0001"), not the native-USB ttyACMn of the S3 DevKit.
   serial_port: /dev/ttyUSB0
@@ -55,11 +58,11 @@ base_controller:
   lidar:
     # The Oradar MS200 sends the LD19's packet (lidar_drivers.py); the LD driver reads it.
     model: ms200
-    # Not `topic`: this board reaches the PC through a 921600-baud bridge, and a
-    # scan on the same wire as the 50 Hz control topics pulls every rate down
-    # (46.5 Hz measured). The LiDAR is on the LiDAR header (UART1: TX 17, RX 18
-    # -- the MS200 connector); in Sim mode the emulated LD19 goes out there.
-    comm_mode: serial
+    # On the LiDAR header (UART1: TX 17, RX 18 -- the MS200 connector) and sent to the
+    # robot computer's LD driver over UDP: with no robot computer on the robot there is no
+    # serial port to read it from, and `topic` over Wi-Fi floods the micro-ROS session.
+    # In Sim mode the emulated LD19 goes out the same way.
+    comm_mode: udp
     rx_pin: 18
     raw_scan_topic: raw_scan
   sensors:
@@ -83,6 +86,12 @@ base_controller:
   # on a bench run these ARE the robot. Every key is optional -- absent, the
   # firmware keeps its compiled default, which is the value shown here.
   # robot_radius is omitted on purpose: it follows the costmaps' robot_radius.
+  wifi:
+    enabled: true
+  telemetry:
+    syslog: true
+    ota: true
+    ota_port: 3232
   simulation:
     map_width: 10.0                   # the simulated room, metres, centred on the origin
     map_height: 6.0
