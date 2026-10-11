@@ -194,7 +194,8 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
     }
 }
 
-// One motor, forward, until the env changes: tm_only=N (1..4) spins only motor N at testPwm(),
+// One motor, forward, until the env changes: tm_only=N (1..4) spins only motor N at testPwm(), or
+// tm_only=5 all four together (the encoders' interrupt load at its highest: every line toggling),
 // printing its RPM and the polled encoder lines every second, so a person beside the robot can
 // say which wheel turns and which way, and the next env write moves on to the next motor. It
 // stops by itself after tm_secs (120 when absent) in case nobody moves it on.
@@ -202,17 +203,25 @@ static bool singleMotor(void)
 {
     static int only = -2;
     if (only == -2) only = envInt("tm_only", 0);
-    if (only < 1 || only > 4) return false;
+    if (only < 1 || only > 5) return false;
     static unsigned long t0 = millis();
     const unsigned long limit = 1000UL * (unsigned long)envInt("tm_secs", 120);
     MotorInterface *mot[4] = {motor1_controller, motor2_controller, motor3_controller, motor4_controller};
     EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
     const bool running = millis() - t0 < limit;
     for (int m = 0; m < 4; m++)
-        mot[m]->spin(running && m == only - 1 ? testPwm() : 0);
+        mot[m]->spin(running && (only == 5 || m == only - 1) ? testPwm() : 0);
     unsigned edges[4][2];
     int level[4][2];
     pollEncoders(1000, edges, level);
+    if (only == 5) {
+        float r[4];
+        for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
+        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n",
+                      running ? "FWD" : "STOPPED", r[0], r[1], r[2], r[3], edges[0][0], edges[0][1],
+                      edges[1][0], edges[1][1], edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
+        return true;
+    }
     const float rpm = enc[only - 1]->getRPM();
     Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only,
                   running ? "FWD" : "STOPPED", rpm, edges[0][0], edges[0][1], edges[1][0], edges[1][1],
