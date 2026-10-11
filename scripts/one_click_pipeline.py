@@ -1423,16 +1423,79 @@ def clearance_step(args, params: dict, controller_cfg: dict, need: float, save: 
     return res.returncode == 0
 
 
+def odom_pose(distro: str):
+    """(x, y, yaw) of one /odom message (the EKF's), or None."""
+    r = run_ros("ros2 topic echo --once /odom nav_msgs/msg/Odometry --field pose.pose", timeout=20, distro=distro)
+    try:
+        doc = yaml.safe_load((r.stdout or "").split("---")[0])
+        p, q = doc["position"], doc["orientation"]
+        yaw = math.atan2(2.0 * (q["w"] * q["z"] + q["x"] * q["y"]), 1.0 - 2.0 * (q["y"] ** 2 + q["z"] ** 2))
+        return (float(p["x"]), float(p["y"]), yaw)
+    except Exception:
+        return None
+
+
+def ekf_set_pose(pose, distro: str) -> bool:
+    """robot_localization's set_pose: the EKF's state becomes `pose` (x, y, yaw) in odom, at rest."""
+    x, y, yaw = pose
+    req = ("{pose: {header: {frame_id: odom}, pose: {pose: {position: {x: %.6f, y: %.6f, z: 0.0}, "
+           "orientation: {x: 0.0, y: 0.0, z: %.9f, w: %.9f}}}}}" % (x, y, math.sin(yaw / 2), math.cos(yaw / 2)))
+    r = run_ros(f"ros2 service call /set_pose robot_localization/srv/SetPose \"{req}\"", timeout=30, distro=distro)
+    return r.returncode == 0 and "response" in (r.stdout or "")
+
+
+def slam_pause_toggle(distro: str) -> bool:
+    """slam_toolbox's pause_new_measurements -- a TOGGLE: call it exactly twice."""
+    r = run_ros("ros2 service call /slam_toolbox/pause_new_measurements slam_toolbox/srv/Pause \"{}\"",
+                timeout=30, distro=distro)
+    return r.returncode == 0 and "response" in (r.stdout or "")
+
+
 def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
                    serial_port: str, flash_baud: int, controller: str, robot_name: str,
                    sim: bool = False) -> tuple:
+    """test_acc with the EKF and SLAM kept out of it.
+
+    test_acc runs as its own application, so for the whole of it the board publishes
+    no /odom/unfiltered and no /imu/data -- and robot_localization, with no
+    measurements, goes on predicting from its last velocity and acceleration. On a
+    real robot (2026-10-11) /odom ran off in a straight line at a frozen heading,
+    0.2 m then 2.2 m per half second, while the robot spun in place; when the board
+    came back, odom sat ~300 m from the truth, SLAM had followed it, and Nav2's next
+    goal aborted INCOHERENT. So: SLAM takes no new measurements while test_acc runs,
+    and once the robot is back where it started (by the LiDAR, not the odometry) the
+    EKF is set to the pose /odom had then. The Sim MCU never stops publishing."""
+    if sim:
+        return _test_acc_body(args, params, controller_cfg, params_path, pio_env, serial_port,
+                              flash_baud, controller, robot_name, sim=True)
+    pose0 = odom_pose(args.distro)
+    paused = slam_pause_toggle(args.distro)
+    print(f"  odometry before test_acc: {'(%+.3f, %+.3f, %+.1f deg)' % (pose0[0], pose0[1], math.degrees(pose0[2])) if pose0 else 'not read'};"
+          f" SLAM {'paused' if paused else 'NOT paused (the service did not answer)'}")
+    state = {}
+    try:
+        return _test_acc_body(args, params, controller_cfg, params_path, pio_env, serial_port,
+                              flash_baud, controller, robot_name, sim=False, state=state)
+    finally:
+        if pose0 and state.get("home"):
+            ok = ekf_set_pose(pose0, args.distro)
+            print(f"  the EKF set back to the pose before test_acc: {'done' if ok else 'FAILED (set_pose did not answer)'}")
+        elif pose0:
+            print("  the EKF left as it is: the robot is not known to be back where test_acc started")
+        if paused:
+            print(f"  SLAM resumed: {'done' if slam_pause_toggle(args.distro) else 'FAILED (call it again by hand)'}")
+
+
+def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
+                   serial_port: str, flash_baud: int, controller: str, robot_name: str,
+                   sim: bool = False, state: dict = None) -> tuple:
     """--test-acc, between the initial map and the goals: (failure, tuned_params_path).
 
     Nav2 is already stopped. In order: room for full-power runs (test_acc_clearance all
     round, inching up to 1.5 m to find it) and that scan kept; test_acc over Wi-Fi
     (test_acc_run.py, which always ends with lino-stop and app=base); back to the kept
-    scan by the LiDAR (clearance.py home) -- the odometry saw none of test_acc, so
-    this is also what keeps SLAM's map consistent; the plant identified and the PID
+    scan by the LiDAR (clearance.py home), which is where test_acc_phase() then sets
+    the EKF back to its pose before test_acc (state["home"] says it got there); the plant identified and the PID
     gains and Nav2 limits derived from it (drivetrain_report.tune_from_test_acc) into
     a copy of the config for the rest of this run; and that copy's env written, so the
     board runs the new gains. The robot's own config is not rewritten: the command to
@@ -1478,6 +1541,8 @@ def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, p
         print(ln if ln.startswith("  ") else "  " + ln)
     if home.returncode != 0:
         return "test_acc: not back where it started (the map and the odometry now disagree)", None
+    if state is not None:
+        state["home"] = True
     if res.returncode != 0:
         return "test_acc: did not finish (see TEST_ACC_FAILED above)", None
     try:
