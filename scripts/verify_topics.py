@@ -337,6 +337,14 @@ class TopicVerifier(Node):
         return self.count_publishers(topic)
 
 
+def measured_hz(ts_list) -> float:
+    """Messages per second over the received timestamps (0 with fewer than two)."""
+    if len(ts_list) < 2:
+        return 0.0
+    dt_total = ts_list[-1] - ts_list[0]
+    return (len(ts_list) - 1) / dt_total if dt_total > 0 else 0.0
+
+
 def format_odom(msg: Odometry) -> str:
     p = msg.pose.pose.position
     v = msg.twist.twist.linear
@@ -369,6 +377,9 @@ def main():
                              "without one (not a fault); a publisher is judged as usual.")
     parser.add_argument("--samples", type=int, default=12, help="Message samples to measure frequency")
     parser.add_argument("--timeout", type=float, default=10.0, help="Maximum seconds to collect samples")
+    parser.add_argument("--retries", type=int, default=1,
+                        help="Measure a short or silent core topic again this many times before "
+                             "failing it (the second look decides; the first is reported)")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
     parser.add_argument("--no-range-check", action="store_true",
                         help="With --require, check that the sensors publish but not that "
@@ -423,11 +434,36 @@ def main():
         print("🔍 Inspecting ROS 2 Topics: Payload Echo & Publishing Rates (Hz)")
         print("==================================================================")
 
-    start_time = time.time()
-    while rclpy.ok() and not verifier.is_complete():
-        rclpy.spin_once(verifier, timeout_sec=0.1)
-        if time.time() - start_time > args.timeout:
+    def collect():
+        start_time = time.time()
+        while rclpy.ok() and not verifier.is_complete():
+            rclpy.spin_once(verifier, timeout_sec=0.1)
+            if time.time() - start_time > args.timeout:
+                break
+
+    # The rate is judged on the first --samples messages (12: a quarter of a second at
+    # 50 Hz), so one stall in that window halves it. A board still settling after the
+    # agent connects showed exactly that: the UNO Q at 16.8 Hz on /imu/data and 27.6 on
+    # /odom, against 52-60 Hz on every other leg of the same gate (2026-10-11). A topic
+    # that comes in short or silent is measured once more from a fresh window; the second
+    # look decides and the first is printed beside it, so a retried pass stays visible.
+    collect()
+    first_look: Dict[str, str] = {}
+    for _ in range(max(0, args.retries)):
+        short = [t for t, ts in verifier.timestamps.items()
+                 if verifier.samples[t] is None or measured_hz(ts) < verifier.thresholds[t]]
+        if not short:
             break
+        for t in short:
+            ts = verifier.timestamps[t]
+            first_look.setdefault(t, "no data" if verifier.samples[t] is None or len(ts) < 2
+                                  else f"{measured_hz(ts):.1f} Hz")
+            verifier.timestamps[t] = []
+            verifier.samples[t] = None
+        if not args.json:
+            print("⏳ short on the first look, measuring again: "
+                  + ", ".join(f"{t} ({first_look[t]})" for t in short))
+        collect()
 
     all_passed = True
     json_results = {
@@ -457,13 +493,11 @@ def main():
                 "echo": "NO DATA (0 msgs received)",
             }
             if not args.json:
-                print(f"❌ {topic:12s} : NO DATA (0 msgs received in {args.timeout:.1f}s)")
+                again = ", twice" if topic in first_look else ""
+                print(f"❌ {topic:12s} : NO DATA (0 msgs received in {args.timeout:.1f}s{again})")
             continue
 
-        # Compute Hz
-        dt_total = ts_list[-1] - ts_list[0]
-        n_intervals = len(ts_list) - 1
-        hz = n_intervals / dt_total if dt_total > 0 else 0.0
+        hz = measured_hz(ts_list)
 
         # Payload description
         if topic == "/odom":
@@ -481,6 +515,8 @@ def main():
             status = f"FAIL (rate {hz:.1f} Hz < min {threshold:.1f} Hz)"
         else:
             status = f"PASS ({hz:.1f} Hz >= {threshold:.1f} Hz)"
+        if topic in first_look:
+            status += f" -- on the second look; the first: {first_look[topic]}"
 
         # On a real base the IMU is a physical chip, so its numbers have to be
         # possible as well as punctual. A dead IMU publishes zeros at a perfect
@@ -501,6 +537,7 @@ def main():
             "passed": passed,
             "range": range_note,
             "echo": desc,
+            "first_look": first_look.get(topic),
         }
 
         if not args.json:
