@@ -1,0 +1,21 @@
+# The Arduino UNO Q's STM32 boot lines, as Arduino's arduino-router.service sets them
+# around itself (ExecStartPre / ExecStartPost), for a board that runs with the router off.
+# The router holds /dev/ttyHS1, the STM32's micro-ROS link, so the cockpit needs it off;
+# then nothing drives the lines, and after a power cycle BOOT0 floats and the STM32 boots
+# its ROM bootloader instead of the application. Line 37 low is BOOT0 low.
+#
+#   sudo systemctl disable --now arduino-router arduino-router-serial
+#   sudo cp docker/unoq/lino-stm32-boot.service /etc/systemd/system/
+#   sudo systemctl enable --now lino-stm32-boot
+[Unit]
+Description=STM32 boot lines as arduino-router sets them (BOOT0 low, line 70 high)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/bin/gpioset -c /dev/gpiochip1 -t0 37=0
+ExecStart=/usr/bin/gpioset -c /dev/gpiochip1 -t0 70=1
+
+[Install]
+WantedBy=multi-user.target

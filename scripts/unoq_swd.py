@@ -4,6 +4,7 @@
     unoq_swd.py identify
     unoq_swd.py verify  <firmware.elf>              is the flash this image? (exit 0 = yes)
     unoq_swd.py flash   [--elf firmware.elf] --env env.bin
+    unoq_swd.py boot-lines                          BOOT0 low, line 70 high (BOOT_LINES)
 
 The UNO Q has no USB to its MCU and no boot banner on its micro-ROS link, so picotool,
 esptool and the serial probe do not apply. Its SWD lines are GPIOs of the QRB2210, driven
@@ -38,6 +39,90 @@ STM32U5_DEV_IDS = {0x481, 0x482, 0x455, 0x476}   # U59x/5Ax, U575/585, U535/545,
 
 class SwdError(RuntimeError):
     pass
+
+
+# The STM32's boot lines, as Arduino's arduino-router.service sets them around itself
+# (ExecStartPre gpiochip1 37=0, ExecStartPost 70=1). The cockpit runs with the router off --
+# it holds /dev/ttyHS1, the micro-ROS link -- and then nothing drives them: after a power
+# cycle BOOT0 floats and the STM32 starts its ROM bootloader (VTOR 0x0BF90000), not the
+# application, so the agent never gets a session. Line 37 low is BOOT0 low.
+BOOT_CHIP = "/dev/gpiochip1"
+BOOT_LINES = ((37, 0), (70, 1))
+
+# Linux GPIO character device, uAPI v2 (linux/gpio.h): enough of it to request lines as
+# outputs with their values, then let them go. The robot image has no libgpiod, and this
+# needs none.
+_GPIO_V2_LINES_MAX = 64
+_GPIO_V2_LINE_NUM_ATTRS_MAX = 10
+_GPIO_V2_LINE_FLAG_OUTPUT = 1 << 3
+_GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES = 2
+
+
+def _gpio_structs():
+    import ctypes
+
+    class LineAttribute(ctypes.Structure):
+        _fields_ = [("id", ctypes.c_uint32), ("padding", ctypes.c_uint32),
+                    ("values", ctypes.c_uint64)]
+
+    class LineConfigAttribute(ctypes.Structure):
+        _fields_ = [("attr", LineAttribute), ("mask", ctypes.c_uint64)]
+
+    class LineConfig(ctypes.Structure):
+        _fields_ = [("flags", ctypes.c_uint64), ("num_attrs", ctypes.c_uint32),
+                    ("padding", ctypes.c_uint32 * 5),
+                    ("attrs", LineConfigAttribute * _GPIO_V2_LINE_NUM_ATTRS_MAX)]
+
+    class LineRequest(ctypes.Structure):
+        _fields_ = [("offsets", ctypes.c_uint32 * _GPIO_V2_LINES_MAX),
+                    ("consumer", ctypes.c_char * 32), ("config", LineConfig),
+                    ("num_lines", ctypes.c_uint32), ("event_buffer_size", ctypes.c_uint32),
+                    ("padding", ctypes.c_uint32 * 5), ("fd", ctypes.c_int32)]
+    return LineRequest
+
+
+def _gpio_v2_get_line_ioctl(size):
+    # _IOWR(0xB4, 0x07, struct gpio_v2_line_request)
+    return (3 << 30) | (size << 16) | (0xB4 << 8) | 0x07
+
+
+def line_request(lines, consumer=b"lino-stm32-boot"):
+    """A gpio_v2_line_request for `lines` ((offset, value), ...) as outputs."""
+    import ctypes
+    req = _gpio_structs()()
+    for i, (off, _) in enumerate(lines):
+        req.offsets[i] = off
+    req.num_lines = len(lines)
+    req.consumer = consumer
+    req.config.flags = _GPIO_V2_LINE_FLAG_OUTPUT
+    req.config.num_attrs = 1
+    att = req.config.attrs[0]
+    att.attr.id = _GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES
+    att.attr.values = sum((1 << i) for i, (_, v) in enumerate(lines) if v)
+    att.mask = (1 << len(lines)) - 1
+    return req, ctypes.sizeof(req)
+
+
+def set_boot_lines(chip=BOOT_CHIP, lines=BOOT_LINES):
+    """Drive the STM32's boot lines the way arduino-router does, then release them (as
+    `gpioset -t0`). Raises SwdError when the chip cannot be opened or the lines requested."""
+    import fcntl
+    req, size = line_request(lines)
+    try:
+        fd = os.open(chip, os.O_RDWR | os.O_CLOEXEC)
+    except OSError as exc:
+        raise SwdError(f"cannot open {chip} for the STM32 boot lines ({exc.strerror}); the "
+                       f"container needs the GPIO chips (docker-compose.unoq.yml)") from exc
+    try:
+        fcntl.ioctl(fd, _gpio_v2_get_line_ioctl(size), req)
+    except OSError as exc:
+        raise SwdError(f"cannot set the STM32 boot lines on {chip} "
+                       f"({', '.join(f'{o}={v}' for o, v in lines)}): {exc.strerror} -- "
+                       f"is arduino-router still holding them?") from exc
+    finally:
+        os.close(fd)
+    if req.fd > 0:
+        os.close(req.fd)
 
 
 def openocd_argv():
@@ -134,11 +219,15 @@ def main():
     f = sub.add_parser("flash")
     f.add_argument("--elf")
     f.add_argument("--env", required=True)
+    sub.add_parser("boot-lines")
     a = ap.parse_args()
     try:
         if a.cmd == "identify":
             dev, uid = identify()
             print(f"STM32U5 DEV_ID 0x{dev:03x} uid={uid}")
+        elif a.cmd == "boot-lines":
+            set_boot_lines()
+            print("STM32 boot lines set: " + ", ".join(f"{BOOT_CHIP} line {o}={v}" for o, v in BOOT_LINES))
         elif a.cmd == "verify":
             ok = verify(a.elf)
             print("firmware current" if ok else "firmware differs")

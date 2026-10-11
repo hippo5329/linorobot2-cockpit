@@ -1641,6 +1641,15 @@ def flash_unoq(prebuilt_dir: str, params_path: str, mode: str, firmware: bool) -
         print("  ❌ could not build the env block (a mixed simulation is refused; see above).")
         return False
     elf = os.path.join(prebuilt_dir, "firmware.elf") if firmware else None
+    # The boot lines first: the flash ends in a reset, and with BOOT0 floating (arduino-router
+    # off and no boot service) the STM32 would come up in its ROM bootloader, not the app.
+    try:
+        unoq_swd.set_boot_lines()
+        print("  STM32 boot lines: " + ", ".join(f"line {o}={v}" for o, v in unoq_swd.BOOT_LINES)
+              + f" on {unoq_swd.BOOT_CHIP} (BOOT0 low: the MCU boots its application)")
+    except unoq_swd.SwdError as exc:
+        print(f"  ⚠️  {exc}. The flash goes on; if the board was power-cycled with nothing setting "
+              f"them, the STM32 may boot its ROM bootloader (docker/unoq/lino-stm32-boot.service).")
     print(f"  SWD: {'firmware.elf and ' if elf else ''}env block at 0x{unoq_swd.ENV_ADDR:08X}...")
     try:
         unoq_swd.flash(env_bin, elf)

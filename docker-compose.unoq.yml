@@ -9,8 +9,14 @@
 # the container runs it through the HOST's loader and libraries, mounted read-only at
 # /host-lib (scripts/unoq_swd.py). Nothing here applies to any other robot computer.
 #
-# Before the first run, free the link from Arduino's router (it owns /dev/ttyHS1):
-#   sudo systemctl disable --now arduino-router
+# Before the first run, free the link from Arduino's router (it owns /dev/ttyHS1) and
+# install the boot-line service in its place -- the router also drives the STM32's BOOT0
+# line low at every start, and without it the MCU boots its ROM bootloader after a power
+# cycle. The 1-Click sets the same lines before every flash; the service covers a boot
+# with no 1-Click:
+#   sudo systemctl disable --now arduino-router arduino-router-serial
+#   sudo cp docker/unoq/lino-stm32-boot.service /etc/systemd/system/
+#   sudo systemctl enable --now lino-stm32-boot
 services:
   cockpit:
     volumes:
