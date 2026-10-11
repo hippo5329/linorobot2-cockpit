@@ -46,6 +46,9 @@ one of them a particular robot is here:
                 tm_pct   (test_motors' drive as a percent of full PWM, 25 when
                           absent: a first run turns the wheels slowly; set with
                           --set tm_pct=100 for full power, never from the config)
+                tm_only  tm_secs  (test_motors: only motor N, forward, until the env
+                          changes or tm_secs pass, 120 when absent; a person
+                          names the wheel that turns. Bench keys, --set only)
 
     board       i2c_sda  i2c_scl  i2c_clock  i2c_bus (a bus fixed in hardware)
                 gpio_out  gpio_out_late  boot_delay

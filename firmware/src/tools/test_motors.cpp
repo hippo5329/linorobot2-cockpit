@@ -194,8 +194,41 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
     }
 }
 
+// One motor, forward, until the env changes: tm_only=N (1..4) spins only motor N at testPwm(),
+// printing its RPM and the polled encoder lines every second, so a person beside the robot can
+// say which wheel turns and which way, and the next env write moves on to the next motor. It
+// stops by itself after tm_secs (120 when absent) in case nobody moves it on.
+static bool singleMotor(void)
+{
+    static int only = -2;
+    if (only == -2) only = envInt("tm_only", 0);
+    if (only < 1 || only > 4) return false;
+    static unsigned long t0 = millis();
+    const unsigned long limit = 1000UL * (unsigned long)envInt("tm_secs", 120);
+    MotorInterface *mot[4] = {motor1_controller, motor2_controller, motor3_controller, motor4_controller};
+    EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
+    const bool running = millis() - t0 < limit;
+    for (int m = 0; m < 4; m++)
+        mot[m]->spin(running && m == only - 1 ? testPwm() : 0);
+    unsigned edges[4][2];
+    int level[4][2];
+    pollEncoders(1000, edges, level);
+    const float rpm = enc[only - 1]->getRPM();
+    Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only,
+                  running ? "FWD" : "STOPPED", rpm, edges[0][0], edges[0][1], edges[1][0], edges[1][1],
+                  edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
+    return true;
+}
+
 void loop_() {
     static unsigned tk = 0; // tick
+    if (tk == 0 && encPin[0][0] == 0 && encPin[0][1] == 0) {
+        static const char *k[4][2] = {{"m1_enc_a", "m1_enc_b"}, {"m2_enc_a", "m2_enc_b"},
+                                      {"m3_enc_a", "m3_enc_b"}, {"m4_enc_a", "m4_enc_b"}};
+        for (int m = 0; m < 4; m++)
+            for (int c = 0; c < 2; c++) encPin[m][c] = envInt(k[m][c], -1);
+    }
+    if (singleMotor()) return;
     const unsigned run_time = 8; // run time of each motor
     const unsigned cycle = run_time * total_motors;
     unsigned current_motor = tk / run_time % total_motors;
