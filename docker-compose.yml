@@ -133,6 +133,9 @@ services:
       - COCKPIT_TOKEN=${COCKPIT_TOKEN:-}
       - HOST_UID=${COCKPIT_UID:-}
       - HOST_GID=${COCKPIT_GID:-}
+      # Optional LAN copies of the release firmware, <base>/<tag>/<asset>, tried
+      # before GitHub (scripts/fetch_prebuilt.py). Comma-separated base URLs.
+      - COCKPIT_FIRMWARE_MIRROR=${COCKPIT_FIRMWARE_MIRROR:-}
       # SERIAL_GID aligns the in-container dialout group with the host's so the
       # dropped-privilege user can still open the tty.
       - SERIAL_GID=${SERIAL_GID:-20}

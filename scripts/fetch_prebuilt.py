@@ -20,6 +20,12 @@ Which release: `--version`, else the `VERSION` file at the repo root. A version
 ending in `-dev`, and any version with no release of its own, resolve to the
 newest published release -- prereleases included, so a checkout during an
 `rc-YYYYMMDD` freeze finds the candidate's assets instead of 404ing.
+
+COCKPIT_FIRMWARE_MIRROR (optional, a comma-separated list of base URLs) names LAN
+copies of the release assets, laid out as `<base>/<tag>/<asset>`. Each is tried
+before GitHub; a mirror that is down or lacks the tag costs a few seconds and the
+download goes to GitHub as before. The archive is checked against its manifest
+either way.
 """
 import argparse
 import hashlib
@@ -121,6 +127,30 @@ def is_floating(version: str) -> bool:
 # hits it; one that stalls this long is treated as a TIMEOUT, below.
 API_TIMEOUT_S = 60
 DOWNLOAD_TIMEOUT_S = 120
+# A LAN mirror answers at once or not at all.
+MIRROR_TIMEOUT_S = 10
+
+
+def mirrors() -> list:
+    return [m.strip().rstrip("/") for m in os.environ.get("COCKPIT_FIRMWARE_MIRROR", "").split(",")
+            if m.strip()]
+
+
+def from_mirror(profile: str, version: str, quiet: bool = False):
+    """The archive from the first mirror that has it, or None."""
+    for base in mirrors():
+        url = f"{base}/{version}/{asset_name(profile)}"
+        try:
+            with urllib.request.urlopen(url, timeout=MIRROR_TIMEOUT_S) as resp:
+                blob = resp.read()
+        except Exception as exc:
+            if not quiet:
+                print(f"[fetch_prebuilt] mirror {url}: {exc}; trying the next source")
+            continue
+        if not quiet:
+            print(f"[fetch_prebuilt] {url} (mirror)")
+        return blob
+    return None
 
 
 def is_timeout(exc: BaseException) -> bool:
@@ -269,6 +299,9 @@ def fetch(profile: str, version: str = None, repo: str = DEFAULT_REPO,
                 print(f"[fetch_prebuilt] no release {version}; falling back to {candidate}")
         url = asset_url(profile, candidate, repo)
         tried.append(candidate)
+        blob = from_mirror(profile, candidate, quiet)
+        if blob is not None:
+            break
         if not quiet:
             print(f"[fetch_prebuilt] {url}")
         try:
