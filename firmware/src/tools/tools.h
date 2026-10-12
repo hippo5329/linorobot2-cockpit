@@ -75,6 +75,8 @@ bool toolStopRequested(void);
 // Waits `ms`, servicing the radio and the input; a stop ends the command (toolAbort).
 void toolWait(uint32_t ms);
 // Motors off, a line saying why, and back to the prompt from wherever the command was.
+// toolStopReason() is what asked: "stop", "lino-stop" or "the terminal went away".
+const char *toolStopReason(void);
 [[noreturn]] void toolAbort(const char *why);
 // Motors off, all four.
 void toolMotorsOff(void);

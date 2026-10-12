@@ -164,7 +164,7 @@ static void waitMs(uint32_t ms)
         runWifis();
         runOta();
         if (toolStopRequested())
-            halt("stop");
+            halt(toolStopReason());
         const int32_t left = (int32_t)(end - millis());
         if (left <= 0)
             return;

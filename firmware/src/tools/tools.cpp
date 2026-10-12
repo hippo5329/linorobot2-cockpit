@@ -156,6 +156,7 @@ static bool i2cUnassigned(void)
 // Stop, and the jump back to the prompt.
 static jmp_buf to_prompt;
 static bool stop_flag = false;
+static const char *stop_why = "stop";      // what the STOPPED line says
 static bool (*job_step)(void) = nullptr;   // the running stepped command
 static const char *job_name = nullptr;     // stepped or blocking, while it runs
 static bool job_moves = false;             // it drives the wheels
@@ -169,6 +170,8 @@ void toolMotorsOff(void)
 }
 
 static void prompt(void) { Serial.print("tool> "); }
+
+const char *toolStopReason(void) { return stop_why; }
 
 void toolAbort(const char *why)
 {
@@ -219,11 +222,13 @@ static void pollInput(bool busy)
         handleLine(line, busy);
     if (hostStopRequested()) {
         hostStopClear();
-        if (busy) stop_flag = true;
+        if (busy) { stop_flag = true; stop_why = "lino-stop"; }
     }
     // The terminal that started a drive went away: nobody can type `stop` now.
-    if (termDropped() && busy && job_moves)
+    if (termDropped() && busy && job_moves) {
         stop_flag = true;
+        stop_why = "the terminal went away";
+    }
 }
 
 bool toolStopRequested(void)
@@ -240,7 +245,7 @@ void toolWait(uint32_t ms)
         runOta();
         feedWatchdogFromTool();
         if (toolStopRequested())
-            toolAbort("stop");
+            toolAbort(stop_why);
         const int32_t left = (int32_t)(end - millis());
         if (left <= 0)
             return;
@@ -355,6 +360,7 @@ static bool setKey(const char *k, const char *v)
 static void startStepped(const char *name, void (*begin)(void), bool (*step)(void), bool moves)
 {
     stop_flag = false;
+    stop_why = "stop";
     hostStopClear();
     job_name = name;
     job_moves = moves;
@@ -365,6 +371,7 @@ static void startStepped(const char *name, void (*begin)(void), bool (*step)(voi
 static void runBlocking(const char *name, void (*fn)(void), bool moves)
 {
     stop_flag = false;
+    stop_why = "stop";
     hostStopClear();
     job_name = name;
     job_moves = moves;
@@ -385,7 +392,7 @@ static void handleLine(char *line, bool busy)
     for (char *p = (char *)cmd; *p; p++) *p = (char)tolower(*p);
 
     if (!*cmd || !strcmp(cmd, "stop") || !strcmp(cmd, "s")) {
-        if (busy) stop_flag = true;
+        if (busy) { stop_flag = true; stop_why = "stop"; }
         else { toolMotorsOff(); prompt(); }
         return;
     }
@@ -534,7 +541,7 @@ void toolLoop(void)
     }
     pollInput(job_name != nullptr);
     if (stop_flag && job_name)
-        toolAbort("stop");
+        toolAbort(stop_why);
     if (job_step) {
         if (!job_step()) {
             toolMotorsOff();
