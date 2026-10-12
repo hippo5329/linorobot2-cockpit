@@ -49,6 +49,16 @@ static const char *boot_run = "";
 RTC_NOINIT_ATTR static uint32_t tool_next_boot;
 #elif defined(ARDUINO_ARCH_RP2040)
 static uint32_t tool_next_boot __attribute__((section(".uninitialized_data.lino_tool")));
+#elif defined(LINO_HOST)
+// The Sim MCU restarts by exec'ing itself; the flag rides in its environment.
+#include <unistd.h>
+static uint32_t tool_next_boot = 0;
+static void hostLoadFlag(void)
+{
+    const char *f = getenv("LINO_TOOL_NEXT_BOOT");
+    if (f && strcmp(f, "1") == 0) tool_next_boot = TOOL_NEXT_BOOT;
+    unsetenv("LINO_TOOL_NEXT_BOOT");
+}
 #else
 static uint32_t tool_next_boot = 0;
 #endif
@@ -72,6 +82,9 @@ void toolRestart(bool tool)
     ESP.restart();
 #elif defined(ARDUINO_ARCH_RP2040)
     rp2040.reboot();
+#elif defined(LINO_HOST)
+    setenv("LINO_TOOL_NEXT_BOOT", tool ? "1" : "0", 1);
+    execl("/proc/self/exe", "lino_host_fw", (char *)NULL);
 #endif
     for (;;) delay(1000);      // a board that cannot restart itself: power-cycle it
 }
@@ -82,6 +95,9 @@ AppMode toolSelect(void)
     const char *want = envGet("app", "base");
     // `base` is the robot, not a command: it returns here, before anything that
     // belongs to the tool (rc-20261012.2: base turned real-only and faulted).
+#if defined(LINO_HOST)
+    hostLoadFlag();
+#endif
     const bool asked = (tool_next_boot == TOOL_NEXT_BOOT);
     tool_next_boot = 0;              // once: the next reset is base again
     if (asked) {

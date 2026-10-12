@@ -61,7 +61,7 @@ class LinoConsole : public Stream
         // Read the env key. Called once, at the top of setup(), before the
         // first print; the flash partition is readable by then.
         void selectFromEnv();
-        void select(bool uart0) { uart0_ = uart0; }
+        void select(bool use_uart0) { uart0_ = use_uart0; }
         bool isUart0() const { return uart0_; }
         const char *name() const { return uart0_ ? "uart0" : "usb"; }
         // Copy every complete line to syslog as well (a tool on a Wi-Fi robot).

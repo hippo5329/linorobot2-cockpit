@@ -36,6 +36,8 @@
 #define LINO_HOST 1
 #endif
 
+#include <poll.h>
+#include <unistd.h>
 #include <arpa/inet.h>
 #include <cstdarg>
 #include <cstdint>
@@ -211,11 +213,38 @@ public:
 
     // A host has no USB device port, so it cannot be a micro-ROS SERIAL client:
     // uros_transport.cpp refuses transport=serial on this target before any of
-    // this is reached. read() staying empty is therefore correct rather than
-    // unfinished -- there is no peer that could ever answer.
-    int available() override { return 0; }
-    int read() override { return -1; }
-    size_t readBytes(char *, size_t) override { return 0; }
+    // this is reached. Input is stdin, for the tool's console (2026-10-12, user: "use
+    // sim mcu to test new base into tool"): never blocking, and an end of file (a Sim
+    // MCU started with stdin on /dev/null) is no input, for good.
+    int available() override { return peekByte() >= 0 ? 1 : 0; }
+    int read() override
+    {
+        const int c = peekByte();
+        pending_ = -1;
+        return c;
+    }
+    int peek() override { return peekByte(); }
+    size_t readBytes(char *buf, size_t n) override
+    {
+        size_t i = 0;
+        for (; i < n; i++) { const int c = read(); if (c < 0) break; buf[i] = (char)c; }
+        return i;
+    }
+
+private:
+    int pending_ = -1;
+    bool eof_ = false;
+    int peekByte()
+    {
+        if (pending_ >= 0 || eof_) return pending_;
+        struct pollfd pfd = {0, POLLIN, 0};
+        if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & (POLLIN | POLLHUP))) return -1;
+        unsigned char c;
+        const ssize_t r = ::read(0, &c, 1);
+        if (r <= 0) { eof_ = true; return -1; }
+        pending_ = c;
+        return pending_;
+    }
 };
 
 extern _LinoHostSerial Serial;
