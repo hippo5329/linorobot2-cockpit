@@ -687,7 +687,8 @@ void runAcc() {
     // drives every wheel, up to full power (or ta_pct), on the floor.
     setRunTime();
     {
-        const unsigned secs = 35 + 48 * run_time / 1000 + 1;
+        const bool strafe = kinematics->base_platform_ == Kinematics::MECANUM;
+        const unsigned secs = 35 + (48 + (strafe ? 4 : 0)) * run_time / 1000 + 1;
         REPORT("acc: every wheel at up to %d %% power for about %u s, out and back -- keep 2 m "
                "clear. 'stop' (or an empty line) stops it. Starting in 3 s.\n",
                envInt("ta_pct", 100), secs);
@@ -753,6 +754,26 @@ void runAcc() {
     }
     // The runs come back by construction (each drives out and the same back), but
     // a track that runs faster one way still walks; take out what is left, once.
+    // A mecanum base also moves sideways, and its Nav2 limits need vy (MPPI omni): one
+    // strafe run at half power, left then back right (kinematics.cpp: +y is wheel 1 and 4
+    // backward, 2 and 3 forward). Its block prints after the straight runs, so the host's
+    // first `MAX VEL` stays the straight one.
+    if (kinematics->base_platform_ == Kinematics::MECANUM) {
+        const int p = pwm_max / 2;
+        idx = 0;
+        imu_max_acc_x = 0;
+        imu_min_acc_x = 0;
+        driveAll(-p, p, p, -p);
+        record(run_time / ticks, buf);
+        driveAll(0, 0, 0, 0);
+        record(run_time / ticks, buf);
+        driveAll(p, -p, -p, p);
+        record(run_time / ticks, buf);
+        driveAll(0, 0, 0, 0);
+        record(run_time / ticks, buf);
+        Serial.printf("MAX PWM strafe %6.1f %6.1f\n", (float)p, (float)-p);
+        dump_record(buf);
+    }
     ident::reportPhase("runs");
     Serial.println("[test_acc] done -- 'base' to leave the tool");
 }

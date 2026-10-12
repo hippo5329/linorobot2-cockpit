@@ -39,7 +39,7 @@ PROMPT = b"tool> "
 ENTERED = (b"[app] tool", b"[tool] ready")
 # Commands that keep running until `stop` (or their own time), and the lines that end
 # the long blocking ones.
-RUNNING = ("sensors", "motor", "motors", "enc")
+RUNNING = ("sensors", "motor", "motors", "enc", "ramp")
 # The long blocking commands end where every command ends: at the prompt, which every path
 # through the shell prints (a refusal, a usage line, `done`, a stop). Their own words go to
 # syslog as well as the console, and differ by path; the prompt does not.
@@ -172,7 +172,7 @@ class SerialLink:
     def keepalive(self):
         # A NUL a second: the tool then stops a drive started from here if this script dies
         # (an ssh session that drops kills it before its `finally` can send `stop`).
-        if time.time() - self.last_keep >= 1.0:
+        if time.time() - self.last_keep >= 0.25:
             self.last_keep = time.time()
             try:
                 self.s.write(b"\0")
@@ -274,7 +274,7 @@ class TcpLink:
 
     def keepalive(self):
         # A NUL a second: the board stops a drive started here when the terminal goes quiet.
-        if time.time() - self.last_keep >= 1.0 and not self.closed:
+        if time.time() - self.last_keep >= 0.25 and not self.closed:
             self.last_keep = time.time()
             try:
                 self.s.sendall(b"\0")

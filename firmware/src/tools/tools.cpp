@@ -20,6 +20,7 @@ void test_sensors_begin(void);   bool test_sensors_step(void);
 void test_motors_begin(void);    bool test_motors_step(void);
 void test_motors_one_begin(void); bool test_motors_one_step(void);
 void test_motors_enc_begin(void); bool test_motors_enc_step(void);
+void test_motors_ramp_begin(void); bool test_motors_ramp_step(void);
 void test_acc_run(void);
 #if ADC_LUT_SUPPORTED
 void adc_calibrate_run(void);
@@ -204,7 +205,7 @@ const char *toolName(AppMode mode) { return mode == APP_TOOL ? app_name : "base"
 // has nothing to measure. Same rules as scripts/mcu_env.py tool_refusal.
 static const char *simulatedFor(const char *cmd)
 {
-    if (!strcmp(cmd, "motor") || !strcmp(cmd, "motors"))
+    if (!strcmp(cmd, "motor") || !strcmp(cmd, "motors") || !strcmp(cmd, "ramp"))
         return envInt("sim_wheel", 0) == 1 ? "the wheels" : NULL;
     if (!strcmp(cmd, "adc"))
         return envInt("sim_battery", 0) == 1 ? "the battery" : NULL;
@@ -257,6 +258,10 @@ static uint32_t i2c_next = 0;
 // that dies without a FIN still reads as connected for minutes, and nobody could type
 // `stop` into it. lino_tool.py sends a keep-alive (NUL) every second.
 #define TERM_DEADMAN_MS 3000
+// `acc` drives every wheel at up to full power: at that speed 3 s is metres. lino_tool.py
+// sends its keep-alive every 250 ms, so 2 s still rides out the GenDrv's measured 0.5-2 s
+// Wi-Fi gaps less often than it stops a robot that has lost its operator.
+#define ACC_DEADMAN_MS 2000
 
 void toolMotorsOff(void)
 {
@@ -343,20 +348,21 @@ static void pollInput(bool busy)
         hostStopClear();
         if (busy) { stop_flag = true; stop_why = "lino-stop"; }
     }
+    const uint32_t deadman = (job_name && !strcmp(job_name, "acc")) ? ACC_DEADMAN_MS : TERM_DEADMAN_MS;
     if (busy && job_moves && job_from_term) {
         // The terminal that started a drive went away, or went quiet: nobody can type
         // `stop` into it now.
         if (termDropped()) {
             stop_flag = true;
             stop_why = "the terminal went away";
-        } else if (millis() - termLastInput() > TERM_DEADMAN_MS) {
+        } else if (millis() - termLastInput() > deadman) {
             stop_flag = true;
             stop_why = "the terminal went quiet";
         }
     } else {
         termDropped();          // read once: a drop between commands is no stop
     }
-    if (busy && job_moves && job_from_hb_console && millis() - con_last > TERM_DEADMAN_MS) {
+    if (busy && job_moves && job_from_hb_console && millis() - con_last > deadman) {
         stop_flag = true;
         stop_why = "the console went quiet";
     }
@@ -455,6 +461,7 @@ static void help(void)
         "                            or secs (0: until stop). `motor` alone: the env's.\n"
         "  motors [pct]              each wheel forward 8 s, then each in reverse; then done\n"
         "  enc                       encoder counts, motors off: turn a wheel by hand\n"
+        "  ramp <wheel> [max]        on the stand: the % that first turns the wheel, both ways\n"
         "  acc [ms] [pct]            drivetrain test on the floor, every wheel (run phase\n"
         "                            300-1000 ms, power cap 10-100 %)\n"
 #if ADC_LUT_SUPPORTED
@@ -688,6 +695,21 @@ static void handleLine(char *line, bool busy)
                 return usage("motor <1-4|all> <pct> [secs] (or tm_only 1-5 in the env)");
         }
         startStepped("motor", test_motors_one_begin, test_motors_one_step, true);
+        return;
+    } else if (!strcmp(cmd, "ramp")) {
+        // ramp <wheel> [max]: sugar for tm_only / tm_pct, a command's own arguments.
+        long wheel = 0, max = 40;
+        if (argc < 2 || !toInt(argv[1], &wheel) || wheel < 1 || wheel > (long)tool_hw::total_motors
+            || (argc >= 3 && (!toInt(argv[2], &max) || max < 5 || max > 100))) {
+            char m[80];
+            snprintf(m, sizeof(m), "ramp <wheel 1-%u> [max pct 5..100, default 40]", tool_hw::total_motors);
+            return usage(m);
+        }
+        char a[12], b[12];
+        snprintf(a, sizeof(a), "%ld", wheel);
+        snprintf(b, sizeof(b), "%ld", max);
+        if (!cmdKey("tm_only", a) || !cmdKey("tm_pct", b)) { prompt(); return; }
+        startStepped("ramp", test_motors_ramp_begin, test_motors_ramp_step, true);
         return;
     } else if (!strcmp(cmd, "motors")) {
         if (argc >= 2 && (!toInt(argv[1], &n) || n < 1 || n > 100))

@@ -251,6 +251,10 @@ bool oneStep(void)
     // The wheel's RPM, the pack, then how often each encoder line (A/B) changed level in that
     // second, every wheel's: only the running wheel's pair should move.
     Serial.printf("MOTOR %d %s  RPM %7.1f", only, dir, r[only - 1]);
+    // The direction check: a wheel driven forward must count forward. Opposite signs mean the
+    // motor or its encoder is inverted (pins.motorN.invert / encoder invert in the config).
+    if (fabsf(r[only - 1]) > 2.0f && (r[only - 1] > 0) != (pwm > 0))
+        Serial.print("  DIR WRONG (motor or encoder inverted)");
     printBat(bat);
     Serial.printf("  ENC A/B  m1 %u/%u  m2 %u/%u  m3 %u/%u  m4 %u/%u\n",
                   edges[0][0], edges[0][1], edges[1][0], edges[1][1],
@@ -284,6 +288,61 @@ bool encStep(void)
     Serial.printf("[TOOL_JSON] {\"cmd\":\"enc\",\"count\":[%ld,%ld,%ld,%ld]}\n",
                   (long)c[0], (long)c[1], (long)c[2], (long)c[3]);
     for (int m = 0; m < 4; m++) enc_last[m] = c[m];
+    return true;
+}
+
+// `ramp <wheel> [max]`: on the stand, one wheel's power from 0 up by 1 % every 250 ms, forward
+// and then in reverse, stopping each way at the first % that turns it (an encoder line moves,
+// or 2 RPM) or at max (40 % unless given). The deadzone per wheel and per direction, which
+// `acc` otherwise measures only on the floor with every wheel at once.
+static int ramp_wheel = 0, ramp_max = 40, ramp_pct = 0, ramp_dir = 1, ramp_found[2] = {-1, -1};
+static unsigned long ramp_t = 0;
+
+void rampBegin(void)
+{
+    readEncPins();
+    ramp_wheel = envInt("tm_only", 1);
+    ramp_max = envInt("tm_pct", 40);
+    if (ramp_max < 5) ramp_max = 5;
+    if (ramp_max > 100) ramp_max = 100;
+    ramp_pct = 0;
+    ramp_dir = 1;
+    ramp_found[0] = ramp_found[1] = -1;
+    ramp_t = millis();
+    Serial.printf("RAMP motor %d: 0 to %d %% forward, then reverse, 1 %% every 250 ms -- 'stop' "
+                  "ends it\n", ramp_wheel, ramp_max);
+}
+
+bool rampStep(void)
+{
+    MotorInterface *mot = motor_controllers[ramp_wheel - 1];
+    EncoderInterface *enc = motor_encoders[ramp_wheel - 1];
+    const int full = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
+    mot->spin(ramp_dir * full * ramp_pct / 100);
+    unsigned edges[4][2];
+    int level[4][2];
+    pollEncoders(250, edges, level);
+    const unsigned e = edges[ramp_wheel - 1][0] + edges[ramp_wheel - 1][1];
+    const float rpm = enc->getRPM();
+    if (e > 0 || fabsf(rpm) > 2.0f || ramp_pct >= ramp_max) {
+        const int idx = ramp_dir > 0 ? 0 : 1;
+        ramp_found[idx] = (e > 0 || fabsf(rpm) > 2.0f) ? ramp_pct : -1;
+        mot->spin(0);
+        if (ramp_found[idx] >= 0)
+            Serial.printf("RAMP motor %d %s: turns at %d %% (RPM %.1f, %u edges)\n", ramp_wheel,
+                          ramp_dir > 0 ? "FWD" : "REV", ramp_pct, rpm, e);
+        else
+            Serial.printf("RAMP motor %d %s: nothing moved up to %d %% -- check the motor's "
+                          "supply and wiring\n", ramp_wheel, ramp_dir > 0 ? "FWD" : "REV", ramp_max);
+        Serial.printf("[TOOL_JSON] {\"cmd\":\"ramp\",\"wheel\":%d,\"dir\":\"%s\",\"pct\":%d}\n",
+                      ramp_wheel, ramp_dir > 0 ? "FWD" : "REV", ramp_found[idx]);
+        if (ramp_dir < 0) return false;
+        toolWait(1000);                     // let it stop before the reverse ramp
+        ramp_dir = -1;
+        ramp_pct = 0;
+        return true;
+    }
+    ramp_pct++;
     return true;
 }
 
@@ -372,4 +431,6 @@ extern "C" bool test_motors_step(void)      { return test_motors::step(); }
 extern "C" void test_motors_one_begin(void) { test_motors::oneBegin(); }
 extern "C" bool test_motors_one_step(void)  { return test_motors::oneStep(); }
 extern "C" void test_motors_enc_begin(void) { test_motors::encBegin(); }
+extern "C" void test_motors_ramp_begin(void) { test_motors::rampBegin(); }
+extern "C" bool test_motors_ramp_step(void)  { return test_motors::rampStep(); }
 extern "C" bool test_motors_enc_step(void)  { return test_motors::encStep(); }
