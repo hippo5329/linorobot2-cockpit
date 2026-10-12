@@ -84,6 +84,10 @@ static const char *toolRequest(const char *arg, char *head, size_t n)
     const IPAddress ip = ping_udp.remoteIP();
     const uint16_t port = ping_udp.remotePort();
     if (!*arg || *arg == '\n' || *arg == '\r') {
+        // One pending nonce at a time, and another sender cannot replace it before it expires.
+        if (tool_nonce[0] && millis() - tool_nonce_ms < 10000
+            && (ip != tool_nonce_ip || port != tool_nonce_port))
+            return "lino-tool busy (another request is pending) ";
         snprintf(tool_nonce, sizeof(tool_nonce), "%08lx", (unsigned long)nonceRandom());
         tool_nonce_ms = millis();
         tool_nonce_ip = ip;

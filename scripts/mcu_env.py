@@ -37,7 +37,7 @@ one of them a particular robot is here:
                          the heading: sensors.orientation_stddev)
                 sim_ld19  lidar_x   (the MCU-side LiDAR emulator, and where on
                                       the robot it raycasts from: geometry.laser.x)
-                ota_port  ping_port
+                ota_port  ping_port  term_port  tool_wait
                 wifi_sleep  (1 = let the radio power-save; it is kept awake
                              by default -- latency over milliwatts)
                 diag_tx  diag_baud   (a second UART that prints the loop's
@@ -877,6 +877,14 @@ def hardware_env(params: dict) -> dict:
     # what it is. Default 3233 on the board; 0 turns it off.
     if telemetry.get("ping_port") is not None:
         env["ping_port"] = int(telemetry["ping_port"])
+    # The tool's terminal on a Wi-Fi robot (firmware/src/tools/tool_term.h): 2323 on the
+    # board, 0 turns it off.
+    if telemetry.get("term_port") is not None:
+        env["term_port"] = int(telemetry["term_port"])
+    # How long base waits at boot for `tool` before micro-ROS (firmware/src/tools/tools.h):
+    # 3000 ms on the board, 0 for no window at all.
+    if tgt.get("tool_wait") is not None:
+        env["tool_wait"] = int(tgt["tool_wait"])
     if telemetry.get("ota_password"):
         env["ota_password"] = str(telemetry["ota_password"])
 

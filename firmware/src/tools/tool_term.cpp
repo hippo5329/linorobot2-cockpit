@@ -16,7 +16,10 @@
 // which also reflashes the robot -- never crosses the network. A board with no password
 // opens no terminal: a robot on the network is never driven without one.
 #define LOGIN_MS      10000      // to answer the challenge
-#define LOCKOUT_MS    10000      // after three wrong answers
+#define LOCKOUT_MS    10000      // after three wrong answers, for that address
+#define IDLE_MS       120000     // a logged-in client silent this long is gone (a half-open
+                                 // link reads as connected; lino_tool.py sends a NUL a second)
+#define WRITE_GRACE_MS 2000      // a send with no room: a burst, until it lasts this long
 
 #if defined(LINO_HOST)
 // The Sim MCU has no MD5Builder; RFC 1321, enough for one short string.
@@ -105,6 +108,8 @@ static bool authed = false;
 static int tries = 0;
 static uint32_t login_t0 = 0;
 static uint32_t locked_until = 0;
+static IPAddress locked_ip;
+static uint32_t write_fail_since = 0;
 static bool dropped = false;
 static uint32_t last_input = 0;
 static char nonce[9] = "";
@@ -131,9 +136,13 @@ public:
         const ssize_t w = (ssize_t)client.write(buf, n);
 #endif
         if (w < (ssize_t)n) {
-            hangUp();
-            return 0;
+            // No room: a burst (`get`, an I2C table) or a link that has gone. A drive's own
+            // stop does not wait on this -- its deadman reads input, not output.
+            if (!write_fail_since) write_fail_since = millis();
+            else if (millis() - write_fail_since > WRITE_GRACE_MS) { hangUp(); return 0; }
+            return w > 0 ? (size_t)w : 0;
         }
+        write_fail_since = 0;
         return n;
     }
     using Print::write;
@@ -249,7 +258,8 @@ static void greet(void)
     client.setTimeout(20);           // a write waits at most this long for room
 #endif
     snprintf(nonce, sizeof(nonce), "%08lx", (unsigned long)nonceRandom());
-    client.print("linorobot2 tool -- answer with md5(password:nonce) (lino_tool.py does)\r\n");
+    client.print("linorobot2 tool -- answer with md5(password:nonce) (lino_tool.py does). A "
+                 "drive started here stops after 3 s without input; lino_tool.py keeps it alive.\r\n");
     client.print("nonce ");
     client.print(nonce);
     client.print("\r\nlogin: ");
@@ -277,6 +287,7 @@ static void checkAnswer(const char *line)
     if (++tries >= 3) {
         tries = 0;
         locked_until = millis() + LOCKOUT_MS;
+        locked_ip = client.remoteIP();
         syslog(LOG_WARNING, "tool terminal: 3 wrong answers from %s, locked 10 s",
                ipText(client.remoteIP()));
     }
@@ -299,13 +310,17 @@ bool termLine(char *buf, size_t n)
         client.print("too slow\r\n");
         hangUp();
     }
+    if (have_client && authed && millis() - last_input > IDLE_MS) {
+        client.print("[tool] idle 2 min: closing this terminal\r\n");
+        hangUp();
+    }
     // One client at a time; a second is told so and closed, as is anyone while locked.
     WiFiClient incoming = server->available();
     if (incoming) {
         if (have_client) {
-            incoming.print("busy: another terminal is connected\r\n");
+            incoming.print("busy: another terminal is connected (an idle one closes after 2 min)\r\n");
             incoming.stop();
-        } else if ((int32_t)(millis() - locked_until) < 0) {
+        } else if ((int32_t)(millis() - locked_until) < 0 && incoming.remoteIP() == locked_ip) {
             incoming.print("locked: too many wrong answers, try again shortly\r\n");
             incoming.stop();
         } else {

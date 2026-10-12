@@ -121,8 +121,18 @@ void toolRestart(bool tool)
 // out of micro-ROS. Same rules as scripts/mcu_env.py tool_refusal.
 static const char *legacyRefusal(const char *app)
 {
-    if (!strcmp(app, "test_sensors"))
-        return strcmp(envGet("imu", ""), "sim") == 0 ? "tests the IMU, and this board's env simulates it" : NULL;
+    if (!strcmp(app, "test_sensors")) {
+        // It reads every I2C sensor, so it runs when ANY is real -- the host's own rule
+        // (mcu_env._sensors_refusal): an ESP32-S3 whose one real part is a BMP280 has to pass.
+        auto real = [](const char *k) {
+            const char *v = envGet(k, "");
+            return v[0] && strcasecmp(v, "sim") != 0 && strcasecmp(v, "none") != 0;
+        };
+        const bool baro = envInt("pub_env", 0) == 1 && envInt("sim_env", 0) != 1;
+        if (real("imu") || real("mag") || baro)
+            return NULL;
+        return "tests the robot's sensors, and this board has no real IMU, magnetometer or barometer";
+    }
     if (!strcmp(app, "test_motors") || !strcmp(app, "test_acc"))
         return envInt("sim_wheel", 0) == 1 ? "tests the wheels, and this board's env simulates them" : NULL;
     if (!strcmp(app, "adc_calibrate")) {
@@ -506,6 +516,35 @@ static bool setKey(const char *k, const char *v)
     return true;
 }
 
+// A command's own argument versus a person's `set`. `motor 1 30 20` writes tm_secs=20 for
+// that run; the next `motor 2 30` must not inherit it -- but `set tm_secs 10` typed by a
+// person must hold until they clear it. So a command clears only what a command wrote.
+static const char *const CMD_KEYS[] = {"tm_only", "tm_pct", "tm_secs", "ta_ms", "ta_pct"};
+static bool cmd_wrote[sizeof(CMD_KEYS) / sizeof(CMD_KEYS[0])];
+
+static int cmdKeyIndex(const char *k)
+{
+    for (size_t i = 0; i < sizeof(CMD_KEYS) / sizeof(CMD_KEYS[0]); i++)
+        if (!strcmp(CMD_KEYS[i], k)) return (int)i;
+    return -1;
+}
+
+// v: the command's argument for k, or nullptr when it was not given.
+static bool cmdKey(const char *k, const char *v)
+{
+    const int i = cmdKeyIndex(k);
+    if (v) {
+        if (!setKey(k, v)) return false;
+        if (i >= 0) cmd_wrote[i] = true;
+        return true;
+    }
+    if (i >= 0 && cmd_wrote[i]) {          // the last command's value, not the person's
+        cmd_wrote[i] = false;
+        return setKey(k, nullptr);
+    }
+    return true;
+}
+
 static void startJob(const char *name, bool moves)
 {
     stop_flag = false;
@@ -565,8 +604,11 @@ static void handleLine(char *line, bool busy)
             Serial.printf("[tool] %s is not a test setting -- change it in the cockpit and "
                           "press Flash MCU (the tool's settings: tm_pct tm_only tm_secs ta_ms "
                           "ta_pct)\n", argv[1]);
-        else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr))
+        else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr)) {
+            const int i = cmdKeyIndex(argv[1]);
+            if (i >= 0) cmd_wrote[i] = false;   // the person's now: commands leave it alone
             Serial.printf("[tool] %s = %s\n", argv[1], argc >= 3 ? argv[2] : "(stored value)");
+        }
         if (!busy) prompt();
         return;
     }
@@ -635,7 +677,7 @@ static void handleLine(char *line, bool busy)
             snprintf(a, sizeof(a), "%ld", all ? 5L : wheel);
             snprintf(b, sizeof(b), "%ld", pct);
             snprintf(c, sizeof(c), "%ld", secs);
-            if (!setKey("tm_only", a) || !setKey("tm_pct", b) || !setKey("tm_secs", secs >= 0 ? c : nullptr)) {
+            if (!cmdKey("tm_only", a) || !cmdKey("tm_pct", b) || !cmdKey("tm_secs", secs >= 0 ? c : nullptr)) {
                 prompt();
                 return;
             }
@@ -650,7 +692,7 @@ static void handleLine(char *line, bool busy)
         if (argc >= 2 && (!toInt(argv[1], &n) || n < 1 || n > 100))
             return usage("motors [pct 1..100]");
         // Its own power, or the stored one: never the last `motor`'s.
-        if (!setKey("tm_pct", argc >= 2 ? argv[1] : nullptr)) { prompt(); return; }
+        if (!cmdKey("tm_pct", argc >= 2 ? argv[1] : nullptr)) { prompt(); return; }
         startStepped("motors", test_motors_begin, test_motors_step, true);
         return;
     } else if (!strcmp(cmd, "acc")) {
@@ -658,8 +700,8 @@ static void handleLine(char *line, bool busy)
         if ((argc >= 2 && (!toInt(argv[1], &n) || n < 300 || n > 1000))
             || (argc >= 3 && (!toInt(argv[2], &pct) || pct < 10 || pct > 100)))
             return usage("acc [ms 300..1000] [pct 10..100]");
-        if (!setKey("ta_ms", argc >= 2 ? argv[1] : nullptr)
-            || !setKey("ta_pct", argc >= 3 ? argv[2] : nullptr)) { prompt(); return; }
+        if (!cmdKey("ta_ms", argc >= 2 ? argv[1] : nullptr)
+            || !cmdKey("ta_pct", argc >= 3 ? argv[2] : nullptr)) { prompt(); return; }
         runBlocking("acc", test_acc_run, true);
 #if ADC_LUT_SUPPORTED
     } else if (!strcmp(cmd, "adc")) {

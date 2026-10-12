@@ -40,8 +40,10 @@ ENTERED = (b"[app] tool", b"[tool] ready")
 # Commands that keep running until `stop` (or their own time), and the lines that end
 # the long blocking ones.
 RUNNING = ("sensors", "motor", "motors", "enc")
-ENDS = {"acc": (b"[test_acc] done", b"[test_acc] STOPPED", b"test_acc refused", b"[tool] STOPPED"),
-        "adc": (b"[ADC_JSON]", b"[tool] STOPPED")}
+# The long blocking commands end where every command ends: at the prompt, which every path
+# through the shell prints (a refusal, a usage line, `done`, a stop). Their own words go to
+# syslog as well as the console, and differ by path; the prompt does not.
+LONG = {"acc": 900.0, "adc": 300.0}
 
 
 def log(msg):
@@ -54,6 +56,31 @@ def tool_answer(password: str, nonce: str) -> str:
 
 
 # ---------------------------------------------------------------- serial
+def release_port(port: str) -> None:
+    """Stop only what holds THIS port (a micro-ROS agent on it), found through /proc: a
+    host with two robots keeps the other's agent. Restart the stack afterwards."""
+    import signal
+    try:
+        target = os.path.realpath(port)
+    except OSError:
+        return
+    me = os.getpid()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == me:
+            continue
+        fd_dir = f"/proc/{pid}/fd"
+        try:
+            for fd in os.listdir(fd_dir):
+                if os.path.realpath(os.path.join(fd_dir, fd)) == target:
+                    log(f"stopping pid {pid}, which holds {port} (restart the robot stack after)")
+                    os.kill(int(pid), signal.SIGINT)
+                    time.sleep(1.0)
+                    break
+        except (PermissionError, FileNotFoundError, ProcessLookupError):
+            continue
+
+
+# ---------------------------------------------------------------- serial (the link)
 class SerialLink:
     def __init__(self, port: str, baud: int, env: str):
         try:
@@ -94,14 +121,18 @@ class SerialLink:
         measured 2026-10-12 on a running Pico 2, the port re-enumerated and no banner
         followed, and the firmware has no picotool reset interface for a running board."""
         import flash_mcu
-        flash_mcu.release_serial_port(self.port)          # a micro-ROS agent lets go
+        release_port(self.port)                           # its micro-ROS agent lets go
         if self.env.startswith("esp32"):
             if not self.open():
                 return False
             self.s.rts = True             # EN low
             time.sleep(0.1)
             self.s.rts = False
-            return True
+            # An S3 on its own USB (USB-Serial/JTAG) re-enumerates on that reset: this
+            # handle is then dead. Reopen; a bridge's port simply opens again.
+            self.s.close()
+            time.sleep(0.3)
+            return self.open()
         if self.env.startswith("unoq"):
             # The STM32 behind the UNO Q's ttyHS1: its boot lines, then an SWD reset, the
             # flasher's own path (unoq_swd.py). The agent must not hold ttyHS1, nor
@@ -309,11 +340,10 @@ def run_commands(link, commands) -> bool:
         if not words or head in ("stop", "s"):
             driving = False
             pump(link, 2.0, until=(PROMPT,))
-        elif head in ENDS:
-            driving = head == "acc"
-            pump(link, 900.0, until=ENDS[head])
-            pump(link, 2.0, until=(PROMPT,))
-            driving = False
+        elif head in LONG:
+            got = pump(link, LONG[head], until=(PROMPT,))
+            # Still driving unless the prompt came back: then the `finally` stops it.
+            driving = head == "acc" and PROMPT not in got
         elif head in RUNNING or (head == "i2c" and len(words) > 1):
             driving = driving or head in ("motor", "motors")
             pump(link, 2.0)

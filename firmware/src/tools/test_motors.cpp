@@ -225,8 +225,9 @@ bool oneStep(void)
     EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
     const int pwm = onePwm();
     const char *dir = pwm < 0 ? "REV" : "FWD";
+    // `all` is the wheels this robot has: a 2wd's m3/m4 are the header's pins, never driven.
     for (int m = 0; m < 4; m++)
-        mot[m]->spin(running && (only == 5 || m == only - 1) ? pwm : 0);
+        mot[m]->spin(running && ((only == 5 && m < (int)total_motors) || m == only - 1) ? pwm : 0);
     if (!running) return false;
     if (only == 5) {
         // Interrupts only: no polling beside them, so the counts show what the pin interrupts

@@ -174,11 +174,13 @@ def is_pico_family(env: str) -> bool:
 
 
 def has_radio(env: str) -> bool:
-    """A board that can be a Wi-Fi robot: the ESP32 family, and every RP2 image (they are
-    all W builds: Pico W, Pico 2 W, the XRP's RM2). A Wi-Fi robot needs its network keys
+    """A board that can be a Wi-Fi robot: the ESP32 family, and the RP2 W builds (picow,
+    pico2w -- every prebuilt RP2 image is one -- and the XRP's RM2); the plain pico/pico2
+    envs carry no radio. A Wi-Fi robot needs its network keys
     and an OTA password before it leaves the cable -- the password also guards the tool's
     network terminal and lino-tool (2026-10-12)."""
-    return is_esp_family(env) or env.startswith(("pico", "xrp"))
+    e = (env or "").lower()
+    return is_esp_family(e) or e.startswith(("picow", "pico2w", "xrp"))
 
 
 def is_esp_family(env: str) -> bool:
@@ -1547,10 +1549,9 @@ def warn_if_app_unsupported(app: str, env: str) -> None:
         return
     log(f"\u26a0\ufe0f  '{app}' needs a hardware DAC; '{env or 'this board'}' has none "
         f"(only {', '.join(_DAC_ENVS)} do).")
-    log("    The env key will be written, but the image does not carry that "
-        "application:")
-    log("    the board will print '[app] ... is not an application this image "
-        "carries' and boot `base`.")
+    log("    The env key will be written, but this board has no `adc` command:")
+    log("    the board will print \"[app] 'adc_calibrate' needs a hardware DAC, which this "
+        "MCU does not have\" and boot `base`.")
 
 
 def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
