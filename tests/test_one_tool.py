@@ -73,7 +73,7 @@ def test_the_window_is_three_seconds_on_a_board_and_none_on_the_sim_mcu():
     main = _read("src", "main.cpp")
     # After the radio (the ping port answers lino-tool), before micro-ROS.
     assert main.index("initPing(formatBanner);") < main.index("if (micro_ros && toolEscape())")
-    assert main.index("if (micro_ros && toolEscape())") < main.index("initUrosTransport(")
+    assert main.index("if (micro_ros && toolEscape())") < main.index("    initUrosTransport();")
 
 
 def test_a_stopped_command_always_turns_the_motors_off_first():
