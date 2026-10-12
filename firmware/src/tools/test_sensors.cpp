@@ -94,29 +94,31 @@ void setup_()
     const char *imu_name = envGet("imu", defaultIMUName());
     const char *mag_name = envGet("mag", defaultMAGName());
     i2cProbeSelect(&imu_name, &mag_name);
-    imu = createIMU(imu_name);
-    mag = createMAG(mag_name);
-
     Serial.println("Initializing IMU & Magnetometer...");
-    bool imu_ok = imu->init();
-    if (!imu_ok)
+    // "none" creates nothing: createIMU()/createMAG() would hand back a simulated
+    // part, and this tool then reported "[+] Magnetometer initialized successfully"
+    // and streamed its field on a real robot with no magnetometer.
+    if (sensorFitted(imu_name))
     {
-        Serial.println("[-] IMU initialization FAILED!");
+        imu = createIMU(imu_name);
+        if (!imu->init())
+            Serial.println("[-] IMU initialization FAILED!");
+        else
+            Serial.println("[+] IMU initialized successfully.");
     }
     else
-    {
-        Serial.println("[+] IMU initialized successfully.");
-    }
+        Serial.println("[ ] No IMU (imu none).");
 
-    bool mag_ok = mag->init();
-    if (!mag_ok)
+    if (sensorFitted(mag_name))
     {
-        Serial.println("[-] Magnetometer initialization FAILED or not detected.");
+        mag = createMAG(mag_name);
+        if (!mag->init())
+            Serial.println("[-] Magnetometer initialization FAILED or not detected.");
+        else
+            Serial.println("[+] Magnetometer initialized successfully.");
     }
     else
-    {
-        Serial.println("[+] Magnetometer initialized successfully.");
-    }
+        Serial.println("[ ] No magnetometer (mag none).");
 
     initBattery();
     initRange();
@@ -145,8 +147,8 @@ void loop_()
 
     // Poll sensors at 50 Hz (20ms interval) to keep IMU state machines (e.g. BNO085) running smoothly
     delay(20);
-    *imu_msg = imu->getData();
-    *mag_msg = mag->getData();
+    if (imu) *imu_msg = imu->getData();   // otherwise the zeroed message: no IMU
+    if (mag) *mag_msg = mag->getData();
 
 #ifdef MAG_BIAS
     const float mag_bias[3] = MAG_BIAS;
@@ -212,7 +214,12 @@ void loop_()
         // no battery line at all, in the tool you run to check the battery.
         // BATTERY_PIN and TRIG_PIN are still genuine compile-time facts; a board
         // without them reads 0 here, which is what a diagnostic should show.
-        Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg->voltage, range_msg->range);
+        // A sonar that is not fitted reads none: getRange() keeps its seeded
+        // max_range (4.84 m on a robot with no sonar looked like a clear reading).
+        if (rangePresent())
+            Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg->voltage, range_msg->range);
+        else
+            Serial.printf("  BAT: %5.2fV | RANGE: none\n", battery_msg->voltage);
         // envOk() is false when nothing answered the probe, so this prints only
         // on a board that actually has the chip -- no macro needed.
         if (envOk())

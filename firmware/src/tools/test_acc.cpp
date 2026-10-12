@@ -269,15 +269,26 @@ void setup_()
     const char *imu_name = envGet("imu", defaultIMUName());
     const char *mag_name = envGet("mag", defaultMAGName());
     i2cProbeSelect(&imu_name, &mag_name);
-    imu = createIMU(imu_name);
-    mag = createMAG(mag_name);
-
-    imu_ok = imu->init();
-    if (!imu_ok)
-        Serial.println("[-] IMU initialization FAILED -- IMU ACC below is not a measurement.");
+    // imu/mag "none": nothing is created. createIMU() would hand back a simulated
+    // IMU, and its readings went out as IMU ACC and yaw_imu from a robot with no IMU.
+    // The magnetometer is not read here at all; it is only created when fitted, so
+    // a real board never starts a simulated one.
+    if (sensorFitted(imu_name))
+    {
+        imu = createIMU(imu_name);
+        imu_ok = imu->init();
+        if (!imu_ok)
+            Serial.println("[-] IMU initialization FAILED -- IMU ACC below is not a measurement.");
+        else
+            Serial.printf("[+] IMU %s initialized.\n", imu_name);
+    }
     else
-        Serial.printf("[+] IMU %s initialized.\n", imu_name);
-    mag->init();
+        Serial.println("[ ] No IMU (imu none): IMU ACC below reads none.");
+    if (sensorFitted(mag_name))
+    {
+        mag = createMAG(mag_name);
+        mag->init();
+    }
 
     for (int i = 0; i < 4; i++) motor_pids[i] = createPID();
     kinematics = createKinematics();
@@ -338,10 +349,12 @@ void record(unsigned n, Kinematics::velocities *buf) {
         float rpm2 = readRPM(1);
         float rpm3 = readRPM(2);
         float rpm4 = readRPM(3);
-        *imu_msg = imu->getData();
-        float imu_acc_x = imu_msg->linear_acceleration.x;
-        if (imu_acc_x > imu_max_acc_x) imu_max_acc_x = imu_acc_x;
-        if (imu_acc_x < imu_min_acc_x) imu_min_acc_x = imu_acc_x;
+        if (imu) {
+            *imu_msg = imu->getData();
+            float imu_acc_x = imu_msg->linear_acceleration.x;
+            if (imu_acc_x > imu_max_acc_x) imu_max_acc_x = imu_acc_x;
+            if (imu_acc_x < imu_min_acc_x) imu_min_acc_x = imu_acc_x;
+        }
 
         if (idx < trace_n) {
             buf[idx] = kinematics->getVelocities(rpm1, rpm2, rpm3, rpm4);
@@ -394,7 +407,10 @@ void dump_record(const Kinematics::velocities *buf) {
     Serial.printf("MIN VEL %6.2f %6.2f m/s  %6.2f rad/s\n", min_vel_x, min_vel_y, min_vel_z);
     Serial.printf("MAX ACC %6.2f %6.2f m/s2  %6.2f rad/s2\n", max_acc_x, max_acc_y, max_acc_z);
     Serial.printf("MIN ACC %6.2f %6.2f m/s2  %6.2f rad/s2\n", min_acc_x, min_acc_y, min_acc_z);
-    Serial.printf("IMU ACC %6.2f %6.2f m/s2\n", imu_max_acc_x, imu_min_acc_x);
+    if (imu)
+        Serial.printf("IMU ACC %6.2f %6.2f m/s2\n", imu_max_acc_x, imu_min_acc_x);
+    else
+        Serial.println("IMU ACC none (no IMU)");
     Serial.printf("time to 0.9x max vel %6.2f sec\n", idx * dt);
     Serial.printf("distance to stop %6.2f %s\n", dist, (runs & 1) ? "m" : "rad");
 
@@ -402,7 +418,8 @@ void dump_record(const Kinematics::velocities *buf) {
     syslog(LOG_INFO, "MIN VEL %6.2f %6.2f m/s  %6.2f rad/s", min_vel_x, min_vel_y, min_vel_z);
     syslog(LOG_INFO, "MAX ACC %6.2f %6.2f m/s2  %6.2f rad/s2", max_acc_x, max_acc_y, max_acc_z);
     syslog(LOG_INFO, "MIN ACC %6.2f %6.2f m/s2  %6.2f rad/s2", min_acc_x, min_acc_y, min_acc_z);
-    syslog(LOG_INFO, "IMU ACC %6.2f %6.2f m/s2", imu_max_acc_x, imu_min_acc_x);
+    if (imu)
+        syslog(LOG_INFO, "IMU ACC %6.2f %6.2f m/s2", imu_max_acc_x, imu_min_acc_x);
 }
 
 

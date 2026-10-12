@@ -138,10 +138,12 @@ void setup_()
     initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
     i2cScanTable();  // default range from 0x03 to 0x77
     initMcuEnv();
-    imu = createIMU(envGet("imu", defaultIMUName()));
-    mag = createMAG(envGet("mag", defaultMAGName()));
-    imu->init();
-    mag->init();
+    // Started as `base` starts them (some chips run their own fusion and want it
+    // running), and only when fitted: "none" would make a simulated part.
+    const char *imu_name = envGet("imu", defaultIMUName());
+    const char *mag_name = envGet("mag", defaultMAGName());
+    if (sensorFitted(imu_name)) { imu = createIMU(imu_name); imu->init(); }
+    if (sensorFitted(mag_name)) { mag = createMAG(mag_name); mag->init(); }
 
     {
         Kinematics *k = createKinematics();

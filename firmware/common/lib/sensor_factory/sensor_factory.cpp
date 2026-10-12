@@ -60,6 +60,11 @@ const char *defaultMAGName(void)
 #endif
 }
 
+bool sensorFitted(const char *name)
+{
+    return name && *name && strcasecmp(name, "none") != 0;
+}
+
 IMUInterface *createIMU(const char *name)
 {
     if (name && *name) {
