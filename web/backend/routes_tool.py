@@ -95,7 +95,11 @@ class SimLink:
         # process only (the binary links librclc and rmw_microxrcedds from there -- run bare
         # it died, "librclc.so: cannot open shared object file"), and RMW_IMPLEMENTATION
         # said, or rcl refuses the image's container-wide Fast DDS and exits 102.
-        cmd = (f". {shlex.quote(host_firmware.setup_script())} && "
+        # The launcher runs inside a sourced ROS; the backend does not, so ROS first
+        # (librcutils and the rest -- "librcutils.so: cannot open shared object file").
+        distro = os.environ.get("ROS_DISTRO", "jazzy")
+        cmd = (f". /opt/ros/{shlex.quote(distro)}/setup.bash && "
+               f". {shlex.quote(host_firmware.setup_script())} && "
                f"RMW_IMPLEMENTATION=rmw_microxrcedds exec {shlex.quote(binary)}")
         self.p = subprocess.Popen(["bash", "-c", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, env=penv)
