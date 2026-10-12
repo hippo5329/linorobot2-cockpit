@@ -45,6 +45,13 @@ const char *envGet(const char *key, const char *fallback = "");
 const char *envPeek(const char *key, const char *fallback = "");
 int         envInt(const char *key, int fallback);   // pins: -1 means not wired
 bool        envFlag(const char *key, bool fallback); // "0"/"false"/"no" are false
+// The diagnostic tools run on a real robot only (user, 2026-10-12: "tools are for
+// real robots, no sim devices should be used"). toolSelect() sets this when it
+// starts one, and from then on nothing simulated is built: createIMU()/createMAG()
+// return NULL for `sim`, `auto`, `none` or a name they do not know, and the battery
+// and barometer models stay off whatever sim_battery / sim_env say. `base` never sets it.
+void        envSetRealOnly(bool on);
+bool        envRealOnly(void);
 uint16_t    envU16(const char *key, uint16_t fallback);
 uint32_t    envU32(const char *key, uint32_t fallback);
 float       envFloat(const char *key, float fallback);

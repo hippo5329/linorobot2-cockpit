@@ -68,7 +68,10 @@ def test_a_robot_with_no_imu_is_a_real_robot_not_a_mixed_one():
     # imu: NONE is "this robot has no IMU": `none` on the wire, nothing published, the
     # EKF fuses the wheels alone. It used to reach the board as "sim" -- a simulated
     # IMU on real wheels, reporting turns nothing measured.
+    # The designs say AUTO now (the bus decides), so the robot that SAYS it has none
+    # is the Maker's Pet with its sensors declared absent.
     cfg = _ref("makerspet_mini")
+    cfg["base_controller"]["sensors"].update(imu="NONE", mag="NONE")
     for mode in ("config", "real"):
         assert mcu_env.mixed_simulation(cfg, mode) is None, mode
         assert mcu_env.robot_has_imu(cfg, mode) is False, mode

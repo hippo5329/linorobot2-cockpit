@@ -38,10 +38,8 @@ MAGInterface *createMAG(const char *name);
 const char *defaultIMUName(void);
 const char *defaultMAGName(void);
 
-// False for "none" (and a blank name): the env says the robot has no such sensor.
-// createIMU()/createMAG() still return a simulated part for any name they do not
-// know -- `base` never asks them for "none" -- so a tool checks this first and
-// creates nothing: on a real robot a simulated reading is not a measurement.
-bool sensorFitted(const char *name);
+// In a tool (envRealOnly(), mcu_env.h) both return NULL for anything but a real
+// chip's driver -- `sim`, `auto`, `none`, an unknown name -- and the tool reports
+// no such sensor: on a real robot a simulated reading is not a measurement.
 
 #endif // SENSOR_FACTORY_H

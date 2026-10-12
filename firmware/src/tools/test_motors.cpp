@@ -139,11 +139,13 @@ void setup_()
     i2cScanTable();  // default range from 0x03 to 0x77
     initMcuEnv();
     // Started as `base` starts them (some chips run their own fusion and want it
-    // running), and only when fitted: "none" would make a simulated part.
+    // running). The bus decides first, as in test_acc and test_sensors, and only a
+    // real chip is created (envRealOnly): never a simulated part on a real robot.
     const char *imu_name = envGet("imu", defaultIMUName());
     const char *mag_name = envGet("mag", defaultMAGName());
-    if (sensorFitted(imu_name)) { imu = createIMU(imu_name); imu->init(); }
-    if (sensorFitted(mag_name)) { mag = createMAG(mag_name); mag->init(); }
+    i2cProbeSelect(&imu_name, &mag_name);
+    if ((imu = createIMU(imu_name))) imu->init();
+    if ((mag = createMAG(mag_name))) mag->init();
 
     {
         Kinematics *k = createKinematics();

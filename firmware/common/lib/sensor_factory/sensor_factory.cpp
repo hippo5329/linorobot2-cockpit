@@ -9,6 +9,7 @@
 #include "default_imu.h"
 #include "default_mag.h"
 #include "sensor_factory.h"
+#include "mcu_env.h"
 
 // The table is the single place a sensor name is tied to a class. Adding a
 // driver means adding its row here and nothing else -- the generator, the env
@@ -60,13 +61,18 @@ const char *defaultMAGName(void)
 #endif
 }
 
-bool sensorFitted(const char *name)
-{
-    return name && *name && strcasecmp(name, "none") != 0;
-}
-
 IMUInterface *createIMU(const char *name)
 {
+    if (envRealOnly()) {
+        for (unsigned i = 0; name && *name && i < sizeof(IMU_TABLE) / sizeof(IMU_TABLE[0]); i++)
+            if (strcasecmp(IMU_TABLE[i].name, "sim") != 0 && strcasecmp(IMU_TABLE[i].name, name) == 0) {
+                Serial.printf("[sensors] IMU: %s\n", IMU_TABLE[i].name);
+                return IMU_TABLE[i].make();
+            }
+        Serial.printf("[sensors] IMU '%s': no real chip by that name - none (real parts only)\n",
+                      name ? name : "");
+        return NULL;
+    }
     if (name && *name) {
         for (unsigned i = 0; i < sizeof(IMU_TABLE) / sizeof(IMU_TABLE[0]); i++) {
             if (strcasecmp(name, IMU_TABLE[i].name) == 0) {
@@ -81,6 +87,16 @@ IMUInterface *createIMU(const char *name)
 
 MAGInterface *createMAG(const char *name)
 {
+    if (envRealOnly()) {
+        for (unsigned i = 0; name && *name && i < sizeof(MAG_TABLE) / sizeof(MAG_TABLE[0]); i++)
+            if (strcasecmp(MAG_TABLE[i].name, "sim") != 0 && strcasecmp(MAG_TABLE[i].name, name) == 0) {
+                Serial.printf("[sensors] MAG: %s\n", MAG_TABLE[i].name);
+                return MAG_TABLE[i].make();
+            }
+        Serial.printf("[sensors] MAG '%s': no real chip by that name - none (real parts only)\n",
+                      name ? name : "");
+        return NULL;
+    }
     if (name && *name) {
         for (unsigned i = 0; i < sizeof(MAG_TABLE) / sizeof(MAG_TABLE[0]); i++) {
             if (strcasecmp(name, MAG_TABLE[i].name) == 0) {

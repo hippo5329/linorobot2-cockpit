@@ -107,6 +107,9 @@ AppMode toolSelect(void)
                               "firmware instead.\n", want, why);
                 return APP_BASE;
             }
+            // A real robot only: no simulated IMU, magnetometer, battery or barometer
+            // stands in for a part the tool cannot find (mcu_env.h, envSetRealOnly).
+            envSetRealOnly(true);
             return TOOLS[i].mode;
         }
 

@@ -108,7 +108,7 @@ void initBattery(){
 #else
   bat_cap = envFloat("bat_cap", 0.0f);
 #endif
-  s_sim = envFlag("sim_battery", SIM_BATTERY_DEFAULT);
+  s_sim = !envRealOnly() && envFlag("sim_battery", SIM_BATTERY_DEFAULT);   // never in a tool
   if (s_sim) {
     // A config with no pack described gets a typical 3S Li-ion one.
     if (bat_max <= bat_min || bat_max <= 0.0f) { bat_min = 9.9f; bat_max = 12.6f; }

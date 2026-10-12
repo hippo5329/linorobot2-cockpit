@@ -1,47 +1,87 @@
-"""A tool on a real robot never creates a simulated IMU or magnetometer for "none".
+"""The tools run on a real robot, and nothing simulated stands in for a part they cannot find.
 
-createIMU()/createMAG() return a simulated part for any name they do not know, "none"
-included; `base` never asks them for "none" (main.cpp). The tools did: on a mecanum robot
-with `mag: none`, test_sensors printed "[+] Magnetometer initialized successfully" and
-streamed a simulated field, and with `imu: none` test_acc reported a simulated IMU's
-acceleration as IMU ACC (2026-10-12). Every tool now asks sensorFitted() first and creates
-nothing for "none". test_sensors also prints RANGE none for a sonar that is not fitted
-(it printed the seeded max range, 4.84 m, as if clear).
+User, 2026-10-12: "tools are for real robots, no sim devices should be used", and
+"sensors should be auto-detect".
+
+createIMU()/createMAG() hand `base` a simulated part for `sim` or a name they do not know.
+The tools went through the same factories: on a mecanum robot with `mag: none`,
+test_sensors printed "[+] Magnetometer initialized successfully" and streamed a simulated
+field, and with `imu: none` test_acc reported a simulated IMU's acceleration as IMU ACC.
+Now toolSelect() sets the env real-only (envSetRealOnly), the factories return NULL for
+anything but a real chip's driver, the battery and barometer models stay off, and every
+tool asks the bus first (i2cProbeSelect), so `auto` is the chip that answered or none.
+test_sensors also prints RANGE none for a sonar that is not fitted (it printed the seeded
+max range, 4.84 m, as if clear).
 """
+import glob
 import os
 import re
 
 import pytest
+import yaml
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LIB = os.path.join(REPO_ROOT, "firmware", "common", "lib")
 TOOLS_DIR = os.path.join(REPO_ROOT, "firmware", "src", "tools")
-FACTORY = os.path.join(REPO_ROOT, "firmware", "common", "lib", "sensor_factory", "sensor_factory.cpp")
+FACTORY = os.path.join(LIB, "sensor_factory", "sensor_factory.cpp")
 
 
-def _src(name):
-    with open(os.path.join(TOOLS_DIR, name + ".cpp"), encoding="utf-8") as f:
+def _read(path):
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
-def test_sensor_fitted_is_false_for_none_and_blank():
-    with open(FACTORY, encoding="utf-8") as f:
-        body = f.read()
-    m = re.search(r"bool sensorFitted\(const char \*name\)\s*\{(.*?)\n\}", body, re.S)
-    assert m, "sensorFitted() missing from the sensor factory"
-    assert 'strcasecmp(name, "none") != 0' in m.group(1)
-    assert "name && *name" in m.group(1)
+def _src(name):
+    return _read(os.path.join(TOOLS_DIR, name + ".cpp"))
+
+
+def _func(src, signature):
+    m = re.search(re.escape(signature) + r"\s*\{(.*?)\n\}", src, re.S)
+    assert m, f"{signature} not found"
+    return m.group(1)
+
+
+def test_tool_select_sets_real_only_before_starting_a_tool():
+    body = _func(_src("tools"), "AppMode toolSelect(void)")
+    ret = body.index("return TOOLS[i].mode;")
+    assert "envSetRealOnly(true);" in body[body.rfind("simulatedFor(", 0, ret):ret]
+
+
+@pytest.mark.parametrize("kind", ["IMU", "MAG"])
+def test_factory_makes_nothing_simulated_when_real_only(kind):
+    body = _func(_read(FACTORY), f"{kind}Interface *create{kind}(const char *name)")
+    real_only = body[body.index("if (envRealOnly())"):body.index("return NULL;")]
+    # The table lookup skips the simulated row, and the fallback is NULL, not new Sim*.
+    assert f'strcasecmp({kind}_TABLE[i].name, "sim") != 0' in real_only
+    assert "new Sim" not in real_only
+    assert body.index("if (envRealOnly())") < body.index(f"return new Sim{kind}();")
+
+
+@pytest.mark.parametrize("path,key", [("battery/battery.cpp", "sim_battery"), ("env/env.cpp", "sim_env")])
+def test_battery_and_barometer_models_stay_off_in_a_tool(path, key):
+    src = _read(os.path.join(LIB, path))
+    assert re.search(r's_sim = !envRealOnly\(\) && envFlag\("%s"' % key, src), path
+
+
+@pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors"])
+def test_every_tool_asks_the_bus_before_creating(tool):
+    src = _src(tool)
+    probe = src.index("i2cProbeSelect(&imu_name, &mag_name);")
+    for kind in ("IMU", "MAG"):
+        assert probe < src.index(f"createIMU(imu_name)" if kind == "IMU" else "createMAG(mag_name)")
 
 
 @pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors"])
 @pytest.mark.parametrize("kind", ["IMU", "MAG"])
-def test_every_create_is_behind_sensor_fitted(tool, kind):
+def test_every_create_is_null_checked(tool, kind):
     src = _src(tool)
-    calls = [m.start() for m in re.finditer(r"= create%s\(" % kind, src)]
+    var = kind.lower()
+    calls = [m.end() for m in re.finditer(r"create%s\(%s_name\)" % (kind, var), src)]
     assert calls, f"{tool} creates no {kind}"
-    for pos in calls:
-        cond = src[src.rfind("if (", 0, pos):pos]          # the nearest condition above the call
-        cond = cond[:cond.find("\n")] if "\n" in cond else cond
-        assert "sensorFitted(" in cond, f"{tool}: create{kind}() not guarded by sensorFitted()"
+    for end in calls:
+        after = src[end:end + 40]
+        assert re.match(r"\)\)|;\s*\n\s*if \(%s\)" % var, after), f"{tool}: create{kind}() result used unchecked"
+    assert "sensorFitted(" not in src
 
 
 @pytest.mark.parametrize("tool", ["test_sensors", "test_acc"])
@@ -61,3 +101,13 @@ def test_test_sensors_prints_range_none_without_a_sonar():
 
 def test_test_acc_says_none_without_an_imu():
     assert 'IMU ACC none (no IMU)' in _src("test_acc")
+
+
+def test_reference_designs_leave_add_on_sensors_to_the_bus():
+    # A design names only what is soldered on its board; everything else is AUTO, so a
+    # chip the user adds is found and an empty bus is none. `NONE` would stop the probe.
+    for path in glob.glob(os.path.join(REPO_ROOT, "config", "reference", "*_config.yaml")):
+        sensors = (yaml.safe_load(_read(path)).get("base_controller") or {}).get("sensors") or {}
+        for field in ("imu", "mag", "current", "env"):
+            if field in sensors:
+                assert str(sensors[field]).upper() != "NONE", f"{os.path.basename(path)}: {field} NONE"

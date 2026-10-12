@@ -20,8 +20,8 @@ base_controller:
     tx_pin: 27
     baudrate: 230400
   sensors:
-    imu: NONE
-    mag: NONE
+    imu: AUTO
+    mag: AUTO
     use_sim_imu: false
     use_sim_mag: false
     use_sim_wheel: false
@@ -29,8 +29,8 @@ base_controller:
     use_sim_env: false
     use_sim_sonar: false
     use_sim_battery: false
-    current: NONE
-    env: NONE
+    current: AUTO
+    env: AUTO
   simulation:
     map_width: 10.0
     map_height: 6.0

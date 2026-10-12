@@ -95,30 +95,30 @@ void setup_()
     const char *mag_name = envGet("mag", defaultMAGName());
     i2cProbeSelect(&imu_name, &mag_name);
     Serial.println("Initializing IMU & Magnetometer...");
-    // "none" creates nothing: createIMU()/createMAG() would hand back a simulated
-    // part, and this tool then reported "[+] Magnetometer initialized successfully"
-    // and streamed its field on a real robot with no magnetometer.
-    if (sensorFitted(imu_name))
+    // Real chips only (envRealOnly): `none`, `sim`, an unresolved `auto` or an unknown
+    // name creates nothing. A simulated part once reported "[+] Magnetometer
+    // initialized successfully" and streamed its field on a robot with no magnetometer.
+    imu = createIMU(imu_name);
+    if (imu)
     {
-        imu = createIMU(imu_name);
         if (!imu->init())
             Serial.println("[-] IMU initialization FAILED!");
         else
             Serial.println("[+] IMU initialized successfully.");
     }
     else
-        Serial.println("[ ] No IMU (imu none).");
+        Serial.println("[ ] No IMU.");
 
-    if (sensorFitted(mag_name))
+    mag = createMAG(mag_name);
+    if (mag)
     {
-        mag = createMAG(mag_name);
         if (!mag->init())
             Serial.println("[-] Magnetometer initialization FAILED or not detected.");
         else
             Serial.println("[+] Magnetometer initialized successfully.");
     }
     else
-        Serial.println("[ ] No magnetometer (mag none).");
+        Serial.println("[ ] No magnetometer.");
 
     initBattery();
     initRange();

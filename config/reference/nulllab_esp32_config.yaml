@@ -49,10 +49,10 @@ base_controller:
     serial_port: /dev/ttyUSB1
     baudrate: 230400
   sensors:
-    imu: NONE
-    mag: NONE
-    current: NONE
-    env: NONE
+    imu: AUTO
+    mag: AUTO
+    current: AUTO
+    env: AUTO
     use_sim_imu: false
     use_sim_mag: false
     use_sim_wheel: false

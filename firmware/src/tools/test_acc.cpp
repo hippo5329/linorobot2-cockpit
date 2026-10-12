@@ -269,13 +269,12 @@ void setup_()
     const char *imu_name = envGet("imu", defaultIMUName());
     const char *mag_name = envGet("mag", defaultMAGName());
     i2cProbeSelect(&imu_name, &mag_name);
-    // imu/mag "none": nothing is created. createIMU() would hand back a simulated
-    // IMU, and its readings went out as IMU ACC and yaw_imu from a robot with no IMU.
-    // The magnetometer is not read here at all; it is only created when fitted, so
-    // a real board never starts a simulated one.
-    if (sensorFitted(imu_name))
+    // Real chips only (envRealOnly): anything else creates nothing. A simulated IMU's
+    // readings once went out as IMU ACC and yaw_imu from a robot with no IMU. The
+    // magnetometer is not read here at all; it is started only when it is real.
+    imu = createIMU(imu_name);
+    if (imu)
     {
-        imu = createIMU(imu_name);
         imu_ok = imu->init();
         if (!imu_ok)
             Serial.println("[-] IMU initialization FAILED -- IMU ACC below is not a measurement.");
@@ -283,12 +282,10 @@ void setup_()
             Serial.printf("[+] IMU %s initialized.\n", imu_name);
     }
     else
-        Serial.println("[ ] No IMU (imu none): IMU ACC below reads none.");
-    if (sensorFitted(mag_name))
-    {
-        mag = createMAG(mag_name);
+        Serial.println("[ ] No IMU: IMU ACC below reads none.");
+    mag = createMAG(mag_name);
+    if (mag)
         mag->init();
-    }
 
     for (int i = 0; i < 4; i++) motor_pids[i] = createPID();
     kinematics = createKinematics();

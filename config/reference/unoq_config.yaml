@@ -40,12 +40,13 @@ base_controller:
     rx_pin: 0
     baudrate: 230400
   sensors:
-    # Arduino Modulino Movement: an LSM6DSOX at 0x6A on the Qwiic connector (the
-    # MCU's i2c4). Found by probing; the name is the fallback.
-    imu: LSM6DSOX
-    mag: NONE
-    current: NONE
-    env: NONE
+    # Nothing is soldered on: whatever answers the Qwiic connector (the MCU's i2c4)
+    # is the robot's -- a Modulino Movement's LSM6DSOX at 0x6A, a BNO085 at 0x4A/0x4B.
+    # AUTO with nothing there is no IMU, never a simulated one.
+    imu: AUTO
+    mag: AUTO
+    current: AUTO
+    env: AUTO
     use_sim_imu: false
     use_sim_mag: false
     use_sim_wheel: false

@@ -148,7 +148,7 @@ bool initEnv()
     s_is_bme = false;
 
     initMcuEnv();
-    s_sim = envFlag("sim_env", SIM_ENV_DEFAULT);
+    s_sim = !envRealOnly() && envFlag("sim_env", SIM_ENV_DEFAULT);   // never in a tool
     if (s_sim)
     {
         s_ok = true;

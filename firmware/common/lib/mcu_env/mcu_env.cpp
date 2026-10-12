@@ -413,6 +413,10 @@ int envInt(const char *key, int fallback)
 // lidar.cpp while moving their compile-time gates to run time. They all parsed
 // "0"/"false"/"no" identically, and the env-contract test can only see the
 // spellings it knows, so a private helper also hides its key from the test.
+static bool s_real_only = false;
+void envSetRealOnly(bool on) { s_real_only = on; }
+bool envRealOnly(void) { return s_real_only; }
+
 bool envFlag(const char *key, bool fallback)
 {
     const char *value = envGet(key, NULL);
