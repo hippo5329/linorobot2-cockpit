@@ -96,10 +96,14 @@ class SerialLink:
 
     def _new(self):
         # An ESP32's auto-reset circuit reads DTR/RTS as EN/IO0: open with both released,
-        # or the open itself can land it in the ROM's download mode (mcu_probe.py).
+        # or the open itself can land it in the ROM's download mode (mcu_probe.py). An RP2
+        # (and the UNO Q's UART) is the other way round: its USB port drops every byte it
+        # writes while DTR is low -- measured 2026-10-12 on a Pico 2, which entered the tool
+        # on `tool` and answered into nothing -- so DTR is asserted there.
         s = self.serial.Serial()
         s.port, s.baudrate, s.timeout = self.port, self.baud, 0.05
-        s.dtr = False
+        esp = self.env.startswith("esp32")
+        s.dtr = not esp
         s.rts = False
         s.open()
         return s
