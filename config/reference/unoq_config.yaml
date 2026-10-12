@@ -1,11 +1,16 @@
 # unoq — single source of truth for this robot.
 # One robot per file, one base controller per robot.
 # Arduino UNO Q (QRB2210 robot computer + STM32U585 base controller) with an AT8236
-# dual H-bridge driver (two PWM inputs per motor, wired to the header), 2WD, Arduino
-# Modulino Movement IMU on Qwiic.
+# dual H-bridge driver (two PWM inputs per motor, wired to the header), on the MC200
+# 4WD mecanum chassis kit, Arduino Modulino Movement IMU on Qwiic.
 robot:
   name: unoq
-  description: Arduino UNO Q mecanum -- the robot computer and the base controller on one board
+  description: Arduino UNO Q on the MC200 mecanum kit -- the robot computer and the base
+    controller on one board
+  # A kit: the MC200 chassis (80 mm mecanum wheels, four 25 mm gear motors with Hall
+  # encoders, a 200 x 150 mm plate) comes with this design. Applying it brings the
+  # chassis in; the user may then override it with their own (autosaved).
+  kit: true
 base_controller:
   name: unoq
   description: 'Arduino UNO Q: STM32U585 (Zephyr + micro-ROS) as the base controller,
@@ -63,7 +68,9 @@ base_controller:
     wall_y1: -1.5
     wall_x2: 2.0
     wall_y2: 1.5
-    robot_mass: 3.5
+    # The MC200 chassis is 1.0 kg as sold; built with the UNO Q, a 3S pack and an LD19
+    # one weighed 1.65 kg.
+    robot_mass: 1.65
     wheel_noise_rpm: 1.0
     gear_efficiency: 0.75
     gear_drag_rpm: 12.0
@@ -71,7 +78,8 @@ base_controller:
     battery_sag_tau_ms: 400
     driver_drop: 0.03
     driver_resistance: 0.1
-    motor_stall_amps: 2.5
+    # The MC200's 25 mm gear motor: 4.5 A locked-rotor current (the vendor's figure).
+    motor_stall_amps: 4.5
     driver_current_limit: 0.0
     imu_mount_roll_deg: 0.0
     imu_mount_pitch_deg: 0.0
@@ -121,16 +129,23 @@ base_controller:
 kinematics:
   base_type: mecanum
   stamped_cmd_vel: auto
-  # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
-  # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
-  # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
-  wheel_diameter: 0.1
-  lr_wheels_distance: 0.271
-  fr_wheels_distance: 0.18   # the shared footprint (robot_radius 0.26) has to contain the body
-                          # AND the wheels, which stick out past it -- see
-                          # gen_robot_description.config_warnings()
-  max_rpm: 140
-  counts_per_rev: 4000
+  # The MC200 kit: 80 mm mecanum wheels (37 mm wide, 9 rollers), four 25 mm DC gear
+  # motors with Hall encoders (150 rpm +-10 % unloaded at 9 V; rated 9-12 V).
+  #
+  # Measured on an MC200 against the LiDAR (scripts/speed_check.py), not taken from
+  # the box: the wheels ROLL as a 75 mm wheel -- the floor got 0.94 of what an 80 mm
+  # circle says, the same at 0.10 and 0.20 m/s, so it is the rollers' contact, not
+  # slip. Re-measure on your own robot with speed_check.py.
+  wheel_diameter: 0.075
+  # Wheel centres: left to right 0.209 m (the kit's front photo), front to rear 0.096 m
+  # (the plate drawing's motor mounts). A mecanum turns on (lr + fr) / 2, and the
+  # LiDAR's spin fits a sum of 0.300 m best (spin/forward 1.004), so 0.205 + 0.095.
+  lr_wheels_distance: 0.205
+  fr_wheels_distance: 0.095
+  # Measured on an MC200 with a tachometer: the wheel's top speed on a 3S pack, and
+  # the encoder counts per wheel revolution.
+  max_rpm: 177
+  counts_per_rev: 887
   # DERIVED -- the driver margin, not a hand-picked derating.
   #
   # The share of the motor's no-load speed that survives the gearbox, the gear
@@ -139,16 +154,14 @@ kinematics:
   # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
   # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
   max_rpm_ratio: 0.8
-  # The parts, not the product: counts_per_rev = encoder_ppr x quadrature x
-  # gear_ratio = 11 x 4 x 30 = 1320, computed by the generators. Give
-  # counts_per_rev directly instead if that is the number you have.
-  encoder_ppr: 11
-  quadrature: 4
-  gear_ratio: 30
+  # counts_per_rev above is the measured number and wins; give the parts instead
+  # (encoder_ppr, quadrature, gear_ratio -- multiplied by the generators) only if
+  # you have them and not the count.
   pwm_bits: 10
   pwm_frequency: 20000
-  motor_operating_voltage: 12
-  motor_power_max_voltage: 12
+  # A 3S pack.
+  motor_operating_voltage: 11.1
+  motor_power_max_voltage: 11.1
   pid:
     kp: 0.6
     ki: 0.8
@@ -156,9 +169,16 @@ kinematics:
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-geometry: {}   # the default chassis: derived by gen_robot_description.effective_geometry()
-               # from the kinematics above -- same body and mounts as every bare module,
-               # laser at the base origin. A real chassis gets measured values in October.
+# The MC200: a 200 x 150 mm plate, 1.0 kg, the wheels outboard of it. The laser stays at
+# the base origin like every reference (its mount is yours: set laser.x/y/z on your robot).
+geometry:
+  body:
+    length: 0.2
+    width: 0.15
+    mass: 1.0
+  wheel:
+    width: 0.037
+    mass: 0.12
 ekf:
   ekf_filter_node:
     ros__parameters:

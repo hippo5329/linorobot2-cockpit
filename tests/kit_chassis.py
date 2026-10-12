@@ -29,6 +29,15 @@ KIT_CHASSIS = {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
     },
+    # The MC200 4WD mecanum kit under the Arduino UNO Q design: 80 mm mecanum wheels
+    # rolling as 75 mm, wheel centres 0.205 x 0.095 m, 25 mm gear motors with Hall
+    # encoders (887 counts, 177 rpm on a 3S pack), 1.65 kg built. Measured on an MC200:
+    # a tachometer for rpm and counts, the LiDAR (speed_check.py) for the wheel and the
+    # spacing. No unit is inverted.
+    "unoq": {
+        "inverted": set(),
+        "simulation": {"robot_mass", "motor_stall_amps"},
+    },
 }
 
 # What a kit's own motors change. These are the keys
