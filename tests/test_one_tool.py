@@ -53,7 +53,7 @@ def test_every_former_tool_name_still_boots_its_command():
     src = _read("src", "tools", "tools.cpp")
     for app, run in (("test_sensors", "sensors"), ("test_motors", "motors"), ("test_acc", "acc"),
                      ("i2c_detect", "i2c 5"), ("adc_calibrate", "adc")):
-        assert f'{{"{app}",' in src and f'"{run}"}}' in src, app
+        assert re.search(r'\{"%s",\s*"%s"\}' % (app, re.escape(run)), src), app
     for cmd in ("i2c", "sensors", "motor", "motors", "acc", "set", "get", "status", "base"):
         assert f'!strcmp(cmd, "{cmd}")' in src, cmd
 
@@ -86,3 +86,85 @@ def test_the_sim_mcu_reads_its_console_from_stdin_without_blocking():
     shim = _read("host", "shim", "Arduino.h")
     assert "poll(&pfd, 1, 0)" in shim
     assert "eof_ = true" in shim
+
+
+def _toolselect():
+    src = _read("src", "tools", "tools.cpp")
+    return src[src.index("AppMode toolSelect(void)"):src.index("const char *toolName(")]
+
+
+def test_a_refused_former_name_boots_base_as_it_did():
+    """Before the merge a refused tool fell back to the robot firmware; an env written
+    without the host's check must not leave a robot out of micro-ROS."""
+    sel = _toolselect()
+    refusal = sel[sel.index("const char *why = legacyRefusal(want);"):]
+    assert refusal.index("return APP_BASE;") < refusal.index("envSetRealOnly(true);")
+    src = _read("src", "tools", "tools.cpp")
+    fn = src[src.index("static const char *legacyRefusal"):src.index("AppMode toolSelect(void)")]
+    for app, key in (("test_sensors", '"imu"'), ("test_motors", '"sim_wheel"'), ("test_acc", '"sim_wheel"'),
+                     ("adc_calibrate", '"sim_battery"'), ("i2c_detect", "toolI2cUnassigned()")):
+        assert app in fn and key in fn, app
+    assert "#if !ADC_LUT_SUPPORTED" in fn
+
+
+def test_test_motors_with_one_wheel_in_the_env_runs_that_wheel():
+    sel = _toolselect()
+    assert 'envInt("tm_only", 0)' in sel and 'boot_run = "motor";' in sel
+    src = _read("src", "tools", "tools.cpp")
+    motor = src[src.index("} else if (!strcmp(cmd, \"motor\")) {"):src.index("} else if (!strcmp(cmd, \"motors\")) {")]
+    assert '`motor` alone runs the env' in motor and 'envInt("tm_only", 0)' in motor
+
+
+def test_base_leaves_the_tool_for_one_boot():
+    """`base` in a tool the env boots (app=tool, a former name) would come straight back."""
+    sel = _toolselect()
+    assert sel.index("if (next == NEXT_BOOT_BASE)") < sel.index('envGet("app"') or \
+        sel.index("if (next == NEXT_BOOT_BASE)") < sel.index("if (!want")
+    src = _read("src", "tools", "tools.cpp")
+    restart = src[src.index("void toolRestart(bool tool)"):src.index("static const char *legacyRefusal")]
+    assert "nextBootSet(tool ? NEXT_BOOT_TOOL : NEXT_BOOT_BASE);" in restart
+    assert "sys_reboot(SYS_REBOOT_COLD);" in restart        # the UNO Q restarts too
+    assert "watchdog_hw->scratch[0]" in src                 # survives an RP2 reboot
+
+
+def test_set_takes_the_test_settings_only():
+    src = _read("src", "tools", "tools.cpp")
+    fn = src[src.index("static bool settable"):src.index("static void status")]
+    allowed = set(re.findall(r'"(\w+)"', fn))
+    assert allowed == {"tm_pct", "tm_only", "tm_secs", "ta_ms", "sim_wheel", "sim_battery"}
+    assert "pwm_bits" not in allowed and not any("password" in k or "psk" in k for k in allowed)
+
+
+def test_a_bare_cr_ends_a_line():
+    """minicom, screen and PuTTY send CR alone; `stop` must work from them."""
+    for path in (("src", "tools", "tools.cpp"), ("src", "tools", "tool_term.cpp")):
+        src = _read(*path)
+        assert re.search(r"if \(c == '\\r' \|\| c == '\\n'\)", src), path
+
+
+def test_the_terminal_login_is_a_challenge_and_needs_a_password():
+    term = _read("src", "tools", "tool_term.cpp")
+    assert 'client.print("nonce ");' in term
+    assert 'snprintf(want, sizeof(want), "%s:%s", password(), nonce);' in term
+    begin = term[term.index("void termBegin(void)"):term.index("const char *termAddress")]
+    assert begin.index("if (!password())") < begin.index("server = new WiFiServer(port);")
+    assert "#define LOGIN_MS" in term and "#define LOCKOUT_MS" in term
+    import lino_tool
+    assert lino_tool.tool_answer("pw", "abcd") == hashlib.md5(b"pw:abcd").hexdigest()
+
+
+def test_a_drive_from_the_terminal_stops_when_it_goes_quiet():
+    src = _read("src", "tools", "tools.cpp")
+    assert "#define TERM_DEADMAN_MS 3000" in src
+    poll = src[src.index("static void pollInput"):src.index("bool toolStopRequested")]
+    assert "millis() - termLastInput() > TERM_DEADMAN_MS" in poll and "job_from_term" in poll
+    import lino_tool
+    assert 'sendall(b"\\0")' in open(lino_tool.__file__).read()
+
+
+def test_lino_tool_never_leaves_a_wheel_turning():
+    import lino_tool
+    text = open(lino_tool.__file__).read()
+    main = text[text.index("def main()"):]
+    fin = main[main.index("finally:"):]
+    assert 'link.write(b"stop\\r\\n")' in fin
