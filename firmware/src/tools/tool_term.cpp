@@ -5,8 +5,18 @@
 #include "wifis.h"
 #include "syslog.h"
 
-#if defined(HAS_WIFI)
+#if defined(HAS_WIFI) || defined(LINO_HOST)
 #include <WiFi.h>
+
+// The console's copy to the client: lino_console on a board, the host Serial on the Sim MCU.
+static void consoleNet(Print *p)
+{
+#if defined(LINO_HOST)
+    Serial.setNet(p);
+#else
+    lino_console.setNet(p);
+#endif
+}
 
 // Allocated in termBegin(): base never builds a server, and a serial robot's tool
 // never either.
@@ -33,9 +43,16 @@ static const char *password(void)
 
 void termBegin(void)
 {
+#if defined(LINO_HOST)
+    // The Sim MCU opens one only when asked (term_port): a gate runs several side by side.
+    const uint16_t port = envU16("term_port", 0);
+    if (server)
+        return;
+#else
     if (server || !wifiWanted() || WiFi.status() != WL_CONNECTED)
         return;
     const uint16_t port = envU16("term_port", 2323);
+#endif
     if (!port)
         return;
     server = new WiFiServer(port);
@@ -72,7 +89,7 @@ bool termDropped(void)
 static void hangUp(void)
 {
     if (authed) {
-        lino_console.setNet(nullptr);
+        consoleNet(nullptr);
         dropped = true;
     }
     client.stop();
@@ -87,7 +104,7 @@ static void greet(void)
     authed = (password() == nullptr);
     client.print("linorobot2 tool -- 'help' lists the commands\r\n");
     if (authed) {
-        lino_console.setNet(&client);
+        consoleNet(&client);
         client.print("tool> ");
     } else {
         client.print("password: ");
@@ -103,7 +120,7 @@ static void checkPassword(const char *line)
     for (size_t i = 0; i < a && i < b; i++) diff |= (unsigned)(line[i] ^ pwd[i]);
     if (pwd && diff == 0) {
         authed = true;
-        lino_console.setNet(&client);
+        consoleNet(&client);
         client.print("ok\r\ntool> ");
         syslog(LOG_INFO, "tool terminal: client %s in", client.remoteIP().toString().c_str());
         return;

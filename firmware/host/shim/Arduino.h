@@ -201,13 +201,20 @@ public:
     void end() {}
     operator bool() const { return true; }
 
-    size_t write(uint8_t c) override { fputc(c, stdout); fflush(stdout); return 1; }
+    size_t write(uint8_t c) override
+    {
+        if (net_) net_->write(c);
+        fputc(c, stdout); fflush(stdout); return 1;
+    }
     size_t write(const uint8_t *buf, size_t n) override
     {
+        if (net_) net_->write(buf, n);
         const size_t w = fwrite(buf, 1, n, stdout);
         fflush(stdout);
         return w;
     }
+    // The tool's terminal client (tool_term.cpp), as lino_console's on a board.
+    void setNet(Print *p) { net_ = p; }
     using Print::write;
     void flush() override { fflush(stdout); }
 
@@ -232,6 +239,7 @@ public:
     }
 
 private:
+    Print *net_ = nullptr;
     int pending_ = -1;
     bool eof_ = false;
     int peekByte()
