@@ -196,6 +196,9 @@ async function toolOpen() {
   }
 }
 
+// Commands that keep running until stop or their own end (web/backend/tool_session.py RUNNING).
+const TOOL_RUNNING = new Set(["sensors", "enc", "motor", "motors", "ramp", "acc", "adc", "i2c"]);
+
 async function toolSend(line) {
   if (!tool.open) { toolStatus("Enter the tool first."); return false; }
   const r = await fetch("/api/tool/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -203,6 +206,11 @@ async function toolSend(line) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { toolStatus(j.detail || "Refused."); return false; }
   toolStatus(`Sent: ${j.sent}`);
+  // STOP shows the moment a command that keeps running is accepted -- not when the next
+  // state message arrives (the 2026-10-13 walk found it missing at phone width while a
+  // wheel turned). The stream's state confirms it, or clears it on a refusal.
+  const word = String(j.sent || line).split(/\s+/)[0];
+  if (TOOL_RUNNING.has(word)) { tool.running = word; toolSetControls(); }
   return true;
 }
 
