@@ -63,6 +63,7 @@ static uint32_t nextBootGet(void) { return watchdog_hw->scratch[0]; }
 static void nextBootSet(uint32_t v) { watchdog_hw->scratch[0] = v; }
 #elif defined(LINO_ZEPHYR)
 #include <zephyr/sys/reboot.h>
+#include <zephyr/linker/section_tags.h>
 static __noinit uint32_t next_boot_ram;
 static uint32_t nextBootGet(void) { return next_boot_ram; }
 static void nextBootSet(uint32_t v) { next_boot_ram = v; }
