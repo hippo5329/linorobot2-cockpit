@@ -87,7 +87,11 @@ AppMode toolSelect(void)
 {
     initMcuEnv();
     const char *want = envGet("app", "base");
-    if (!want || !*want)
+    // `base` is the robot, not a tool, and it is TOOLS[0]: matched in the loop below
+    // it would reach envSetRealOnly(), the factories would hand main.cpp a NULL IMU
+    // and magnetometer for `sim`, and the board faulted ~8 s into every micro-ROS
+    // session on every MCU (rc-20261012.2). Return before the loop.
+    if (!want || !*want || strcmp(want, "base") == 0)
         return APP_BASE;
 
     for (size_t i = 0; i < TOOL_COUNT; i++)

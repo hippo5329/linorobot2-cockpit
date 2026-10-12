@@ -7,7 +7,8 @@ createIMU()/createMAG() hand `base` a simulated part for `sim` or a name they do
 The tools went through the same factories: on a mecanum robot with `mag: none`,
 test_sensors printed "[+] Magnetometer initialized successfully" and streamed a simulated
 field, and with `imu: none` test_acc reported a simulated IMU's acceleration as IMU ACC.
-Now toolSelect() sets the env real-only (envSetRealOnly), the factories return NULL for
+Now toolSelect() sets the env real-only (envSetRealOnly) for a tool -- never for `base`,
+which returns before the tool loop -- the factories return NULL for
 anything but a real chip's driver, the battery and barometer models stay off, and every
 tool asks the bus first (i2cProbeSelect), so `auto` is the chip that answered or none.
 test_sensors also prints RANGE none for a sonar that is not fitted (it printed the seeded
@@ -45,6 +46,26 @@ def test_tool_select_sets_real_only_before_starting_a_tool():
     body = _func(_src("tools"), "AppMode toolSelect(void)")
     ret = body.index("return TOOLS[i].mode;")
     assert "envSetRealOnly(true);" in body[body.rfind("simulatedFor(", 0, ret):ret]
+
+
+def test_base_never_turns_real_only():
+    """`base` is TOOLS[0], so the loop matches `app=base` too. Reaching envSetRealOnly()
+    there made createIMU("sim") return NULL in the robot firmware itself, and every MCU
+    faulted seconds into each micro-ROS session (rc-20261012.2: 4 sessions in 45 s, the
+    board re-enumerating between them). `base` has to leave toolSelect() before the loop."""
+    src = _src("tools")
+    table = src[src.index("static const ToolEntry TOOLS[]"):]
+    assert re.search(r'\{\s*APP_BASE\s*,\s*"base"', table), "base left the table: re-check this test"
+    body = _func(src, "AppMode toolSelect(void)")
+    early = re.search(r'if \(!want \|\| !\*want \|\| strcmp\(want, "base"\) == 0\)\s*return APP_BASE;', body)
+    assert early, "toolSelect() must return APP_BASE for app=base before the tool loop"
+    assert early.start() < body.index("for (size_t i = 0; i < TOOL_COUNT; i++)")
+    assert early.start() < body.index("envSetRealOnly(true);")
+    # And nothing else turns it on: only toolSelect() sets it, and only for a tool.
+    sources = [f for d in ("src", "common") for ext in ("*.c", "*.cpp", "*.h")
+               for f in glob.glob(os.path.join(REPO_ROOT, "firmware", d, "**", ext), recursive=True)]
+    setters = [f for f in sources if "envSetRealOnly(true)" in _read(f)]
+    assert [os.path.basename(f) for f in setters] == ["tools.cpp"]
 
 
 @pytest.mark.parametrize("kind", ["IMU", "MAG"])
