@@ -1640,3 +1640,13 @@ body.console-collapsed {
   .tool-live { grid-template-columns: 1fr 1fr; }
   .tool-stop { position: fixed; top: auto; bottom: 0; left: 0; right: 0; border-radius: 0; margin: 0; min-height: 56px; }
 }
+
+/* Phone width: the header's reference stack asked for 380 px of a 390 px screen and pushed the
+   whole page sideways (the 2026-10-13 tool panel walk measured 30-37 px on every tab). */
+@media (max-width: 600px) {
+  .reference-build-stack { min-width: 0; width: 100%; }
+  .header-actions { gap: 8px; }
+  .header-actions > *, .reference-build-stack > * { min-width: 0; max-width: 100%; }
+  .hdr-field, .preset-selector-group { flex-wrap: wrap; }
+  #hdr-workspace-pill, #hdr-run-mode { white-space: normal; overflow-wrap: anywhere; }
+}
