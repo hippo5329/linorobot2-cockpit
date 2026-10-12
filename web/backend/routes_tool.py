@@ -91,7 +91,14 @@ class SimLink:
             fh.write(mcu_env.encode(e))
         penv = dict(os.environ, LINO_ENV_BIN=path)
         penv.pop("LINO_NEXT_BOOT", None)
-        self.p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        # Through the client workspace's setup, as the launcher starts it: the binary links
+        # librclc and the rest from there, and the backend's own environment has neither
+        # (run bare it died at once -- "librclc.so: cannot open shared object file").
+        distro = os.environ.get("ROS_DISTRO", "jazzy")
+        cmd = (f". /opt/ros/{shlex.quote(distro)}/setup.sh 2>/dev/null; "
+               f". {shlex.quote(host_firmware.setup_script())} 2>/dev/null; "
+               f"exec {shlex.quote(binary)}")
+        self.p = subprocess.Popen(["bash", "-c", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, env=penv)
         os.set_blocking(self.p.stdout.fileno(), False)
         self.closed = False
