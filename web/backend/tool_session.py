@@ -33,7 +33,7 @@ from typing import Callable, Dict, List, Optional
 PROMPT = "tool> "
 ENTERED = ("[app] tool", "[tool] ready")
 HEARTBEAT_S = 3.0          # a browser stream counts as watching for this long after a beat
-KEEPALIVE_S = 1.0          # the NUL the board's deadman wants, once a second
+KEEPALIVE_S = 0.25         # the NUL the board's deadman wants (2 s under acc, 3 s otherwise)
 BACKLOG = 400              # lines a newly opened tab is shown
 
 # ---------------------------------------------------------------------------
@@ -46,8 +46,8 @@ SET_KEYS = {
     "ta_pct": (10, 100),
 }
 # Commands that keep running until `stop` (or their own end), and the drives among them.
-RUNNING = {"sensors", "enc", "motor", "motors", "acc", "adc", "i2c"}
-DRIVES = {"motor", "motors", "acc"}
+RUNNING = {"sensors", "enc", "motor", "motors", "ramp", "acc", "adc", "i2c"}
+DRIVES = {"motor", "motors", "ramp", "acc"}
 _LINE_OK = re.compile(r"^[ -~]{0,64}$")       # printable ASCII, no CR/LF/NUL, short
 
 
@@ -92,6 +92,12 @@ def validate(line: str) -> str:
                 raise Refused("power %: 0 turns nothing -- use Stop")
             if len(args) == 3:
                 _int(args[2], 0, 3600, "secs")
+    elif cmd == "ramp":
+        if len(args) not in (1, 2):
+            raise Refused("ramp <wheel> [max pct 5..100]")
+        _int(args[0], 1, 4, "wheel")
+        if len(args) == 2:
+            _int(args[1], 5, 100, "max power %")
     elif cmd == "motors":
         if len(args) > 1:
             raise Refused("motors [pct]")

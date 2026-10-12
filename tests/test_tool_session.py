@@ -187,3 +187,22 @@ def test_the_description_never_carries_a_password():
     s.feed(b"nonce 1a2b3c4d\nlogin: ok\ntool> ")
     d = repr(s.describe())
     assert "password" not in d.lower()
+
+
+def test_ramp_is_in_the_grammar_and_counts_as_a_drive():
+    from tool_session import validate, Refused, RUNNING, DRIVES
+    assert validate("ramp 2") == "ramp 2"
+    assert validate("ramp 1 60") == "ramp 1 60"
+    for bad in ("ramp", "ramp 5", "ramp 1 3", "ramp 1 60 9"):
+        try:
+            validate(bad)
+        except Refused:
+            continue
+        raise AssertionError(bad)
+    assert "ramp" in RUNNING and "ramp" in DRIVES
+
+
+def test_the_keep_alive_beats_the_acc_deadman():
+    """The board stops an acc drive whose terminal is quiet for 2 s: send more often than that."""
+    import tool_session
+    assert tool_session.KEEPALIVE_S <= 0.5

@@ -258,6 +258,10 @@ function toolInit() {
     const secs = parseInt($t("tool-secs").value || "10", 10);
     toolSend(`motor ${w} ${dir() * parseInt(power.value, 10)} ${isNaN(secs) ? 10 : secs}`);
   });
+  $t("btn-tool-ramp-wheel")?.addEventListener("click", () => {
+    const w = document.querySelector('input[name="tool-wheel"]:checked')?.value || "1";
+    toolSend(`ramp ${w}`);
+  });
   $t("tool-form")?.addEventListener("submit", (e) => {
     e.preventDefault();
     const inp = $t("tool-input");

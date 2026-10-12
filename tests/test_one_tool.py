@@ -162,7 +162,10 @@ def test_a_drive_from_the_terminal_stops_when_it_goes_quiet():
     src = _read("src", "tools", "tools.cpp")
     assert "#define TERM_DEADMAN_MS 3000" in src
     poll = src[src.index("static void pollInput"):src.index("bool toolStopRequested")]
-    assert "millis() - termLastInput() > TERM_DEADMAN_MS" in poll and "job_from_term" in poll
+    assert "millis() - termLastInput() > deadman" in poll and "job_from_term" in poll
+    # 2 s under acc (full power), 3 s otherwise.
+    assert '!strcmp(job_name, "acc")) ? ACC_DEADMAN_MS : TERM_DEADMAN_MS' in poll
+    assert "#define ACC_DEADMAN_MS 2000" in src
     import lino_tool
     assert 'sendall(b"\\0")' in open(lino_tool.__file__).read()
 
