@@ -21,7 +21,8 @@ cmd_vel timeout stops the wheels if this program dies.
 
 It refuses to move when anything is nearer than --need (0.6 m) all round, or when something
 else already publishes /cmd_vel (a teleop, Nav2). Run it with the robot brought up on its
-own -- no SLAM, no Nav2.
+own -- no SLAM, no Nav2 -- in the cockpit's container; it runs itself under the stack's own
+ROS environment (one_click_pipeline.get_ros_env).
 
 What it prints: a row per step (commanded, odom, LiDAR, gyro, LiDAR/odom, battery), then
 one verdict per motion -- LINEAR, ANGULAR, STRAFE -- with the config change it implies.
@@ -342,6 +343,18 @@ def run(a, params: dict) -> int:
     return 0
 
 
+def ros_env_command(argv: list, distro: str) -> str:
+    """This program again, under the shell prefix every ROS step of the 1-Click runs under
+    (one_click_pipeline.get_ros_env: ROS, the workspaces and the Fast DDS profile). A reader
+    without the stack's DDS profile cannot see a stack that has it, so a plain
+    `python3 speed_check.py` in the container would find no /odom at all."""
+    import shlex
+    import one_click_pipeline
+    args = " ".join(shlex.quote(x) for x in argv)
+    return (f"{one_click_pipeline.get_ros_env(distro or 'auto')} && SPEED_CHECK_IN_ROS_ENV=1 "
+            f"exec python3 {shlex.quote(os.path.abspath(__file__))} {args}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -358,6 +371,9 @@ def main(argv=None) -> int:
     ap.add_argument("--scan-topic", default=None, help="default: scan_raw when there is one, else scan")
     ap.add_argument("--json", default="", help="write the rows, ratios and track here")
     a = ap.parse_args(argv)
+    if os.environ.get("SPEED_CHECK_IN_ROS_ENV") != "1":
+        cmd = ros_env_command(sys.argv[1:] if argv is None else list(argv), os.environ.get("ROS_DISTRO", "auto"))
+        os.execvp("bash", ["bash", "-c", cmd])
     params = {}
     if a.params:
         import yaml

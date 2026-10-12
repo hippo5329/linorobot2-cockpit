@@ -225,3 +225,13 @@ def test_importing_needs_no_ros():
     src = open(os.path.join(REPO, "scripts", "speed_check.py")).read()
     head = src.split("# ---- ROS ----")[0]
     assert "import rclpy" not in head
+
+
+def test_it_runs_under_the_stacks_ros_environment():
+    """Without the stack's Fast DDS profile a reader cannot see the stack: the program
+    re-runs itself under the 1-Click's own prefix, its arguments quoted."""
+    import one_click_pipeline
+    cmd = sc.ros_env_command(["--params", "/config/my robot.yaml", "--strafe"], "jazzy")
+    assert cmd.startswith(one_click_pipeline.get_ros_env("jazzy"))
+    assert "SPEED_CHECK_IN_ROS_ENV=1 exec python3 " in cmd
+    assert "'/config/my robot.yaml' --strafe" in cmd
