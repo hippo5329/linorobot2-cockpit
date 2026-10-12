@@ -102,10 +102,14 @@ class SerialLink:
         # on `tool` and answered into nothing -- so DTR is asserted there.
         s = self.serial.Serial()
         s.port, s.baudrate, s.timeout = self.port, self.baud, 0.05
-        esp = self.env.startswith("esp32")
-        s.dtr = not esp
-        s.rts = False
+        # Open with both lines high, as the kernel raises them: that resets nothing. pyserial
+        # applies DTR before RTS, and clearing them in that order passes through DTR low /
+        # RTS high -- the reset on an ESP32-S3's USB-Serial/JTAG (measured 2026-10-12: every
+        # reopen restarted the chip, rst:0x15, and the tool window never came). So RTS first.
         s.open()
+        if self.env.startswith("esp32"):
+            s.rts = False
+            s.dtr = False
         return s
 
     def open(self, timeout: float = 15.0) -> bool:
@@ -160,13 +164,29 @@ class SerialLink:
         log(f"no reboot for env '{self.env}': give one of esp32*, esp32s3*, pico*, pico2*, xrp*, unoq*")
         return False
 
+    def _reopen(self) -> bool:
+        # The port went away under us: an ESP32-S3 on its own USB re-enumerates more than
+        # once while it boots (the ROM, then the application) -- measured 2026-10-12 on an
+        # S3, which printed its ROM banner on the reopened port and then dropped it again.
+        try:
+            self.s.close()
+        except Exception:
+            pass
+        time.sleep(0.2)
+        return self.open(10.0)
+
     def write(self, data: bytes):
-        self.s.write(data)
+        try:
+            self.s.write(data)
+        except Exception:
+            if self._reopen():
+                self.s.write(data)
 
     def read(self) -> bytes:
         try:
             return self.s.read(4096)
         except Exception:
+            self._reopen()
             return b""
 
     def keepalive(self):
