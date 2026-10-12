@@ -849,15 +849,15 @@
       your wiring: the battery monitor, the ADC divider resistors and the sonar pins. Read those wrong and you
       read the battery wrong.</p>
 
-      <!-- AI I2C Sensor Auto-Detection Card -->
+      <!-- I2C bus scan card: the tool's `i2c` (app-tool.js) -->
       <div class="card p-3 mb-3 border-accent-glow" style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.7)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; margin: 1rem 0;">
         <div class="u-flex u-justify-between u-items-center u-flex-wrap" style="gap: 1rem;">
           <div>
-            <h4 class="u-font-600" style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0;">🤖 I2C Bus Probe</h4>
+            <h4 class="u-font-600" style="color:#38bdf8; font-size:1.05rem; margin:0 0 0.25rem 0;">I2C bus scan</h4>
             <p class="hint" style="margin:0;">Runs the same scan the firmware runs at every boot (WHO_AM_I identification) and shows what answered. This is a read-out, not a setting: whatever is on the bus is what the robot firmware will drive.</p>
           </div>
           <button type="button" id="btn-auto-detect-i2c" class="btn btn-primary" style="white-space:nowrap; padding:0.6rem 1.2rem;">
-            <span>⚡ Auto-Detect Sensors</span>
+            <span>Scan I2C bus</span>
           </button>
         </div>
         <p class="hint sim-mcu-note" style="margin:0.5rem 0 0 0;" hidden>🧪 The Sim MCU has no I2C bus to probe: its IMU, magnetometer and barometer are simulated.</p>
@@ -1308,116 +1308,137 @@
 
   <!-- 6. HARDWARE TESTS -->
   <section class="tab-pane" id="tab-hw-tests">
+    <button type="button" id="btn-tool-stop" class="tool-stop" hidden>■ STOP MOTORS <span class="tool-stop-key">(Esc)</span></button>
     <div class="card">
       <div class="section-header-flex">
-        <h2 style="margin:0;">⚡ 6. Low-Level Robot Hardware Tests &amp; Diagnostics Hub</h2>
-        <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">🔄 Refresh Ports</button>
+        <h2 style="margin:0;">6. Hardware Tests</h2>
+        <button type="button" id="btn-refresh-ports-hw" class="btn btn-secondary btn-sm">Refresh ports</button>
       </div>
-      <p class="hint">Directly compile, flash, and verify microcontroller hardware sub-systems without starting the ROS 2 autonomy stack. Stop <code>micro_ros_agent</code> automatically, flash diagnostic binaries, and inspect serial output streams in real-time.</p>
-      <p class="hint sim-mcu-note" hidden>🧪 The robot is the <b>Sim MCU</b> (the firmware, running on this computer): there is no board to build for, flash or monitor. Pick the board you plugged in on the MCU &amp; Sim tab to use these.</p>
+      <p class="hint">Test the board's sensors and motors with the <b>tool</b>, the firmware's own
+        test shell. The robot leaves micro-ROS while the tool is open and returns to it on
+        <b>Back to robot</b>. Every button below types its command into the terminal, so what you
+        see is what you could type.</p>
+      <p class="hint sim-mcu-note" hidden>The robot is the <b>Sim MCU</b> (the firmware, running on this computer): its wheels and sensors are simulated, and the tool uses real parts only. Pick the board you plugged in on the MCU &amp; Sim tab.</p>
 
-      <!-- Diagnostic firmware selection & serial port bar -->
-      <div class="row mt-3" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
-        <div class="form-group u-min-w-200" style="flex:2;">
-          <label for="hw-flash-target" class="form-label">Application (env <code>app</code> key)</label>
-          <select id="hw-flash-target" class="form-select">
-            <option value="test_sensors" selected>🧭 test_sensors — Sensor Diagnostics &amp; I2C Scanner</option>
-            <option value="test_motors">⚙️ test_motors — Motor Diagnostics &amp; CPR Calibration</option>
-            <option value="i2c_detect">🔍 i2c_detect — I2C Bus Probe &amp; WHO_AM_I Identifier</option>
-            <option value="test_acc">📈 test_acc — Dynamic Acceleration Profiler</option>
-            <option value="adc_calibrate">🔋 adc_calibrate — ESP32 SAR ADC DAC Sweep &amp; LUT Linearizer</option>
-            <option value="base">🏎️ base — Main Robot micro-ROS Base Controller</option>
-          </select>
+      <!-- The tool: one session per robot, held by the backend (routes_tool.py). -->
+      <div id="tool-panel" class="tool-panel mt-3">
+        <div class="tool-head">
+          <div class="tool-head-facts">
+            <span>Robot <b id="tool-robot">—</b></span>
+            <span>Link <b id="tool-link">—</b></span>
+            <span>State <b id="tool-state">closed</b></span>
+            <span>Wheels <b id="tool-wheels">—</b></span>
+          </div>
+          <div class="u-flex u-gap-8 u-flex-wrap">
+            <button type="button" id="btn-tool-open" class="btn btn-primary">Enter tool</button>
+            <button type="button" id="btn-tool-close" class="btn btn-secondary" disabled>Back to robot (base)</button>
+          </div>
+        </div>
+        <p id="tool-status" class="tool-status" role="status" aria-live="polite"></p>
+        <p id="tool-refusal" class="tool-refusal" hidden></p>
+
+        <fieldset class="tool-group" id="tool-checks" disabled>
+          <legend>Checks</legend>
+          <div class="tool-row">
+            <button type="button" class="btn btn-secondary" id="btn-tool-i2c" data-cmd="i2c">Scan I2C</button>
+            <button type="button" class="btn btn-secondary" id="btn-tool-sensors" data-cmd="sensors">Sensors</button>
+            <button type="button" class="btn btn-secondary" id="btn-tool-enc" data-cmd="enc">Encoder counts</button>
+            <span class="tool-inline">
+              <button type="button" class="btn btn-secondary tool-drive" id="btn-tool-motors">All motors</button>
+              <label for="tool-motors-pct" class="tool-small">power %</label>
+              <input type="number" id="tool-motors-pct" class="form-input tool-num" min="1" max="100" value="25" inputmode="numeric">
+            </span>
+            <span class="tool-inline">
+              <button type="button" class="btn btn-secondary tool-drive" id="btn-tool-acc">Accel profile</button>
+              <label for="tool-acc-ms" class="tool-small">ms</label>
+              <input type="number" id="tool-acc-ms" class="form-input tool-num" min="300" max="1000" step="20" value="1000" inputmode="numeric">
+              <label for="tool-acc-pct" class="tool-small">power cap %</label>
+              <input type="number" id="tool-acc-pct" class="form-input tool-num" min="10" max="100" value="50" inputmode="numeric">
+            </span>
+            <button type="button" class="btn btn-secondary" id="btn-tool-adc" data-cmd="adc">ADC sweep</button>
+          </div>
+          <p class="tool-small" id="tool-adc-note" hidden></p>
+          <div id="tool-i2c-table" class="tool-i2c" hidden></div>
+        </fieldset>
+
+        <fieldset class="tool-group" id="tool-wheel" disabled>
+          <legend>One wheel</legend>
+          <div class="tool-wheel-grid">
+            <div class="tool-sketch" role="radiogroup" aria-label="Wheel">
+              <label class="tool-w tool-w1"><input type="radio" name="tool-wheel" value="1" checked> 1</label>
+              <label class="tool-w tool-w2"><input type="radio" name="tool-wheel" value="2"> 2</label>
+              <span class="tool-body" aria-hidden="true">front ↑</span>
+              <label class="tool-w tool-w3"><input type="radio" name="tool-wheel" value="3"> 3</label>
+              <label class="tool-w tool-w4"><input type="radio" name="tool-wheel" value="4"> 4</label>
+              <label class="tool-w tool-wall"><input type="radio" name="tool-wheel" value="all"> all</label>
+            </div>
+            <div class="tool-wheel-ctl">
+              <div class="tool-row" role="radiogroup" aria-label="Direction">
+                <label><input type="radio" name="tool-dir" value="1" checked> forward</label>
+                <label><input type="radio" name="tool-dir" value="-1"> reverse</label>
+              </div>
+              <label for="tool-power" class="tool-small">power <b id="tool-power-val">25 %</b></label>
+              <input type="range" id="tool-power" min="1" max="100" value="25" aria-valuetext="25 percent forward">
+              <span class="tool-inline">
+                <label for="tool-secs" class="tool-small">seconds (0 = until Stop)</label>
+                <input type="number" id="tool-secs" class="form-input tool-num" min="0" max="3600" value="10" inputmode="numeric">
+              </span>
+              <button type="button" class="btn btn-primary tool-drive" id="btn-tool-run-wheel">Run wheel</button>
+            </div>
+          </div>
+          <p class="tool-small" id="tool-wheel-note"></p>
+        </fieldset>
+
+        <div class="tool-group">
+          <div class="tool-live" id="tool-live" aria-label="Live readings">
+            <span>M1 <b id="tool-live-m1">—</b></span><span>M2 <b id="tool-live-m2">—</b></span>
+            <span>M3 <b id="tool-live-m3">—</b></span><span>M4 <b id="tool-live-m4">—</b></span>
+            <span>BAT <b id="tool-live-bat">—</b></span><span>IMU <b id="tool-live-imu">—</b></span>
+          </div>
         </div>
 
-        <div class="form-group u-min-w-140" style="flex:1;">
-          <label for="hw-flash-env" class="form-label">Base Controller Env <span class="input-hint u-font-normal">(Synced)</span></label>
-          <select id="hw-flash-env" class="form-select font-mono">
-            <option value="pico2" selected>pico2</option>
-            <option value="pico2w">pico2w</option>
-            <option value="pico">pico</option>
-            <option value="picow">picow</option>
-            <option value="xrp">xrp</option>
-            <option value="esp32">esp32</option>
-            <option value="esp32s3">esp32s3</option>
-            <option value="unoq">unoq</option>
-            <option value="sim">sim</option>
-          </select>
-        </div>
-
-        <div class="form-group u-min-w-220" style="flex:2;">
-          <label for="hw-flash-port" class="form-label">Upload Serial Port <span class="input-hint u-font-normal">(Synced with Base &amp; MCU)</span></label>
-          <input type="text" id="hw-flash-port" class="form-input font-mono" value="/dev/ttyACM0" placeholder="/dev/ttyACM0 or /dev/ttyUSB0">
-          <div id="hw-port-chips" class="port-chips-wrap mt-1"></div>
-        </div>
-
-        <div class="u-flex u-gap-8">
-          <button type="button" id="btn-hw-flash" class="btn btn-primary" title="Compile and upload firmware to MCU">⚡ Flash MCU</button>
-          <button type="button" id="btn-hw-build" class="btn btn-secondary" title="Compile only without uploading">🔨 Build</button>
-          <button type="button" id="btn-hw-monitor" class="btn btn-secondary" title="Stream serial monitor">📡 Monitor</button>
-          <button type="button" id="btn-hw-stop" class="btn btn-danger" style="display:none;" title="Stop running process">⏹️ Stop</button>
-        </div>
-      </div>
-
-      <!-- Direct 1-Click Microcontroller Uploads Grid -->
-      <div class="direct-upload-section mt-4">
-        <label class="form-label u-mb-8" style="display:block;">🚀 1-Click Diagnostic Upload Buttons</label>
-        <div class="direct-upload-grid">
-          <button type="button" id="btn-upload-sensors" class="btn-direct-upload" title="Upload test_sensors">
-            <span class="direct-upload-icon">🧭</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>test_sensors</code></span>
-              <span class="direct-upload-desc">I2C Scanner &amp; Real-Time Telemetry</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
-
-          <button type="button" id="btn-upload-motors" class="btn-direct-upload" title="Upload test_motors">
-            <span class="direct-upload-icon">⚙️</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>test_motors</code></span>
-              <span class="direct-upload-desc">Sequential Motor &amp; CPR Direction Test</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
-
-          <button type="button" id="btn-upload-i2c" class="btn-direct-upload" title="Upload i2c_detect">
-            <span class="direct-upload-icon">🔍</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>i2c_detect</code></span>
-              <span class="direct-upload-desc">Hardware Bus Scanner &amp; Chip Probe</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
-
-          <button type="button" id="btn-upload-acc" class="btn-direct-upload" title="Upload test_acc">
-            <span class="direct-upload-icon">📈</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>test_acc</code></span>
-              <span class="direct-upload-desc">Dynamic Acceleration Profiler</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
-
-          <button type="button" id="btn-upload-adc" class="btn-direct-upload" title="Upload adc_calibrate">
-            <span class="direct-upload-icon">🔋</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>adc_calibrate</code></span>
-              <span class="direct-upload-desc">Hardware DAC ADC Linearization</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
-
-          <button type="button" id="btn-upload-firmware" class="btn-direct-upload" title="Upload firmware">
-            <span class="direct-upload-icon">🏎️</span>
-            <div class="direct-upload-info">
-              <span class="direct-upload-title">Upload <code>firmware</code></span>
-              <span class="direct-upload-desc">Main micro-ROS Base Controller</span>
-            </div>
-            <span class="direct-upload-badge">⚡ Upload</span>
-          </button>
+        <div class="tool-group">
+          <pre id="tool-term" class="tool-term" role="log" aria-live="off" aria-label="Tool terminal"></pre>
+          <form id="tool-form" class="tool-row" autocomplete="off">
+            <label for="tool-input" class="sr-only">Command</label>
+            <input type="text" id="tool-input" class="form-input font-mono tool-input" disabled
+                   placeholder="a command, e.g. status -- help lists them"
+                   autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+            <button type="submit" class="btn btn-secondary" id="btn-tool-send" disabled>Send</button>
+          </form>
         </div>
       </div>
+
+      <!-- The firmware image itself: writing it is not a test. -->
+      <details class="tool-image mt-3">
+        <summary>Firmware image</summary>
+        <div class="row mt-2" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
+          <div class="form-group u-min-w-140" style="flex:1;">
+            <label for="hw-flash-env" class="form-label">Board env <span class="input-hint u-font-normal">(synced)</span></label>
+            <select id="hw-flash-env" class="form-select font-mono">
+              <option value="pico2" selected>pico2</option>
+              <option value="pico2w">pico2w</option>
+              <option value="pico">pico</option>
+              <option value="picow">picow</option>
+              <option value="xrp">xrp</option>
+              <option value="esp32">esp32</option>
+              <option value="esp32s3">esp32s3</option>
+              <option value="unoq">unoq</option>
+              <option value="sim">sim</option>
+            </select>
+          </div>
+          <div class="form-group u-min-w-220" style="flex:2;">
+            <label for="hw-flash-port" class="form-label">Serial port <span class="input-hint u-font-normal">(synced with Base &amp; MCU)</span></label>
+            <input type="text" id="hw-flash-port" class="form-input font-mono" value="" placeholder="pick the board's port">
+            <div id="hw-port-chips" class="port-chips-wrap mt-1"></div>
+          </div>
+          <div class="u-flex u-gap-8">
+            <button type="button" id="btn-hw-flash" class="btn btn-secondary" title="Write the robot firmware image to the board">Flash MCU</button>
+            <button type="button" id="btn-hw-build" class="btn btn-secondary" title="Compile only, without writing">Build</button>
+            <button type="button" id="btn-hw-stop" class="btn btn-danger" style="display:none;" title="Cancel the flash or build">Cancel</button>
+          </div>
+        </div>
+      </details>
 
       <!-- Shown in place of the calibration card on silicon with no DAC. -->
       <p id="adc-no-dac-note" class="hint mt-4" style="display:none;"></p>
@@ -1565,12 +1586,12 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
     </div>
 
     <div class="card" id="card-webserial">
-      <h2>🔌 Serial Debug Monitor <span id="webserial-status" class="badge-pill badge-idle">Not connected</span></h2>
+      <h2>Terminal on this computer's USB <span id="webserial-status" class="badge-pill badge-idle">Not connected</span></h2>
       <p class="hint">
-        Opens a board's serial port <b>from this browser</b> and shows its raw output — the
-        equivalent of <code>pio device monitor</code> for the machine you are sitting at. Handy for
-        reading a boot log or driving the <code>test_sensors</code> / <code>i2c_detect</code>
-        diagnostic firmwares.
+        Opens a board plugged into <b>the computer you are sitting at</b>, from this browser: its
+        boot log, and the tool by hand -- open the port at the robot's serial speed, press the
+        board's reset, and type <code>tool</code> and Enter within 3 s. For a board on the robot
+        computer, use the tool panel above.
       </p>
       <p class="hint">
         <b>Monitoring only — this never flashes.</b> Firmware is written natively on the robot
@@ -1586,7 +1607,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div class="row" style="align-items:flex-end; gap:10px; flex-wrap:wrap;">
         <label>Baud
           <select id="webserial-baud">
-            <option value="115200" selected>115200 — default monitor_speed</option>
+            <option value="config" selected>the robot's serial speed</option>
+            <option value="115200">115200</option>
             <option value="230400">230400 — LD19 LiDAR</option>
             <option value="921600">921600 — micro-ROS serial</option>
             <option value="1500000">1500000 — GenDrv ESP32</option>
@@ -1610,7 +1632,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         </label>
       </div>
 
-      <pre id="webserial-output" class="webserial-output" aria-live="polite"></pre>
+      <pre id="webserial-output" class="webserial-output" role="log" aria-live="off"></pre>
       <input type="text" id="webserial-input" class="webserial-input"
              placeholder="Type a command and press Enter to send to the board…"
              spellcheck="false" autocomplete="off" disabled>
@@ -3079,6 +3101,7 @@ podman run --rm hello-world</code></pre>
 <script src="app-workflow.js"></script>
 <script src="app-hardware.js"></script>
 <script src="app-adc.js"></script>
+<script src="app-tool.js"></script>
 <script src="app-presets.js"></script>
 <script src="rosviz.js"></script>
 <script src="webserial.js"></script>

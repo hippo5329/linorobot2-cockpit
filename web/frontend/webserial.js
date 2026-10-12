@@ -186,11 +186,11 @@
       // for a board plugged into the machine the browser runs on.
       const insecure = !window.isSecureContext;
       supportEl.innerHTML = insecure
-        ? "\u2139\ufe0f To watch the robot's board, use <b>\ud83d\udce1 Monitor</b> above: it reads " +
-          "the serial port on the robot computer. This panel opens a port on <i>this</i> " +
+        ? "\u2139\ufe0f For the robot's board, use the tool panel above: it reaches the board " +
+          "through the robot computer. This panel opens a port on <i>this</i> " +
           "computer instead, which browsers allow only on <code>https://</code> or " +
           "<code>http://localhost</code>."
-        : "\u2139\ufe0f This browser has no Web Serial. Use <b>\ud83d\udce1 Monitor</b> above, " +
+        : "\u2139\ufe0f This browser has no Web Serial. Use the tool panel above, " +
           "or open the cockpit in Chrome or Edge to watch a board plugged into this computer.";
       supportEl.style.color = "var(--text-muted, #94a3b8)";
       supportEl.hidden = false;
@@ -211,7 +211,13 @@
     monitor.onState = refresh;
 
     connectBtn?.addEventListener("click", async () => {
-      await monitor.connect(parseInt(baudSelect?.value || "115200", 10));
+      // "the robot's serial speed": the board's console runs at the config's baud
+      // (921600, 1.5 Mbaud on a GenDrv), and at any other speed the tool is garbage.
+      const choice = baudSelect?.value || "config";
+      const baud = choice === "config"
+        ? parseInt(document.getElementById("cfg-baudrate")?.value || "921600", 10)
+        : parseInt(choice, 10);
+      await monitor.connect(baud);
       refresh();
     });
     disconnectBtn?.addEventListener("click", () => monitor.disconnect());

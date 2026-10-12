@@ -36,12 +36,20 @@ function renderPinFindings(findings, savedOk) {
 // the firmware refuse it then too (mcu_env.tool_refusal). A bare module has none: apply
 // the robot's reference design first.
 function applyI2cAvailability(i2c) {
-  const btn = document.getElementById("btn-upload-i2c");
+  const btn = document.getElementById("btn-tool-i2c");
   if (!btn) return;
   const set = (v) => v !== "" && v !== null && v !== undefined && Number.isInteger(Number(v)) && Number(v) >= 0;
   const usable = !!i2c.bus || (set(i2c.sda) && set(i2c.scl));
-  btn.disabled = !usable;
-  btn.title = usable ? "" : "No I2C pins in this robot's config: apply its reference design, or set SDA/SCL in the Pin Matrix";
+  // Hidden rather than disabled-with-a-tooltip: the reason is shown as text beside it.
+  btn.hidden = !usable;
+  const note = document.getElementById("tool-adc-note")?.parentElement?.querySelector(".tool-i2c-note");
+  if (note) note.remove();
+  if (!usable) {
+    const p = document.createElement("p");
+    p.className = "tool-small tool-i2c-note";
+    p.textContent = "Scan I2C: no I2C pins in this robot's config -- apply its reference design, or set SDA/SCL in the Pin Matrix.";
+    btn.closest("fieldset")?.appendChild(p);
+  }
 }
 
 async function loadHardwareConfig() {
@@ -1586,7 +1594,8 @@ async function executeHardwareAction(action, customFirmware = null) {
   // This selects which APPLICATION the one image boots. It is the `app` key of
   // the env partition, not a directory and not a separate build (test_sensors,
   // base) -- not a controller and not a nav goal.
-  const firmwareName = customFirmware || document.getElementById("hw-flash-target")?.value || "test_sensors";
+  // The image is the robot firmware; the tests are the tool's commands (app-tool.js).
+  const firmwareName = customFirmware || "base";
   const port = document.getElementById("cfg-serial-port")?.value.trim() || document.getElementById("hw-flash-port")?.value.trim() || "/dev/ttyACM0";
   const mcuEnv = document.getElementById("hw-flash-env")?.value || document.getElementById("cfg-mcu")?.value || "pico2";
   const baud = parseInt(document.getElementById("cfg-baudrate")?.value || 921600, 10);

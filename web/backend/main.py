@@ -22,6 +22,7 @@ import routes_secrets  # noqa: F401
 import routes_status  # noqa: F401
 import routes_syslog  # noqa: F401
 import routes_system  # noqa: F401
+import routes_tool  # noqa: F401
 
 
 # Mount static frontend.

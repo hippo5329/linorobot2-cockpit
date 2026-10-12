@@ -1,0 +1,358 @@
+"""The board's tool, held by the cockpit for the browser (2026-10-13, the web-designer review).
+
+The firmware has one mode: `base` waits 3 s at boot for `tool` and then starts micro-ROS;
+typed in time, the board stays in the tool, a command shell (firmware/src/tools). This module
+holds ONE session per robot -- the serial link, or the Wi-Fi terminal behind its challenge
+login -- and fans its output out to every browser tab that watches it.
+
+Rules it keeps, each from the review:
+
+  * The OTA password stays here. It is read from the robot's secrets on the server, used to
+    answer the board's nonces, and appears in no response, no log line and no command line.
+  * Commands are validated against the shell's grammar before a byte reaches the board: a
+    known first word, integers in the firmware's own ranges, `set` limited to the tool's
+    test settings, no line breaks or NULs inside a line.
+  * Liveness crosses two hops. The board stops a drive started from a terminal that goes
+    quiet for 3 s; this session sends it a keep-alive only while at least one browser is
+    watching (a stream with a heartbeat in the last 3 s). When the last browser goes away
+    while a command runs, the session sends `stop` -- and on Wi-Fi the `lino-stop` datagram
+    too -- itself.
+  * Entering the tool writes nothing: the board is restarted and catches its boot window.
+    Leaving is `base`. A board whose env still names a former tool (an older cockpit wrote
+    `app=test_*`) is told so, and `env_base_command()` is the env-only write that fixes it.
+
+No FastAPI here: routes_tool.py wires it to HTTP, and the tests drive it with a fake link.
+"""
+import collections
+import re
+import socket
+import threading
+import time
+from typing import Callable, Dict, List, Optional
+
+PROMPT = "tool> "
+ENTERED = ("[app] tool", "[tool] ready")
+HEARTBEAT_S = 3.0          # a browser stream counts as watching for this long after a beat
+KEEPALIVE_S = 1.0          # the NUL the board's deadman wants, once a second
+BACKLOG = 400              # lines a newly opened tab is shown
+
+# ---------------------------------------------------------------------------
+# The shell's grammar (firmware/src/tools/tools.cpp handleLine), as ranges.
+SET_KEYS = {
+    "tm_pct": (-100, 100),
+    "tm_only": (1, 5),
+    "tm_secs": (0, 3600),
+    "ta_ms": (300, 1000),
+    "ta_pct": (10, 100),
+}
+# Commands that keep running until `stop` (or their own end), and the drives among them.
+RUNNING = {"sensors", "enc", "motor", "motors", "acc", "adc", "i2c"}
+DRIVES = {"motor", "motors", "acc"}
+_LINE_OK = re.compile(r"^[ -~]{0,64}$")       # printable ASCII, no CR/LF/NUL, short
+
+
+class Refused(ValueError):
+    """A line the shell's grammar does not allow. The message says why, for the page."""
+
+
+def _int(word: str, lo: int, hi: int, what: str) -> int:
+    try:
+        n = int(word)
+    except ValueError:
+        raise Refused(f"{what}: '{word}' is not a whole number")
+    if n < lo or n > hi:
+        raise Refused(f"{what}: {n} is outside {lo}..{hi}")
+    return n
+
+
+def validate(line: str) -> str:
+    """The line as it will be sent, or Refused. Mirrors the firmware's own checks so a
+    page never sends what the board would refuse -- and never sends what it should not."""
+    if not isinstance(line, str) or not _LINE_OK.match(line):
+        raise Refused("one line of plain text, at most 64 characters")
+    words = line.split()
+    if not words:
+        raise Refused("an empty line stops -- use Stop")
+    cmd, args = words[0].lower(), words[1:]
+    if cmd in ("stop", "s", "status", "help", "base", "enc", "sensors", "adc"):
+        if args:
+            raise Refused(f"{cmd} takes no arguments")
+    elif cmd == "i2c":
+        if len(args) > 1:
+            raise Refused("i2c [secs]")
+        if args:
+            _int(args[0], 1, 3600, "i2c secs")
+    elif cmd == "motor":
+        if args:
+            if len(args) not in (2, 3):
+                raise Refused("motor <1-4|all> <pct -100..100, not 0> [secs]")
+            if args[0] != "all":
+                _int(args[0], 1, 4, "wheel")
+            if _int(args[1], -100, 100, "power %") == 0:
+                raise Refused("power %: 0 turns nothing -- use Stop")
+            if len(args) == 3:
+                _int(args[2], 0, 3600, "secs")
+    elif cmd == "motors":
+        if len(args) > 1:
+            raise Refused("motors [pct]")
+        if args:
+            _int(args[0], 1, 100, "power %")
+    elif cmd == "acc":
+        if len(args) > 2:
+            raise Refused("acc [ms] [pct]")
+        if args:
+            _int(args[0], 300, 1000, "run phase ms")
+        if len(args) == 2:
+            _int(args[1], 10, 100, "power cap %")
+    elif cmd == "set":
+        if not args or len(args) > 2:
+            raise Refused("set <key> <value>")
+        key = args[0]
+        if key not in SET_KEYS:
+            raise Refused(f"set: {key} is not a test setting ({', '.join(sorted(SET_KEYS))})")
+        if len(args) == 2:
+            lo, hi = SET_KEYS[key]
+            _int(args[1], lo, hi, key)
+    elif cmd == "get":
+        if len(args) > 1 or (args and not re.match(r"^[a-z0-9_]{1,23}$", args[0])):
+            raise Refused("get [key]")
+    else:
+        raise Refused(f"'{cmd}' is not a tool command")
+    return " ".join([cmd] + args)
+
+
+# ---------------------------------------------------------------------------
+class ToolSession:
+    """One robot's tool, open. `link` has write(bytes), read() -> bytes (non-blocking or
+    with a short timeout) and close(); lino_tool.py's SerialLink and TcpLink are two."""
+
+    def __init__(self, robot: str, link, kind: str, ip: Optional[str] = None,
+                 ping_port: int = 3233, clock: Callable[[], float] = time.monotonic,
+                 send_datagram: Optional[Callable[[str, int, bytes], None]] = None):
+        self.robot = robot
+        self.link = link
+        self.kind = kind                    # "serial" | "wifi"
+        self.ip = ip
+        self.ping_port = ping_port
+        self._clock = clock
+        self._send_datagram = send_datagram or _udp_send
+        self._lock = threading.RLock()
+        self._lines = collections.deque(maxlen=BACKLOG)
+        self._partial = ""
+        self._watchers: Dict[int, dict] = {}
+        self._next_id = 1
+        self._last_keepalive = 0.0
+        self.running: Optional[str] = None  # the command running, by its first word
+        self.banner_app: Optional[str] = None
+        self.closed = False
+        self._stopped_unwatched = False
+
+    # -- public state, never the password ----------------------------------
+    def describe(self) -> dict:
+        with self._lock:
+            return {"robot": self.robot, "kind": self.kind, "running": self.running,
+                    "watchers": len(self._watchers), "closed": self.closed,
+                    "env_app": self.banner_app}
+
+    # -- the board's output --------------------------------------------------
+    def feed(self, data: bytes) -> List[str]:
+        """Bytes from the board: complete lines go to the backlog and every watcher. A
+        prompt (no newline after it) counts as a line, so a page sees it at once."""
+        text = self._partial + data.decode("utf-8", errors="replace").replace("\r", "")
+        out = []
+        while True:
+            nl = text.find("\n")
+            pr = text.find(PROMPT)
+            if nl < 0 and pr < 0:
+                break
+            if pr >= 0 and (nl < 0 or pr < nl):
+                cut = pr + len(PROMPT)
+            else:
+                cut = nl + 1
+            out.append(text[:cut].rstrip("\n"))
+            text = text[cut:]
+        self._partial = text[-512:]
+        with self._lock:
+            for ln in out:
+                self._note(ln)
+                self._lines.append(ln)
+                for w in self._watchers.values():
+                    w["queue"].append(ln)
+        return out
+
+    def _note(self, ln: str) -> None:
+        m = re.search(r"linorobot2_hardware app=(\S+)", ln)
+        if m:
+            self.banner_app = m.group(1)
+        if ln.endswith(PROMPT) or "[tool] stopped" in ln or "[test_acc] STOPPED" in ln \
+                or re.search(r"\[tool\] \w+ done", ln):
+            self.running = None
+
+    def pump(self) -> None:
+        """One read from the link (the reader thread calls this in a loop)."""
+        d = self.link.read()
+        if d:
+            self.feed(d)
+        if getattr(self.link, "closed", False) and not self.closed:
+            self.feed(b"[cockpit] the board closed the terminal\n")
+            self.close()
+
+    # -- watchers (browser streams) -------------------------------------------
+    def watch(self) -> int:
+        with self._lock:
+            wid = self._next_id
+            self._next_id += 1
+            self._watchers[wid] = {"queue": collections.deque(list(self._lines)),
+                                   "beat": self._clock()}
+            self._stopped_unwatched = False
+            return wid
+
+    def beat(self, wid: int) -> bool:
+        with self._lock:
+            w = self._watchers.get(wid)
+            if not w:
+                return False
+            w["beat"] = self._clock()
+            return True
+
+    def unwatch(self, wid: int) -> None:
+        with self._lock:
+            self._watchers.pop(wid, None)
+
+    def drain(self, wid: int) -> List[str]:
+        with self._lock:
+            w = self._watchers.get(wid)
+            if not w:
+                return []
+            q = w["queue"]
+            out = list(q)
+            q.clear()
+            return out
+
+    def watched(self) -> bool:
+        now = self._clock()
+        with self._lock:
+            return any(now - w["beat"] <= HEARTBEAT_S for w in self._watchers.values())
+
+    # -- liveness ---------------------------------------------------------------
+    def tick(self) -> None:
+        """Once a second: the board's keep-alive while a browser watches; a stop when the
+        last one went away with a command running."""
+        now = self._clock()
+        if self.watched():
+            self._stopped_unwatched = False
+            if now - self._last_keepalive >= KEEPALIVE_S:
+                self._last_keepalive = now
+                self._write(b"\0")
+        elif self.running and not self._stopped_unwatched:
+            self._stopped_unwatched = True
+            self.stop()
+
+    # -- commands ---------------------------------------------------------------
+    def send(self, line: str) -> str:
+        clean = validate(line)
+        word = clean.split()[0]
+        if word in ("stop", "s"):
+            self.stop()
+            return clean
+        self._write(clean.encode() + b"\r\n")
+        if word in RUNNING:
+            self.running = word
+        return clean
+
+    def stop(self) -> None:
+        """`stop` on the shell, and on Wi-Fi the ping port's lino-stop as well: it needs no
+        login and reaches the board even when the terminal does not."""
+        self._write(b"stop\r\n")
+        if self.kind == "wifi" and self.ip:
+            try:
+                self._send_datagram(self.ip, self.ping_port, b"lino-stop")
+            except OSError:
+                pass
+
+    def leave(self) -> None:
+        """Back to the robot: stop anything running, then `base` (a restart into micro-ROS)."""
+        self._write(b"stop\r\n")
+        self._write(b"base\r\n")
+
+    def close(self) -> None:
+        with self._lock:
+            self.closed = True
+            self._watchers.clear()
+        try:
+            self.link.close()
+        except Exception:
+            pass
+
+    def needs_env_base(self) -> bool:
+        """The board's env names a tool (`app=tool` or a former tool's name): every power-on
+        would boot the tool again until `app=base` is written."""
+        return bool(self.banner_app) and self.banner_app != "base"
+
+    def _write(self, data: bytes) -> None:
+        with self._lock:
+            if self.closed:
+                return
+            try:
+                self.link.write(data)
+            except Exception:
+                pass
+
+
+def _udp_send(ip: str, port: int, data: bytes) -> None:
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sk.sendto(data, (ip, port))
+    finally:
+        sk.close()
+
+
+# ---------------------------------------------------------------------------
+# The registry: one session per robot.
+class Registry:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._sessions: Dict[str, ToolSession] = {}
+        self._threads: Dict[str, threading.Thread] = {}
+
+    def get(self, robot: str) -> Optional[ToolSession]:
+        with self._lock:
+            s = self._sessions.get(robot)
+            return s if s and not s.closed else None
+
+    def add(self, session: ToolSession, start_threads: bool = True) -> ToolSession:
+        with self._lock:
+            old = self._sessions.get(session.robot)
+            if old and not old.closed:
+                raise RuntimeError(f"a tool session for {session.robot} is already open")
+            self._sessions[session.robot] = session
+        if start_threads:
+            t = threading.Thread(target=_serve, args=(session,), daemon=True,
+                                 name=f"tool-{session.robot}")
+            self._threads[session.robot] = t
+            t.start()
+        return session
+
+    def remove(self, robot: str) -> None:
+        with self._lock:
+            s = self._sessions.pop(robot, None)
+        if s:
+            s.close()
+
+
+def _serve(session: ToolSession) -> None:
+    """Read the board, and tick the liveness rules, until the session closes."""
+    last_tick = 0.0
+    while not session.closed:
+        try:
+            session.pump()
+        except Exception:
+            time.sleep(0.05)
+        now = time.monotonic()
+        if now - last_tick >= 0.25:
+            last_tick = now
+            session.tick()
+        time.sleep(0.01)
+
+
+REGISTRY = Registry()

@@ -182,18 +182,13 @@ function applyDacAvailability() {
     || document.getElementById("cfg-mcu")?.value || "";
   const usable = mcuHasDac(env);
 
-  const opt = document.querySelector('#hw-flash-target option[value="adc_calibrate"]');
-  if (opt) {
-    opt.disabled = !usable;
-    opt.hidden = !usable;
-    // Never leave the selector pointing at something that cannot be flashed.
-    const sel = document.getElementById("hw-flash-target");
-    if (!usable && sel && sel.value === "adc_calibrate") sel.value = "test_sensors";
-  }
-  const uploadBtn = document.getElementById("btn-upload-adc");
-  if (uploadBtn) {
-    uploadBtn.disabled = !usable;
-    uploadBtn.style.display = usable ? "" : "none";
+  // The tool's `adc` button, with the reason beside it rather than a silent gap.
+  const adcBtn = document.getElementById("btn-tool-adc");
+  if (adcBtn) adcBtn.hidden = !usable;
+  const adcNote = document.getElementById("tool-adc-note");
+  if (adcNote) {
+    adcNote.hidden = usable;
+    adcNote.textContent = usable ? "" : `ADC sweep: ${env || "this board"} has no hardware DAC (ESP32 / ESP32-S2 only).`;
   }
   const card = document.getElementById("adc-studio-card");
   if (card) {
@@ -407,53 +402,13 @@ function initBaseControllerConfigModule() {
   const btnHwBuild = document.getElementById("btn-hw-build");
   if (btnHwBuild) btnHwBuild.addEventListener("click", () => executeHardwareAction("build"));
 
-  const btnHwMonitor = document.getElementById("btn-hw-monitor");
-  if (btnHwMonitor) btnHwMonitor.addEventListener("click", () => executeHardwareAction("monitor"));
-
+  // Cancels a flash or a build (the process slot). The tool panel has its own STOP,
+  // which stops the board's motors.
   const btnHwStop = document.getElementById("btn-hw-stop");
   if (btnHwStop) btnHwStop.addEventListener("click", () => killSlot("main"));
 
-  // 1-Click Upload Diagnostics Buttons
-  const directBtns = [
-    { id: "btn-upload-sensors", firmware: "test_sensors" },
-    { id: "btn-upload-motors", firmware: "test_motors" },
-    { id: "btn-upload-i2c", firmware: "i2c_detect" },
-    { id: "btn-upload-acc", firmware: "test_acc" },
-    { id: "btn-upload-adc", firmware: "adc_calibrate" },
-    { id: "btn-upload-firmware", firmware: "base" },
-  ];
-
-  directBtns.forEach(({ id, firmware }) => {
-    const btn = document.getElementById(id);
-    if (btn) {
-      btn.addEventListener("click", () => {
-        const elSel = document.getElementById("hw-flash-target");
-        if (elSel) elSel.value = firmware;
-        executeHardwareAction("upload", firmware);
-      });
-    }
-  });
-
-  // Auto-Detect I2C button
-  const btnAutoI2c = document.getElementById("btn-auto-detect-i2c");
-  if (btnAutoI2c) {
-    btnAutoI2c.addEventListener("click", async () => {
-      const resultsEl = document.getElementById("i2c-detect-results");
-      if (resultsEl) {
-        resultsEl.style.display = "block";
-        resultsEl.innerHTML = "⏳ Switching the board to the <code>i2c_detect</code> app &amp; scanning I2C bus...";
-      }
-      await executeHardwareAction("upload", "i2c_detect");
-    });
-  }
-
-  // ADC Calibration button
-  const btnAdcCal = document.getElementById("btn-adc-run-cal");
-  if (btnAdcCal) {
-    btnAdcCal.addEventListener("click", () => {
-      executeHardwareAction("upload", "adc_calibrate");
-    });
-  }
+  // The tests themselves -- I2C scan, sensors, motors, the ADC sweep -- are the tool's
+  // commands now (app-tool.js): nothing here writes the env's `app` key.
 
   // The LUT the calibration prints is meant to be pasted into a config; the
   // Copy button beside it had no handler at all, so the only way to take it
@@ -538,9 +493,7 @@ function initBaseControllerConfigModule() {
 // flash error"). Only a disable made HERE is undone here: a button disabled by
 // a running action keeps its own state.
 const BOARD_ONLY_BUTTONS = [
-  "btn-hw-flash", "btn-hw-build", "btn-hw-monitor",
-  "btn-upload-sensors", "btn-upload-motors", "btn-upload-i2c", "btn-upload-acc",
-  "btn-upload-adc", "btn-upload-firmware", "btn-auto-detect-i2c", "btn-adc-run-cal",
+  "btn-hw-flash", "btn-hw-build", "btn-tool-open", "btn-auto-detect-i2c", "btn-adc-run-cal",
 ];
 function updateBoardOnlyButtons() {
   const sim = state.robot_name === "bare_sim" || document.getElementById("cfg-mcu")?.value === "sim";

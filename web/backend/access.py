@@ -74,6 +74,7 @@ PROTECTED_GETS = {
     "/api/list_dir",
     "/api/workflow/one-click/stream",
     "/api/lidar_stream",
+    "/api/tool/stream",
 }
 
 
@@ -131,7 +132,8 @@ def is_stream_path(path: str) -> bool:
     """The protected GETs that are EventSource streams -- they may be authorised
     by a one-shot stream ticket in ?ticket= instead of the token, so the token
     stays out of the URL."""
-    return path.rstrip("/") in ("/api/workflow/one-click/stream", "/api/lidar_stream", "/api/ros2/stream")
+    return path.rstrip("/") in ("/api/workflow/one-click/stream", "/api/lidar_stream", "/api/ros2/stream",
+                                "/api/tool/stream")
 
 
 def token_matches(presented: str, expected: str) -> bool:
