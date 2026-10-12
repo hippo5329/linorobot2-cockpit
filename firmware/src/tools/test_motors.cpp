@@ -43,27 +43,25 @@
 #include "wifis.h"
 #include "ota.h"
 #include "board_init.h"
+#include "tool_hw.h"
 
 #ifndef BAUDRATE
 #define BAUDRATE 921600
 #endif
 
-// Motor diagnostics and calibration.
-//
-// The Encoder and Motor objects used to be constructed at file scope. In a
-// unified image that runs their constructors at boot for EVERY mode -- touching
-// motor pins before initBoard() has set the bus up, in a robot whose user asked
-// for a sensor scan. They come from hw_factory now, built in setup_() like the
-// robot firmware's, which also means this tool drives the wiring the env
-// partition describes rather than whatever the header was generated for.
+// Motor diagnostics and calibration. The tool's `motors` / `motor` commands
+// (tools.cpp). The motors and encoders are main.cpp's: initDrivetrain() builds them
+// from the env partition for every mode, first thing in setup(), so a command drives the
+// wiring the env describes and two commands in a row never build them twice.
 //
 // Serial, initBoard() and the radio belong to the dispatcher (see tools.h).
 namespace test_motors {
 
-EncoderInterface *motor1_encoder = NULL, *motor2_encoder = NULL,
-                 *motor3_encoder = NULL, *motor4_encoder = NULL;
-MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
-                 *motor3_controller = NULL, *motor4_controller = NULL;
+// main.cpp's drivetrain (initDrivetrain(), every mode): the tool's commands share it.
+EncoderInterface *&motor1_encoder = motor_encoders[0], *&motor2_encoder = motor_encoders[1],
+                 *&motor3_encoder = motor_encoders[2], *&motor4_encoder = motor_encoders[3];
+MotorInterface   *&motor1_controller = motor_controllers[0], *&motor2_controller = motor_controllers[1],
+                 *&motor3_controller = motor_controllers[2], *&motor4_controller = motor_controllers[3];
 
 // All six of these came from main.cpp when this tool was split out and not one
 // of them was referenced here -- 1376 bytes of .bss, on every board, for
@@ -109,56 +107,16 @@ void initLed(void)
 // No `Odometry odometry;` here: declared, never referenced, 728 bytes of
 // .bss out of a 124580-byte static segment. A motor test has no use for an
 // odometry estimate.
-// Through the factory, like main.cpp. `IMU imu;` was the legacy compile-time
-// typedef -- imu.h resolved the macro to whichever driver the header named --
-// so this tool built for one chip while the firmware beside it in the same
-// image chose at boot. It only ever needs init() here, but it should be the
-// same sensor the robot will use.
-IMUInterface *imu = nullptr;
-MAGInterface *mag = nullptr;
-unsigned total_motors = 4;
+// The bus, the IMU and the radio are the tool's (tool_hw.cpp): this command only drives.
+static int encPin[4][2];
+static unsigned total_motors = 4;
 
-void setup_()
+static void readEncPins(void)
 {
-    for (int i = 1; i <= 4; i++) {
-        EncoderInterface **enc = (i == 1) ? &motor1_encoder : (i == 2) ? &motor2_encoder
-                               : (i == 3) ? &motor3_encoder : &motor4_encoder;
-        MotorInterface **mot = (i == 1) ? &motor1_controller : (i == 2) ? &motor2_controller
-                             : (i == 3) ? &motor3_controller : &motor4_controller;
-        *enc = createEncoder(i);
-        *mot = createMotor(i);
-    }
-    initLed();
-    // I2C bus and boot-time output pins, from the env partition falling back to
-    // the generated header -- see firmware/common/lib/board_init. This replaced
-    // the board-specific init macro, a fragment of setup() living in a config.
-    initBoard();
-
-    initWifis();
-    initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
-    i2cScanTable();  // default range from 0x03 to 0x77
-    initMcuEnv();
-    // Started as `base` starts them (some chips run their own fusion and want it
-    // running). The bus decides first, as in test_acc and test_sensors, and only a
-    // real chip is created (envRealOnly): never a simulated part on a real robot.
-    const char *imu_name = envGet("imu", defaultIMUName());
-    const char *mag_name = envGet("mag", defaultMAGName());
-    i2cProbeSelect(&imu_name, &mag_name);
-    if ((imu = createIMU(imu_name))) imu->init();
-    if ((mag = createMAG(mag_name))) mag->init();
-
-    {
-        Kinematics *k = createKinematics();
-        if (k->base_platform_ == Kinematics::DIFFERENTIAL_DRIVE) total_motors = 2;
-        delete k;
-    }
-    motor1_encoder->getRPM();
-    motor2_encoder->getRPM();
-    motor3_encoder->getRPM();
-    motor4_encoder->getRPM();
-
-    initBoardLate();
-    syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
+    static const char *k[4][2] = {{"m1_enc_a", "m1_enc_b"}, {"m2_enc_a", "m2_enc_b"},
+                                  {"m3_enc_a", "m3_enc_b"}, {"m4_enc_a", "m4_enc_b"}};
+    for (int m = 0; m < 4; m++)
+        for (int c = 0; c < 2; c++) encPin[m][c] = envInt(k[m][c], -1);
 }
 
 // The drive: a quarter of full PWM unless the env's tm_pct says otherwise. A first run on a new
@@ -178,7 +136,6 @@ static int testPwm(void)
 // line that moves while the count stays 0 is the counting, and a line that never moves is the
 // wiring or the encoder's supply (a mecanum robot's first run, 2026-10-11: two wheels turned
 // and every count read 0).
-static int encPin[4][2];
 static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
 {
     for (int m = 0; m < 4; m++)
@@ -195,55 +152,85 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
                 if (v != level[m][c]) { edges[m][c]++; level[m][c] = v; }
             }
         delayMicroseconds(100);
+        // A second is long to wait for `stop` with a wheel turning.
+        if ((millis() - t0) % 10 == 0 && toolStopRequested())
+            toolAbort("stop");
     }
 }
 
-// One motor, forward, until the env changes: tm_only=N (1..4) spins only motor N at testPwm(), or
-// tm_only=5 all four together (the encoders' interrupt load at its highest: every line toggling),
-// printing its RPM and the polled encoder lines every second, so a person beside the robot can
-// say which wheel turns and which way, and the next env write moves on to the next motor. It
-// stops by itself after tm_secs (120 when absent) in case nobody moves it on.
-static bool singleMotor(void)
+// `motor <1-4|all> <pct> [secs]` (the shell sets tm_only / tm_pct / tm_secs): one motor,
+// or all four (tm_only=5, the encoders' interrupt load at its highest), at tm_pct % --
+// signed, minus is reverse -- printing its RPM and the polled encoder lines every second,
+// so a person beside the robot can say which wheel turns and which way. Read every
+// second, so `set tm_pct 50` while it runs changes its power. Stops on `stop`, or after
+// tm_secs (120 when absent; 0 = until stop).
+static unsigned long one_t0 = 0;
+
+static int onePwm(void)
 {
-    static int only = -2;
-    if (only == -2) only = envInt("tm_only", 0);
+    const int full = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
+    int pct = envInt("tm_pct", 25);
+    if (pct > 100) pct = 100;
+    if (pct < -100) pct = -100;
+    return full * pct / 100;
+}
+
+void oneBegin(void)
+{
+    readEncPins();
+    total_motors = tool_hw::total_motors;
+    one_t0 = millis();
+    const int only = envInt("tm_only", 0);
+    const long secs = envInt("tm_secs", 120);
+    if (only == 5) Serial.printf("MOTORS ALL at %d %%", envInt("tm_pct", 25));
+    else           Serial.printf("MOTOR%d at %d %%", only, envInt("tm_pct", 25));
+    if (secs > 0) Serial.printf(" for %ld s -- 'stop' ends it\n", secs);
+    else          Serial.println(" until 'stop'");
+}
+
+bool oneStep(void)
+{
+    const int only = envInt("tm_only", 0);
     if (only < 1 || only > 5) return false;
-    static unsigned long t0 = millis();
-    const unsigned long limit = 1000UL * (unsigned long)envInt("tm_secs", 120);
+    const long secs = envInt("tm_secs", 120);
+    const bool running = secs <= 0 || millis() - one_t0 < 1000UL * (unsigned long)secs;
     MotorInterface *mot[4] = {motor1_controller, motor2_controller, motor3_controller, motor4_controller};
     EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
-    const bool running = millis() - t0 < limit;
+    const int pwm = onePwm();
+    const char *dir = pwm < 0 ? "REV" : "FWD";
     for (int m = 0; m < 4; m++)
-        mot[m]->spin(running && (only == 5 || m == only - 1) ? testPwm() : 0);
+        mot[m]->spin(running && (only == 5 || m == only - 1) ? pwm : 0);
+    if (!running) return false;
     if (only == 5) {
         // Interrupts only: no polling beside them, so the counts show what the pin interrupts
         // keep up with on their own with every encoder line toggling.
-        delay(1000);
+        toolWait(1000);
         float r[4];
         for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
-        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f\n",
-                      running ? "FWD" : "STOPPED", r[0], r[1], r[2], r[3]);
+        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f\n", dir, r[0], r[1], r[2], r[3]);
         return true;
     }
     unsigned edges[4][2];
     int level[4][2];
     pollEncoders(1000, edges, level);
     const float rpm = enc[only - 1]->getRPM();
-    Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only,
-                  running ? "FWD" : "STOPPED", rpm, edges[0][0], edges[0][1], edges[1][0], edges[1][1],
+    Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only, dir, rpm,
+                  edges[0][0], edges[0][1], edges[1][0], edges[1][1],
                   edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
     return true;
 }
 
-void loop_() {
-    static unsigned tk = 0; // tick
-    if (tk == 0 && encPin[0][0] == 0 && encPin[0][1] == 0) {
-        static const char *k[4][2] = {{"m1_enc_a", "m1_enc_b"}, {"m2_enc_a", "m2_enc_b"},
-                                      {"m3_enc_a", "m3_enc_b"}, {"m4_enc_a", "m4_enc_b"}};
-        for (int m = 0; m < 4; m++)
-            for (int c = 0; c < 2; c++) encPin[m][c] = envInt(k[m][c], -1);
-    }
-    if (singleMotor()) return;
+// `motors [pct]`: each motor in turn, forward 8 s, then the same in reverse, until stop.
+static unsigned tk = 0;
+
+void begin(void)
+{
+    readEncPins();
+    total_motors = tool_hw::total_motors;
+    tk = 0;
+}
+
+bool step() {
     const unsigned run_time = 8; // run time of each motor
     const unsigned cycle = run_time * total_motors;
     unsigned current_motor = tk / run_time % total_motors;
@@ -251,10 +238,6 @@ void loop_() {
     const int pwm_max = testPwm();
     static float max_rpm, stopping;
     if (tk == 0) {
-        static const char *k[4][2] = {{"m1_enc_a", "m1_enc_b"}, {"m2_enc_a", "m2_enc_b"},
-                                      {"m3_enc_a", "m3_enc_b"}, {"m4_enc_a", "m4_enc_b"}};
-        for (int m = 0; m < 4; m++)
-            for (int c = 0; c < 2; c++) encPin[m][c] = envInt(k[m][c], -1);
         Serial.printf("MOTOR TEST pwm %d of %d (tm_pct %d)\n", pwm_max,
                       (1 << envU16("pwm_bits", PWM_BITS)) - 1, envInt("tm_pct", 25));
     }
@@ -302,9 +285,12 @@ void loop_() {
            level[0][0], level[0][1], level[1][0], level[1][1],
            level[2][0], level[2][1], level[3][0], level[3][1]);
     tk++;
+    return true;
 }
 
 }  // namespace test_motors
 
-extern "C" void test_motors_setup(void) { test_motors::setup_(); }
-extern "C" void test_motors_loop(void)  { test_motors::loop_(); }
+extern "C" void test_motors_begin(void)     { test_motors::begin(); }
+extern "C" bool test_motors_step(void)      { return test_motors::step(); }
+extern "C" void test_motors_one_begin(void) { test_motors::oneBegin(); }
+extern "C" bool test_motors_one_step(void)  { return test_motors::oneStep(); }

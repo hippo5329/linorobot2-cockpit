@@ -9,6 +9,13 @@
 // moving between the robot firmware and a sensor scan is a 4 KB env rewrite
 // (or, on ESP32, no reflash at all) rather than a rebuild.
 //
+// And one application (2026-10-12, user: "merge tools into one, use terminal command
+// to drive i2c, sensors, motors, acc ... so that we have only two modes, base and
+// tool"): `app=tool` boots a command shell on the console -- USB serial, or on a
+// Wi-Fi robot a TCP terminal -- and each former tool is one of its commands. The old
+// app names still boot the tool, running their command at once (`app=test_acc` is
+// `app=tool` + `tool_run=acc`), so a host that writes one keeps working.
+//
 // Two rules keep this from costing the robot firmware anything:
 //
 //   * Each tool is its own translation unit inside its own namespace, exposing
@@ -32,24 +39,44 @@
 #ifndef TOOLS_H
 #define TOOLS_H
 
+#include <stdint.h>
+
 enum AppMode {
     APP_BASE = 0,       // the robot firmware; the default when `app` is unset
-    APP_TEST_SENSORS,
-    APP_TEST_MOTORS,
-    APP_TEST_ACC,
-    APP_I2C_DETECT,
-    APP_ADC_CALIBRATE,
+    APP_TOOL,           // the command shell (tool_shell.cpp)
 };
 
-// Reads the `app` env key. Falls back to APP_BASE for an unset, unknown or
-// unsupported value, so a typo boots the robot firmware rather than nothing.
+// Reads the `app` env key: `tool` (or a former tool's name) boots the shell, anything
+// else the robot firmware, so a typo boots the robot rather than nothing.
 AppMode toolSelect(void);
 
-// Name of a mode, for logging and for the "unknown app" message.
+// Name of a mode, for the banner's `app=`.
 const char *toolName(AppMode mode);
 
-// Dispatch. Not called for APP_BASE.
-void toolSetup(AppMode mode);
-void toolLoop(AppMode mode);
+// The boot's tool window (user, 2026-10-12: "only one mode, base boot wait for tool
+// escape for 3 or 5 seconds then proceed to micro-ros"). Called by base after the radio
+// is up and before micro-ROS: for `tool_wait` ms (3000; 0 = none) it listens for the
+// word `tool` and Enter on the console or the Wi-Fi terminal, or "lino-tool" on the ping
+// port. True: the tool takes over (no micro-ROS this boot).
+bool toolEscape(void);
+// "lino-tool" while base runs: restart, and come up in the tool (a RAM flag that
+// survives a soft reset, not an env write). With tool=false, back to base.
+[[noreturn]] void toolRestart(bool tool);
+
+// The shell. Not called for APP_BASE.
+void toolSetup(void);
+void toolLoop(void);
+
+// ---- for the commands (tool_shell.cpp) ----
+// True once `stop` (or `s`, or an empty line) arrived on the console or the terminal,
+// or "lino-stop" on the ping port. Reads the input as it goes, so a long command that
+// calls it is stoppable mid-run -- and `set` works while a command runs.
+bool toolStopRequested(void);
+// Waits `ms`, servicing the radio and the input; a stop ends the command (toolAbort).
+void toolWait(uint32_t ms);
+// Motors off, a line saying why, and back to the prompt from wherever the command was.
+[[noreturn]] void toolAbort(const char *why);
+// Motors off, all four.
+void toolMotorsOff(void);
 
 #endif // TOOLS_H

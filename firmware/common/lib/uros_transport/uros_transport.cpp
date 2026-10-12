@@ -176,7 +176,14 @@ bool initUrosTransport(void)
 
     Serial.println("[uros] transport serial");
     // framing true: a byte stream has no message boundaries of its own.
+    // On an RP2 the console wrapper exists only for the tool's terminal (lino_console.h):
+    // micro-ROS gets the bare SerialUSB, the object it always had. An ESP32 keeps the
+    // wrapper, which is what picks usb or uart0 there.
+#if defined(ARDUINO_ARCH_RP2040)
+    rmw_uros_set_custom_transport(true, (void *)&linoConsoleStream(),
+#else
     rmw_uros_set_custom_transport(true, (void *)&Serial,
+#endif
                                   platformio_transport_open,
                                   platformio_transport_close,
                                   platformio_transport_write,

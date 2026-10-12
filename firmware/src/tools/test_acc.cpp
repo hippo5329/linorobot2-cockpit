@@ -43,6 +43,7 @@
 #include "wifis.h"
 #include "ota.h"
 #include "board_init.h"
+#include "tool_hw.h"
 #include "sensor_factory.h"
 #include "mcu_env.h"
 #include "i2c_probe.h"
@@ -58,27 +59,24 @@
 #define LED_ACTIVE
 #endif
 
-// Accelerometer calibration.
-//
-// The Encoder and Motor objects used to be constructed at file scope. In a
-// unified image that runs their constructors at boot for EVERY mode -- touching
-// motor pins before initBoard() has set the bus up, in a robot whose user asked
-// for a sensor scan. They come from hw_factory now, built in setup_() like the
-// robot firmware's, which also means this tool drives the wiring the env
-// partition describes rather than whatever the header was generated for.
+// Accelerometer calibration. The tool's `acc` command
+// (tools.cpp). The motors and encoders are main.cpp's: initDrivetrain() builds them
+// from the env partition for every mode, first thing in setup(), so a command drives the
+// wiring the env describes and two commands in a row never build them twice.
 //
 // Serial, initBoard() and the radio belong to the dispatcher (see tools.h).
 namespace test_acc {
 
-EncoderInterface *motor1_encoder = NULL, *motor2_encoder = NULL,
-                 *motor3_encoder = NULL, *motor4_encoder = NULL;
-MotorInterface   *motor1_controller = NULL, *motor2_controller = NULL,
-                 *motor3_controller = NULL, *motor4_controller = NULL;
+// main.cpp's drivetrain (initDrivetrain(), every mode): the tool's commands share it.
+EncoderInterface *&motor1_encoder = motor_encoders[0], *&motor2_encoder = motor_encoders[1],
+                 *&motor3_encoder = motor_encoders[2], *&motor4_encoder = motor_encoders[3];
+MotorInterface   *&motor1_controller = motor_controllers[0], *&motor2_controller = motor_controllers[1],
+                 *&motor3_controller = motor_controllers[2], *&motor4_controller = motor_controllers[3];
 
 // Only imu_msg is used here. The other five came along from main.cpp when this
 // tool was split out and were never referenced -- 1056 bytes of .bss in an
 // image whose static segment is 124580 bytes total, carried on every board.
-sensor_msgs__msg__Imu *imu_msg = nullptr;
+using tool_hw::imu_msg;
 
 
 
@@ -88,8 +86,9 @@ sensor_msgs__msg__Imu *imu_msg = nullptr;
 // (a tracked GenDrv robot, 2026-10-08) the closed-loop steps ran the header's gains, the
 // velocity table used a 0.043 m wheel and 180 RPM, and the base type was the
 // header's -- an identification of a robot that does not exist.
-PID *motor_pids[4] = {};
-Kinematics *kinematics = nullptr;
+// main.cpp's, built by initDrivetrain() from the same env keys.
+using ::motor_pids;
+using ::kinematics;
 
 // The PWM width the motors were built with (createMotor reads the same key).
 static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
@@ -103,7 +102,7 @@ static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
 // every app. This tool measures wheel velocity through Kinematics; it never
 // built an odometry estimate.
 
-// Pointers, built in setup_() from what is on the bus -- not the macro types the
+// Pointers, built once by tool_hw.cpp from what is on the bus -- not the macro types the
 // config header chose. This tool runs on a real robot with real motors, and its
 // whole output is the IMU's measured acceleration set against the wheel
 // odometry's, so the IMU has to be the chip that is actually answering. One
@@ -113,12 +112,12 @@ static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
 // encoders read, the velocity and acceleration columns fill with real numbers,
 // and the one column the test exists to produce is taken from the wrong chip.
 // Same rule and the same two calls as test_sensors and `base`.
-IMUInterface *imu = nullptr;
-bool imu_ok = false;     // init() answered: only then is a gyro heading anything
-MAGInterface *mag = nullptr;
+// The tool's (tool_hw.cpp), built once at boot by base's probe and adoption rule.
+using tool_hw::imu;
+using tool_hw::imu_ok;   // init() answered: only then is a gyro heading anything
 unsigned total_motors = 4;
 
-// Set when the env says the wheels are simulated. loop_() then prints where to
+// Set when the env says the wheels are simulated. runAcc() then prints where to
 // get the answer instead of driving nothing and tabulating the result.
 bool sim_wheels = false;
 
@@ -135,13 +134,9 @@ static void halt(const char *why)
     motor2_controller->spin(0);
     motor3_controller->spin(0);
     motor4_controller->spin(0);
-    Serial.printf("[test_acc] STOPPED: %s -- motors off; write app=base to leave\n", why);
-    for (;;) {
-        runWifis();
-        runOta();
-        feedWatchdogFromTool();
-        delay(20);
-    }
+    // The line test_acc_run.py ends on; then back to the tool's prompt.
+    Serial.printf("[test_acc] STOPPED: %s -- motors off\n", why);
+    toolAbort(why);
 }
 
 // The robot's heading, from the IMU's gyro -- not from the wheels (user, 2026-10-08:
@@ -168,8 +163,8 @@ static void waitMs(uint32_t ms)
         trackHeading();
         runWifis();
         runOta();
-        if (hostStopRequested())
-            halt("stop from the host");
+        if (toolStopRequested())
+            halt("stop");
         const int32_t left = (int32_t)(end - millis());
         if (left <= 0)
             return;
@@ -228,80 +223,16 @@ static void reportHome(const char *phase)
            wheelNetM(0), wheelNetM(1), wheelNetM(2), wheelNetM(3));
 }
 
-void setup_()
+// Each `acc` starts from scratch: the shared drivetrain at rest, the baseline counts,
+// whatever the env (or a `set ta_ms`) says now.
+static void prepare()
 {
-    // Allocated when this tool runs, not statically (see test_sensors).
-    if (!imu_msg) imu_msg = (sensor_msgs__msg__Imu *)calloc(1, sizeof(*imu_msg));
-    if (!imu_msg) {
-        Serial.println("[test_acc] out of memory for the IMU message buffer");
-        return;
-    }
-
-    for (int i = 1; i <= 4; i++) {
-        EncoderInterface **enc = (i == 1) ? &motor1_encoder : (i == 2) ? &motor2_encoder
-                               : (i == 3) ? &motor3_encoder : &motor4_encoder;
-        MotorInterface **mot = (i == 1) ? &motor1_controller : (i == 2) ? &motor2_controller
-                             : (i == 3) ? &motor3_controller : &motor4_controller;
-        *enc = createEncoder(i);
-        *mot = createMotor(i);
-    }
-#ifdef LED_ACTIVE
-    pinMode(LED_PIN, OUTPUT);
-#endif
-    // I2C bus and boot-time output pins, from the env partition falling back to
-    // the generated header -- see firmware/common/lib/board_init. This replaced
-    // the board-specific init macro, a fragment of setup() living in a config.
-    initBoard();
-
-    initWifis();
-    initOta(NULL, NULL);   // a no-op: main.cpp started OTA, with its hooks
-    // The LiDAR's UDP forwarder, as in `base` (user, 2026-10-08: "include lidar udp in
-    // the test loop"): the robot computer tracks the whole trajectory from the room while
-    // this tool drives. It forwards from the UART's receive callback, so the tool's loops
-    // do not have to service it; with no real LiDAR in the env it stays off.
-    initLidar();
-
-    i2cScanTable();
-
-    // The same probe and the same adoption rule the robot firmware uses, so this
-    // tool and `base` can never disagree about what is fitted.
-    initMcuEnv();
-    const char *imu_name = envGet("imu", defaultIMUName());
-    const char *mag_name = envGet("mag", defaultMAGName());
-    i2cProbeSelect(&imu_name, &mag_name);
-    // Real chips only (envRealOnly): anything else creates nothing. A simulated IMU's
-    // readings once went out as IMU ACC and yaw_imu from a robot with no IMU. The
-    // magnetometer is not read here at all; it is started only when it is real.
-    imu = createIMU(imu_name);
-    if (imu)
-    {
-        imu_ok = imu->init();
-        if (!imu_ok)
-            Serial.println("[-] IMU initialization FAILED -- IMU ACC below is not a measurement.");
-        else
-            Serial.printf("[+] IMU %s initialized.\n", imu_name);
-    }
-    else
-        Serial.println("[ ] No IMU: IMU ACC below reads none.");
-    mag = createMAG(mag_name);
-    if (mag)
-        mag->init();
-
-    for (int i = 0; i < 4; i++) motor_pids[i] = createPID();
-    kinematics = createKinematics();
-
-    // A simulated-wheel board has nothing to measure. Checked here, after
-    // initMcuEnv(), because it is the env that decides -- not the build.
+    // A simulated-wheel board has nothing to measure: the env decides, not the build.
     sim_wheels = wheelsAreSim();
-
-    if (kinematics->base_platform_ == Kinematics::DIFFERENTIAL_DRIVE)
-    {
-        total_motors = 2;
-    }
+    total_motors = tool_hw::total_motors;
+    imu_heading = 0.0f;
+    heading_us = 0;
     for (int i = 0; i < 4; i++) readRPM(i);   // the baseline: travel counts from here
-
-    initBoardLate();
-    syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
     waitMs(2000);
 }
 
@@ -325,8 +256,8 @@ static void setRunTime()
     run_time = ms / ticks * ticks;
     trace_n = run_time / ticks * 4;
 }
-// The 2400-byte velocity trace is a LOCAL in loop_(), passed to the two
-// functions that touch it -- see loop_(). It used to be a file-scope array,
+// The 2400-byte velocity trace is a LOCAL in runAcc(), passed to the two
+// functions that touch it -- see runAcc(). It used to be a file-scope array,
 // which put it in .bss, where it was charged against a static segment of just
 // 124580 bytes (memory.ld: 0x2c200 - 0xdb5c) and paid for by every app in the
 // image, since the tools are dispatched at runtime from one binary. A tool
@@ -432,7 +363,7 @@ void dump_record(const Kinematics::velocities *buf) {
 // test_acc's own 20 ms / 1 s profile and prints the same four lines in
 // milliseconds, with no board involved.
 //
-// So a simulated-wheel board is refused in setup_() rather than answered. What is
+// So a simulated-wheel board is refused in runAcc() rather than answered. What is
 // left here is the real measurement: a real motor's real acceleration, which is
 // the only thing a board can tell you that the model cannot.
 static void driveAll(int pwm1, int pwm2, int pwm3, int pwm4)
@@ -683,8 +614,12 @@ void run()
 
 }  // namespace ident
 
-void loop_() {
-    if (!imu_msg) return;   // setup_ could not allocate; nothing to run
+// `acc [ms]`: one whole run, then back to the prompt. A stop anywhere inside it (every
+// wait goes through waitMs) halts the motors and jumps back to the prompt.
+void runAcc() {
+    if (!imu_msg) return;   // tool_hw could not allocate; nothing to run
+    prepare();
+    runs = 12;
 
     // Refuse rather than answer. With simulated wheels there is no motor to
     // accelerate: every number below would be a property of the simulated
@@ -706,19 +641,14 @@ void loop_() {
         Serial.println("[test_acc] or open the Config Studio's Kinematics HUD. "
                        "For a real measurement, flash a robot with motors.");
         syslog(LOG_INFO, "test_acc refused: sim_wheel=1, nothing to measure");
-        delay(10000);
         return;
     }
 
     // Identification first, while the motors are cold and the pack is full:
     // once, not once per run, because the twelve runs below halve the PWM as
     // they go and a plant fitted across different step sizes is not a plant.
-    static bool identified = false;
-    if (!identified) {
-        setRunTime();
-        identified = true;
-        ident::run();
-    }
+    setRunTime();
+    ident::run();
 
     // The velocity trace lives here, on the stack, for exactly as long as the
     // test runs. 2400 bytes of the loop task's 8192, and this tool is the only
@@ -774,17 +704,10 @@ void loop_() {
     }
     // The runs come back by construction (each drives out and the same back), but
     // a track that runs faster one way still walks; take out what is left, once.
-    static bool homed = false;
-    if (!homed) {
-        homed = true;
-        ident::reportPhase("runs");
-        Serial.println("[test_acc] done -- write app=base to leave");
-    }
-
-    waitMs(100);
+    ident::reportPhase("runs");
+    Serial.println("[test_acc] done -- 'base' to leave the tool");
 }
 
 }  // namespace test_acc
 
-extern "C" void test_acc_setup(void) { test_acc::setup_(); }
-extern "C" void test_acc_loop(void)  { test_acc::loop_(); }
+extern "C" void test_acc_run(void) { test_acc::runAcc(); }

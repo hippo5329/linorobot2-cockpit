@@ -113,33 +113,27 @@ void scanAndIdentify() {
     Serial.println("=======================================================\n");
 }
 
-void setup_() {
+// The `i2c` command: one scan of the bus the tool brought up (tool_hw: initBoard(), the
+// env's pins, exactly as base). Explicit pins from the Web UI pinout (I2C_*_OVERRIDE)
+// take the bus over once, as they always did.
+void scan()
+{
 #if defined(I2C_SDA_OVERRIDE) && defined(I2C_SCL_OVERRIDE)
-    // Explicit pins from the Web UI pinout — independent of the board config.
+    static bool overridden = false;
+    if (!overridden) {
+        overridden = true;
   #if defined(ARDUINO_ARCH_RP2040) || defined(PICO) || defined(PICO2)
-    boardI2cPins(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);   // I2C0 or I2C1, by the pins
-    Wire.begin();
+        boardI2cPins(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);   // I2C0 or I2C1, by the pins
+        Wire.begin();
   #else
-    Wire.begin(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);
+        Wire.begin(I2C_SDA_OVERRIDE, I2C_SCL_OVERRIDE);
   #endif
-    Wire.setClock(400000);
-#else
-    // No explicit override: the bus is whatever the env partition and the
-    // generated header say, exactly as the base firmware brings it up. A probe
-    // that scanned a different bus from the firmware it is diagnosing would be
-    // worse than no probe at all.
-    initBoard();
+        Wire.setClock(400000);
+    }
 #endif
-    delay(1500);
-    scanAndIdentify();
-}
-
-void loop_() {
-    delay(5000);
     scanAndIdentify();
 }
 
 }  // namespace i2c_detect
 
-extern "C" void i2c_detect_setup(void) { i2c_detect::setup_(); }
-extern "C" void i2c_detect_loop(void)  { i2c_detect::loop_(); }
+extern "C" void i2c_detect_scan(void) { i2c_detect::scan(); }

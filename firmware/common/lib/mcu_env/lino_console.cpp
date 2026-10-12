@@ -37,6 +37,14 @@ size_t LinoConsole::setTxBufferSize(size_t n)
 {
     return uart0_ ? Serial0.setTxBufferSize(n) : Serial.setTxBufferSize(n);
 }
+#elif defined(ARDUINO_ARCH_RP2040)
+// RP2040 / RP2350: one console, the USB port, so nothing to select. SerialUSB has no
+// buffer sizes to set.
+void LinoConsole::selectFromEnv() {}
+void LinoConsole::begin(unsigned long baud) { Serial.begin(baud); }
+void LinoConsole::end() { Serial.end(); }
+size_t LinoConsole::setRxBufferSize(size_t) { return 0; }
+size_t LinoConsole::setTxBufferSize(size_t) { return 0; }
 #else
 // A classic ESP32: one console, the UART, so nothing to select.
 void LinoConsole::selectFromEnv() {}

@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "i2c_probe.h"
+#include "tool_hw.h"
 
 #include <sensor_msgs/msg/imu.h>
 #include <sensor_msgs/msg/magnetic_field.h>
@@ -52,98 +53,32 @@
 // dispatcher's job (see tools.h); everything below is only this tool's work.
 namespace test_sensors {
 
-sensor_msgs__msg__Imu *imu_msg = nullptr;
-sensor_msgs__msg__MagneticField *mag_msg = nullptr;
-sensor_msgs__msg__BatteryState *battery_msg = nullptr;
-sensor_msgs__msg__Range *range_msg = nullptr;
-
-// Pointers, built in setup() from what is on the bus -- not the macro types the
-// config header chose. A tool compiled against `IMU` reported the SIM driver's
-// zeros on a board with a real MPU6050 answering at 0x68, because the image it
-// lives in was built for a robot whose config says `imu: SIM`. One image serves
-// every board of a family (AGENTS.md §10), so a diagnostic that takes its sensor
-// from the build is diagnosing the build, not the board.
-IMUInterface *imu = nullptr;
-MAGInterface *mag = nullptr;
+// The tool's sensors and buffers, built once at boot (tool_hw.cpp) -- by the same probe
+// and adoption rule as base, so this command and the robot firmware never disagree
+// about what is fitted. Real chips only: `none`, `sim` or nothing on the bus is none.
+using tool_hw::imu;
+using tool_hw::mag;
+using tool_hw::imu_msg;
+using tool_hw::mag_msg;
+using tool_hw::battery_msg;
+using tool_hw::range_msg;
 
 static unsigned long lastLogTime = 0;
 
-void setup_()
+// `sensors`: the header and what was found, then the stream until stop.
+void begin()
 {
-    // Allocated when this tool runs, not statically: every tool's buffers
-    // used to sit in .bss at once, paid by whichever app was actually booted.
-    if (!imu_msg)     imu_msg     = (sensor_msgs__msg__Imu *)calloc(1, sizeof(*imu_msg));
-    if (!mag_msg)     mag_msg     = (sensor_msgs__msg__MagneticField *)calloc(1, sizeof(*mag_msg));
-    if (!battery_msg) battery_msg = (sensor_msgs__msg__BatteryState *)calloc(1, sizeof(*battery_msg));
-    if (!range_msg)   range_msg   = (sensor_msgs__msg__Range *)calloc(1, sizeof(*range_msg));
-    if (!imu_msg || !mag_msg || !battery_msg || !range_msg) {
-        Serial.println("[test_sensors] out of memory for the message buffers");
-        return;
-    }
-
-    delay(2000);
     Serial.println("\n==========================================");
     Serial.println("   Linorobot2 Hardware Sensor Diagnostics ");
     Serial.println("==========================================");
-    Serial.println("Scanning I2C bus...");
-    i2cScanTable();  // default range from 0x03 to 0x77
-
-    // The same probe and the same adoption rule the robot firmware uses, so this
-    // tool and `base` can never disagree about what is fitted.
-    initMcuEnv();
-    const char *imu_name = envGet("imu", defaultIMUName());
-    const char *mag_name = envGet("mag", defaultMAGName());
-    i2cProbeSelect(&imu_name, &mag_name);
-    Serial.println("Initializing IMU & Magnetometer...");
-    // Real chips only (envRealOnly): `none`, `sim`, an unresolved `auto` or an unknown
-    // name creates nothing. A simulated part once reported "[+] Magnetometer
-    // initialized successfully" and streamed its field on a robot with no magnetometer.
-    imu = createIMU(imu_name);
-    if (imu)
-    {
-        if (!imu->init())
-            Serial.println("[-] IMU initialization FAILED!");
-        else
-            Serial.println("[+] IMU initialized successfully.");
-    }
-    else
-        Serial.println("[ ] No IMU.");
-
-    mag = createMAG(mag_name);
-    if (mag)
-    {
-        if (!mag->init())
-            Serial.println("[-] Magnetometer initialization FAILED or not detected.");
-        else
-            Serial.println("[+] Magnetometer initialized successfully.");
-    }
-    else
-        Serial.println("[ ] No magnetometer.");
-
-    initBattery();
-    initRange();
-    // Unconditional, like every other sensor this tool reports on. It used to be
-    // #if defined(USE_BMP280), which meant the one application you run TO FIND
-    // OUT what is on the bus could only see a barometer the config had already
-    // named -- and the config naming it was exactly the assumption under test.
-    // initEnv() probes 0x76/0x77 and returns false when nothing answers.
-    if (!initEnv())
-    {
-        Serial.println("[ ] No BMP280/BME280 on the bus.");
-    }
-    else
-    {
-        Serial.printf("[+] %s environmental sensor initialized successfully.\n", envHasHumidity() ? "BME280" : "BMP280");
-    }
-
-    initBoardLate();
-    syslog(LOG_INFO, "%s Ready %lu", __FUNCTION__, millis());
+    tool_hw::report();
     Serial.println("Starting real-time sensor stream (50 Hz poll, 1 Hz output)...\n");
+    lastLogTime = 0;
 }
 
-void loop_()
+bool step()
 {
-    if (!imu_msg) return;   // setup_ could not allocate; nothing to run
+    if (!imu_msg) return false;   // tool_hw could not allocate; nothing to run
 
     // Poll sensors at 50 Hz (20ms interval) to keep IMU state machines (e.g. BNO085) running smoothly
     delay(20);
@@ -241,10 +176,10 @@ void loop_()
             battery_msg->voltage
         );
     }
-
+    return true;
 }
 
 }  // namespace test_sensors
 
-extern "C" void test_sensors_setup(void) { test_sensors::setup_(); }
-extern "C" void test_sensors_loop(void)  { test_sensors::loop_(); }
+extern "C" void test_sensors_begin(void) { test_sensors::begin(); }
+extern "C" bool test_sensors_step(void)  { return test_sensors::step(); }

@@ -1033,7 +1033,7 @@ void setup()
     lino_console.selectFromEnv();
 #endif
     app_mode = toolSelect();
-    const bool micro_ros = (app_mode == APP_BASE);
+    bool micro_ros = (app_mode == APP_BASE);
     // Base's message buffers, the executor and the odometry estimator are
     // allocated only when the base app is the one booting. As statics they
     // were ~2.3 KB of .bss charged to every app in the unified image -- a
@@ -1163,16 +1163,16 @@ void setup()
     // Everything above is what every application needs: the bus, the drivetrain,
     // the radio, a log sink. Everything below it is micro-ROS, which only the
     // robot firmware uses -- so a tool takes over here.
+    // One mode: base waits a moment for the tool's escape before it starts micro-ROS
+    // (tools.h toolEscape). Typed `tool` + Enter, or "lino-tool" -- the tool this boot.
+    if (micro_ros && toolEscape()) {
+        app_mode = APP_TOOL;
+        micro_ros = false;
+    }
     if (!micro_ros) {
-#if LINO_CONSOLE_WRAPPED
-        // A tool on a Wi-Fi robot: the robot may be off the cable, and the tool's
-        // console is its whole output -- so every line also goes to syslog, where
-        // the cockpit's Monitor streams it. (The base application never tees: on a
-        // serial robot its console carries the micro-ROS frames.)
-        if (wifiWanted())
-            lino_console.teeToSyslog(true);
-#endif
-        toolSetup(app_mode);
+        // The tool (tools.cpp) tees its console to syslog on a Wi-Fi robot itself; the
+        // base application never does: on a serial robot its console carries micro-ROS.
+        toolSetup();
         return;
     }
     // Which IMU and magnetometer this board has is read from the env partition,
@@ -1601,10 +1601,13 @@ void loop() {
         // run OTA twice per iteration.
         runWifis();
         runOta();
-        toolLoop(app_mode);
+        toolLoop();
         wdtFeed();
         return;
     }
+    // "lino-tool" on the ping port: restart into the tool (tools.h toolRestart).
+    if (hostToolRequested())
+        toolRestart(true);
     simWallLedService();
     reportSampleAge();
     diagCount(DIAG_LOOP);

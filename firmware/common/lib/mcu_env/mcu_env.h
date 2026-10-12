@@ -51,6 +51,11 @@ bool        envFlag(const char *key, bool fallback); // "0"/"false"/"no" are fal
 // return NULL for `sim`, `auto`, `none` or a name they do not know, and the battery
 // and barometer models stay off whatever sim_battery / sim_env say. `base` never sets it.
 void        envSetRealOnly(bool on);
+// The tool's `set`: `value` shadows the stored one until the next boot (RAM only;
+// NULL unsets it). False for a key or value that does not fit, or a full table.
+bool        envSetOverride(const char *key, const char *value);
+// Every key the board sees: the overrides first, then the stored env's other keys.
+void        envForEach(void (*cb)(const char *key, const char *value, bool overridden));
 bool        envRealOnly(void);
 uint16_t    envU16(const char *key, uint16_t fallback);
 uint32_t    envU32(const char *key, uint32_t fallback);

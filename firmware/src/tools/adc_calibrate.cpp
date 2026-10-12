@@ -300,7 +300,8 @@ static void emitCurveJson()
 
 #endif // ADC_LUT_SUPPORTED
 
-void setup_()
+// `adc`: one whole calibration, then back to the prompt.
+void run()
 {
 #if ADC_LUT_SUPPORTED
     initMcuEnv();
@@ -321,16 +322,7 @@ void setup_()
     Serial.print(F("  ADC input pin: GPIO"));
     Serial.println(adc_pin);
     Serial.println(F("Wire the DAC pin to the ADC pin before starting."));
-#endif
-}
 
-void loop_()
-{
-#if ADC_LUT_SUPPORTED
-    if (!knot) {
-        Serial.println(F("No curve buffer - nothing to do."));
-        while (1) delay(1000);
-    }
     measureCurve();
     applyRoundingOffset();
     enforceMonotonic();
@@ -340,20 +332,13 @@ void loop_()
     free(knot);
     knot = NULL;
 #else
-    // Reached only if a dispatcher offered this tool on a board that cannot run
-    // it; the app list is supposed to exclude it there.
-    Serial.println(F("adc_calibrate is an ESP32-only tool: building the table needs a "
+    Serial.println(F("adc is an ESP32-only command: building the table needs a "
                      "hardware DAC, which the ESP32-S3 and the RP2040/RP2350 do not have."));
 #endif
-
-    while (1) {
-        delay(1000);
-    }
 }
 
 }  // namespace adc_calibrate
 
 // Entry points for tool mode. The dispatcher in firmware/base calls these; it
 // never sees the namespace.
-extern "C" void adc_calibrate_setup(void) { adc_calibrate::setup_(); }
-extern "C" void adc_calibrate_loop(void)  { adc_calibrate::loop_(); }
+extern "C" void adc_calibrate_run(void) { adc_calibrate::run(); }

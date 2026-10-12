@@ -50,6 +50,11 @@ void hostStopClear(void);
 // micro-ROS and the LiDAR still up. Read once: true at most once per request. Answered
 // "lino-ident ok <banner>".
 bool hostIdentRequested(void);
+// "lino-tool" on the ping port: base restarts into the tool; the boot's tool window
+// enters it. Read once. Guarded like OTA: with an OTA password the board answers
+// "lino-tool nonce <n> <banner>" and only "lino-tool <md5(password:nonce)>" within 10 s
+// is "lino-tool ok <banner>" (else "lino-tool denied"); without one, the first datagram is.
+bool hostToolRequested(void);
 // The watchdog feed initOta() was given (main.cpp's), for a tool that waits a long
 // time outside loop(); a no-op without one.
 void feedWatchdogFromTool(void);
@@ -60,6 +65,7 @@ void feedWatchdogFromTool(void);
 #define hostStopRequested() false
 #define hostStopClear()
 #define hostIdentRequested() false
+#define hostToolRequested() false
 #define feedWatchdogFromTool()
 #endif
 

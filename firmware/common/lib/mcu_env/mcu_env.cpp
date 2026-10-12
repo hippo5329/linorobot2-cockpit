@@ -372,9 +372,80 @@ uint32_t mcuEnvCrc(void)
     return crc;
 }
 
+// The tool's `set` (2026-10-12, user: "update env by command"): a value typed at the
+// tool's terminal shadows the stored one until the next boot. RAM only -- the env
+// block is written by the host (mcu_env.py / flash_mcu.py --env-only), never by the
+// board -- and only the tool writes here, so `base` reads exactly what was flashed.
+// Allocated on the first `set`: base never sets one, and esp32_lyrical's .bss has no
+// 1 KB to spare for a table it would never use.
+#define ENV_OVERRIDES 16
+struct EnvOverride { char key[24]; char val[48]; };
+static EnvOverride *ov = NULL;
+
+bool envSetOverride(const char *key, const char *value)
+{
+    if (!key || !*key || strlen(key) >= sizeof(ov->key) || strchr(key, '='))
+        return false;
+    if (!ov && !(ov = (EnvOverride *)calloc(ENV_OVERRIDES, sizeof(EnvOverride))))
+        return false;
+    int slot = -1;
+    for (int i = 0; i < ENV_OVERRIDES; i++) {
+        if (strcmp(ov[i].key, key) == 0) { slot = i; break; }
+        if (slot < 0 && !ov[i].key[0]) slot = i;
+    }
+    if (slot < 0)
+        return false;
+    if (!value) {                          // unset: the stored value again
+        if (strcmp(ov[slot].key, key) == 0) ov[slot].key[0] = '\0';
+        return true;
+    }
+    if (strlen(value) >= sizeof(ov->val))
+        return false;
+    strcpy(ov[slot].key, key);
+    strcpy(ov[slot].val, value);
+    return true;
+}
+
+static const char *envOverride(const char *key)
+{
+    for (int i = 0; ov && i < ENV_OVERRIDES; i++)
+        if (ov[i].key[0] && strcmp(ov[i].key, key) == 0)
+            return ov[i].val;
+    return NULL;
+}
+
+void envForEach(void (*cb)(const char *key, const char *value, bool overridden))
+{
+    initMcuEnv();
+    if (!cb)
+        return;
+    for (int i = 0; ov && i < ENV_OVERRIDES; i++)
+        if (ov[i].key[0])
+            cb(ov[i].key, ov[i].val, true);
+    if (!env_valid || !env_data)
+        return;
+    char key[24];
+    for (size_t pos = 0; pos < ENV_DATA_LEN && env_data[pos]; ) {
+        const char *entry = &env_data[pos];
+        const size_t elen = strnlen(entry, ENV_DATA_LEN - pos);
+        const char *eq = (const char *)memchr(entry, '=', elen);
+        if (eq && (size_t)(eq - entry) < sizeof(key)) {
+            memcpy(key, entry, eq - entry);
+            key[eq - entry] = '\0';
+            if (!envOverride(key))
+                cb(key, eq + 1, false);
+        }
+        pos += elen + 1;
+    }
+}
+
 const char *envGet(const char *key, const char *fallback)
 {
     initMcuEnv();
+    if (key) {
+        const char *ov = envOverride(key);
+        if (ov) return ov;
+    }
     if (!env_valid || !env_data || !key)
         return fallback;
 

@@ -29,6 +29,7 @@
 // board reboots into it, and the uploader confirms by the banner's `envcrc=`.
 
 #include <WiFiUdp.h>
+#include <MD5Builder.h>
 
 static WiFiUDP ping_udp;
 static bool ping_started = false;
@@ -38,6 +39,75 @@ static volatile bool ident_requested = false;
 
 bool hostStopRequested(void) { return stop_requested; }
 void hostStopClear(void) { stop_requested = false; }
+// "lino-tool" (2026-10-12): the board restarts into the tool, or, during the boot's tool
+// window, enters it. Read once.
+static volatile bool tool_requested = false;
+
+// "lino-tool" is guarded like OTA (user, 2026-10-12: "a reset command port with ota like
+// logic"): with an OTA password set, the first datagram gets a one-time nonce, and only
+// "lino-tool <md5(password:nonce)>" within 10 s takes the robot out of micro-ROS. The
+// password never crosses the network. No password: one datagram does it, as OTA would.
+static char tool_nonce[9] = "";
+static uint32_t tool_nonce_ms = 0;
+
+static const char *otaPassword(void)
+{
+    const char *pwd = envGet("ota_password", NULL);
+#if defined(OTA_PASSWORD)
+    if (!pwd || pwd[0] == '\0') pwd = OTA_PASSWORD;
+#endif
+    return (pwd && pwd[0]) ? pwd : NULL;
+}
+
+static uint32_t nonceRandom(void)
+{
+#if defined(ARDUINO_ARCH_ESP32)
+    return esp_random();
+#elif defined(ARDUINO_ARCH_RP2040)
+    return rp2040.hwrand32();
+#else
+    return (uint32_t)random(0x7fffffff) ^ micros();
+#endif
+}
+
+// Returns the reply's head: "lino-tool ok ", "lino-tool nonce <n> " or "lino-tool denied ".
+static const char *toolRequest(const char *arg, char *head, size_t n)
+{
+    const char *pwd = otaPassword();
+    if (!pwd) {
+        tool_requested = true;
+        return "lino-tool ok ";
+    }
+    while (*arg == ' ') arg++;
+    if (!*arg) {
+        snprintf(tool_nonce, sizeof(tool_nonce), "%08lx", (unsigned long)nonceRandom());
+        tool_nonce_ms = millis();
+        snprintf(head, n, "lino-tool nonce %s ", tool_nonce);
+        return head;
+    }
+    bool ok = false;
+    if (tool_nonce[0] && millis() - tool_nonce_ms < 10000) {
+        MD5Builder md5;
+        md5.begin();
+        md5.add(String(pwd) + ":" + tool_nonce);
+        md5.calculate();
+        ok = md5.toString().equalsIgnoreCase(String(arg).substring(0, 32));
+    }
+    tool_nonce[0] = '\0';              // one use, right or wrong
+    if (ok) {
+        tool_requested = true;
+        return "lino-tool ok ";
+    }
+    syslog(LOG_WARNING, "lino-tool denied from %s", ping_udp.remoteIP().toString().c_str());
+    return "lino-tool denied ";
+}
+bool hostToolRequested(void)
+{
+    if (!tool_requested) return false;
+    tool_requested = false;
+    return true;
+}
+
 bool hostIdentRequested(void)
 {
     if (!ident_requested) return false;
@@ -62,18 +132,25 @@ static void runPing(void)
         return;
     if (ping_udp.parsePacket() <= 0)
         return;
-    char req[16];
+    char req[64];                      // "lino-tool" + a 32-character answer
     const int r = ping_udp.read(req, sizeof(req) - 1);
     req[r > 0 ? r : 0] = '\0';
     const bool stop = strncmp(req, "lino-stop", 9) == 0;
     const bool ident = strncmp(req, "lino-ident", 10) == 0;
-    if (!stop && !ident && strncmp(req, "lino?", 5) != 0)
+    const bool tool = strncmp(req, "lino-tool", 9) == 0;
+    if (!stop && !ident && !tool && strncmp(req, "lino?", 5) != 0)
         return;
     char line[224];
     if (stop) {
         stop_requested = true;
         strcpy(line, "lino-stop ok ");
         ping_format(line + 13, sizeof(line) - 13);
+    } else if (tool) {
+        char head[40];
+        const char *h = toolRequest(req + 9, head, sizeof(head));
+        const size_t hl = strlen(h);
+        memmove(line, h, hl + 1);
+        ping_format(line + hl, sizeof(line) - hl);
     } else if (ident) {
         ident_requested = true;
         strcpy(line, "lino-ident ok ");
