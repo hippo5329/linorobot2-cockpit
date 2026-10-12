@@ -69,8 +69,8 @@ IMUInterface *createIMU(const char *name)
                 Serial.printf("[sensors] IMU: %s\n", IMU_TABLE[i].name);
                 return IMU_TABLE[i].make();
             }
-        Serial.printf("[sensors] IMU '%s': no real chip by that name - none (real parts only)\n",
-                      name ? name : "");
+        Serial.printf("[sensors] IMU: none -- the config says '%s', and the tool uses only a "
+                      "real chip that answers on the bus\n", name ? name : "");
         return NULL;
     }
     if (name && *name) {
@@ -93,8 +93,8 @@ MAGInterface *createMAG(const char *name)
                 Serial.printf("[sensors] MAG: %s\n", MAG_TABLE[i].name);
                 return MAG_TABLE[i].make();
             }
-        Serial.printf("[sensors] MAG '%s': no real chip by that name - none (real parts only)\n",
-                      name ? name : "");
+        Serial.printf("[sensors] MAG: none -- the config says '%s', and the tool uses only a "
+                      "real chip that answers on the bus\n", name ? name : "");
         return NULL;
     }
     if (name && *name) {

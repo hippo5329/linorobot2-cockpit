@@ -11,6 +11,8 @@
 #ifndef ENCODER_INTERFACE_H
 #define ENCODER_INTERFACE_H
 
+#include <stdint.h>
+
 class EncoderInterface
 {
     public:
@@ -24,6 +26,10 @@ class EncoderInterface
         // nothing and the control loop can call it unconditionally instead of
         // being bracketed by #ifdef USE_SIM_WHEEL.
         virtual void feed(int pwm) { (void)pwm; }
+
+        // The raw count, signed, with the config's invert: the tool's `enc` (a wheel turned
+        // by hand). A simulated wheel has none to read.
+        virtual int32_t count() { return 0; }
 };
 
 #endif // ENCODER_INTERFACE_H

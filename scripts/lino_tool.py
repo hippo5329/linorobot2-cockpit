@@ -39,7 +39,7 @@ PROMPT = b"tool> "
 ENTERED = (b"[app] tool", b"[tool] ready")
 # Commands that keep running until `stop` (or their own time), and the lines that end
 # the long blocking ones.
-RUNNING = ("sensors", "motor", "motors")
+RUNNING = ("sensors", "motor", "motors", "enc")
 ENDS = {"acc": (b"[test_acc] done", b"[test_acc] STOPPED", b"test_acc refused", b"[tool] STOPPED"),
         "adc": (b"[ADC_JSON]", b"[tool] STOPPED")}
 
@@ -56,10 +56,16 @@ def tool_answer(password: str, nonce: str) -> str:
 # ---------------------------------------------------------------- serial
 class SerialLink:
     def __init__(self, port: str, baud: int, env: str):
-        import serial
+        try:
+            import serial
+        except ImportError:
+            raise SystemExit("[lino_tool] pyserial is missing: run this inside the cockpit "
+                             "container (docker compose exec -it cockpit python3 "
+                             "scripts/lino_tool.py ...), or pip install pyserial")
         self.port, self.baud, self.env = port, baud, env
         self.serial = serial
         self.s = None
+        self.last_keep = 0.0
 
     def _new(self):
         # An ESP32's auto-reset circuit reads DTR/RTS as EN/IO0: open with both released,
@@ -96,6 +102,19 @@ class SerialLink:
             time.sleep(0.1)
             self.s.rts = False
             return True
+        if self.env.startswith("unoq"):
+            # The STM32 behind the UNO Q's ttyHS1: its boot lines, then an SWD reset, the
+            # flasher's own path (unoq_swd.py). The agent must not hold ttyHS1, nor
+            # arduino-router the lines.
+            import unoq_swd
+            try:
+                unoq_swd.set_boot_lines()
+                unoq_swd.run(["reset_config srst_only srst_push_pull", "init", "reset run", "shutdown"],
+                             timeout=60)
+            except unoq_swd.SwdError as exc:
+                log(f"UNO Q reset: {exc}")
+                return False
+            return self.open()
         if self.env.startswith(("pico", "xrp")):
             flash_mcu.remember_usb_path(self.port)        # picotool aims at this board only
             if not flash_mcu.pulse_1200_baud(self.port):
@@ -103,7 +122,7 @@ class SerialLink:
             if not flash_mcu.rp2_reboot_into_app(self.env):
                 return False
             return self.open()
-        log(f"no reboot for env '{self.env}': give one of esp32*, esp32s3*, pico*, pico2*, xrp*")
+        log(f"no reboot for env '{self.env}': give one of esp32*, esp32s3*, pico*, pico2*, xrp*, unoq*")
         return False
 
     def write(self, data: bytes):
@@ -116,7 +135,14 @@ class SerialLink:
             return b""
 
     def keepalive(self):
-        pass                              # only the Wi-Fi terminal needs one
+        # A NUL a second: the tool then stops a drive started from here if this script dies
+        # (an ssh session that drops kills it before its `finally` can send `stop`).
+        if time.time() - self.last_keep >= 1.0:
+            self.last_keep = time.time()
+            try:
+                self.s.write(b"\0")
+            except Exception:
+                pass
 
     def close(self):
         if self.s:
@@ -335,6 +361,9 @@ def main() -> int:
     ap.add_argument("-c", "--command", action="append", default=[], help="a tool command; repeat")
     ap.add_argument("--base", action="store_true", help="leave the tool when done (restart into base)")
     ap.add_argument("--window", type=float, default=15.0, help="seconds to catch the tool window")
+    ap.add_argument("--stop", action="store_true",
+                    help="stop the board's motors now and leave: lino-stop on Wi-Fi (no password), "
+                         "`stop` on the console")
     args = ap.parse_args()
 
     env_vals = {}
@@ -343,6 +372,44 @@ def main() -> int:
         import mcu_env
         env_vals = mcu_env.env_from_config(os.path.abspath(args.params), cockpit_paths.secrets_path())
     baud = args.baud or int(env_vals.get("baud") or 921600)
+    if not args.env and args.params:
+        import mcu_env
+        tgt = (mcu_env.load_yaml(os.path.abspath(args.params)).get("base_controller") or {})
+        args.env = str(tgt.get("pio_env") or tgt.get("mcu") or "")
+    if args.port and args.port.endswith("ttyHS1") and not args.env:
+        args.env = "unoq"
+
+    # A SIGHUP (the ssh session that ran this went away) or a SIGTERM must still stop the
+    # wheels: turn them into the KeyboardInterrupt the `finally` below handles.
+    import signal
+    def _bail(signum, frame):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, _bail)
+
+    if args.stop:
+        if args.port:
+            link = SerialLink(args.port, baud, args.env or "")
+            if not link.open(3):
+                log(f"cannot open {args.port}")
+                return 1
+            link.write(b"stop\r\n")
+            link.close()
+            log("sent stop on the console")
+            return 0
+        ip = args.ip
+        if not ip:
+            log("--stop needs --port or --ip")
+            return 2
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sk.settimeout(1.0)
+        sk.sendto(b"lino-stop", (ip, int(env_vals.get("ping_port") or 3233)))
+        try:
+            log(sk.recvfrom(512)[0].decode(errors="replace").split(" linorobot2")[0])
+        except socket.timeout:
+            log("no answer to lino-stop")
+            return 1
+        return 0
     password = args.password if args.password is not None else str(env_vals.get("ota_password") or "")
 
     if args.port:

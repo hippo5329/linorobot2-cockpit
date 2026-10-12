@@ -91,7 +91,15 @@ using ::motor_pids;
 using ::kinematics;
 
 // The PWM width the motors were built with (createMotor reads the same key).
-static int pwmMax() { return (1 << envU16("pwm_bits", PWM_BITS)) - 1; }
+// `ta_pct` caps it (the tool's `acc [ms] [pct]`): a first floor run on a fast robot at half
+// power. Every step and run below scales with it, and IDENT reports the capped figure.
+static int pwmMax()
+{
+    int pct = envInt("ta_pct", 100);
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+    return ((1 << envU16("pwm_bits", PWM_BITS)) - 1) * pct / 100;
+}
 
 // The console. On a Wi-Fi robot main.cpp tees a tool's console to syslog, so a
 // robot on the ground, off its cable, still reports every line.
@@ -136,7 +144,7 @@ static void halt(const char *why)
     motor4_controller->spin(0);
     // The line test_acc_run.py ends on; then back to the tool's prompt.
     Serial.printf("[test_acc] STOPPED: %s -- motors off\n", why);
-    toolAbort(why);
+    toolAbortQuiet(why);
 }
 
 // The robot's heading, from the IMU's gyro -- not from the wheels (user, 2026-10-08:
@@ -493,6 +501,7 @@ void plant()
     for (int dir = 1; dir >= -1; dir -= 2) {
         static float samples[4][30];
         float peak[4] = {0, 0, 0, 0};
+        float signed_rpm[4] = {0, 0, 0, 0};
         int cmd[4];
         for (unsigned i = 0; i < total_motors; i++) readRPM(i);
         for (unsigned i = 0; i < 4; i++) cmd[i] = dir * pwm_max;
@@ -500,11 +509,21 @@ void plant()
         for (unsigned t = 0; t < 30; t++) {          // 0.6 s at 20 ms
             waitMs(TICK_MS);
             for (unsigned i = 0; i < total_motors; i++) {
-                samples[i][t] = fabs(readRPM(i));
+                signed_rpm[i] = readRPM(i);
+                samples[i][t] = fabs(signed_rpm[i]);
                 if (samples[i][t] > peak[i]) peak[i] = samples[i][t];
             }
         }
         stopAll();
+        // A wheel that turns against its encoder looks healthy in |rpm|, and the closed
+        // loop below would then be positive feedback at full PWM. Stop before it.
+        for (unsigned i = 0; i < total_motors; i++)
+            if (signed_rpm[i] * dir < -5.0f) {
+                REPORT("IDENT plant wheel=%u SIGN WRONG: driven %s, its encoder reads %.1f rpm "
+                       "(the motor or the encoder is inverted)\n", i + 1,
+                       dir > 0 ? "forward" : "backward", signed_rpm[i]);
+                halt("a wheel turns against its encoder -- fix its invert, then run acc again");
+            }
         for (unsigned i = 0; i < total_motors; i++) {
             const float steady = samples[i][29];
             unsigned tau_ticks = 0;
@@ -551,10 +570,25 @@ void loopStep(float magnitude_rpm)
         int crossings[4] = {0, 0, 0, 0};
         unsigned settle_tick[4] = {ticks, ticks, ticks, ticks};
         bool was_below[4] = {true, true, true, true};
+        unsigned wrong[4] = {0, 0, 0, 0};
+        const int pwm_cap = pwmMax();
         for (unsigned t = 0; t < ticks; t++) {
             for (unsigned i = 0; i < total_motors; i++) {
                 const float rpm = readRPM(i);
-                mot(i)->spin((int)pid(i)->compute(setpoint_rpm, rpm));
+                int out = (int)pid(i)->compute(setpoint_rpm, rpm);
+                if (out > pwm_cap) out = pwm_cap;
+                if (out < -pwm_cap) out = -pwm_cap;
+                mot(i)->spin(out);
+                // Saturated and turning the wrong way for 200 ms: a runaway, not a loop.
+                if (abs(out) >= pwm_cap * 95 / 100 && rpm * setpoint_rpm < 0.0f) {
+                    if (++wrong[i] > 200 / TICK_MS) {
+                        REPORT("IDENT loop wheel=%u RUNAWAY: full power, turning against the "
+                               "setpoint\n", i + 1);
+                        halt("a wheel ran away in the closed loop -- check its invert");
+                    }
+                } else {
+                    wrong[i] = 0;
+                }
                 if (fabs(rpm) > peak[i]) peak[i] = fabs(rpm);
                 const bool below = rpm < setpoint_rpm;
                 if (t > 0 && below != was_below[i]) crossings[i]++;
@@ -649,10 +683,20 @@ void runAcc() {
         return;
     }
 
+    // Say what is about to happen, then give a moment to take it back: everything below
+    // drives every wheel, up to full power (or ta_pct), on the floor.
+    setRunTime();
+    {
+        const unsigned secs = 35 + 48 * run_time / 1000 + 1;
+        REPORT("acc: every wheel at up to %d %% power for about %u s, out and back -- keep 2 m "
+               "clear. 'stop' (or an empty line) stops it. Starting in 3 s.\n",
+               envInt("ta_pct", 100), secs);
+        waitMs(3000);
+    }
+
     // Identification first, while the motors are cold and the pack is full:
     // once, not once per run, because the twelve runs below halve the PWM as
     // they go and a plant fitted across different step sizes is not a plant.
-    setRunTime();
     ident::run();
 
     // The velocity trace lives here, on the stack, for exactly as long as the

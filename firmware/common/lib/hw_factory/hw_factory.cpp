@@ -46,6 +46,7 @@ class RealEncoder : public EncoderInterface
         RealEncoder(int pin_a, int pin_b, int counts_per_rev, bool invert)
             : enc_(pin_a, pin_b, counts_per_rev, invert) {}
         float getRPM() override { return enc_.getRPM(); }
+        int32_t count() override { return enc_.read(); }
     private:
         Encoder enc_;
 };

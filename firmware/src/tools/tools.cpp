@@ -19,6 +19,7 @@ void i2c_detect_scan(void);
 void test_sensors_begin(void);   bool test_sensors_step(void);
 void test_motors_begin(void);    bool test_motors_step(void);
 void test_motors_one_begin(void); bool test_motors_one_step(void);
+void test_motors_enc_begin(void); bool test_motors_enc_step(void);
 void test_acc_run(void);
 #if ADC_LUT_SUPPORTED
 void adc_calibrate_run(void);
@@ -236,6 +237,7 @@ static bool (*job_step)(void) = nullptr;   // the running stepped command
 static const char *job_name = nullptr;     // stepped or blocking, while it runs
 static bool job_moves = false;             // it drives the wheels
 static bool job_from_term = false;         // typed on the Wi-Fi terminal
+static bool job_from_hb_console = false;   // typed on a console that sends keep-alives
 static bool line_from_term = false;        // the line being handled came from it
 static unsigned i2c_every_ms = 0;          // `i2c <secs>`
 static uint32_t i2c_next = 0;
@@ -255,13 +257,22 @@ static void prompt(void) { Serial.print("tool> "); }
 
 const char *toolStopReason(void) { return stop_why; }
 
-void toolAbort(const char *why)
+static void abortJump(const char *why)
 {
     toolMotorsOff();
-    Serial.printf("\n[tool] STOPPED: %s -- motors off\n", why);
     syslog(LOG_INFO, "tool stopped: %s", why);
     longjmp(to_prompt, 1);
 }
+
+void toolAbort(const char *why)
+{
+    // "stopped: you typed stop", "stopped: lino-stop", "stopped: the terminal went quiet".
+    Serial.printf("\n[tool] stopped: %s%s\n", strcmp(why, "stop") == 0 ? "you typed stop" : why,
+                  job_moves ? " -- motors off" : "");
+    abortJump(why);
+}
+
+void toolAbortQuiet(const char *why) { abortJump(why); }
 
 static void handleLine(char *line, bool busy);
 
@@ -270,12 +281,19 @@ static void handleLine(char *line, bool busy);
 static char con_buf[96];
 static size_t con_len = 0;
 static bool con_cr = false;
+// A console that sends keep-alives (lino_tool.py: a NUL a second) gets the terminal's
+// deadman: a drive started there stops when it goes quiet, as when its ssh or USB dies.
+// A person at minicom sends none, and is never stopped for not typing.
+static bool con_heartbeat = false;
+static uint32_t con_last = 0;
 
 static bool consoleLine(char *out, size_t n)
 {
     while (Serial.available() > 0) {
         const int c = Serial.read();
         if (c < 0) break;
+        con_last = millis();
+        if (c == 0) { con_heartbeat = true; continue; }
         if (c == '\n' && con_cr) { con_cr = false; continue; }
         con_cr = (c == '\r');
         if (c == '\r' || c == '\n') {
@@ -327,6 +345,10 @@ static void pollInput(bool busy)
     } else {
         termDropped();          // read once: a drop between commands is no stop
     }
+    if (busy && job_moves && job_from_hb_console && millis() - con_last > TERM_DEADMAN_MS) {
+        stop_flag = true;
+        stop_why = "the console went quiet";
+    }
 }
 
 bool toolStopRequested(void)
@@ -359,9 +381,14 @@ bool toolEscape(void)
     if (!wait)
         return false;
     termBegin();
-    Serial.printf("[boot] type 'tool' and Enter within %lu s for the tool%s%s; "
-                  "micro-ROS after that\n", (unsigned long)((wait + 999) / 1000),
-                  termAddress()[0] ? ", here or on tcp " : "", termAddress());
+    const unsigned long secs = (unsigned long)((wait + 999) / 1000);
+    if (termAddress()[0])
+        Serial.printf("[boot] To open the test tool (sensor and motor tests), type tool and press "
+                      "Enter within %lu s, here or on tcp %s. Otherwise the robot starts "
+                      "normally.\n", secs, termAddress());
+    else
+        Serial.printf("[boot] To open the test tool (sensor and motor tests), type tool and press "
+                      "Enter within %lu s. Otherwise the robot starts normally.\n", secs);
     // Exactly `tool` (any case), trailing spaces forgiven. A line is printable bytes
     // between line ends; micro-ROS's binary frames reset it, so they never spell it.
     char typed[8];
@@ -415,13 +442,15 @@ static void help(void)
         "  motor <1-4|all> <pct> [secs]\n"
         "                            run a wheel at pct % power (minus = reverse); 120 s,\n"
         "                            or secs (0: until stop). `motor` alone: the env's.\n"
-        "  motors [pct]              each wheel forward then reverse, 8 s each\n"
-        "  acc [ms]                  drivetrain test on the floor (run phase 300-1000 ms)\n"
+        "  motors [pct]              each wheel forward 8 s, then each in reverse; then done\n"
+        "  enc                       encoder counts, motors off: turn a wheel by hand\n"
+        "  acc [ms] [pct]            drivetrain test on the floor, every wheel (run phase\n"
+        "                            300-1000 ms, power cap 10-100 %)\n"
 #if ADC_LUT_SUPPORTED
         "  adc                       battery ADC calibration (DAC pin wired to the ADC)\n"
 #endif
         "  set <key> <value>         a test setting until reboot (set <key> clears it):\n"
-        "                            tm_pct tm_only tm_secs ta_ms sim_wheel sim_battery\n"
+        "                            tm_pct tm_only tm_secs ta_ms ta_pct\n"
         "  get [key]                 show one setting, or all\n"
         "  status                    what this board has and what is running\n"
         "  base                      restart into the robot firmware (also: exit, reboot)");
@@ -438,11 +467,12 @@ static void printKey(const char *k, const char *v, bool overridden)
 }
 
 // What `set` may change: the tests' own settings, read while a command runs. Everything
-// else is read once at boot (pins, PWM width, drivers -- a new value would describe a
-// drivetrain that was not built) or is a secret: flash the env to change those.
+// else is read once at boot (pins, PWM width, drivers, and sim_wheel -- the encoders were
+// built simulated or real at boot, and real motors against simulated encoders run away),
+// or is a secret: flash the env to change those.
 static bool settable(const char *k)
 {
-    static const char *const OK[] = {"tm_pct", "tm_only", "tm_secs", "ta_ms", "sim_wheel", "sim_battery"};
+    static const char *const OK[] = {"tm_pct", "tm_only", "tm_secs", "ta_ms", "ta_pct"};
     for (const char *o : OK)
         if (!strcmp(k, o)) return true;
     return false;
@@ -486,6 +516,8 @@ static void startJob(const char *name, bool moves)
     job_name = name;
     job_moves = moves;
     job_from_term = line_from_term;
+    job_from_hb_console = !line_from_term && con_heartbeat;
+    con_last = millis();
 }
 
 static void startStepped(const char *name, void (*begin)(void), bool (*step)(void), bool moves)
@@ -530,7 +562,9 @@ static void handleLine(char *line, bool busy)
         if (argc < 2)
             Serial.println("[tool] set <key> <value>");
         else if (!settable(argv[1]))
-            Serial.printf("[tool] %s is not a test setting -- write the env to change it\n", argv[1]);
+            Serial.printf("[tool] %s is not a test setting -- change it in the cockpit and "
+                          "press Flash MCU (the tool's settings: tm_pct tm_only tm_secs ta_ms "
+                          "ta_pct)\n", argv[1]);
         else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr))
             Serial.printf("[tool] %s = %s\n", argv[1], argc >= 3 ? argv[2] : "(stored value)");
         if (!busy) prompt();
@@ -553,8 +587,9 @@ static void handleLine(char *line, bool busy)
         toolRestart(false);
     const char *why = simulatedFor(cmd);
     if (why) {
-        Serial.printf("[tool] '%s' tests %s, and this board's env simulates it - "
-                      "the tool runs on a real robot only.\n", cmd, why);
+        Serial.printf("[tool] '%s' tests %s, and this robot's config simulates them -- the "
+                      "tool runs on real parts only. Turn the simulation off on the Sensors "
+                      "tab and press Flash MCU.\n", cmd, why);
         prompt();
         return;
     }
@@ -575,6 +610,9 @@ static void handleLine(char *line, bool busy)
     } else if (!strcmp(cmd, "sensors")) {
         startStepped("sensors", test_sensors_begin, test_sensors_step, false);
         return;
+    } else if (!strcmp(cmd, "enc")) {
+        startStepped("enc", test_motors_enc_begin, test_motors_enc_step, false);
+        return;
     } else if (!strcmp(cmd, "motor")) {
         // motor <1-4|all> <pct> [secs]: sugar for tm_only / tm_pct / tm_secs, which the run
         // reads every second -- so `set tm_pct 40` while it runs changes its power. Each
@@ -583,6 +621,12 @@ static void handleLine(char *line, bool busy)
         if (argc > 1) {
             long wheel = 0, pct = 0, secs = -1;
             const bool all = !strcmp(argv[1], "all");
+            if (!all && toInt(argv[1], &wheel) && wheel > (long)tool_hw::total_motors && wheel <= 4) {
+                char m[80];
+                snprintf(m, sizeof(m), "this robot has %u wheels: motor 1%s, or all",
+                         tool_hw::total_motors, tool_hw::total_motors == 2 ? " or 2" : "-4");
+                return usage(m);
+            }
             if (argc < 3 || (!all && (!toInt(argv[1], &wheel) || wheel < 1 || wheel > 4))
                 || !toInt(argv[2], &pct) || pct < -100 || pct > 100 || pct == 0
                 || (argc >= 4 && (!toInt(argv[3], &secs) || secs < 0)))
@@ -610,9 +654,12 @@ static void handleLine(char *line, bool busy)
         startStepped("motors", test_motors_begin, test_motors_step, true);
         return;
     } else if (!strcmp(cmd, "acc")) {
-        if (argc >= 2 && (!toInt(argv[1], &n) || n < 300 || n > 1000))
-            return usage("acc [ms 300..1000]");
-        if (!setKey("ta_ms", argc >= 2 ? argv[1] : nullptr)) { prompt(); return; }
+        long pct = 100;
+        if ((argc >= 2 && (!toInt(argv[1], &n) || n < 300 || n > 1000))
+            || (argc >= 3 && (!toInt(argv[2], &pct) || pct < 10 || pct > 100)))
+            return usage("acc [ms 300..1000] [pct 10..100]");
+        if (!setKey("ta_ms", argc >= 2 ? argv[1] : nullptr)
+            || !setKey("ta_pct", argc >= 3 ? argv[2] : nullptr)) { prompt(); return; }
         runBlocking("acc", test_acc_run, true);
 #if ADC_LUT_SUPPORTED
     } else if (!strcmp(cmd, "adc")) {

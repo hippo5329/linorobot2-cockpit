@@ -134,7 +134,17 @@ bool step()
             yaw = atan2(siny_cosp, cosy_cosp) * RAD_TO_DEG;
         }
 
-        if (has_orientation)
+        if (!imu)
+        {
+            // No IMU: say so, not 0.00 everywhere (zeros read as a broken chip).
+            if (mag)
+                Serial.printf("ACC none (no IMU) | MAG [uT] X:%5.2f Y:%5.2f Z:%5.2f\n",
+                    mag_msg->magnetic_field.x * 1000000.0f, mag_msg->magnetic_field.y * 1000000.0f,
+                    mag_msg->magnetic_field.z * 1000000.0f);
+            else
+                Serial.println("ACC none (no IMU) | MAG none (no magnetometer)");
+        }
+        else if (has_orientation)
         {
             Serial.printf("ACC [m/s^2] X:%5.2f Y:%5.2f Z:%5.2f | GYR [rad/s] X:%5.2f Y:%5.2f Z:%5.2f | RPY [deg] R:%5.1f P:%5.1f Y:%5.1f\n",
                 imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
@@ -160,10 +170,24 @@ bool step()
         // without them reads 0 here, which is what a diagnostic should show.
         // A sonar that is not fitted reads none: getRange() keeps its seeded
         // max_range (4.84 m on a robot with no sonar looked like a clear reading).
-        if (rangePresent())
-            Serial.printf("  BAT: %5.2fV | RANGE: %5.2fm\n", battery_msg->voltage, range_msg->range);
-        else
-            Serial.printf("  BAT: %5.2fV | RANGE: none\n", battery_msg->voltage);
+        if (batteryPresent()) Serial.printf("  BAT: %5.2fV", battery_msg->voltage);
+        else                  Serial.print("  BAT: none (no battery sense)");
+        if (rangePresent()) Serial.printf(" | RANGE: %5.2fm\n", range_msg->range);
+        else                Serial.print(" | RANGE: none\n");
+        // One tagged line for a program (the Web UI's readouts): never parse the prose.
+        Serial.print("[TOOL_JSON] {\"cmd\":\"sensors\"");
+        if (imu)
+            Serial.printf(",\"acc\":[%.2f,%.2f,%.2f],\"gyr\":[%.3f,%.3f,%.3f]",
+                imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
+                imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+        if (has_orientation)
+            Serial.printf(",\"rpy\":[%.1f,%.1f,%.1f]", roll, pitch, yaw);
+        if (mag)
+            Serial.printf(",\"mag_ut\":[%.2f,%.2f,%.2f]", mag_msg->magnetic_field.x * 1e6f,
+                mag_msg->magnetic_field.y * 1e6f, mag_msg->magnetic_field.z * 1e6f);
+        if (batteryPresent()) Serial.printf(",\"bat\":%.2f", battery_msg->voltage);
+        if (rangePresent())   Serial.printf(",\"range\":%.2f", range_msg->range);
+        Serial.print("}\n");
         // envOk() is false when nothing answered the probe, so this prints only
         // on a board that actually has the chip -- no macro needed.
         if (envOk())

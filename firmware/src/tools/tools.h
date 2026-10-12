@@ -78,6 +78,8 @@ void toolWait(uint32_t ms);
 // toolStopReason() is what asked: "stop", "lino-stop" or "the terminal went away".
 const char *toolStopReason(void);
 [[noreturn]] void toolAbort(const char *why);
+// The same, printing nothing: for a command that has said it in its own words.
+[[noreturn]] void toolAbortQuiet(const char *why);
 // Motors off, all four.
 void toolMotorsOff(void);
 // The env names no I2C bus: neither both pins nor a fixed bus (`i2c_bus`). Nothing scans

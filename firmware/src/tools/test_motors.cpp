@@ -44,6 +44,7 @@
 #include "ota.h"
 #include "board_init.h"
 #include "tool_hw.h"
+#include "battery.h"
 
 #ifndef BAUDRATE
 #define BAUDRATE 921600
@@ -169,6 +170,29 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
 // tm_secs (120 when absent; 0 = until stop).
 static unsigned long one_t0 = 0;
 
+// The pack under load: a thin lead or a tired pack shows as sag beside the RPM. NAN when the
+// robot has no battery sense.
+static float packVolts(void) { return batteryPresent() ? getBattery().voltage : NAN; }
+
+static void printBat(float v)
+{
+    if (isnan(v)) Serial.print("  BAT none");
+    else          Serial.printf("  BAT %5.2f V", v);
+}
+
+// One tagged line a second for a program (the Web UI's readouts): never parse the prose.
+static void toolJson(const char *cmd, int wheel, const char *dir, int pct, const float rpm[4],
+                     unsigned edges[4][2], float bat)
+{
+    Serial.printf("[TOOL_JSON] {\"cmd\":\"%s\",\"wheel\":%d,\"dir\":\"%s\",\"pct\":%d,"
+                  "\"rpm\":[%.1f,%.1f,%.1f,%.1f]", cmd, wheel, dir, pct, rpm[0], rpm[1], rpm[2], rpm[3]);
+    if (edges)
+        Serial.printf(",\"enc\":[[%u,%u],[%u,%u],[%u,%u],[%u,%u]]", edges[0][0], edges[0][1],
+                      edges[1][0], edges[1][1], edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
+    if (isnan(bat)) Serial.print(",\"bat\":null}\n");
+    else            Serial.printf(",\"bat\":%.2f}\n", bat);
+}
+
 static int onePwm(void)
 {
     const int full = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
@@ -186,7 +210,7 @@ void oneBegin(void)
     const int only = envInt("tm_only", 0);
     const long secs = envInt("tm_secs", 120);
     if (only == 5) Serial.printf("MOTORS ALL at %d %%", envInt("tm_pct", 25));
-    else           Serial.printf("MOTOR%d at %d %%", only, envInt("tm_pct", 25));
+    else           Serial.printf("MOTOR %d at %d %%", only, envInt("tm_pct", 25));
     if (secs > 0) Serial.printf(" for %ld s -- 'stop' ends it\n", secs);
     else          Serial.println(" until 'stop'");
 }
@@ -210,20 +234,59 @@ bool oneStep(void)
         toolWait(1000);
         float r[4];
         for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
-        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f\n", dir, r[0], r[1], r[2], r[3]);
+        const float bat = packVolts();
+        Serial.printf("MOTORS ALL %s RPM %8.1f %8.1f %8.1f %8.1f", dir, r[0], r[1], r[2], r[3]);
+        printBat(bat);
+        Serial.println();
+        toolJson("motor", 5, dir, envInt("tm_pct", 25), r, nullptr, bat);
         return true;
     }
     unsigned edges[4][2];
     int level[4][2];
     pollEncoders(1000, edges, level);
-    const float rpm = enc[only - 1]->getRPM();
-    Serial.printf("MOTOR%d ONLY %s RPM %8.1f  ENC POLL %u/%u %u/%u %u/%u %u/%u\n", only, dir, rpm,
+    float r[4];
+    for (int m = 0; m < 4; m++) r[m] = enc[m]->getRPM();
+    const float bat = packVolts();
+    // The wheel's RPM, the pack, then how often each encoder line (A/B) changed level in that
+    // second, every wheel's: only the running wheel's pair should move.
+    Serial.printf("MOTOR %d %s  RPM %7.1f", only, dir, r[only - 1]);
+    printBat(bat);
+    Serial.printf("  ENC A/B  m1 %u/%u  m2 %u/%u  m3 %u/%u  m4 %u/%u\n",
                   edges[0][0], edges[0][1], edges[1][0], edges[1][1],
                   edges[2][0], edges[2][1], edges[3][0], edges[3][1]);
+    toolJson("motor", only, dir, envInt("tm_pct", 25), r, edges, bat);
     return true;
 }
 
-// `motors [pct]`: each motor in turn, forward 8 s, then the same in reverse, until stop.
+// `enc`: the motors off, each encoder's count once a second -- the count as the firmware
+// reads it, with the config's invert. Turn a wheel by hand: forward must count up. Ten
+// marked turns give counts_per_rev (the difference over ten).
+static int32_t enc_last[4];
+
+void encBegin(void)
+{
+    EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
+    for (int m = 0; m < 4; m++) { motor_controllers[m]->spin(0); enc_last[m] = enc[m]->count(); }
+    Serial.println("ENC counts, motors off: turn a wheel by hand -- forward must count up. "
+                   "'stop' ends it.");
+}
+
+bool encStep(void)
+{
+    toolWait(1000);
+    EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
+    int32_t c[4];
+    for (int m = 0; m < 4; m++) c[m] = enc[m]->count();
+    Serial.printf("ENC  m1 %ld (%+ld)  m2 %ld (%+ld)  m3 %ld (%+ld)  m4 %ld (%+ld)\n",
+                  (long)c[0], (long)(c[0] - enc_last[0]), (long)c[1], (long)(c[1] - enc_last[1]),
+                  (long)c[2], (long)(c[2] - enc_last[2]), (long)c[3], (long)(c[3] - enc_last[3]));
+    Serial.printf("[TOOL_JSON] {\"cmd\":\"enc\",\"count\":[%ld,%ld,%ld,%ld]}\n",
+                  (long)c[0], (long)c[1], (long)c[2], (long)c[3]);
+    for (int m = 0; m < 4; m++) enc_last[m] = c[m];
+    return true;
+}
+
+// `motors [pct]`: each motor in turn, forward 8 s, then the same in reverse, then done.
 static unsigned tk = 0;
 
 void begin(void)
@@ -234,6 +297,9 @@ void begin(void)
 }
 
 bool step() {
+    // One pass forward and one in reverse, then done: a test that never ended was a robot
+    // left driving its wheels after everyone walked away.
+    if (tk >= 2 * 8 * total_motors) return false;
     const unsigned run_time = 8; // run time of each motor
     const unsigned cycle = run_time * total_motors;
     unsigned current_motor = tk / run_time % total_motors;
@@ -282,11 +348,18 @@ bool step() {
 	   current_motor + 1, direction ? "REV" : "FWD",
 	   current_rpm1, current_rpm2, current_rpm3, current_rpm4);
     // Level changes per line in that second (A/B) and the levels at its end.
-    Serial.printf("ENC POLL %u/%u %u/%u %u/%u %u/%u  levels %d%d %d%d %d%d %d%d\n",
+    char lv[4][3];
+    for (int m = 0; m < 4; m++)
+        for (int c = 0; c < 2; c++) lv[m][c] = level[m][c] < 0 ? '-' : (char)('0' + level[m][c]);
+    for (int m = 0; m < 4; m++) lv[m][2] = '\0';
+    Serial.printf("ENC POLL %u/%u %u/%u %u/%u %u/%u  levels %s %s %s %s\n",
            edges[0][0], edges[0][1], edges[1][0], edges[1][1],
-           edges[2][0], edges[2][1], edges[3][0], edges[3][1],
-           level[0][0], level[0][1], level[1][0], level[1][1],
-           level[2][0], level[2][1], level[3][0], level[3][1]);
+           edges[2][0], edges[2][1], edges[3][0], edges[3][1], lv[0], lv[1], lv[2], lv[3]);
+    {
+        const float r[4] = {current_rpm1, current_rpm2, current_rpm3, current_rpm4};
+        toolJson("motors", (int)current_motor + 1, direction ? "REV" : "FWD", envInt("tm_pct", 25),
+                 r, edges, packVolts());
+    }
     tk++;
     return true;
 }
@@ -297,3 +370,5 @@ extern "C" void test_motors_begin(void)     { test_motors::begin(); }
 extern "C" bool test_motors_step(void)      { return test_motors::step(); }
 extern "C" void test_motors_one_begin(void) { test_motors::oneBegin(); }
 extern "C" bool test_motors_one_step(void)  { return test_motors::oneStep(); }
+extern "C" void test_motors_enc_begin(void) { test_motors::encBegin(); }
+extern "C" bool test_motors_enc_step(void)  { return test_motors::encStep(); }

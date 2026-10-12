@@ -78,8 +78,11 @@ def test_the_window_is_three_seconds_on_a_board_and_none_on_the_sim_mcu():
 
 def test_a_stopped_command_always_turns_the_motors_off_first():
     src = _read("src", "tools", "tools.cpp")
-    abort = src[src.index("void toolAbort(const char *why)"):]
-    assert abort.index("toolMotorsOff();") < abort.index("longjmp(to_prompt, 1);")
+    jump = src[src.index("static void abortJump(const char *why)"):src.index("void toolAbort(const char *why)")]
+    assert jump.index("toolMotorsOff();") < jump.index("longjmp(to_prompt, 1);")
+    for fn in ("void toolAbort(const char *why)", "void toolAbortQuiet(const char *why)"):
+        body = src[src.index(fn):]
+        assert body.index("abortJump(why);") < body.index("\n}")
 
 
 def test_the_sim_mcu_reads_its_console_from_stdin_without_blocking():
@@ -131,7 +134,9 @@ def test_set_takes_the_test_settings_only():
     src = _read("src", "tools", "tools.cpp")
     fn = src[src.index("static bool settable"):src.index("static void status")]
     allowed = set(re.findall(r'"(\w+)"', fn))
-    assert allowed == {"tm_pct", "tm_only", "tm_secs", "ta_ms", "sim_wheel", "sim_battery"}
+    # Not sim_wheel: the encoders are built simulated or real at boot, and real motors
+    # against simulated encoders run away (the 2026-10-13 robot-builder review).
+    assert allowed == {"tm_pct", "tm_only", "tm_secs", "ta_ms", "ta_pct"}
     assert "pwm_bits" not in allowed and not any("password" in k or "psk" in k for k in allowed)
 
 
