@@ -97,7 +97,7 @@ class SimLink:
         # said, or rcl refuses the image's container-wide Fast DDS and exits 102.
         # The launcher runs inside a sourced ROS; the backend does not, so ROS first
         # (librcutils and the rest -- "librcutils.so: cannot open shared object file").
-        distro = os.environ.get("ROS_DISTRO", "jazzy")
+        distro = os.environ.get("ROS_DISTRO", "lyrical")
         cmd = (f". /opt/ros/{shlex.quote(distro)}/setup.bash && "
                f". {shlex.quote(host_firmware.setup_script())} && "
                f"RMW_IMPLEMENTATION=rmw_microxrcedds exec {shlex.quote(binary)}")
