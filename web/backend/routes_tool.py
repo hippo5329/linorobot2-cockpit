@@ -62,11 +62,101 @@ def _robot():
     }
 
 
+class SimLink:
+    """The Sim MCU, started for the tool: the host firmware booting straight into the tool
+    (app=tool), its console -- stdin and stdout -- as the session's link. The firmware is the
+    same code a board runs, so the panel can be learned and walked with no board: the tool
+    refuses what the Sim MCU simulates (its wheels, its sensors) in its own words.
+
+    `base` on this link ends the process rather than restarting it into micro-ROS: a second
+    Sim MCU on the agent's port beside a running stack would be a second robot.
+    COCKPIT_TOOL_SIM_WHEELS_REAL=1 (a walkthrough cell, never a robot) makes the wheels count
+    as real so the drive commands run -- the host's motors drive nothing and read 0."""
+
+    def __init__(self, params_path: str):
+        import subprocess
+        import tempfile
+        import host_firmware
+        import mcu_env
+        binary = host_firmware.binary()
+        if not binary:
+            raise Unavailable("This cockpit has no Sim MCU build to run the tool on.")
+        e = host_firmware.env(params_path)
+        e.update({"app": "tool", "tool_wait": "0", "term_port": "0"})
+        if os.environ.get("COCKPIT_TOOL_SIM_WHEELS_REAL") == "1":
+            e["sim_wheel"] = "0"
+        self._dir = tempfile.mkdtemp(prefix="lino_tool_sim_")
+        path = os.path.join(self._dir, "env.bin")
+        with open(path, "wb") as fh:
+            fh.write(mcu_env.encode(e))
+        penv = dict(os.environ, LINO_ENV_BIN=path)
+        penv.pop("LINO_NEXT_BOOT", None)
+        self.p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, env=penv)
+        os.set_blocking(self.p.stdout.fileno(), False)
+        self.closed = False
+
+    def write(self, data: bytes):
+        if self.closed:
+            return
+        if data.strip().lower() in (b"base", b"exit", b"reboot"):
+            self.close()
+            return
+        try:
+            self.p.stdin.write(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+            self.p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            self.close()
+
+    def read(self) -> bytes:
+        if self.closed:
+            return b""
+        try:
+            d = os.read(self.p.stdout.fileno(), 4096)
+        except BlockingIOError:
+            time.sleep(0.02)
+            return b""
+        except OSError:
+            d = b""
+        if not d and self.p.poll() is not None:
+            self.closed = True
+        return d
+
+    def keepalive(self):
+        pass
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.p.terminate()
+            self.p.wait(3)
+        except Exception:
+            try:
+                self.p.kill()
+            except Exception:
+                pass
+
+
+def _open_sim(r: dict):
+    link = SimLink(r["params_path"])
+    session = tool_session.ToolSession(r["robot"], link, "sim")
+    end = time.monotonic() + 10
+    seen = 0
+    while time.monotonic() < end:
+        session.pump()
+        lines = list(session._lines)[seen:]
+        seen += len(lines)
+        if any(any(e in ln for e in tool_session.ENTERED) for ln in lines):
+            return session
+    link.close()
+    raise Unavailable("The Sim MCU did not start its tool (see the server log).")
+
+
 def _refusal(r: dict):
-    """Why the tool cannot be opened here, in words for the page; None when it can."""
-    if r["sim"]:
-        return ("The robot is the Sim MCU: its wheels and sensors are simulated, and the tool "
-                "uses real parts only. Pick the board you plugged in on the MCU & Sim tab.")
+    """Why the tool cannot be opened here, in words for the page; None when it can. The Sim
+    MCU can: its tool refuses what it simulates, in its own words."""
     if mcu_identity.env_family(r["pio_env"]) == "unoq" and not os.path.exists("/dev/ttyHS1"):
         return ("An Arduino UNO Q's tool is reached on the board itself (its STM32 on "
                 "/dev/ttyHS1): open this cockpit on the UNO Q, or run "
@@ -203,7 +293,9 @@ async def api_tool_open(request: Request):
     if existing:
         return {"ok": True, "already": True, **existing.describe()}
     try:
-        if r["wifi"] and not data.get("port"):
+        if r["sim"]:
+            session = await _run_blocking(_open_sim, r)
+        elif r["wifi"] and not data.get("port"):
             session = await _run_blocking(_open_wifi, r)
         else:
             port = _serial_port(r, str(data.get("port") or ""))

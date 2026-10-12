@@ -493,7 +493,7 @@ function initBaseControllerConfigModule() {
 // flash error"). Only a disable made HERE is undone here: a button disabled by
 // a running action keeps its own state.
 const BOARD_ONLY_BUTTONS = [
-  "btn-hw-flash", "btn-hw-build", "btn-tool-open", "btn-auto-detect-i2c", "btn-adc-run-cal",
+  "btn-hw-flash", "btn-hw-build", "btn-auto-detect-i2c", "btn-adc-run-cal",
 ];
 function updateBoardOnlyButtons() {
   const sim = state.robot_name === "bare_sim" || document.getElementById("cfg-mcu")?.value === "sim";

@@ -114,7 +114,11 @@ bool step()
         float qy = imu_msg->orientation.y;
         float qz = imu_msg->orientation.z;
         float qw = imu_msg->orientation.w;
-        bool has_orientation = (qw != 0.0f || qx != 0.0f || qy != 0.0f || qz != 0.0f);
+        // Only a chip that fuses on its own (a BNO085) reports a rotation here. The others
+        // leave the identity -- w=1 -- and printed "RPY 0.0 0.0 0.0" in place of their
+        // magnetometer (a QMI8658 robot, 2026-10-12).
+        bool has_orientation = (qx != 0.0f || qy != 0.0f || qz != 0.0f);
+        (void)qw;
 
         float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
         if (has_orientation)
