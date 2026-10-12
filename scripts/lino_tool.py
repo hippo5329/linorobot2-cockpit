@@ -42,16 +42,18 @@ def log(msg):
 
 # ---------------------------------------------------------------- serial
 def reboot_serial(env: str, port: str, baud: int) -> bool:
-    """Restart the board so its tool window opens: EN on an ESP32's auto-reset circuit,
-    `picotool reboot -f` on an RP2 (its USB reset interface), the USB reset otherwise."""
+    """Restart the board so its tool window opens. An ESP32: EN, through the bridge's
+    auto-reset circuit. An RP2: the 1200-baud touch into BOOTSEL, then `picotool reboot`
+    into the application -- the flash's own path. A USB reset is no reboot there: measured
+    2026-10-12 on a running Pico 2, the port re-enumerated and no banner followed, and the
+    firmware has no picotool reset interface for a running board."""
     import flash_mcu
     if env.startswith("esp32"):
         import mcu_probe
         return mcu_probe.esp32_boot_app(port, baud)
     if env.startswith("pico") or env.startswith("xrp"):
-        if flash_mcu.rp2_reboot_into_app(env):
-            return True
-    return flash_mcu.usb_reset_target(port)
+        return flash_mcu.pulse_1200_baud(port) and flash_mcu.rp2_reboot_into_app(env)
+    return False
 
 
 class SerialLink:
