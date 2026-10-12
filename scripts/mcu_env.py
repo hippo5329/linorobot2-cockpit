@@ -195,8 +195,30 @@ def load_yaml(path):
 
 
 # --------------------------------------------------------------------- encode
+# Simulated wheels drive no real wheel. With sim_wheel on, the firmware still calls
+# spin(pwm) on the real H-bridge drivers -- only the encoders are simulated -- so a robot
+# flashed for a simulation-mode run would turn its real motors under a controller that
+# cannot see them (2026-10-12, before the gate's UNO Q legs went onto a real mecanum
+# robot; user: "in sim mode, set all pin to -1. so no real wheel will be driven"). Every
+# driver returns at once on a -1 pin (default_motor.h), so a simulated drivetrain gets no
+# pins at all. encode() applies it because every env that reaches a board goes through it.
+DRIVETRAIN_PIN_KEYS = ("pwm", "in_a", "in_b", "enc_a", "enc_b")
+
+
+def disconnect_simulated_drivetrain(env: dict) -> dict:
+    """The env with every motor and encoder pin -1 when the wheels are simulated."""
+    if not _truthy(env.get("sim_wheel")):
+        return env
+    out = dict(env)
+    for n in range(1, 5):
+        for suffix in DRIVETRAIN_PIN_KEYS:
+            out[f"m{n}_{suffix}"] = "-1"
+    return out
+
+
 def encode(env: dict) -> bytes:
     """Pack {key: value} into the U-Boot on-flash layout."""
+    env = disconnect_simulated_drivetrain(env)
     body = bytearray()
     for key in sorted(env):
         value = env[key]
