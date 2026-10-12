@@ -14,6 +14,7 @@ clearance step (clearance.py) uses to find its way back to where it started.
                     puts the MOST points within 5 cm wins. Not the lowest rms: a wrong
                     match that pairs a few points well beats the right one on rms.
   * median_points() one cloud from several scans of a robot standing still
+  * track()         the path a moving robot took, scan by scan (speed_check.py)
 
 Poses are (yaw, x, y): the pose of the scan's frame in the reference's frame,
 p_ref = Rot(yaw) p + (x, y). Pure numpy; the ROS helpers import rclpy lazily so the
@@ -119,6 +120,59 @@ def median_points(scans: list, laser=(0.0, 0.0, 0.0), min_frac: float = 0.5, bod
     P = np.asarray(pts, float).reshape(-1, 2)
     return P[np.hypot(P[:, 0], P[:, 1]) >= body]
 
+
+
+def compose(a, b):
+    """Pose a (yaw, x, y), then b expressed in a's frame."""
+    c, s = math.cos(a[0]), math.sin(a[0])
+    return (a[0] + b[0], a[1] + c * b[1] - s * b[2], a[2] + s * b[1] + c * b[2])
+
+
+def relative(a, b):
+    """Pose b in pose a's frame."""
+    c, s = math.cos(a[0]), math.sin(a[0])
+    dx, dy = b[1] - a[1], b[2] - a[2]
+    return (b[0] - a[0], c * dx + s * dy, -s * dx + c * dy)
+
+
+def track(scans: list, laser=(0.0, 0.0, 0.0), kf_yaw: float = math.radians(30), kf_dist: float = 0.15):
+    """Where the robot went, scan by scan, with the room as the reference.
+
+    [(stamp, x, y, yaw, rms, pairs)] -- base_link in the frame of the first scan, yaw
+    unwrapped (a full turn reads 2 pi) -- and `end`, the last scan matched directly against
+    the first. Every scan is matched against a keyframe from the previous pose, a new
+    keyframe every kf_yaw or kf_dist. Keyframe tracking drifts a little (each match slides
+    along the walls, ~1.7 % of a turn); the end match does not, so when the robot turned
+    more than 45 deg the yaw is scaled to agree with it -- a loop closure for a turn in
+    place. A scan with too few returns, or a weak match, keeps the last pose."""
+    if not scans:
+        return [], None
+    pts = [scan_points(s, laser) for s in scans]
+    kf_pose, kf_pts = (0.0, 0.0, 0.0), pts[0]
+    pose = (0.0, 0.0, 0.0)
+    out = [(scans[0]["stamp"], 0.0, 0.0, 0.0, 0.0, len(pts[0]))]
+    for sc, P in zip(scans[1:], pts[1:]):
+        if len(P) < 30:
+            continue
+        guess = relative(kf_pose, pose)
+        th, x, y, rms, n = icp(P, kf_pts, guess[0], (guess[1], guess[2]))
+        if n < 30:
+            continue
+        pose = compose(kf_pose, (th, x, y))
+        out.append((sc["stamp"], pose[1], pose[2], pose[0], rms, n))
+        rel = relative(kf_pose, pose)
+        if abs(rel[0]) > kf_yaw or math.hypot(rel[1], rel[2]) > kf_dist:
+            kf_pose, kf_pts = pose, P
+    turns = round(pose[0] / (2 * math.pi))
+    g = pose[0] - turns * 2 * math.pi
+    th, x, y, rms, n = locate(pts[-1], pts[0], (g, pose[1], pose[2]))
+    th = g + wrap(th - g)          # locate() wraps; keep it on the tracked side of +-pi
+    end = {"yaw": th + turns * 2 * math.pi, "x": x, "y": y, "rms": rms, "pairs": n,
+           "tracked_yaw": pose[0], "tracked_x": pose[1], "tracked_y": pose[2]}
+    if n >= 50 and abs(pose[0]) > math.radians(45):
+        k = end["yaw"] / pose[0]
+        out = [(t, px, py, yaw * k, r, m) for t, px, py, yaw, r, m in out]
+    return out, end
 
 # ---- ROS helpers (rclpy imported lazily) ----
 
