@@ -20,6 +20,8 @@ static char rx[96];
 static size_t rx_len = 0;
 static char addr[32] = "";
 
+static void hangUp(void);
+
 static const char *password(void)
 {
     const char *pwd = envGet("ota_password", NULL);

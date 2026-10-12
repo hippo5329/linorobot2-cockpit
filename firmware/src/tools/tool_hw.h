@@ -12,10 +12,7 @@
 #include <sensor_msgs/msg/magnetic_field.h>
 #include <sensor_msgs/msg/battery_state.h>
 #include <sensor_msgs/msg/range.h>
-#include "motor.h"
-#include "encoder.h"
-#include "pid.h"
-#include "kinematics.h"
+#include "hw_factory.h"      // the encoder, motor, PID and kinematics interfaces
 #include "imu.h"
 #include "mag.h"
 
