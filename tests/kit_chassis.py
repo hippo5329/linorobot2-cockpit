@@ -29,14 +29,47 @@ KIT_CHASSIS = {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
     },
-    # The MC200 4WD mecanum kit under the Arduino UNO Q design: 80 mm mecanum wheels
-    # rolling as 75 mm, wheel centres 0.205 x 0.095 m, 25 mm gear motors with Hall
-    # encoders (887 counts, 177 rpm on a 3S pack), 1.65 kg built. Measured on an MC200:
-    # a tachometer for rpm and counts, the LiDAR (speed_check.py) for the wheel and the
-    # spacing. No unit is inverted.
+    # The MC200 4WD mecanum kit (MC200_CHASSIS below), under two designs: the Arduino
+    # UNO Q and the Pico 2 mecanum. No unit is inverted.
     "unoq": {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
+        "chassis": "MC200",
+    },
+    "pico2_mecanum": {
+        "inverted": set(),
+        "simulation": {"robot_mass", "motor_stall_amps"},
+        "chassis": "MC200",
+    },
+}
+
+# One kit chassis under several designs: its numbers, once. Each design file still
+# spells them out (every tool reads a design as plain YAML), and
+# test_kit_designs_share_their_chassis holds every design that names a chassis here to
+# exactly these values.
+#
+# The MC200: 80 mm mecanum wheels (37 mm wide) that ROLL as 75 mm, wheel centres
+# 0.205 x 0.095 m, 25 mm gear motors with Hall encoders -- 887 counts per wheel turn and
+# 177 rpm on a 3S pack -- a 200 x 150 mm plate, 1.65 kg built. Measured on an MC200: a
+# tachometer for rpm and counts, the LiDAR (scripts/speed_check.py) for the wheel and the
+# spacing (the 0.209 / 0.096 m read off the kit's photo and drawing sum to within 2 %).
+CHASSIS = {
+    "MC200": {
+        "kinematics": {
+            "base_type": "mecanum",
+            "wheel_diameter": 0.075,
+            "lr_wheels_distance": 0.205,
+            "fr_wheels_distance": 0.095,
+            "max_rpm": 177,
+            "counts_per_rev": 887,
+            "motor_operating_voltage": 11.1,
+            "motor_power_max_voltage": 11.1,
+        },
+        "geometry": {
+            "body": {"length": 0.2, "width": 0.15, "mass": 1.0},
+            "wheel": {"width": 0.037, "mass": 0.12},
+        },
+        "simulation": {"robot_mass": 1.65, "motor_stall_amps": 4.5},
     },
 }
 

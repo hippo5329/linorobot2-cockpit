@@ -4,7 +4,9 @@
 # UNVERIFIED ON HARDWARE: generated and checked through the header and env
 # generators only; no 4-motor rig has run it yet.
 #
-# A wired Raspberry Pi Pico 2 mecanum robot: four AT8236 motor drivers in the
+# A wired Raspberry Pi Pico 2 mecanum robot on the MC200 4WD mecanum chassis kit
+# (the same kit, and the same measured chassis numbers, as the unoq design):
+# four AT8236 motor drivers in the
 # two-PWM scheme (driver_type: AT8236), four quadrature encoders, an ICM20948
 # 9-axis IMU on I2C0, a battery divider on ADC0, and the LD19 on the robot
 # computer's own USB port (the MCU never sees the scan). 21 of the 26 GPIOs are
@@ -12,7 +14,11 @@
 # (UART1) for a second serial device.
 robot:
   name: pico2_mecanum
-  description: Raspberry Pi Pico 2 mecanum (4WD, real hardware)
+  description: Raspberry Pi Pico 2 on the MC200 mecanum kit (4WD, real hardware)
+  # A kit: the MC200 chassis (80 mm mecanum wheels, four 25 mm gear motors with Hall
+  # encoders, a 200 x 150 mm plate) comes with this design, as with the unoq design.
+  # Applying it brings the chassis in; the user may then override it (autosaved).
+  kit: true
 base_controller:
   name: pico2
   description: Raspberry Pi Pico 2, mecanum, real hardware
@@ -51,7 +57,9 @@ base_controller:
     wall_y1: -1.5
     wall_x2: 2.0
     wall_y2: 1.5
-    robot_mass: 3.5                   # kg -- sets the wheels' spin-up time constant
+    # kg -- sets the wheels' spin-up time constant. The MC200 chassis is 1.0 kg as sold;
+    # one built with a UNO Q, a 3S pack and an LD19 weighed 1.65 kg (weigh yours).
+    robot_mass: 1.65
     wheel_noise_rpm: 1.0              # +/- peak white noise on the reported RPM
     gear_efficiency: 0.75             # fraction of motor torque the reduction returns
     gear_drag_rpm: 12.0               # constant (Coulomb) drag, RPM/s, while turning
@@ -59,7 +67,8 @@ base_controller:
     battery_sag_tau_ms: 400           # the pack sags, and recovers, over this long
     driver_drop: 0.03                 # bridge's fixed voltage floor, present at any current
     driver_resistance: 0.1            # bridge's current-proportional loss, instant
-    motor_stall_amps: 2.5             # datasheet stall current at the motor's rated voltage
+    # The MC200's 25 mm gear motor: 4.5 A locked-rotor current (the vendor's figure).
+    motor_stall_amps: 4.5
     driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
     # How the IMU is mounted, in degrees. Zero is a level part; a real one
     # sits a degree or two off and leans gravity into the ax/ay the EKF fuses.
@@ -157,16 +166,23 @@ base_controller:
 kinematics:
   base_type: mecanum
   stamped_cmd_vel: auto
-  # 97 mm mecanum wheels, 0.30 m track, 0.24 m wheelbase; 12 V 333 RPM gear
-  # motors with 11 PPR magnetic encoders behind a 30:1 gearbox, quadrature
-  # decoded: 11 * 4 * 30 = 1320 counts per wheel revolution.
-  wheel_diameter: 0.1
-  lr_wheels_distance: 0.271
-  fr_wheels_distance: 0.18   # the shared footprint (robot_radius 0.26) has to contain the body
-                          # AND the wheels, which stick out past it -- see
-                          # gen_robot_description.config_warnings()
-  max_rpm: 140
-  counts_per_rev: 4000
+  # The MC200 kit: 80 mm mecanum wheels (37 mm wide, 9 rollers), four 25 mm DC gear
+  # motors with Hall encoders (150 rpm +-10 % unloaded at 9 V; rated 9-12 V).
+  #
+  # Measured on an MC200 against the LiDAR (scripts/speed_check.py), not taken from
+  # the box: the wheels ROLL as a 75 mm wheel -- the floor got 0.94 of what an 80 mm
+  # circle says, the same at 0.10 and 0.20 m/s, so it is the rollers' contact, not
+  # slip. Re-measure on your own robot with speed_check.py.
+  wheel_diameter: 0.075
+  # Wheel centres: left to right 0.209 m (the kit's front photo), front to rear 0.096 m
+  # (the plate drawing's motor mounts). A mecanum turns on (lr + fr) / 2, and the
+  # LiDAR's spin fits a sum of 0.300 m best (spin/forward 1.004), so 0.205 + 0.095.
+  lr_wheels_distance: 0.205
+  fr_wheels_distance: 0.095
+  # Measured on an MC200 with a tachometer: the wheel's top speed on a 3S pack, and
+  # the encoder counts per wheel revolution.
+  max_rpm: 177
+  counts_per_rev: 887
   # DERIVED -- the driver margin, not a hand-picked derating.
   #
   # The share of the motor's no-load speed that survives the gearbox, the gear
@@ -175,16 +191,14 @@ kinematics:
   # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
   # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
   max_rpm_ratio: 0.8
-  # The parts, not the product: counts_per_rev = encoder_ppr x quadrature x
-  # gear_ratio = 11 x 4 x 30 = 1320, computed by the generators. Give
-  # counts_per_rev directly instead if that is the number you have.
-  encoder_ppr: 11
-  quadrature: 4
-  gear_ratio: 30
+  # counts_per_rev above is the measured number and wins; give the parts instead
+  # (encoder_ppr, quadrature, gear_ratio -- multiplied by the generators) only if
+  # you have them and not the count.
   pwm_bits: 10
   pwm_frequency: 20000
-  motor_operating_voltage: 12
-  motor_power_max_voltage: 12
+  # A 3S pack.
+  motor_operating_voltage: 11.1
+  motor_power_max_voltage: 11.1
   pid:
     kp: 0.6
     ki: 0.8
@@ -192,17 +206,20 @@ kinematics:
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-geometry: {}   # Derived from the kinematics above. This is a REAL robot design --
-               # a 97 mm-wheel mecanum AMR -- so it keeps its own measured wheels and
-               # wheelbase; what it shares with every other config is the MOUNT (laser
-               # at the base origin) and the Nav2 template. A default/bare module is
-               # the thing that must be identical on every MCU and drive type.
-               #
-               # ekf/slam/nav2 below are the ONE template every reference shares
-               # (RotationShim + RegulatedPurePursuit, velocity-fused EKF); the only
-               # mecanum differences are vy fused in the EKF and lateral limits in
-               # the controller and velocity smoother. RPP itself drives a mecanum
-               # as a differential base -- no lateral motion is commanded by Nav2.
+# The MC200: a 200 x 150 mm plate, 1.0 kg, the wheels outboard of it. The laser stays at
+# the base origin like every reference (its mount is yours: set laser.x/y/z on your robot).
+#
+# ekf/slam/nav2 below are the ONE template every reference shares (RotationShim +
+# RegulatedPurePursuit, velocity-fused EKF); the only mecanum differences are vy fused in
+# the EKF and lateral limits in the controller and velocity smoother.
+geometry:
+  body:
+    length: 0.2
+    width: 0.15
+    mass: 1.0
+  wheel:
+    width: 0.037
+    mass: 0.12
 ekf:
   ekf_filter_node:
     ros__parameters:

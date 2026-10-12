@@ -22,7 +22,7 @@ REF = os.path.join(REPO_ROOT, "config", "reference")
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import gen_robot_description  # noqa: E402
 import gen_firmware_header    # noqa: E402
-from kit_chassis import DERIVED_NAV2_KEYS, kit  # noqa: E402
+from kit_chassis import CHASSIS, DERIVED_NAV2_KEYS, kit  # noqa: E402
 
 DEFAULT_KINEMATICS = {"wheel_diameter": 0.1, "lr_wheels_distance": 0.271,
                       "max_rpm": 140, "counts_per_rev": 4000}
@@ -111,6 +111,36 @@ def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
         k = params.get("kinematics", {})
         for key, want in DEFAULT_KINEMATICS.items():
             assert k.get(key) == want, f"{name}: {key}={k.get(key)}, not the default {want}"
+
+
+def test_kit_designs_share_their_chassis():
+    """One kit chassis, one set of numbers: every design built on it ships exactly them.
+
+    The MC200 sits under two designs (the UNO Q and the Pico 2 mecanum). Each file
+    spells the chassis out, because every tool reads a design as plain YAML; this keeps
+    the copies equal to kit_chassis.CHASSIS, so a re-measured wheel is changed once
+    there and the test names every design still on the old value.
+    """
+    seen = {}
+    for name, params in _refs():
+        entry = kit(name)
+        if not (entry and entry.get("chassis")):
+            continue
+        want = CHASSIS[entry["chassis"]]
+        k = params.get("kinematics", {})
+        for key, v in want["kinematics"].items():
+            assert k.get(key) == v, f"{name}: kinematics.{key}={k.get(key)}, the {entry['chassis']} is {v}"
+        geo = params.get("geometry") or {}
+        for part, keys in want["geometry"].items():
+            for key, v in keys.items():
+                got = (geo.get(part) or {}).get(key)
+                assert got == v, f"{name}: geometry.{part}.{key}={got}, the {entry['chassis']} is {v}"
+        sim = params.get("base_controller", {}).get("simulation", {})
+        for key, v in want["simulation"].items():
+            assert sim.get(key) == v, f"{name}: simulation.{key}={sim.get(key)}, the {entry['chassis']} is {v}"
+        assert params.get("robot", {}).get("kit") is True, f"{name}: on a kit chassis but robot.kit is not true"
+        seen.setdefault(entry["chassis"], []).append(name[: -len("_config.yaml")])
+    assert sorted(seen.get("MC200", [])) == ["pico2_mecanum", "unoq"], seen
 
 
 def test_the_footprint_contains_every_default_body():
