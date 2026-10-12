@@ -1112,9 +1112,14 @@ class BNO085IMU: public IMUInterface
             imu_msg_.orientation.y = bno085_.getQuatJ();
             imu_msg_.orientation.z = bno085_.getQuatK();
             imu_msg_.orientation.w = bno085_.getQuatReal();
-            gyro_.x = bno085_.getGyroX() * DEG_TO_RAD;
-            gyro_.y = bno085_.getGyroY() * DEG_TO_RAD;
-            gyro_.z = bno085_.getGyroZ() * DEG_TO_RAD;
+            // rad/s as it comes. The SH-2 calibrated gyroscope report IS rad/s
+            // (Q9), and the library's getGyroX() returns it unscaled; this used to
+            // multiply by DEG_TO_RAD, so /imu/data's angular velocity was 57.3
+            // times too small on every BNO085 (MC200, 2026-10-12: 0.006 rad/s
+            // published at a 0.58 rad/s spin measured against the LiDAR).
+            gyro_.x = bno085_.getGyroX();
+            gyro_.y = bno085_.getGyroY();
+            gyro_.z = bno085_.getGyroZ();
             return gyro_;
         }
 
