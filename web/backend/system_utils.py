@@ -199,6 +199,7 @@ SENSOR_REGISTRY = {
         {"id": "mpu6050", "name": "MPU6050 (Classic)", "i2c_addr": "0x68", "type": "6-DoF"},
         {"id": "mpu9250", "name": "MPU9250", "i2c_addr": "0x68", "type": "9-DoF"},
         {"id": "bno085", "name": "BNO085 (High Precision IMU)", "i2c_addr": "0x4A", "type": "9-DoF"},
+        {"id": "bno055", "name": "BNO055", "i2c_addr": "0x28", "type": "9-DoF"},
     ]
 }
 

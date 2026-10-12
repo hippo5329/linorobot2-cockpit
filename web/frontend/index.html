@@ -907,7 +907,10 @@
               <option value="LSM6DSOX">LSM6DSOX — 6-axis (0x6A/0x6B)</option>
               <option value="ICM20948">ICM20948 — 9-axis (0x68/0x69)</option>
               <option value="ICM42670">ICM-42670-P — 6-axis (0x68/0x69)</option>
-              <option value="BNO085">BNO085 — sensor-fusion IMU</option>
+              <option value="BNO085">BNO085 — sensor-fusion IMU (0x4A/0x4B)</option>
+              <option value="BNO080">BNO080 — the BNO085 driver</option>
+              <option value="BNO086">BNO086 — the BNO085 driver</option>
+              <option value="BNO055">BNO055 — 9-axis, fused on the board (0x28/0x29)</option>
             </select>
           </div>
           <div class="form-group">
@@ -921,6 +924,10 @@
               <option value="AK8975">AK8975 — inside an MPU9150</option>
               <option value="AK09918">AK09918 (0x0C)</option>
               <option value="ICM20948">ICM20948 — AK09916 on the IMU's aux bus</option>
+              <option value="BNO085">BNO085 — the BNO08x's own field (the board then fuses it)</option>
+              <option value="BNO080">BNO080 — as BNO085</option>
+              <option value="BNO086">BNO086 — as BNO085</option>
+              <option value="BNO055">BNO055 — the BNO055's own field</option>
             </select>
           </div>
         </div>

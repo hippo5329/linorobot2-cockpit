@@ -62,7 +62,7 @@ def test_a_driver_with_real_fusion_still_overwrites_all_four():
     s = _read(DRIVERS)
     blk = s[s.index("class BNO085IMU"):]
     for axis in ("x", "y", "z", "w"):
-        assert re.search(rf"imu_msg_\.orientation\.{axis}\s*=\s*bno085_\.getQuat", blk), axis
+        assert re.search(rf"imu_msg_\.orientation\.{axis}\s*=\s*d\.getQuat", blk), axis
 
 
 def test_no_driver_leaves_a_zero_quaternion_on_purpose():

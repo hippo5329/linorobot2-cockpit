@@ -25,6 +25,7 @@
 #include "AK8963.h"
 #include "AK8975.h"
 #include "AK09918.h"
+#include "bno_chips.h"
 
 class HMC5883LMAG: public MAGInterface
 {
@@ -320,6 +321,73 @@ class ICM20948MAG: public MAGInterface
                 mag_.x = (int16_t)(b[2] << 8 | b[1]) * 0.15e-6;   // 0.15 µT/LSB -> Tesla
                 mag_.y = (int16_t)(b[4] << 8 | b[3]) * 0.15e-6;
                 mag_.z = (int16_t)(b[6] << 8 | b[5]) * 0.15e-6;
+            }
+            return mag_;
+        }
+};
+
+// The BNO08x's (BNO080/085/086) magnetometer: the same chip as BNO085IMU,
+// through bno_chips.h. Its calibrated-field report in uT, with the chip's own
+// dynamic magnetometer calibration switched off, so the robot's
+// magnetometer_calibration (mag_bias / mag_soft) is the one that applies --
+// and, while this role is in use, the board's AHRS fuses the field instead of
+// the chip fusing without it (BNO085IMU::hasFusedOrientation()).
+class BNO085MAG: public MAGInterface
+{
+    private:
+        geometry_msgs__msg__Vector3 mag_;
+
+    public:
+        BNO085MAG()
+        {
+        }
+
+        bool startSensor() override
+        {
+            // Starts the chip if the IMU role has not; never a second begin().
+            return bno08xChip().wantMag();
+        }
+
+        geometry_msgs__msg__Vector3 readMagnetometer() override
+        {
+            Bno08xChip &chip = bno08xChip();
+            chip.poll();   // empty when the IMU role drained it this cycle
+            if (chip.haveMag())
+            {
+                BNO080 &d = chip.dev();
+                mag_.x = d.getMagX() * 1e-6;   // uT -> Tesla
+                mag_.y = d.getMagY() * 1e-6;
+                mag_.z = d.getMagZ() * 1e-6;
+            }
+            return mag_;
+        }
+};
+
+// The BNO055's magnetometer, in AMG mode (bno_chips.h): 16 LSB per uT.
+// NOT RUN ON SILICON -- no BNO055 on the bench; compiled and unit-tested only.
+class BNO055MAG: public MAGInterface
+{
+    private:
+        geometry_msgs__msg__Vector3 mag_;
+
+    public:
+        BNO055MAG()
+        {
+        }
+
+        bool startSensor() override
+        {
+            return bno055Chip().start();
+        }
+
+        geometry_msgs__msg__Vector3 readMagnetometer() override
+        {
+            uint8_t b[6];
+            if (bno055Chip().read(Bno055Chip::REG_MAG_X_LSB, b, 6))
+            {
+                mag_.x = Bno055Chip::le16(b + 0) / Bno055Chip::MAG_LSB_PER_UT * 1e-6;   // -> Tesla
+                mag_.y = Bno055Chip::le16(b + 2) / Bno055Chip::MAG_LSB_PER_UT * 1e-6;
+                mag_.z = Bno055Chip::le16(b + 4) / Bno055Chip::MAG_LSB_PER_UT * 1e-6;
             }
             return mag_;
         }

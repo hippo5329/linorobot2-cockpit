@@ -79,8 +79,10 @@ def test_the_board_fuses_unless_the_part_already_did():
                      iface), "the default is no longer 'fuse it'"
     bno = _read(os.path.join(ROOT, "firmware", "common", "lib", "imu",
                              "default_imu.h"))
-    assert "hasFusedOrientation() override { return true; }" in bno, \
-        "the BNO085 no longer claims its own fusion"
+    # The BNO08x claims its own fusion exactly while its magnetometer is NOT in use
+    # (bno_chips.h): with the field, the board fuses it like any 9-axis part.
+    assert "hasFusedOrientation() override { return bno08xChip().chipFusesOrientation(); }" in bno, \
+        "the BNO085 no longer asks whether the chip fuses"
 
 
 def test_the_nine_axis_and_six_axis_paths_are_both_taken():

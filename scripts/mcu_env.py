@@ -1021,16 +1021,29 @@ def hardware_env(params: dict) -> dict:
         "MPU6050": {"accel_cov": 1.5e-3, "gyro_cov": 3e-6},
         "GY85": {"accel_cov": 1.8e-3, "gyro_cov": 4.4e-5},
     }
+    # The BNO parts' field (a BMM150-class magnetometer): 0.6 uT rms at the
+    # regular preset -> (0.6e-6 T)^2.
     _mag_cov = {"AK09918": 2.3e-14, "ICM20948": 2.3e-14, "QMC5883L": 4e-14,
-                "HMC5883L": 4e-14, "AK8963": 9e-14, "AK8975": 9e-14}
+                "HMC5883L": 4e-14, "AK8963": 9e-14, "AK8975": 9e-14,
+                "BNO085": 3.6e-13}
+    # One silicon, several names: the BNO080/085/086 are one SH-2 part to this
+    # firmware (one driver, bno_chips.h), and the BNO08x is the BNO055's Bosch
+    # sensor package with CEVA's firmware on it. Mapped, not added as rows: each
+    # row is a part in the median the simulated IMU is sized to
+    # (test_default_chassis), and a second name for one part is not a second part.
+    _cov_alias = {"BNO080": "BNO085", "BNO086": "BNO085", "BNO055": "BNO085"}
     # pressure Pa^2 (sigma ~1.7 Pa), temperature C^2 (+/-0.5 C), humidity (0..1)^2 (+/-3 %RH)
     _env_cov = {"BMP280": [3, 0.25, 0], "BME280": [3, 0.25, 9e-4]}
 
     def _clean(name):
         return str(name or "").upper().replace("USE_", "").replace("_IMU", "").replace("_MAG", "")
 
-    defaults = dict(_imu_cov.get(_clean(sensors.get("imu")), {}))
-    mcov = _mag_cov.get(_clean(sensors.get("mag")))
+    _imu_part = _clean(sensors.get("imu"))
+    defaults = dict(_imu_cov.get(_cov_alias.get(_imu_part, _imu_part), {}))
+    if _imu_part == "BNO055":
+        defaults.pop("ori_cov", None)   # AMG mode: no orientation of its own (the board fuses it)
+    _mag_part = _clean(sensors.get("mag"))
+    mcov = _mag_cov.get(_cov_alias.get(_mag_part, _mag_part))
     if mcov is not None:
         defaults["mag_cov"] = mcov
     ecov = _env_cov.get(_clean(sensors.get("env")))

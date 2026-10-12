@@ -235,8 +235,10 @@ to synchronise. So `firmware/common/lib/imu/ahrs.h` — a port of that node's ow
 it numerically by `tests/test_ahrs_is_the_filter_it_replaces.py` — does the fusion on the board,
 publishes `imu/data` directly with an orientation and an honest covariance, and removes gravity at
 the source as the node's `remove_gravity_vector` did. `imu/mag` is still published, because
-`magnetometer_calibration` needs it. A part with on-chip fusion (BNO085) does its own AHRS and the
-filter stands aside: `hasFusedOrientation()` is the seam.
+`magnetometer_calibration` needs it. A part with on-chip fusion (a BNO08x without its magnetometer
+in use) does its own AHRS and the filter stands aside: `hasFusedOrientation()` is the seam. With
+`mag: BNO085` the board fuses the BNO08x's gyro, accel and field instead, so the robot's own
+magnetometer calibration reaches the heading.
 
 Cost, measured by compiling one update for each target: **988 instructions and 422 hardware FPU ops
 on an ESP32** (~5 us, 0.025% of a 20 ms cycle), and on the RP2040 — the only target with no FPU —
@@ -284,7 +286,8 @@ than "the driver exists", and the only one backed by a measurement.
 | QMI8658 | 0x6A, 0x6B | `WHO_AM_I` | GenDrv |
 | LSM6DSOX | 0x6A, 0x6B | reg 0x0F = 0x6C | bench Pico 2, 2026-09-23 |
 | GY85 (ADXL345 + ITG3200) | 0x53 / 0x68 | reg 0x00 = 0xE5 / 0x68 | — |
-| BNO085 / BNO080 | 0x4A, 0x4B | the address alone | bench Pico 2 W, 2026-10-02 (on-chip fusion, 50 Hz) |
+| BNO085 / BNO080 / BNO086 | 0x4A, 0x4B | the address alone | bench Pico 2 W, 2026-10-02 (on-chip fusion, 50 Hz) |
+| BNO055 | 0x28, 0x29 | reg 0x00 = 0xA0 | — (AMG mode, fused on the board) |
 
 **Read the last column as the honest state.** A dash means the driver exists
 and no real chip of that part has answered on a bench yet. The GenDrv's QMI8658
@@ -297,6 +300,8 @@ is read at 50 Hz, like every other part here.
 | AK09916 | via ICM-20948 | reached through the IMU's bypass at 0x0C | yes — bench Pico 2 |
 | QMC5883L | 0x0D | | no |
 | HMC5883L | 0x1E | | no |
+| BNO085 / BNO080 / BNO086 | via the BNO08x | the chip's field, its own magnetometer calibration off; only when named (never AUTO) | no |
+| BNO055 | via the BNO055 | AMG mode; AUTO takes it with the IMU | no |
 
 **Every part is read by polling**, at the control loop's rate. Where a chip has a FIFO with
 its own timestamp counter, that carries the sample time with the sample and needs no wiring.
@@ -309,6 +314,17 @@ standalone AK09918. `i2cProbeFoldComposites()` attributes it to the part that ow
 keyed on the ICM-20948 being present, so a genuine standalone AK09918 is untouched. Two
 consequences worth knowing: the magnetometer only works because IMU init runs before MAG
 init, and after a power cycle 0x0C is silent until it does.
+
+**The BNO parts are one chip, two roles too** (`firmware/common/lib/imu/bno_chips.h`). One chip
+object per part serves the IMU and the magnetometer driver; whichever starts first runs `begin()`,
+the other only adds its reports, so the order does not matter and a BNO used only as a compass
+works. Naming `mag: BNO085` (or BNO080 / BNO086) changes how the heading is made: the chip stops
+publishing its own orientation (the game rotation vector, gyro and accel only), its dynamic
+magnetometer calibration is switched off so its field holds still, and the board's AHRS fuses gyro,
+accel and field with the robot's `mag_bias` / `mag_soft` -- then `magnetometer_calibration` is the
+calibration that counts. AUTO never makes that switch: the probe lists a BNO08x as an IMU only. A
+BNO055 runs in AMG mode (no on-chip fusion) and is fused on the board either way, so AUTO takes its
+field like the ICM-20948's. No BNO055 has been on a bench; its driver is written from the datasheet.
 
 
 **The QMI8658 driver is the base's own.** The QST/Waveshare reference copy it replaced carried

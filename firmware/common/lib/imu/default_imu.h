@@ -1020,47 +1020,31 @@ class ICM20948IMU: public IMUInterface
         }
 };
 
-// Note: Sparkfun library redefines I2C_BUFFER_LENGTH, so we undefine it for this class
-#ifdef I2C_BUFFER_LENGTH
-#undef I2C_BUFFER_LENGTH
-#endif
-#include <SparkFun_BNO080_Arduino_Library.h>
+// The BNO series shares one chip object per part with its magnetometer role
+// (bno_chips.h): both roles talk to the same silicon, in either start order.
+#include "bno_chips.h"
 
-class BNO085IMU: public IMUInterface 
+// BNO08x (BNO080/085/086): accelerometer, gyro and -- without its magnetometer in
+// use -- the chip's own orientation.
+class BNO085IMU: public IMUInterface
 {
     private:
-        BNO080 bno085_;
-        const int bno085UpdateRateMs = 20;   // 50Hz update rate (standard for ROS IMU messages)
-
         geometry_msgs__msg__Vector3 accel_;
         geometry_msgs__msg__Vector3 gyro_;
 
-        // The SparkFun library parses ONE packet per getReadings() call, and
-        // dataAvailable() is nothing but getReadings() != 0 -- so calling both
-        // consumes two packets and keeps the second. The state machine this
-        // replaces did exactly that, and treated a single empty poll as a lost
-        // link (begin(), i.e. a chip reset). It never ran -- see readGyroscope()
-        // -- but a standalone sketch doing the same thing on an RP2350 at 400 kHz
-        // (2026-10-03) counted a fraction of what the chip sent: accel ~38 Hz,
-        // gyro ~37 Hz, game rotation ~18 Hz.
-        //
-        // So: one getReadings() per packet, drain what is queued on every call,
-        // keep the last good sample across quiet polls, re-arm the reports when
-        // the chip says it reset, and re-run begin() only after a real silence.
-        static const uint8_t kMaxPacketsPerPoll = 32;
-        static const unsigned long kRearmAfterMs = 1000;    // silent this long: re-send the report config
-        static const unsigned long kRebeginAfterMs = 3000;  // silent this long: the link is gone, begin() again
-
-        bool started_ = false;
-        bool haveSample_ = false;
-        unsigned long lastReportMs_ = 0;
-        unsigned long lastRecoveryMs_ = 0;
-
     public:
-        // This part runs its own AHRS: sensor fusion in the chip, with its own
-        // calibration, so ahrs.h stands aside and the quaternion below is the
-        // chip's rather than the firmware's.
-        bool hasFusedOrientation() override { return true; }
+        // Two modes, decided by whether the magnetometer role is in use:
+        //
+        //   no field  the chip fuses gyro + accel on board (the game rotation
+        //             vector) and the quaternion below is the chip's; ahrs.h
+        //             stands aside. The behaviour this driver always had.
+        //   field     the board's AHRS fuses the chip's gyro, accel and field like
+        //             any 9-axis part, so the robot's magnetometer calibration
+        //             (mag_bias / mag_soft) reaches the heading. The chip's own
+        //             heading would be ITS calibration, not ours.
+        //
+        // Asked on every sample, so the magnetometer may start after this does.
+        bool hasFusedOrientation() override { return bno08xChip().chipFusesOrientation(); }
 
         BNO085IMU()
         {
@@ -1068,24 +1052,20 @@ class BNO085IMU: public IMUInterface
 
         bool startSensor() override
         {
-            // The bus is initBoard()'s (env pins and clock); a second
-            // Wire.begin() here reset an RP2's clock to the core default.
-            if (bno085_.begin() == 0){
+            if (!bno08xChip().wantImu()) {
                 syslog(LOG_ERR, "%s BNO085 IMU init fail %lu", __FUNCTION__, millis());
-                started_ = false;
                 return false;
             }
             syslog(LOG_INFO, "%s BNO085 IMU init success %lu", __FUNCTION__, millis());
-            started_ = true;
-            enableReports();
             return true;
         }
 
         geometry_msgs__msg__Vector3 readAccelerometer() override
         {
-            accel_.x = bno085_.getAccelX();
-            accel_.y = bno085_.getAccelY();
-            accel_.z = bno085_.getAccelZ();
+            BNO080 &d = bno08xChip().dev();
+            accel_.x = d.getAccelX();
+            accel_.y = d.getAccelY();
+            accel_.z = d.getAccelZ();
             return accel_;
         }
 
@@ -1100,77 +1080,32 @@ class BNO085IMU: public IMUInterface
         // chip, the library's values stayed zero, the orientation stayed
         // identity, and /imu/data was a noiseless (0, 0, -9.807) on a board
         // whose BNO085 was streaming at ~90 packets/s (RP2350, 2026-10-03).
+        //
+        // The gyro is rad/s as it comes: the SH-2 calibrated gyroscope report is
+        // rad/s (Q9), and getGyroX() returns it unscaled. This read used to multiply
+        // it by DEG_TO_RAD as if it were deg/s, so /imu/data's angular velocity was
+        // 57.3 times too small on every BNO085 -- invisible while the chip fused its
+        // own orientation, and fatal to a gyro the board's AHRS integrates.
         geometry_msgs__msg__Vector3 readGyroscope() override
         {
-            pollReports();
-            if (!haveSample_) {
+            Bno08xChip &chip = bno08xChip();
+            chip.poll();
+            if (!chip.haveImu()) {
                 logImuDataUnavailable();
                 gyro_.x = gyro_.y = gyro_.z = 0.0;
                 return gyro_;
             }
-            imu_msg_.orientation.x = bno085_.getQuatI();
-            imu_msg_.orientation.y = bno085_.getQuatJ();
-            imu_msg_.orientation.z = bno085_.getQuatK();
-            imu_msg_.orientation.w = bno085_.getQuatReal();
-            // rad/s as it comes. The SH-2 calibrated gyroscope report IS rad/s
-            // (Q9), and the library's getGyroX() returns it unscaled; this used to
-            // multiply by DEG_TO_RAD, so /imu/data's angular velocity was 57.3
-            // times too small on every BNO085 (MC200, 2026-10-12: 0.006 rad/s
-            // published at a 0.58 rad/s spin measured against the LiDAR).
-            gyro_.x = bno085_.getGyroX();
-            gyro_.y = bno085_.getGyroY();
-            gyro_.z = bno085_.getGyroZ();
+            BNO080 &d = chip.dev();
+            if (chip.chipFusesOrientation()) {
+                imu_msg_.orientation.x = d.getQuatI();
+                imu_msg_.orientation.y = d.getQuatJ();
+                imu_msg_.orientation.z = d.getQuatK();
+                imu_msg_.orientation.w = d.getQuatReal();
+            }
+            gyro_.x = d.getGyroX();
+            gyro_.y = d.getGyroY();
+            gyro_.z = d.getGyroZ();
             return gyro_;
-        }
-
-    private:
-        void enableReports()
-        {
-            bno085_.hasReset();   // clear the flag the reset we just caused would leave
-            bno085_.enableGameRotationVector(bno085UpdateRateMs);
-            bno085_.enableGyro(bno085UpdateRateMs);
-            bno085_.enableAccelerometer(bno085UpdateRateMs);
-            lastRecoveryMs_ = millis();
-            syslog(LOG_INFO, "%s BNO085 reports enabled @ %d ms %lu", __FUNCTION__, bno085UpdateRateMs, millis());
-        }
-
-        void pollReports()
-        {
-            const unsigned long now = millis();
-            if (!started_) {
-                if (now - lastRecoveryMs_ >= kRearmAfterMs) {
-                    lastRecoveryMs_ = now;
-                    startSensor();
-                }
-                return;
-            }
-            // One getReadings() per packet; it returns the report id it parsed, 0 when nothing is queued.
-            for (uint8_t i = 0; i < kMaxPacketsPerPoll; i++) {
-                const uint16_t id = bno085_.getReadings();
-                if (id == 0) break;
-                if (id == SENSOR_REPORTID_ACCELEROMETER || id == SENSOR_REPORTID_GYROSCOPE ||
-                    id == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-                    lastReportMs_ = now;
-                    haveSample_ = true;
-                }
-            }
-            // The chip resets itself now and then and comes back with every report off.
-            if (bno085_.hasReset()) {
-                syslog(LOG_INFO, "%s BNO085 reported a reset, re-arming reports %lu", __FUNCTION__, now);
-                enableReports();
-                return;
-            }
-            const unsigned long quiet = now - (lastReportMs_ > lastRecoveryMs_ ? lastReportMs_ : lastRecoveryMs_);
-            if (quiet >= kRebeginAfterMs) {
-                syslog(LOG_INFO, "%s BNO085 silent %lu ms, begin() again %lu", __FUNCTION__, quiet, now);
-                started_ = false;
-                haveSample_ = false;   // a frozen last sample would look like a healthy, motionless IMU
-                lastRecoveryMs_ = now - kRearmAfterMs;   // retry begin() on this very poll
-                pollReports();
-            } else if (quiet >= kRearmAfterMs && now - lastRecoveryMs_ >= kRearmAfterMs) {
-                syslog(LOG_INFO, "%s BNO085 silent %lu ms, re-arming reports %lu", __FUNCTION__, quiet, now);
-                enableReports();
-            }
         }
 
         void logImuDataUnavailable()
@@ -1181,6 +1116,47 @@ class BNO085IMU: public IMUInterface
                 syslog(LOG_INFO, "%s BNO085 IMU data not available %lu", __FUNCTION__, currentTime);
                 lastLogTime = currentTime;
             }
+        }
+};
+
+// BNO055: accelerometer and gyro in AMG mode, fused by the board (bno_chips.h).
+// NOT RUN ON SILICON -- no BNO055 on the bench; compiled and unit-tested only.
+class BNO055IMU: public IMUInterface
+{
+    private:
+        geometry_msgs__msg__Vector3 accel_;
+        geometry_msgs__msg__Vector3 gyro_;
+
+    public:
+        BNO055IMU()
+        {
+        }
+
+        bool startSensor() override
+        {
+            return bno055Chip().start();
+        }
+
+        // One burst, acc .. mag .. gyr (0x08..0x19): the gyro read is the bus
+        // transaction (getData() calls it first), the accelerometer keeps it.
+        geometry_msgs__msg__Vector3 readGyroscope() override
+        {
+            uint8_t b[18];
+            if (bno055Chip().read(Bno055Chip::REG_ACC_X_LSB, b, 18))
+            {
+                accel_.x = Bno055Chip::le16(b + 0) / Bno055Chip::ACC_LSB_PER_MS2;
+                accel_.y = Bno055Chip::le16(b + 2) / Bno055Chip::ACC_LSB_PER_MS2;
+                accel_.z = Bno055Chip::le16(b + 4) / Bno055Chip::ACC_LSB_PER_MS2;
+                gyro_.x = Bno055Chip::le16(b + 12) / Bno055Chip::GYR_LSB_PER_RPS;
+                gyro_.y = Bno055Chip::le16(b + 14) / Bno055Chip::GYR_LSB_PER_RPS;
+                gyro_.z = Bno055Chip::le16(b + 16) / Bno055Chip::GYR_LSB_PER_RPS;
+            }
+            return gyro_;
+        }
+
+        geometry_msgs__msg__Vector3 readAccelerometer() override
+        {
+            return accel_;
         }
 };
 

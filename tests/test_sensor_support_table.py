@@ -28,6 +28,7 @@ ROW_TO_CLASS = {
     "LSM6DSOX": "LSM6DSOXIMU",
     "GY85": "GY85IMU",
     "BNO085": "BNO085IMU",
+    "BNO055": "BNO055IMU",
 }
 
 
@@ -63,12 +64,12 @@ def test_every_imu_in_the_factory_has_a_row():
     names = re.findall(r'\{"(\w[\w-]*)",\s*makeIMU<', table)
     rows = " ".join(_doc_rows())
     for name in names:
-        if name in ("sim", "mpu9150", "mpu6500"):
+        if name in ("sim", "mpu9150", "mpu6500", "bno080", "bno086"):
             continue                     # simulated, or an alias of a listed row
         key = {"icm42670": "ICM-42670", "icm20948": "ICM-20948",
                "lsm6dsox": "LSM6DSOX", "qmi8658": "QMI8658",
                "mpu6050": "MPU6050", "mpu9250": "MPU9250",
-               "gy85": "GY85", "bno085": "BNO085"}[name]
+               "gy85": "GY85", "bno085": "BNO085", "bno055": "BNO055"}[name]
         assert key in rows, f"{name} is in the sensor factory and not in the table"
 
 

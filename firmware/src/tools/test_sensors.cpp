@@ -114,7 +114,8 @@ bool step()
         float qy = imu_msg->orientation.y;
         float qz = imu_msg->orientation.z;
         float qw = imu_msg->orientation.w;
-        // Only a chip that fuses on its own (a BNO085) reports a rotation here. The others
+        // Only a chip that fuses on its own (a BNO08x without its magnetometer in use)
+        // reports a rotation here; the board's AHRS does not run in the tool. The others
         // leave the identity -- w=1 -- and printed "RPY 0.0 0.0 0.0" in place of their
         // magnetometer (a QMI8658 robot, 2026-10-12).
         bool has_orientation = (qx != 0.0f || qy != 0.0f || qz != 0.0f);

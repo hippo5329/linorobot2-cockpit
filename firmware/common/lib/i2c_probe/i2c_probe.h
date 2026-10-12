@@ -17,10 +17,11 @@
 //
 // `driver` is the name sensor_factory.cpp knows, which is NOT always derivable
 // from `model`: MPU6500 is driven by the MPU6050 driver, an ADXL345 or ITG3200
-// is one half of a GY85, and a BNO055 is a different chip from the BNO085 this
-// image drives -- so its driver field is empty rather than a plausible guess.
-// An empty driver means "recognised, but this image cannot drive it", which is
-// a different and much more useful answer than "not found".
+// is one half of a GY85, and a BNO080 or BNO086 is driven by the BNO085 driver.
+// A part this image cannot drive gets an empty driver field rather than a
+// plausible guess: "recognised, but this image cannot drive it", which is a
+// different and much more useful answer than "not found". (The BNO055 was that
+// example until it got its own driver, 2026-10-12.)
 #ifndef I2C_PROBE_H
 #define I2C_PROBE_H
 

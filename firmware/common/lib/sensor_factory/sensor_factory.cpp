@@ -31,6 +31,9 @@ static const IMUEntry IMU_TABLE[] = {
     {"icm42670", makeIMU<ICM42670IMU>},
     {"icm20948", makeIMU<ICM20948IMU>},
     {"bno085",   makeIMU<BNO085IMU>},
+    {"bno080",   makeIMU<BNO085IMU>},    // the BNO08x family: one SH-2 driver
+    {"bno086",   makeIMU<BNO085IMU>},
+    {"bno055",   makeIMU<BNO055IMU>},
 };
 
 static const MAGEntry MAG_TABLE[] = {
@@ -41,6 +44,10 @@ static const MAGEntry MAG_TABLE[] = {
     {"ak09918",  makeMAG<AK09918MAG>},
     {"qmc5883l", makeMAG<QMC5883LMAG>},
     {"icm20948", makeMAG<ICM20948MAG>},
+    {"bno085",   makeMAG<BNO085MAG>},    // the BNO08x's own field (bno_chips.h)
+    {"bno080",   makeMAG<BNO085MAG>},
+    {"bno086",   makeMAG<BNO085MAG>},
+    {"bno055",   makeMAG<BNO055MAG>},
 };
 
 const char *defaultIMUName(void)

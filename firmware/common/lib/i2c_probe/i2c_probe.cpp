@@ -100,18 +100,23 @@ void identify(Sink &sink, uint8_t addr)
     }
 
     if (addr == 0x4A || addr == 0x4B) {
+        // IMU only, on purpose. The chip's magnetometer is real (mag: BNO085 uses
+        // it, bno_chips.h), but using it moves the heading from the chip's own
+        // fusion to the board's, with whatever calibration the robot has -- a
+        // change a config makes by naming it, never one AUTO makes behind its back.
         sink.add(addr, "imu", "BNO085", "bno085",
-                 "BNO085/BNO080 9-DOF Robotic IMU");
+                 "BNO08x (BNO080/085/086) 9-DOF IMU");
         return;
     }
 
     if (addr == 0x28 || addr == 0x29) {
         if (readRegister8(addr, 0x00) == 0xA0) {
-            // Recognised, but a BNO055 is not a BNO085 and this image carries no
-            // driver for it. Empty driver, so the caller keeps its configured
-            // sensor instead of being handed one that cannot work.
-            sink.add(addr, "imu", "BNO055", "",
-                     "BNO055 9-DOF IMU (no driver in this image)");
+            // One chip, two roles, like the ICM-20948: the board fuses a BNO055
+            // (AMG mode) either way, so its field is offered as the magnetometer.
+            sink.add(addr, "imu", "BNO055", "bno055",
+                     "BNO055 9-DOF IMU (AMG mode, fused on the board)");
+            sink.add(addr, "mag", "BNO055", "bno055",
+                     "BNO055 magnetometer (inside the BNO055)");
             return;
         }
     }
@@ -275,8 +280,8 @@ void i2cProbePrint(const I2CDevice *devs, int count)
 // Take the detected sensor's driver when there is one, and say so. Three cases,
 // and the two that are not a silent success are the ones worth printing:
 // nothing answered (keep the configured name and let init() report it), or
-// something answered that this image cannot drive -- a BNO055, say, where the
-// table leaves `driver` empty rather than handing back a plausible wrong one.
+// something answered that this image cannot drive -- where the table leaves
+// `driver` empty rather than handing back a plausible wrong one.
 // The 9-axis parts whose magnetometer is reached through the IMU itself, and the
 // magnetometer driver for it -- or NULL for an IMU that carries none.
 static const char *imuHiddenMag(const char *imu)
