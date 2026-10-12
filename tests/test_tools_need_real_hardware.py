@@ -75,13 +75,25 @@ def test_the_flasher_stops_before_writing(capsys):
 
 
 def test_firmware_and_host_refuse_the_same_tools():
-    src = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
+    """The host refuses a former tool's app name before the write; the tool refuses the
+    same thing per command (tools.cpp simulatedFor), and `acc` in its own words, the
+    ones test_acc_run.py waits for. `sensors` creates nothing simulated at all (real
+    parts only), so it needs no refusal of its own."""
+    tools = os.path.join(REPO_ROOT, "firmware", "src", "tools")
+    src = open(os.path.join(tools, "tools.cpp")).read()
     fn = src[src.index("static const char *simulatedFor"):src.index("static bool i2cUnassigned")]
+    command = {"test_motors": "motors", "adc_calibrate": "adc"}
     for tool, (key, value, _) in mcu_env.REAL_ONLY_TOOLS.items():
-        case = "APP_" + tool.upper()
-        assert case in fn, f"{tool} is refused on the host but not in toolSelect()"
-        assert f'"{key}"' in fn, f"toolSelect() does not read {key} for {tool}"
-    assert "APP_I2C_DETECT" not in fn      # judged by its pins instead (i2cUnassigned)
+        if tool == "test_acc":
+            acc = open(os.path.join(tools, "test_acc.cpp")).read()
+            assert "wheelsAreSim()" in acc and "test_acc refused" in acc
+        elif tool == "test_sensors":
+            assert "envSetRealOnly(true);" in src
+        else:
+            assert f'"{command[tool]}"' in fn, f"{tool} is refused on the host but not by the tool"
+            assert f'"{key}"' in fn, f"the tool does not read {key} for {tool}"
+    assert '"motor"' in fn                  # one wheel, the same wheels
+    assert '"i2c"' not in fn                # judged by its pins instead (i2cUnassigned)
 
 
 def test_test_sensors_runs_on_any_real_sensor_not_only_an_imu():

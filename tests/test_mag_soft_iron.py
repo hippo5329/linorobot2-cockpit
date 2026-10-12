@@ -37,5 +37,6 @@ def test_the_firmware_applies_it_after_the_bias():
 
 
 def test_test_acc_forwards_the_lidar():
-    src = open(os.path.join(ROOT, "firmware", "src", "tools", "test_acc.cpp")).read()
+    # The tool brings the forwarder up once, for every command (tool_hw.cpp).
+    src = open(os.path.join(ROOT, "firmware", "src", "tools", "tool_hw.cpp")).read()
     assert "initLidar();" in src

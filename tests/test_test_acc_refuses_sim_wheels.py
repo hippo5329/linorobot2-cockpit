@@ -81,7 +81,7 @@ def test_a_sim_wheel_board_is_refused_before_any_motor_is_spun():
     """The refusal has to come first. Falling through to the run would drive the
     motor pins of a board whose config says it has none."""
     s = _src(ACC)
-    loop = s[s.index("void loop_()"):]
+    loop = s[s.index("void runAcc()"):]
     guard = loop.index("if (sim_wheels)")
     assert guard < loop.index("driveAll("), "the guard runs after the first drive"
     assert "return;" in loop[guard:loop.index("driveAll(")]
@@ -106,10 +106,13 @@ def test_the_env_decides_not_the_build():
 
 
 def test_the_guard_is_set_after_the_env_is_read():
-    """wheelsAreSim() calls initMcuEnv() itself, but reading it before the tool
-    has probed the bus would order the banner lines confusingly."""
+    """Each `acc` reads it afresh (prepare()), before anything else it does: the env
+    (or a `set sim_wheel`) decides, at the time of the run."""
     s = _src(ACC)
-    assert s.index("initMcuEnv();") < s.index("sim_wheels = wheelsAreSim();")
+    run = s[s.index("void runAcc()"):]
+    assert run.index("prepare();") < run.index("if (sim_wheels)")
+    prep = s[s.index("static void prepare()"):s.index("unsigned runs = 12;")]
+    assert "sim_wheels = wheelsAreSim();" in prep
 
 
 def test_main_still_feeds_the_simulated_wheels():

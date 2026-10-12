@@ -44,24 +44,29 @@ def _func(src, signature):
 
 def test_tool_select_sets_real_only_before_starting_a_tool():
     body = _func(_src("tools"), "AppMode toolSelect(void)")
-    ret = body.index("return TOOLS[i].mode;")
-    assert "envSetRealOnly(true);" in body[body.rfind("simulatedFor(", 0, ret):ret]
+    assert body.rstrip().endswith("return APP_TOOL;")
+    assert "envSetRealOnly(true);" in body[body.rfind("strcmp(want, \"base\")"):]
+
+
+def test_the_boot_window_turns_real_only_when_it_enters_the_tool():
+    body = _func(_src("tools"), "bool toolEscape(void)")
+    tail = body[body.index("if (!enter)"):]
+    assert tail.index("return false;") < tail.index("envSetRealOnly(true);") < tail.index("return true;")
 
 
 def test_base_never_turns_real_only():
-    """`base` is TOOLS[0], so the loop matches `app=base` too. Reaching envSetRealOnly()
-    there made createIMU("sim") return NULL in the robot firmware itself, and every MCU
-    faulted seconds into each micro-ROS session (rc-20261012.2: 4 sessions in 45 s, the
-    board re-enumerating between them). `base` has to leave toolSelect() before the loop."""
-    src = _src("tools")
-    table = src[src.index("static const ToolEntry TOOLS[]"):]
-    assert re.search(r'\{\s*APP_BASE\s*,\s*"base"', table), "base left the table: re-check this test"
-    body = _func(src, "AppMode toolSelect(void)")
+    """rc-20261012.2: base reached envSetRealOnly(), createIMU("sim") returned NULL to
+    main.cpp, and every MCU faulted seconds into each micro-ROS session (4 sessions in
+    45 s, the board re-enumerating between them). Every envSetRealOnly(true) in
+    toolSelect() leads to `return APP_TOOL`, never to `return APP_BASE`."""
+    body = _func(_src("tools"), "AppMode toolSelect(void)")
     early = re.search(r'if \(!want \|\| !\*want \|\| strcmp\(want, "base"\) == 0\)\s*return APP_BASE;', body)
-    assert early, "toolSelect() must return APP_BASE for app=base before the tool loop"
-    assert early.start() < body.index("for (size_t i = 0; i < TOOL_COUNT; i++)")
-    assert early.start() < body.index("envSetRealOnly(true);")
-    # And nothing else turns it on: only toolSelect() sets it, and only for a tool.
+    assert early, "toolSelect() must return APP_BASE for app=base before anything of the tool's"
+    assert early.start() < body.index("sizeof(LEGACY)")
+    for m in re.finditer(r"envSetRealOnly\(true\);", body):
+        nxt = re.search(r"return (APP_\w+);", body[m.end():])
+        assert nxt and nxt.group(1) == "APP_TOOL", "a path through envSetRealOnly ends in base"
+    # And nothing else turns it on: only the tool's own selection and its boot window.
     sources = [f for d in ("src", "common") for ext in ("*.c", "*.cpp", "*.h")
                for f in glob.glob(os.path.join(REPO_ROOT, "firmware", d, "**", ext), recursive=True)]
     setters = [f for f in sources if "envSetRealOnly(true)" in _read(f)]
@@ -84,24 +89,28 @@ def test_battery_and_barometer_models_stay_off_in_a_tool(path, key):
     assert re.search(r's_sim = !envRealOnly\(\) && envFlag\("%s"' % key, src), path
 
 
-@pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors"])
-def test_every_tool_asks_the_bus_before_creating(tool):
-    src = _src(tool)
+def test_the_tool_asks_the_bus_before_creating():
+    """One place builds the tool's sensors (tool_hw.cpp), by base's probe and rule."""
+    src = _src("tool_hw")
     probe = src.index("i2cProbeSelect(&imu_name, &mag_name);")
-    for kind in ("IMU", "MAG"):
-        assert probe < src.index(f"createIMU(imu_name)" if kind == "IMU" else "createMAG(mag_name)")
+    assert probe < src.index("createIMU(imu_name)")
+    assert probe < src.index("createMAG(mag_name)")
 
 
-@pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors"])
-@pytest.mark.parametrize("kind", ["IMU", "MAG"])
-def test_every_create_is_null_checked(tool, kind):
+@pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors", "i2c_detect"])
+def test_no_command_builds_its_own_sensors(tool):
     src = _src(tool)
+    assert "createIMU(" not in src and "createMAG(" not in src, f"{tool} builds a sensor again"
+
+
+@pytest.mark.parametrize("kind", ["IMU", "MAG"])
+def test_every_create_is_null_checked(kind):
+    src = _src("tool_hw")
     var = kind.lower()
     calls = [m.end() for m in re.finditer(r"create%s\(%s_name\)" % (kind, var), src)]
-    assert calls, f"{tool} creates no {kind}"
+    assert calls, f"the tool creates no {kind}"
     for end in calls:
-        after = src[end:end + 40]
-        assert re.match(r"\)\)|;\s*\n\s*if \(%s\)" % var, after), f"{tool}: create{kind}() result used unchecked"
+        assert src[end:end + 2] == "))", f"create{kind}() result used unchecked"
     assert "sensorFitted(" not in src
 
 

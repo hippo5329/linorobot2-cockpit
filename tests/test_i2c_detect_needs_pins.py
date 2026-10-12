@@ -33,7 +33,7 @@ def test_a_named_bus_counts_and_the_uno_q_design_names_its_qwiic():
 
 def test_the_firmware_applies_the_same_rule():
     src = open(os.path.join(ROOT, "firmware", "src", "tools", "tools.cpp")).read()
-    assert "i2cUnassigned(TOOLS[i].mode)" in src
+    assert "if (i2cUnassigned())" in src
     assert 'envGet("i2c_bus", "")' in src
     assert 'envInt("i2c_sda", -1) < 0 || envInt("i2c_scl", -1) < 0' in src
 

@@ -135,15 +135,16 @@ def test_it_runs_once_not_once_per_run():
     """The twelve runs below halve the PWM as they go, and a plant fitted across
     different step sizes is not a plant."""
     src = open(ACC, encoding="utf-8").read()
-    assert "static bool identified = false;" in src
-    assert "if (!identified)" in src
+    run = src[src.index("void runAcc()"):]
+    assert run.count("ident::run();") == 1
+    assert run.index("ident::run();") < run.index("while (runs > 0)")
 
 
 def test_identification_is_skipped_on_a_sim_wheel_board():
     """It must sit AFTER the refusal: there is nothing to identify, and the
     host models it better than a serial line can report it."""
     src = open(ACC, encoding="utf-8").read()
-    loop = src[src.index("void loop_()"):]
+    loop = src[src.index("void runAcc()"):]
     assert loop.index("if (sim_wheels)") < loop.index("ident::run()")
 
 

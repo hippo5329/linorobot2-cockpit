@@ -191,15 +191,21 @@ static bool consoleLine(char *out, size_t n)
         if (c < 0) break;
         if (c == '\r') continue;
         if (c == '\n') {
+            Serial.print("\r\n");      // a serial terminal does not echo what is typed
             con_buf[con_len] = '\0';
             strncpy(out, con_buf, n - 1);
             out[n - 1] = '\0';
             con_len = 0;
             return true;
         }
-        if (c == 0x08 || c == 0x7f) { if (con_len) con_len--; continue; }   // backspace
-        if (con_len < sizeof(con_buf) - 1)
+        if (c == 0x08 || c == 0x7f) {                                      // backspace
+            if (con_len) { con_len--; Serial.print("\b \b"); }
+            continue;
+        }
+        if (c >= 0x20 && c < 0x7f && con_len < sizeof(con_buf) - 1) {
             con_buf[con_len++] = (char)c;
+            Serial.write((uint8_t)c);
+        }
     }
     return false;
 }
