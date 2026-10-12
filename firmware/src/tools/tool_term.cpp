@@ -7,6 +7,85 @@
 
 #if defined(HAS_WIFI) || defined(LINO_HOST)
 #include <WiFi.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <lwip/sockets.h>
+#endif
+
+// The login is a challenge, like the ping port's lino-tool and like OTA itself: the board
+// sends a one-time nonce, the client answers md5(password:nonce), and the OTA password --
+// which also reflashes the robot -- never crosses the network. A board with no password
+// opens no terminal: a robot on the network is never driven without one.
+#define LOGIN_MS      10000      // to answer the challenge
+#define LOCKOUT_MS    10000      // after three wrong answers
+
+#if defined(LINO_HOST)
+// The Sim MCU has no MD5Builder; RFC 1321, enough for one short string.
+static void md5hex(const char *msg, char out[33])
+{
+    static const uint32_t K[64] = {
+        0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,
+        0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,
+        0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,
+        0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,
+        0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,
+        0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,
+        0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,
+        0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391};
+    static const uint8_t R[64] = {7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,5,9,14,20,5,9,14,20,
+        5,9,14,20,5,9,14,20,4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,6,10,15,21,6,10,15,21,
+        6,10,15,21,6,10,15,21};
+    const size_t len = strlen(msg);
+    const size_t total = ((len + 8) / 64 + 1) * 64;
+    uint8_t buf[192] = {0};
+    if (total > sizeof(buf)) { out[0] = '\0'; return; }
+    memcpy(buf, msg, len);
+    buf[len] = 0x80;
+    const uint64_t bits = (uint64_t)len * 8;
+    for (int i = 0; i < 8; i++) buf[total - 8 + i] = (uint8_t)(bits >> (8 * i));
+    uint32_t h[4] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476};
+    for (size_t off = 0; off < total; off += 64) {
+        uint32_t w[16];
+        for (int i = 0; i < 16; i++)
+            w[i] = buf[off + 4*i] | (buf[off + 4*i + 1] << 8) | (buf[off + 4*i + 2] << 16) | ((uint32_t)buf[off + 4*i + 3] << 24);
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+        for (int i = 0; i < 64; i++) {
+            uint32_t f; int g;
+            if (i < 16)      { f = (b & c) | (~b & d); g = i; }
+            else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16; }
+            else if (i < 48) { f = b ^ c ^ d;          g = (3 * i + 5) % 16; }
+            else             { f = c ^ (b | ~d);       g = (7 * i) % 16; }
+            const uint32_t t = d; d = c; c = b;
+            const uint32_t x = a + f + K[i] + w[g];
+            b = b + ((x << R[i]) | (x >> (32 - R[i])));
+            a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+    }
+    for (int i = 0; i < 16; i++)
+        snprintf(out + 2 * i, 3, "%02x", (unsigned)((h[i / 4] >> (8 * (i % 4))) & 0xff));
+}
+#else
+#include <MD5Builder.h>
+static void md5hex(const char *msg, char out[33])
+{
+    MD5Builder md5;
+    md5.begin();
+    md5.add((uint8_t *)msg, (uint16_t)strlen(msg));
+    md5.calculate();
+    md5.getChars(out);
+}
+#endif
+
+static uint32_t nonceRandom(void)
+{
+#if defined(ARDUINO_ARCH_ESP32)
+    return esp_random();
+#elif defined(ARDUINO_ARCH_RP2040)
+    return rp2040.hwrand32();
+#else
+    return (uint32_t)random(0x7fffffff) ^ (uint32_t)micros();
+#endif
+}
 
 // An address as text, by its bytes: every core's IPAddress has operator[], the host's
 // has no String to convert to.
@@ -17,6 +96,50 @@ static const char *ipText(const IPAddress &ip)
     return t;
 }
 
+// Allocated in termBegin(): base never builds a server, and a serial robot's tool
+// never either.
+static WiFiServer *server = nullptr;
+static WiFiClient client;
+static bool have_client = false;
+static bool authed = false;
+static int tries = 0;
+static uint32_t login_t0 = 0;
+static uint32_t locked_until = 0;
+static bool dropped = false;
+static uint32_t last_input = 0;
+static char nonce[9] = "";
+static char rx[96];
+static size_t rx_len = 0;
+static bool rx_cr = false;
+static char addr[32] = "";
+
+static void hangUp(void);
+
+// What the console copies to the client. Never waits on the network: a link without
+// room for a line is a link that has gone, and a drive must not stall in a print.
+class NetSink : public Print
+{
+public:
+    size_t write(uint8_t c) override { return write(&c, 1); }
+    size_t write(const uint8_t *buf, size_t n) override
+    {
+        if (!have_client || !authed) return 0;
+#if defined(ARDUINO_ARCH_ESP32)
+        const int fd = client.fd();
+        const ssize_t w = fd >= 0 ? send(fd, buf, n, MSG_DONTWAIT) : -1;
+#else
+        const ssize_t w = (ssize_t)client.write(buf, n);
+#endif
+        if (w < (ssize_t)n) {
+            hangUp();
+            return 0;
+        }
+        return n;
+    }
+    using Print::write;
+};
+static NetSink net_sink;
+
 // The console's copy to the client: lino_console on a board, the host Serial on the Sim MCU.
 static void consoleNet(Print *p)
 {
@@ -26,20 +149,6 @@ static void consoleNet(Print *p)
     lino_console.setNet(p);
 #endif
 }
-
-// Allocated in termBegin(): base never builds a server, and a serial robot's tool
-// never either.
-static WiFiServer *server = nullptr;
-static WiFiClient client;
-static bool have_client = false;
-static bool authed = false;
-static int tries = 0;
-static bool dropped = false;
-static char rx[96];
-static size_t rx_len = 0;
-static char addr[32] = "";
-
-static void hangUp(void);
 
 static const char *password(void)
 {
@@ -52,41 +161,51 @@ static const char *password(void)
 
 void termBegin(void)
 {
+    static uint32_t last_try = 0;
+    if (server || (last_try && millis() - last_try < 1000))
+        return;               // once a second at most: it is called from every poll
+    last_try = millis();
 #if defined(LINO_HOST)
     // The Sim MCU opens one only when asked (term_port): a gate runs several side by side.
     const uint16_t port = envU16("term_port", 0);
-    if (server)
-        return;
 #else
-    if (server || !wifiWanted() || WiFi.status() != WL_CONNECTED)
+    if (!wifiWanted() || WiFi.status() != WL_CONNECTED)
         return;
     const uint16_t port = envU16("term_port", 2323);
 #endif
     if (!port)
         return;
+    if (!password()) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            Serial.println("[tool] no terminal on the network: this board has no OTA password "
+                           "(a USB flash of a Wi-Fi robot sets one)");
+        }
+        return;
+    }
     server = new WiFiServer(port);
     server->begin();
+#if defined(LINO_HOST)
+    static bool bind_failed = false;
+    if (!*server) {
+        if (!bind_failed)
+            Serial.printf("[tool] no terminal: tcp port %u is taken\n", (unsigned)port);
+        bind_failed = true;
+        delete server;
+        server = nullptr;
+        return;
+    }
+#endif
     snprintf(addr, sizeof(addr), "%s:%u", ipText(WiFi.localIP()), (unsigned)port);
-    Serial.printf("[tool] terminal on tcp %s%s\n", addr, password() ? " (OTA password)" : "");
+    Serial.printf("[tool] terminal on tcp %s (OTA password, by challenge)\n", addr);
     syslog(LOG_INFO, "tool terminal on tcp %s", addr);
 }
 
 const char *termAddress(void) { return addr; }
 
-void termEnd(void)
-{
-    if (have_client) {
-        client.print("[tool] no tool this boot -- micro-ROS\r\n");
-        hangUp();
-    }
-    dropped = false;
-    if (server) {
-        server->stop();
-        delete server;
-        server = nullptr;
-    }
-    addr[0] = '\0';
-}
+uint32_t termLastInput(void) { return last_input; }
+void termTouch(void) { last_input = millis(); }
 
 bool termDropped(void)
 {
@@ -105,42 +224,63 @@ static void hangUp(void)
     have_client = false;
     authed = false;
     rx_len = 0;
+    nonce[0] = '\0';
+}
+
+void termEnd(void)
+{
+    if (have_client && authed)
+        client.print("[tool] no tool this boot -- micro-ROS\r\n");
+    if (have_client)
+        hangUp();
+    dropped = false;
+    if (server) {
+        server->stop();
+        delete server;
+        server = nullptr;
+    }
+    addr[0] = '\0';
 }
 
 static void greet(void)
 {
-    tries = 0;
-    authed = (password() == nullptr);
-    client.print("linorobot2 tool -- 'help' lists the commands\r\n");
-    if (authed) {
-        consoleNet(&client);
-        client.print("tool> ");
-    } else {
-        client.print("password: ");
-    }
+    login_t0 = millis();
+#if defined(ARDUINO_ARCH_RP2040)
+    client.setTimeout(20);           // a write waits at most this long for room
+#endif
+    snprintf(nonce, sizeof(nonce), "%08lx", (unsigned long)nonceRandom());
+    client.print("linorobot2 tool -- answer with md5(password:nonce) (lino_tool.py does)\r\n");
+    client.print("nonce ");
+    client.print(nonce);
+    client.print("\r\nlogin: ");
 }
 
-// The password line: compared in full, three tries, then the line is dropped.
-static void checkPassword(const char *line)
+static void checkAnswer(const char *line)
 {
-    const char *pwd = password();
-    const size_t a = strlen(line), b = pwd ? strlen(pwd) : 0;
-    unsigned diff = (unsigned)(a ^ b);
-    for (size_t i = 0; i < a && i < b; i++) diff |= (unsigned)(line[i] ^ pwd[i]);
-    if (pwd && diff == 0) {
+    char want[96], md5[33];
+    snprintf(want, sizeof(want), "%s:%s", password(), nonce);
+    md5hex(want, md5);
+    unsigned diff = strlen(line) == 32 ? 0u : 1u;
+    for (size_t i = 0; i < 32 && line[i]; i++)
+        diff |= (unsigned)(tolower((unsigned char)line[i]) ^ md5[i]);
+    nonce[0] = '\0';
+    if (diff == 0) {
         authed = true;
-        consoleNet(&client);
+        tries = 0;
+        last_input = millis();
+        consoleNet(&net_sink);
         client.print("ok\r\ntool> ");
         syslog(LOG_INFO, "tool terminal: client %s in", ipText(client.remoteIP()));
         return;
     }
+    client.print("wrong answer\r\n");
     if (++tries >= 3) {
-        client.print("wrong password\r\n");
-        syslog(LOG_WARNING, "tool terminal: 3 wrong passwords from %s", ipText(client.remoteIP()));
-        hangUp();
-        return;
+        tries = 0;
+        locked_until = millis() + LOCKOUT_MS;
+        syslog(LOG_WARNING, "tool terminal: 3 wrong answers from %s, locked 10 s",
+               ipText(client.remoteIP()));
     }
-    client.print("wrong password\r\npassword: ");
+    hangUp();
 }
 
 bool termLine(char *buf, size_t n)
@@ -149,13 +289,24 @@ bool termLine(char *buf, size_t n)
         termBegin();          // the radio may associate after the tool started
     if (!server)
         return false;
+#if !defined(LINO_HOST)
+    if (have_client && WiFi.status() != WL_CONNECTED)
+        hangUp();             // the radio went: the client cannot be there
+#endif
     if (have_client && !client.connected())
         hangUp();
-    // One client at a time; a second is told so and closed.
-    WiFiClient incoming = server->available();   // accept() is newer than some cores
+    if (have_client && !authed && millis() - login_t0 > LOGIN_MS) {
+        client.print("too slow\r\n");
+        hangUp();
+    }
+    // One client at a time; a second is told so and closed, as is anyone while locked.
+    WiFiClient incoming = server->available();
     if (incoming) {
         if (have_client) {
             incoming.print("busy: another terminal is connected\r\n");
+            incoming.stop();
+        } else if ((int32_t)(millis() - locked_until) < 0) {
+            incoming.print("locked: too many wrong answers, try again shortly\r\n");
             incoming.stop();
         } else {
             client = incoming;
@@ -166,17 +317,21 @@ bool termLine(char *buf, size_t n)
     }
     if (!have_client)
         return false;
-    while (client.available()) {
+    while (have_client && client.available()) {
         const int c = client.read();
         if (c < 0) break;
-        if (c == '\r') continue;
-        if (c == '\n') {
+        if (authed) last_input = millis();      // any byte, the keep-alive NUL included
+        if (c == 0) continue;
+        if (c == '\n' && rx_cr) { rx_cr = false; continue; }
+        rx_cr = (c == '\r');
+        if (c == '\r' || c == '\n') {
             rx[rx_len] = '\0';
             rx_len = 0;
             if (!authed) {
-                checkPassword(rx);
+                checkAnswer(rx);
                 return false;
             }
+            client.print("\r\n");
             strncpy(buf, rx, n - 1);
             buf[n - 1] = '\0';
             return true;
@@ -185,8 +340,14 @@ bool termLine(char *buf, size_t n)
             hangUp();
             return false;
         }
-        if (rx_len < sizeof(rx) - 1)
+        if (c == 0x08 || c == 0x7f) {
+            if (rx_len) { rx_len--; if (authed) client.print("\b \b"); }
+            continue;
+        }
+        if (c >= 0x20 && c < 0x7f && rx_len < sizeof(rx) - 1) {
             rx[rx_len++] = (char)c;
+            if (authed) client.write((uint8_t)c);        // the answer is not echoed
+        }
     }
     return false;
 }
@@ -196,5 +357,7 @@ void termBegin(void) {}
 void termEnd(void) {}
 bool termLine(char *, size_t) { return false; }
 bool termDropped(void) { return false; }
+uint32_t termLastInput(void) { return millis(); }
+void termTouch(void) {}
 const char *termAddress(void) { return ""; }
 #endif

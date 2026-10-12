@@ -60,7 +60,7 @@ public:
     size_t write(const uint8_t *buf, size_t n) override
     {
         if (fd_ < 0) return 0;
-        const ssize_t w = send(fd_, buf, n, MSG_NOSIGNAL);
+        const ssize_t w = send(fd_, buf, n, MSG_NOSIGNAL | MSG_DONTWAIT);
         return w > 0 ? (size_t)w : 0;
     }
     using Print::write;
@@ -88,7 +88,9 @@ public:
         struct sockaddr_in a = {};
         a.sin_family = AF_INET;
         a.sin_port = htons(port_);
-        a.sin_addr.s_addr = htonl(INADDR_ANY);
+        // Loopback only: the Sim MCU runs beside a gate's other cells, and nothing but
+        // this computer should drive it.
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (bind(fd_, (struct sockaddr *)&a, sizeof(a)) != 0 || listen(fd_, 1) != 0) {
             close(fd_);
             fd_ = -1;
@@ -97,10 +99,11 @@ public:
     WiFiClient available()
     {
         if (fd_ < 0) return WiFiClient();
-        const int c = accept4(fd_, NULL, NULL, SOCK_CLOEXEC);
+        const int c = accept4(fd_, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
         return c >= 0 ? WiFiClient(c) : WiFiClient();
     }
     void stop() { if (fd_ >= 0) close(fd_); fd_ = -1; }
+    explicit operator bool() const { return fd_ >= 0; }   // listening
 private:
     uint16_t port_;
     int fd_;

@@ -80,5 +80,12 @@ const char *toolStopReason(void);
 [[noreturn]] void toolAbort(const char *why);
 // Motors off, all four.
 void toolMotorsOff(void);
+// The env names no I2C bus: neither both pins nor a fixed bus (`i2c_bus`). Nothing scans
+// a bus nobody wired -- its default pins may be a motor's.
+bool toolI2cUnassigned(void);
+
+// main.cpp's watchdog, for the tool: armed in toolSetup(), fed from every wait.
+void linoWdtBegin(void);
+void linoWdtFeed(void);
 
 #endif // TOOLS_H

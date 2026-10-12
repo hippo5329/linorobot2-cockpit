@@ -1346,8 +1346,8 @@ SIM_SWITCHES = ("sim_wheel", "sim_ld19", "sim_sonar", "sim_battery", "sim_env")
 # on a simulated IMU printed uninitialised floats -- ACC Y / GYR Z of 90-180
 # digits -- and claimed "[+] IMU initialized successfully" on a board with no IMU.
 # i2c_detect is judged apart (tool_refusal): by the config assigning I2C pins, not by
-# a simulated part. The firmware's toolSelect() applies the same rules
-# (firmware/src/tools/tools.cpp).
+# a simulated part. The firmware applies the same rules (firmware/src/tools/tools.cpp):
+# legacyRefusal() boots base for a refused app name, simulatedFor() refuses the command.
 REAL_ONLY_TOOLS = {
     "test_sensors":  ("imu", ("sim", "none"), "the IMU"),
     "test_motors":   ("sim_wheel", "1", "the wheels"),

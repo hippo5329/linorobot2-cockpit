@@ -173,6 +173,14 @@ def is_pico_family(env: str) -> bool:
     return any(k in env_lower for k in ("pico", "rp2040", "rp2350", "rpipico", "xrp"))
 
 
+def has_radio(env: str) -> bool:
+    """A board that can be a Wi-Fi robot: the ESP32 family, and every RP2 image (they are
+    all W builds: Pico W, Pico 2 W, the XRP's RM2). A Wi-Fi robot needs its network keys
+    and an OTA password before it leaves the cable -- the password also guards the tool's
+    network terminal and lino-tool (2026-10-12)."""
+    return is_esp_family(env) or env.startswith(("pico", "xrp"))
+
+
 def is_esp_family(env: str) -> bool:
     env_lower = (env or "").lower()
     return any(k in env_lower for k in ("esp32", "esp32s3", "espressif", "gendrv"))
@@ -1576,7 +1584,7 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
 
     # A Wi-Fi robot needs its network before anything goes on the board: after this
     # flash it may leave the cable, and the placeholder SSID joins nothing.
-    if params and is_esp_family(getattr(args, "env", "") or ""):
+    if params and has_radio(getattr(args, "env", "") or ""):
         sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
         import mcu_env
         if mcu_env.wifi_keys_missing(os.path.abspath(params)):
@@ -1585,7 +1593,7 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     # A Wi-Fi robot's env carries its OTA password, generated here on its first flash
     # when it has none: every write after this one comes over the air and must
     # authenticate. A serial robot gets none (its radio is off).
-    if is_esp_family(getattr(args, "env", "") or ""):
+    if has_radio(getattr(args, "env", "") or ""):
         try:
             sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
             import mcu_env
@@ -2091,10 +2099,11 @@ def main() -> int:
                              "whatever the config says, real is the opposite, config "
                              "(default) lets the YAML stand. The status LED is never touched.")
     parser.add_argument("--app", default=None,
-                        help="application the unified image should boot: base, test_sensors, "
-                             "test_motors, test_acc, i2c_detect or adc_calibrate. "
-                             "Written as the `app` key of the env block, so switching tools "
-                             "rewrites 4 KB of flash instead of rebuilding.")
+                        help="application the image should boot: base (the robot), or tool "
+                             "(the command shell; scripts/lino_tool.py drives it). The former "
+                             "tools' names -- test_sensors, test_motors, test_acc, i2c_detect, "
+                             "adc_calibrate -- boot the tool running that test. Written as the "
+                             "`app` key of the env block: 4 KB of flash, no rebuild.")
     # No default board name here. It used to be "pico2", so a hand-run flash of any
     # other board announced "Flashing firmware: pico2" and "flashed successfully to
     # pico2" while writing an ESP32 (seen on the bench, 2026-09-18, flashing the

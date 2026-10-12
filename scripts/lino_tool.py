@@ -12,13 +12,16 @@ command shell on its console. This script gets it there and drives it:
     python3 scripts/lino_tool.py --port /dev/ttyUSB0 --env esp32 --baud 1500000 \\
         -c "i2c" -c "motor 1 30" -c "sleep 5" -c "stop" --base
 
-    # Wi-Fi: "lino-tool" to the ping port (answered with a nonce when the board has an
-    # OTA password: the reply is md5(password:nonce), as OTA does), then the TCP terminal
+    # Wi-Fi: "lino-tool" to the ping port, answered with a nonce, and the reply is
+    # md5(password:nonce), as OTA does; then the TCP terminal, logged in the same way --
+    # the OTA password never crosses the network
     python3 scripts/lino_tool.py --params robot_config.yaml -c "sensors" -c "sleep 3" -c stop
 
 The commands (the tool's `help`): i2c [secs], sensors, motor <1-4|all> <pct> [secs],
 motors [pct], acc [ms], adc, set <key> <value>, get [key], status, base. `stop`, `s` or an
-empty line stops the running one.
+empty line stops the running one. On exit this script sends `stop`: a wheel it started is
+never left turning. On the Wi-Fi terminal it sends a keep-alive every second; the board
+stops a drive started there when the terminal goes quiet for 3 s.
 
 Exit 0 when the tool was entered and every command was sent; the transcript is stdout.
 """
@@ -34,43 +37,73 @@ sys.path.insert(0, HERE)
 
 PROMPT = b"tool> "
 ENTERED = (b"[app] tool", b"[tool] ready")
+# Commands that keep running until `stop` (or their own time), and the lines that end
+# the long blocking ones.
+RUNNING = ("sensors", "motor", "motors")
+ENDS = {"acc": (b"[test_acc] done", b"[test_acc] STOPPED", b"test_acc refused", b"[tool] STOPPED"),
+        "adc": (b"[ADC_JSON]", b"[tool] STOPPED")}
 
 
 def log(msg):
     print(f"[lino_tool] {msg}", flush=True)
 
 
+def tool_answer(password: str, nonce: str) -> str:
+    """md5(password:nonce): the ping port's lino-tool and the terminal's login alike."""
+    return hashlib.md5(f"{password}:{nonce}".encode()).hexdigest()
+
+
 # ---------------------------------------------------------------- serial
-def reboot_serial(env: str, port: str, baud: int) -> bool:
-    """Restart the board so its tool window opens. An ESP32: EN, through the bridge's
-    auto-reset circuit. An RP2: the 1200-baud touch into BOOTSEL, then `picotool reboot`
-    into the application -- the flash's own path. A USB reset is no reboot there: measured
-    2026-10-12 on a running Pico 2, the port re-enumerated and no banner followed, and the
-    firmware has no picotool reset interface for a running board."""
-    import flash_mcu
-    if env.startswith("esp32"):
-        import mcu_probe
-        return mcu_probe.esp32_boot_app(port, baud)
-    if env.startswith("pico") or env.startswith("xrp"):
-        return flash_mcu.pulse_1200_baud(port) and flash_mcu.rp2_reboot_into_app(env)
-    return False
-
-
 class SerialLink:
-    def __init__(self, port: str, baud: int):
+    def __init__(self, port: str, baud: int, env: str):
         import serial
-        self.port, self.baud = port, baud
-        self.s = None
+        self.port, self.baud, self.env = port, baud, env
         self.serial = serial
+        self.s = None
+
+    def _new(self):
+        # An ESP32's auto-reset circuit reads DTR/RTS as EN/IO0: open with both released,
+        # or the open itself can land it in the ROM's download mode (mcu_probe.py).
+        s = self.serial.Serial()
+        s.port, s.baudrate, s.timeout = self.port, self.baud, 0.05
+        s.dtr = False
+        s.rts = False
+        s.open()
+        return s
 
     def open(self, timeout: float = 15.0) -> bool:
         end = time.time() + timeout
         while time.time() < end:
             try:
-                self.s = self.serial.Serial(self.port, self.baud, timeout=0.05)
+                self.s = self._new()
                 return True
             except Exception:
                 time.sleep(0.1)       # an RP2's port is re-enumerating after the reboot
+        return False
+
+    def reboot(self) -> bool:
+        """Restart the board so its tool window opens. An ESP32: EN, pulsed on this
+        handle. An RP2: the 1200-baud touch into BOOTSEL, then `picotool reboot` into the
+        application, both aimed at THIS port's board. A USB reset is no reboot there:
+        measured 2026-10-12 on a running Pico 2, the port re-enumerated and no banner
+        followed, and the firmware has no picotool reset interface for a running board."""
+        import flash_mcu
+        flash_mcu.release_serial_port(self.port)          # a micro-ROS agent lets go
+        if self.env.startswith("esp32"):
+            if not self.open():
+                return False
+            self.s.rts = True             # EN low
+            time.sleep(0.1)
+            self.s.rts = False
+            return True
+        if self.env.startswith(("pico", "xrp")):
+            flash_mcu.remember_usb_path(self.port)        # picotool aims at this board only
+            if not flash_mcu.pulse_1200_baud(self.port):
+                return False
+            if not flash_mcu.rp2_reboot_into_app(self.env):
+                return False
+            return self.open()
+        log(f"no reboot for env '{self.env}': give one of esp32*, esp32s3*, pico*, pico2*, xrp*")
         return False
 
     def write(self, data: bytes):
@@ -82,18 +115,17 @@ class SerialLink:
         except Exception:
             return b""
 
+    def keepalive(self):
+        pass                              # only the Wi-Fi terminal needs one
+
     def close(self):
         if self.s:
             self.s.close()
 
 
 # ---------------------------------------------------------------- Wi-Fi
-def tool_answer(password: str, nonce: str) -> str:
-    return hashlib.md5(f"{password}:{nonce}".encode()).hexdigest()
-
-
 def request_tool_udp(ip: str, ping_port: int, password: str, timeout: float = 2.0) -> bool:
-    """"lino-tool", and the nonce's answer when the board asks for one."""
+    """"lino-tool", and the nonce's answer. A board without an OTA password refuses."""
     sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sk.settimeout(timeout)
     try:
@@ -101,7 +133,7 @@ def request_tool_udp(ip: str, ping_port: int, password: str, timeout: float = 2.
         reply = sk.recvfrom(512)[0].decode(errors="replace")
         if reply.startswith("lino-tool nonce "):
             if not password:
-                log("the board has an OTA password and none was given (--password or --params)")
+                log("the board asks for its OTA password and none was given (--params or --password)")
                 return False
             nonce = reply.split()[2]
             sk.sendto(f"lino-tool {tool_answer(password, nonce)}".encode(), (ip, ping_port))
@@ -119,6 +151,8 @@ class TcpLink:
     def __init__(self, ip: str, port: int, password: str):
         self.ip, self.port, self.password = ip, port, password
         self.s = None
+        self.closed = False
+        self.last_keep = 0.0
 
     def open(self, timeout: float = 30.0) -> bool:
         end = time.time() + timeout
@@ -131,22 +165,34 @@ class TcpLink:
                 time.sleep(0.5)
         if not self.s:
             return False
-        got = self._until((b"password: ", PROMPT), 5)
-        if got.endswith(b"password: "):
-            self.s.sendall((self.password or "").encode() + b"\n")
-            got = self._until((PROMPT, b"wrong password"), 5)
-            if b"wrong password" in got or not got.endswith(PROMPT):
-                log("the terminal refused the password")
-                return False
-        sys.stdout.write(got.decode(errors="replace"))
+        got = self._until((b"login: ", b"busy:", b"locked:"), 5)
+        if b"busy:" in got or b"locked:" in got:
+            log(got.decode(errors="replace").strip())
+            return False
+        nonce = None
+        for line in got.decode(errors="replace").splitlines():
+            if line.startswith("nonce "):
+                nonce = line.split()[1]
+        if not nonce or b"login: " not in got:
+            log("the terminal did not offer a login")
+            return False
+        if not self.password:
+            log("the terminal asks for the OTA password's answer and none was given")
+            return False
+        self.s.sendall(tool_answer(self.password, nonce).encode() + b"\n")
+        got = self._until((PROMPT, b"wrong answer", b"too slow"), 5)
+        if PROMPT not in got:
+            log("the terminal refused the login")
+            return False
+        sys.stdout.write(got.split(b"ok\r\n", 1)[-1].decode(errors="replace"))
         return True
 
     def _until(self, endings, timeout):
         buf = b""
         end = time.time() + timeout
-        while time.time() < end:
+        while time.time() < end and not self.closed:
             buf += self.read()
-            if any(buf.endswith(e) or e in buf for e in endings):
+            if any(e in buf for e in endings):
                 return buf
         return buf
 
@@ -156,11 +202,23 @@ class TcpLink:
     def read(self) -> bytes:
         try:
             d = self.s.recv(4096)
-            return d if d else b""
+            if d == b"":
+                self.closed = True    # the board hung up
+            return d
         except (socket.timeout, BlockingIOError):
             return b""
         except OSError:
+            self.closed = True
             return b""
+
+    def keepalive(self):
+        # A NUL a second: the board stops a drive started here when the terminal goes quiet.
+        if time.time() - self.last_keep >= 1.0 and not self.closed:
+            self.last_keep = time.time()
+            try:
+                self.s.sendall(b"\0")
+            except OSError:
+                self.closed = True
 
     def close(self):
         if self.s:
@@ -168,19 +226,23 @@ class TcpLink:
 
 
 # ---------------------------------------------------------------- driving it
-def pump(link, seconds: float, out=sys.stdout, until=None) -> bytes:
-    """Copy the board's output for `seconds` (or until a byte string appears)."""
+def pump(link, seconds: float, until=None) -> bytes:
+    """Copy the board's output for `seconds`, or until one of `until` appears."""
     buf = b""
     end = time.time() + seconds
     while time.time() < end:
+        link.keepalive()
         d = link.read()
         if d:
             buf += d
-            out.write(d.decode(errors="replace"))
-            out.flush()
-            if until and until in buf:
+            sys.stdout.write(d.decode(errors="replace"))
+            sys.stdout.flush()
+            if until and any(u in buf for u in until):
                 break
         else:
+            if getattr(link, "closed", False):
+                log("the board hung up")
+                break
             time.sleep(0.02)
     return buf
 
@@ -200,21 +262,38 @@ def catch_window(link, seconds: float) -> bool:
             sys.stdout.write(d.decode(errors="replace"))
             sys.stdout.flush()
             if any(e in buf for e in ENTERED):
-                pump(link, 4, until=PROMPT)
+                pump(link, 4, until=(PROMPT,))
                 return True
     return False
 
 
-def run_commands(link, commands) -> None:
+def run_commands(link, commands) -> bool:
+    """Send each; returns whether something that drives may still be running."""
+    driving = False
     for cmd in commands:
-        if cmd.startswith("sleep "):
-            pump(link, float(cmd.split()[1]))
+        words = cmd.split()
+        if words[:1] == ["sleep"]:
+            if len(words) != 2:
+                log("sleep <seconds>")
+                continue
+            pump(link, float(words[1]))
             continue
         link.write(cmd.encode() + b"\r\n")
-        # A command that ends prints the prompt again; one that runs (sensors, motor,
-        # motors, i2c <secs>) does not, and the next entry is usually `sleep` or `stop`.
-        pump(link, 2.0 if cmd.split()[0] in ("sensors", "motor", "motors") else 30.0,
-             until=PROMPT)
+        head = words[0] if words else ""
+        if not words or head in ("stop", "s"):
+            driving = False
+            pump(link, 2.0, until=(PROMPT,))
+        elif head in ENDS:
+            driving = head == "acc"
+            pump(link, 900.0, until=ENDS[head])
+            pump(link, 2.0, until=(PROMPT,))
+            driving = False
+        elif head in RUNNING or (head == "i2c" and len(words) > 1):
+            driving = driving or head in ("motor", "motors")
+            pump(link, 2.0)
+        else:
+            pump(link, 30.0, until=(PROMPT,))
+    return driving
 
 
 def interactive(link) -> None:
@@ -227,13 +306,14 @@ def interactive(link) -> None:
     log("terminal: Ctrl-] leaves")
     try:
         tty.setcbreak(fd)
-        while True:
+        while not getattr(link, "closed", False):
+            link.keepalive()
             r, _, _ = select.select([fd], [], [], 0.02)
             if r:
                 ch = os.read(fd, 64)
                 if b"\x1d" in ch:
                     break
-                link.write(ch.replace(b"\n", b"\r\n"))
+                link.write(ch.replace(b"\n", b"\r"))
             d = link.read()
             if d:
                 sys.stdout.write(d.decode(errors="replace"))
@@ -245,11 +325,12 @@ def interactive(link) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--port", help="the board's USB serial port (else Wi-Fi)")
-    ap.add_argument("--env", default="pico2", help="PlatformIO env: pico, pico2, esp32, esp32s3 ...")
+    ap.add_argument("--env", help="PlatformIO env, for the reboot over USB: esp32, esp32s3, pico, pico2 ...")
     ap.add_argument("--baud", type=int, default=None, help="serial rate (default: the config's, else 921600)")
     ap.add_argument("--params", help="the robot config: baud, OTA password, ports, and on Wi-Fi its address")
     ap.add_argument("--ip", help="the board's address on Wi-Fi (else found from --params)")
-    ap.add_argument("--password", default=None, help="OTA password (default: the robot's secrets)")
+    ap.add_argument("--password", default=None,
+                    help="OTA password (default: the robot's secrets; on the command line it shows in ps)")
     ap.add_argument("--no-reboot", action="store_true", help="the board is already in the tool")
     ap.add_argument("-c", "--command", action="append", default=[], help="a tool command; repeat")
     ap.add_argument("--base", action="store_true", help="leave the tool when done (restart into base)")
@@ -265,20 +346,26 @@ def main() -> int:
     password = args.password if args.password is not None else str(env_vals.get("ota_password") or "")
 
     if args.port:
-        link = SerialLink(args.port, baud)
-        if not args.no_reboot:
-            log(f"rebooting the board on {args.port} into its tool window")
-            reboot_serial(args.env, args.port, baud)
-        if not link.open():
-            log(f"cannot open {args.port}")
-            return 1
-        if not args.no_reboot and not catch_window(link, args.window):
-            log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
-            link.close()
-            return 1
+        if not args.env and not args.no_reboot:
+            log("--env is needed to reboot the board over USB (esp32, esp32s3, pico, pico2 ...)")
+            return 2
+        link = SerialLink(args.port, baud, args.env or "")
         if args.no_reboot:
+            if not link.open():
+                log(f"cannot open {args.port}")
+                return 1
             link.write(b"\r\n")
-            pump(link, 1, until=PROMPT)
+            pump(link, 1, until=(PROMPT,))
+        else:
+            log(f"rebooting the board on {args.port} into its tool window")
+            if not link.reboot():
+                log("the reboot failed: nothing to catch")
+                link.close()
+                return 1
+            if not catch_window(link, args.window):
+                log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
+                link.close()
+                return 1
     else:
         ip = args.ip
         if not ip and args.params:
@@ -303,17 +390,26 @@ def main() -> int:
             log(f"no terminal at {ip}:{link.port}")
             return 1
 
+    driving = True
     try:
         if args.command:
-            run_commands(link, args.command)
+            driving = run_commands(link, args.command)
         elif sys.stdin.isatty():
             interactive(link)
         if args.base:
             link.write(b"stop\r\n")
-            time.sleep(0.3)
+            pump(link, 0.5)
             link.write(b"base\r\n")
-            pump(link, 2, until=b"restarting into base")
+            pump(link, 3, until=(b"restarting into base",))
+            driving = False
     finally:
+        # Never leave a wheel turning: a closed serial port stops nothing on the board.
+        if driving and not getattr(link, "closed", False):
+            try:
+                link.write(b"stop\r\n")
+                pump(link, 1.0, until=(PROMPT,))
+            except Exception:
+                pass
         link.close()
     return 0
 

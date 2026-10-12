@@ -12,6 +12,7 @@
 #include "board_init.h"
 #include "mcu_env.h"
 #include "syslog.h"
+#include "tools.h"
 
 namespace tool_hw {
 
@@ -64,20 +65,25 @@ void init(void)
     // while a command drives. With no real LiDAR in the env it stays off.
     initLidar();
 
-    Serial.println("Scanning I2C bus...");
-    i2cScanTable();
     // The same probe and adoption rule as base, so the tool and the robot firmware
-    // never disagree about what is fitted. Real chips only (envRealOnly).
-    imu_name = envGet("imu", defaultIMUName());
-    mag_name = envGet("mag", defaultMAGName());
-    i2cProbeSelect(&imu_name, &mag_name);
-    if ((imu = createIMU(imu_name)))
-        imu_ok = imu->init();
-    if ((mag = createMAG(mag_name)))
-        mag_ok = mag->init();
+    // never disagree about what is fitted. Real chips only (envRealOnly). A board whose
+    // env names no I2C bus is not scanned: the core's default pins may be a motor's.
+    if (toolI2cUnassigned()) {
+        Serial.println("[tool] no I2C bus in the env: no IMU, magnetometer or barometer");
+    } else {
+        Serial.println("Scanning I2C bus...");
+        i2cScanTable();
+        imu_name = envGet("imu", defaultIMUName());
+        mag_name = envGet("mag", defaultMAGName());
+        i2cProbeSelect(&imu_name, &mag_name);
+        if ((imu = createIMU(imu_name)))
+            imu_ok = imu->init();
+        if ((mag = createMAG(mag_name)))
+            mag_ok = mag->init();
+    }
     initBattery();
     initRange();
-    env_ok = initEnv();
+    env_ok = !toolI2cUnassigned() && initEnv();
     initBoardLate();
     report();
     syslog(LOG_INFO, "%s tool ready %lu", __FUNCTION__, millis());

@@ -64,6 +64,9 @@ using tool_hw::battery_msg;
 using tool_hw::range_msg;
 
 static unsigned long lastLogTime = 0;
+// What was found, again every 5 s: a host that opened the port after the tool started (an
+// RP2's USB drops what nobody reads) still sees the "[+] IMU initialized" lines.
+static unsigned long lastReport = 0;
 
 // `sensors`: the header and what was found, then the stream until stop.
 void begin()
@@ -74,6 +77,7 @@ void begin()
     tool_hw::report();
     Serial.println("Starting real-time sensor stream (50 Hz poll, 1 Hz output)...\n");
     lastLogTime = 0;
+    lastReport = millis();
 }
 
 bool step()
@@ -96,6 +100,11 @@ bool step()
     *range_msg = getRange();
 
     unsigned long currentTime = millis();
+    if (currentTime - lastReport >= 5000)
+    {
+        lastReport = currentTime;
+        tool_hw::report();
+    }
     if (currentTime - lastLogTime >= 1000)
     {
         lastLogTime = currentTime;

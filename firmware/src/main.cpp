@@ -754,6 +754,9 @@ static inline void wdtFeed()
 static inline void wdtBegin() {}
 static inline void wdtFeed()  {}
 #endif
+// The tool's handles on the same watchdog (tools.h).
+void linoWdtBegin(void) { wdtBegin(); }
+void linoWdtFeed(void)  { wdtFeed(); }
 
 // An env key read as a boolean. hw_factory has its own copy of this three-liner
 // and it stays there: one is file-static in a library, this one is file-static
@@ -1605,9 +1608,17 @@ void loop() {
         wdtFeed();
         return;
     }
-    // "lino-tool" on the ping port: restart into the tool (tools.h toolRestart).
-    if (hostToolRequested())
+    // "lino-tool" on the ping port: restart into the tool (tools.h toolRestart). The
+    // drivetrain stops first -- on a dual-core robot the control task would otherwise
+    // drive the last twist on the other core until the reset.
+    if (hostToolRequested()) {
+#ifdef HAS_DUAL_CORE
+        if (dual_core && controlTaskHandle)
+            vTaskSuspend(controlTaskHandle);
+#endif
+        fullStop();
         toolRestart(true);
+    }
     simWallLedService();
     reportSampleAge();
     diagCount(DIAG_LOOP);

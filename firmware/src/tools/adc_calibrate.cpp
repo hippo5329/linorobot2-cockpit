@@ -118,6 +118,7 @@ static void measureCurve()
 
     Serial.print(F("Test Linearity "));
     for (int pass = 0; pass < SWEEP_PASSES; pass++) {
+        linoWdtFeed();
         if (pass % 100 == 0) Serial.print(".");
         for (int k = 0; k < DAC_STEPS; k++) {
             dacWrite(dac_pin, k & 0xff);

@@ -163,8 +163,8 @@ function initAdcChart() {
 // Sweeping a hardware DAC is the only way to measure the curve, and only the
 // classic ESP32 and the ESP32-S2 have one -- the ESP32-S3, the C-series and the
 // RP2040/RP2350 do not. adc_lut.h gates the whole facility on exactly this
-// condition and adc_calibrate refuses to run anywhere else, printing
-// "adc_calibrate is an ESP32-only tool" and then idling forever.
+// condition, and elsewhere app=adc_calibrate boots the robot firmware instead (the tool
+// has no `adc` command there).
 //
 // Which is the problem: the panel offered it on every board. Flashing it to a
 // Pico spends a flash cycle and leaves the robot running a tool that can only

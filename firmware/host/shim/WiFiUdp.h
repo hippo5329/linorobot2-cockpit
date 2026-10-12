@@ -38,7 +38,7 @@ public:
     int begin(uint16_t local_port)
     {
         stop();
-        _fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        _fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (_fd < 0) { Serial.printf("[host-udp] socket: %s\n", strerror(errno)); return 0; }
         int on = 1;
         ::setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));

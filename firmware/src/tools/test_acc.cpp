@@ -163,6 +163,7 @@ static void waitMs(uint32_t ms)
         trackHeading();
         runWifis();
         runOta();
+        linoWdtFeed();
         if (toolStopRequested())
             halt(toolStopReason());
         const int32_t left = (int32_t)(end - millis());
@@ -232,6 +233,10 @@ static void prepare()
     total_motors = tool_hw::total_motors;
     imu_heading = 0.0f;
     heading_us = 0;
+    // Where the wheels think the robot is starts at zero for every run: an `acc` after
+    // another, or after a `motor`, must not carry its travel in.
+    home_x = home_y = odom_th = 0.0f;
+    for (int i = 0; i < 4; i++) { wheel_net_rev[i] = 0.0f; wheel_read_us[i] = 0; }
     for (int i = 0; i < 4; i++) readRPM(i);   // the baseline: travel counts from here
     waitMs(2000);
 }

@@ -153,8 +153,11 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
             }
         delayMicroseconds(100);
         // A second is long to wait for `stop` with a wheel turning.
-        if ((millis() - t0) % 10 == 0 && toolStopRequested())
-            toolAbort(toolStopReason());
+        if ((millis() - t0) % 10 == 0) {
+            linoWdtFeed();
+            if (toolStopRequested())
+                toolAbort(toolStopReason());
+        }
     }
 }
 
