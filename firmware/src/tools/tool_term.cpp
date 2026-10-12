@@ -8,6 +8,15 @@
 #if defined(HAS_WIFI) || defined(LINO_HOST)
 #include <WiFi.h>
 
+// An address as text, by its bytes: every core's IPAddress has operator[], the host's
+// has no String to convert to.
+static const char *ipText(const IPAddress &ip)
+{
+    static char t[16];
+    snprintf(t, sizeof(t), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+    return t;
+}
+
 // The console's copy to the client: lino_console on a board, the host Serial on the Sim MCU.
 static void consoleNet(Print *p)
 {
@@ -57,7 +66,7 @@ void termBegin(void)
         return;
     server = new WiFiServer(port);
     server->begin();
-    snprintf(addr, sizeof(addr), "%s:%u", WiFi.localIP().toString().c_str(), (unsigned)port);
+    snprintf(addr, sizeof(addr), "%s:%u", ipText(WiFi.localIP()), (unsigned)port);
     Serial.printf("[tool] terminal on tcp %s%s\n", addr, password() ? " (OTA password)" : "");
     syslog(LOG_INFO, "tool terminal on tcp %s", addr);
 }
@@ -122,12 +131,12 @@ static void checkPassword(const char *line)
         authed = true;
         consoleNet(&client);
         client.print("ok\r\ntool> ");
-        syslog(LOG_INFO, "tool terminal: client %s in", client.remoteIP().toString().c_str());
+        syslog(LOG_INFO, "tool terminal: client %s in", ipText(client.remoteIP()));
         return;
     }
     if (++tries >= 3) {
         client.print("wrong password\r\n");
-        syslog(LOG_WARNING, "tool terminal: 3 wrong passwords from %s", client.remoteIP().toString().c_str());
+        syslog(LOG_WARNING, "tool terminal: 3 wrong passwords from %s", ipText(client.remoteIP()));
         hangUp();
         return;
     }
