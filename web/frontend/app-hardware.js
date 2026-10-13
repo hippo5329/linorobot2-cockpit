@@ -1435,6 +1435,17 @@ async function saveCurrentHardwareConfig(opts = {}) {
     if (result.success) {
       if (auto) logLine(`${result.header_ok === false ? "⚠️" : "💾"} saved to ${state.robot_name}`);
       else logLine(`${result.header_ok === false ? "⚠️" : "✅"} ${result.message}`);
+      // The first pin made it a real robot: the backend turned its simulated devices off.
+      // Untick them here too, or the next save would send them back on.
+      const simOff = result.sim_turned_off || [];
+      simOff.forEach((key) => {
+        const box = document.getElementById(`chk-sim-${key.replace(/^use_sim_/, "")}`);
+        if (box) box.checked = false;
+      });
+      if (simOff.length) {
+        logLine(`🔧 A pin is assigned, so ${state.robot_name} is a real robot: simulation turned off ` +
+                `(${simOff.map((k) => k.replace(/^use_sim_/, "")).join(", ")}).`);
+      }
       (result.pin_findings || []).forEach((f) => logLine(`[pins] ${f.level}: ${f.message}`));
       renderPinFindings(result.pin_findings, result.header_ok !== false);
       renderGeometryWarnings(result.geometry_warnings);

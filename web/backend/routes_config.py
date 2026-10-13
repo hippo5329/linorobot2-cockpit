@@ -314,6 +314,10 @@ async def api_save_hardware_config(request: Request):
     else:
         nav2_error = None
 
+    # The first pin assigned makes a bare module a real robot, and a real robot simulates
+    # nothing: its simulated devices go off in the saved config, not only in Real mode.
+    sim_turned_off = one_click_pipeline.simulate_nothing_if_real(params)
+
     save_params(params)
     findings = [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)]
     import lidar_link
@@ -329,6 +333,9 @@ async def api_save_hardware_config(request: Request):
                    f"error(s) for [{controller_name}]. Fix them below and save again.")
     else:
         message = f"Hardware config saved, but the header generator failed for [{controller_name}]."
+    if sim_turned_off:
+        message += (" A pin is assigned, so this is a real robot: simulation turned off ("
+                    + ", ".join(k[len("use_sim_"):] for k in sim_turned_off) + ").")
     if nav2_changes:
         message += (f" Nav2 limits re-derived from the motors "
                     f"({len(nav2_changes)} value(s) changed).")
@@ -345,6 +352,7 @@ async def api_save_hardware_config(request: Request):
         "header_stdout": res.stdout,
         "header_stderr": res.stderr,
         "pin_findings": findings,
+        "sim_turned_off": sim_turned_off,
         **description,
     }
 
@@ -368,7 +376,11 @@ async def api_toggle_sim_mode(request: Request):
     if not enabled and str(ctrl.get("name") or "").lower() == SIM_MCU:
         raise HTTPException(status_code=400, detail=(
             "The Sim MCU is simulation only. To design real hardware, pick your board "
-            "on the Base & MCU tab."))
+            "on the MCU & Sim tab."))
+    if enabled and one_click_pipeline.is_real_robot(params):
+        raise HTTPException(status_code=400, detail=(
+            "This robot is real (it has pins assigned, or was built from a design), and a real "
+            "robot simulates nothing. Clear its pins, or pick No design, to simulate it."))
 
     sensors = ctrl.setdefault("sensors", {})
     sensors["use_sim_wheel"] = enabled

@@ -347,6 +347,26 @@ def is_real_robot(params: dict, robot_name: str = None) -> bool:
                       is_bare_config(params)) in ("design", "real")
 
 
+def simulate_nothing_if_real(params: dict, robot_name: str = None) -> list:
+    """A real robot simulates nothing: turn every `use_sim_*` flag off when the config is real
+    (a pin assigned, or built from a design). Returns the flags it turned off, in order.
+
+    User, 2026-10-13: "when user assign a pin, it moves from bare module to a real robot, turn
+    sim mode sim devices off automatically." The pipeline's Real mode already ignored the
+    flags, but the saved config kept them: the Sensors tab still ticked them, Flash MCU wrote
+    them into the env, the tool refused the wheels as simulated, and with sim_wheel on every
+    motor and encoder pin went to -1 (mcu_env.disconnect_simulated_drivetrain)."""
+    if not is_real_robot(params, robot_name):
+        return []
+    sensors = (params.get("base_controller") or {}).get("sensors")
+    if not isinstance(sensors, dict):
+        return []
+    turned = [k for k, v in sensors.items() if k.startswith("use_sim_") and v]
+    for k in turned:
+        sensors[k] = False
+    return turned
+
+
 def is_generated_robot(robot_name: str) -> bool:
     """A bare module or the Sim MCU robot (`bare_*`), generated rather than designed.
 
