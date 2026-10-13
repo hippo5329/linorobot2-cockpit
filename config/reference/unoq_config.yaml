@@ -534,7 +534,14 @@ nav2:
       state_topic: collision_monitor_state
       transform_tolerance: 0.2
       source_timeout: 1.0
-      base_shift_correction: true
+      # false on the UNO Q (2026-10-14, MC200): with it on, every scan is shifted to the robot's
+      # pose now through odom AT THE SCAN'S STAMP, and this robot's scans run ~50 ms ahead of its
+      # newest odom TF while the QRB2210 cannot hold the controller's 20 Hz under Nav2 (10.4 Hz).
+      # The lookup failed ("extrapolation into the future") 125 times in one soak chunk and each
+      # failure stopped the robot ("invalid source"): 26 "Failed to make progress". Off, the
+      # monitor takes the newest transform (Nav2's documented trade: a less exact source pose for
+      # less CPU); source_timeout still stops the robot when the LiDAR goes quiet.
+      base_shift_correction: false
       stop_pub_timeout: 2.0
       polygons:
       - FootprintApproach

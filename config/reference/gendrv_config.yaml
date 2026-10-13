@@ -551,7 +551,13 @@ nav2:
       state_topic: collision_monitor_state
       transform_tolerance: 0.2
       source_timeout: 1.0
-      base_shift_correction: true
+      # false (2026-10-14): with it on, each scan is shifted to the robot's pose now through odom AT
+      # THE SCAN'S STAMP. On MC200 (UNO Q) scans ran ~50 ms ahead of the newest odom TF while the CPU
+      # held the controller at 10 Hz; the lookup failed ("extrapolation into the future") 125 times in
+      # one soak chunk and each failure stopped the robot ("invalid source"). At these robots' 0.25 m/s
+      # and 10 Hz scans the shift is <= 2.5 cm, far inside the footprint; source_timeout still stops
+      # the robot when the LiDAR goes quiet. Nav2's documented trade: a less exact pose, less CPU.
+      base_shift_correction: false
       stop_pub_timeout: 2.0
       polygons:
       - FootprintApproach

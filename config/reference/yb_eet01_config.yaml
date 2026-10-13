@@ -574,7 +574,8 @@ nav2:
       state_topic: collision_monitor_state
       transform_tolerance: 0.2
       source_timeout: 1.0
-      base_shift_correction: true
+      # false: see gendrv_config.yaml (the donor) -- a stamp lookup that stopped MC200
+      base_shift_correction: false
       stop_pub_timeout: 2.0
       polygons:
       - FootprintApproach
