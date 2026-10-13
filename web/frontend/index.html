@@ -1437,7 +1437,7 @@
             </select>
           </div>
           <div class="form-group u-min-w-220" style="flex:2;">
-            <label for="hw-flash-port" class="form-label">Serial port <span class="input-hint u-font-normal">(synced with Base &amp; MCU)</span></label>
+            <label for="hw-flash-port" class="form-label">Serial port <span class="input-hint u-font-normal">(synced with MCU &amp; Sim)</span></label>
             <input type="text" id="hw-flash-port" class="form-input font-mono" value="" placeholder="pick the board's port">
             <div id="hw-port-chips" class="port-chips-wrap mt-1"></div>
           </div>
@@ -2681,7 +2681,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <h2 style="margin:0;">Container Engine &amp; Image Registry</h2>
         <span class="pill pill-ok">Runtime Environment</span>
       </div>
-      <p class="hint">Select rootless container runtime or native host execution. Note: the base controller and its serial connection are configured centrally in <strong>Base &amp; MCU</strong>. Agent launch and monitoring are handled in <strong>Bringup</strong>.</p>
+      <p class="hint">Select rootless container runtime or native host execution. Note: the base controller and its serial connection are configured centrally in <strong>MCU &amp; Sim</strong>. Agent launch and monitoring are handled in <strong>Bringup</strong>.</p>
       <div class="row" style="align-items: flex-end; gap: 10px;">
         <label style="flex: 1;">Agent Engine
           <select id="cfg-agent-engine">

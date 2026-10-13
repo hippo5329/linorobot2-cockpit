@@ -1090,7 +1090,19 @@ def hardware_env(params: dict) -> dict:
 
     # Hard-iron offsets. Three axes or nothing: an all-zero bias is not a
     # calibration, and a partial one would silently zero the axes it omits.
+    # imu_tuning.mag_bias is tesla, as magnetometer_calibration prints it and as
+    # the firmware subtracts it from /imu/mag. The Sensors tab's three fields are
+    # sensors.mag_bias in uT; they reach the board too, converted, unless
+    # imu_tuning carries its own. Without that fallback a bias typed on the tab
+    # only ever reached a local build (MAG_BIAS), never a release image.
     bias = tuning.get("mag_bias")
+    ut = (sensors.get("mag_bias") if isinstance(sensors, dict) else None)
+    if not (isinstance(bias, (list, tuple)) and len(bias) == 3) \
+            and isinstance(ut, (list, tuple)) and len(ut) == 3:
+        try:
+            bias = [float(v) * 1e-6 for v in ut]
+        except (TypeError, ValueError):
+            bias = None
     if isinstance(bias, (list, tuple)) and len(bias) == 3:
         try:
             values = [float(v) for v in bias]

@@ -572,8 +572,11 @@ def generate_header(params, secrets, controller_name, no_embed_secrets=False, di
         except (TypeError, ValueError):
             bx = by = bz = 0.0
         if any(v != 0.0 for v in (bx, by, bz)):
-            lines.append("// Magnetometer hard-iron bias (uT), subtracted in main.cpp")
-            lines.append(f"#define MAG_BIAS {{{bx}f, {by}f, {bz}f}}")
+            # The Sensors tab's fields are uT; the firmware subtracts in tesla
+            # (sensor_msgs/MagneticField), so 20 uT entered must compile as 2e-05.
+            bx, by, bz = (v * 1e-6 for v in (bx, by, bz))
+            lines.append("// Magnetometer hard-iron bias (tesla; entered in uT), subtracted in main.cpp")
+            lines.append(f"#define MAG_BIAS {{{bx:.9g}f, {by:.9g}f, {bz:.9g}f}}")
             lines.append("")
 
     # Sensors & Bare MCU Fallback

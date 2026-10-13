@@ -736,7 +736,7 @@ async function refreshStatus() {
           mmEl.innerHTML = `⚠️ <b>Board does not match this robot.</b> ` +
             `<code>${escapeHtml(mm.controller)}</code> builds for <b>${escapeHtml(mm.expected)}</b>, ` +
             `but the board on the bus is <b>${escapeHtml(mm.detected)}</b> (${escapeHtml(mm.chip)}). ` +
-            `Editing this design is fine; Flash, 1-Click and app switches are blocked until the ` +
+            `Editing this design is fine; Flash and 1-Click are blocked until the ` +
             `board it is written for is plugged in.`;
           mmEl.hidden = false;
         } else {

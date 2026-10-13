@@ -68,7 +68,8 @@ def test_mag_bias_is_emitted_when_the_config_carries_it():
     cfg = copy.deepcopy(bare_config("pico2"))
     cfg["base_controller"].setdefault("sensors", {})["mag_bias"] = [1.5, -2.25, 0.75]
     header = _header(cfg)
-    assert "#define MAG_BIAS {1.5f, -2.25f, 0.75f}" in header
+    # Entered in uT on the Sensors tab, subtracted in tesla by the firmware.
+    assert "#define MAG_BIAS {1.5e-06f, -2.25e-06f, 7.5e-07f}" in header
 
 
 def test_an_uncalibrated_robot_gets_no_correction():

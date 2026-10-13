@@ -37,7 +37,7 @@ base_controller:
     baudrate: 230400
   sensors:
     imu: ICM20948
-    mag: AK09916
+    mag: ICM20948
     use_sim_imu: false
     use_sim_mag: false
     use_sim_wheel: false
