@@ -49,7 +49,7 @@ void syslog(uint16_t priority, const char *fmt, ...)
     return;
   if ((priority & 0x03f8) == 0)
     priority |= LOG_KERN;
-  char msg[192];
+  char msg[288];   // the boot banner is the longest line (formatBanner, ~250 with every optional field)
   va_list args;
   va_start(args, fmt);
   vsnprintf(msg, sizeof(msg), fmt, args);

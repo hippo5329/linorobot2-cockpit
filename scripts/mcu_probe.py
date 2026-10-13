@@ -186,11 +186,25 @@ def drop_unfinished_banner(text: str) -> str:
     return text
 
 
+# The board's wireless chip, appended after the identity field on RP2 W images
+# (firmware/src/main.cpp:radioField): `cyw43439r5:2CCF67E7AFA0` (chip, revision, factory
+# MAC), `none` (the core found no W) or `noanswer(<rc>)` (it assumed one and nothing
+# answered). Absent on older images and on the ESP32s, whose uid= is the radio's MAC.
+RADIO_RE = re.compile(r"\bradio=(?P<radio>\S+)")
+
+
 def parse_banner(text: str) -> dict:
     """The LAST banner in a capture, so a board that rebooted twice reports the
     boot that is actually running rather than the one before it."""
     matches = list(BANNER_RE.finditer(text or ""))
-    return matches[-1].groupdict() if matches else {}
+    if not matches:
+        return {}
+    found = matches[-1].groupdict()
+    line_end = (text or "").find("\n", matches[-1].end())
+    rest = (text or "")[matches[-1].end():None if line_end < 0 else line_end]
+    m = RADIO_RE.search(rest)
+    found["radio"] = m.group("radio") if m else None
+    return found
 
 
 # How long a board gets to come back onto the USB bus before the probe

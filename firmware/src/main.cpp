@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include <Arduino.h>
+#if defined(PICO_CYW43_SUPPORTED)
+#include <pico/cyw43_arch.h>   // radioField(): the W's radio answers for itself
+#include <cyw43.h>
+#endif
 #ifdef ESP32
 #include <esp_system.h>   // esp_reset_reason(), see printResetReason()
 #endif
@@ -848,6 +852,56 @@ static void identityField(char *buf, size_t n)
 #endif
 }
 
+// ` radio=` names the board's WIRELESS chip, where an RP2 image can have one: the CYW43
+// on a Pico W / Pico 2 W, or the RM2 module on a SparkFun XRP. arduino-pico decides
+// "W" at boot (CheckPicoW) and assumes yes whenever it cannot tell, so __isPicoW alone
+// proves nothing -- only the radio answering does. Asked once (WLC_GET_REVINFO and the
+// MAC from the chip's OTP; the first ioctl powers the chip up and loads its firmware)
+// and kept:
+//   radio=cyw43439r5:2CCF67E7AFA0   the chip number, its revision, its factory MAC
+//   radio=none                      the core found no W (a plain Pico / Pico 2)
+//   radio=noanswer(-6)              the core assumed a W and nothing answered
+// Seen 2026-10-13: a bench board recorded as a Pico 2 W answered noanswer(-6); a real
+// one answered cyw43439r5 with a Raspberry Pi MAC (2c:cf:67). The XRP answers only with
+// its env's cyw43_pins (26,29,28,27), which are applied before the radio starts.
+#if defined(PICO_CYW43_SUPPORTED)
+extern bool __isPicoW;
+static void radioField(char *buf, size_t n)
+{
+    static char cached[48] = "";
+    if (!buf || !n)
+        return;
+    if (!cached[0]) {
+        if (!__isPicoW) {
+            snprintf(cached, sizeof(cached), " radio=none");
+        } else {
+            // wlc_rev_info: vendorid deviceid radiorev chiprev corerev boardid boardvendor
+            // boardrev driverrev ucoderev bus chipnum ... (uint32 each)
+            uint32_t rev[17] = {0};
+            const uint32_t get_revinfo = 98 << 1;   // WLC_GET_REVINFO; the driver shifts the ioctl number, low bit = set
+            int rc = cyw43_ioctl(&cyw43_state, get_revinfo, sizeof(rev), (uint8_t *)rev, CYW43_ITF_STA);
+            uint8_t mac[6] = {0};
+            if (rc == 0)
+                rc = cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+            if (rc == 0 && rev[11] != 0) {
+                const unsigned chip = rev[11] == 0xA9AF ? 43439u : (unsigned)rev[11];
+                snprintf(cached, sizeof(cached), " radio=cyw%ur%lu:%02X%02X%02X%02X%02X%02X",
+                         chip, (unsigned long)rev[3], mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            } else {
+                snprintf(cached, sizeof(cached), " radio=noanswer(%d)", rc ? rc : -1);
+            }
+        }
+    }
+    snprintf(buf, n, "%s", cached);
+}
+#else
+static void radioField(char *buf, size_t n)
+{
+    if (buf && n)
+        buf[0] = '\0';   // the ESP32's radio is on the die: its uid= is the radio's MAC already
+}
+#endif
+
 // The banner line itself, without the newlines: the serial console prints it
 // and syslog carries it (announceBanner), and both must say the same thing.
 //
@@ -874,9 +928,11 @@ static void formatBanner(char *buf, size_t n)
     if (wifiWanted() && WiFi.status() == WL_CONNECTED)
         snprintf(ip, sizeof(ip), " ip=%s", WiFi.localIP().toString().c_str());
 #endif
-    snprintf(buf, n, "[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s envcrc=%08lX%s%s",
+    char radio[48];
+    radioField(radio, sizeof(radio));
+    snprintf(buf, n, "[fw] linorobot2_hardware app=%s distro=%s built=%s git=%s%s%s envcrc=%08lX%s%s%s",
              toolName(app_mode), FW_DISTRO, FW_BUILD_DATE, FW_GIT_REV, ident, envota,
-             (unsigned long)mcuEnvCrc(), ip,
+             (unsigned long)mcuEnvCrc(), ip, radio,
              mcuEnvValid() ? "" : " (env blank or invalid - using header defaults)");
 }
 
@@ -898,7 +954,7 @@ static void announceBanner(void)
     if (last && (now - last) < period)
         return;
     last = now ? now : 1;
-    char line[224];
+    char line[288];   // longest: 24-digit uid + ip + radio + the env-blank note, ~250
     formatBanner(line, sizeof(line));
     syslog(LOG_NOTICE, "%s", line);
 }
@@ -913,7 +969,7 @@ static void printBanner(void)
     // The identity field is appended, not inserted: scripts/mcu_probe.py parses
     // this line as key=value pairs, and older hosts reading a newer board must
     // keep working.
-    char line[224];
+    char line[288];   // longest: 24-digit uid + ip + radio + the env-blank note, ~250
     formatBanner(line, sizeof(line));
     Serial.printf("\n%s\n", line);
 }
