@@ -54,7 +54,10 @@ class SimMcu:
             fh.write(mcu_env.encode(e))
         penv = dict(os.environ, LINO_ENV_BIN=path)
         penv.pop("LINO_NEXT_BOOT", None)
-        self.p = subprocess.Popen([BINARY], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        # Started as the backend starts it (host_firmware.shell_command): run bare, the
+        # binary cannot load librclc and every test here saw an empty console.
+        self.p = subprocess.Popen(["bash", "-c", host_firmware.shell_command(BINARY)],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, env=penv)
         self.out = b""
         self.lock = threading.Lock()

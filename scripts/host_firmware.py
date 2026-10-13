@@ -33,6 +33,19 @@ def setup_script():
     return os.path.join(HOST_WS, "install", "local_setup.bash")
 
 
+def shell_command(binary_path: str, distro: str = None) -> str:
+    """The one way to start the host firmware: ROS sourced (librcutils and the rest), then
+    the client workspace (librclc, rmw_microxrcedds), and RMW_IMPLEMENTATION said, or rcl
+    refuses the image's container-wide Fast DDS and exits 102. Run bare it dies, "librclc.so:
+    cannot open shared object file" -- which is how every Sim MCU tool test failed in the
+    robot image while the backend, which sourced both, worked."""
+    import shlex
+    distro = distro or os.environ.get("ROS_DISTRO", "lyrical")
+    return (f". /opt/ros/{shlex.quote(distro)}/setup.bash && "
+            f". {shlex.quote(setup_script())} && "
+            f"RMW_IMPLEMENTATION=rmw_microxrcedds exec {shlex.quote(binary_path)}")
+
+
 def env(config_file: str, agent_port: int = 8888, lidar_port: int = 8889, world=None) -> dict:
     """The env block a flash of this robot would write, for the host.
 
