@@ -1939,6 +1939,46 @@ def print_failure_troubleshooting(target_name: str, env: str, port: str, uf2_pat
 
 
 
+# Which RP2 configs promise a wireless chip. Every RP2 image is built from a W env, so
+# a plain Pico also enumerates as "Pico W"/"Pico 2W" and arduino-pico calls it a W when
+# it cannot tell: neither is evidence. Only the banner's radio= is -- the chip answering
+# over its SPI link (firmware/src/main.cpp:radioField). User, 2026-10-13: "every non-W
+# module will read as W. we have to check spi wifi to verify."
+RADIO_MCUS = {"picow", "pico2w", "xrp"}
+NO_RADIO_MCUS = {"pico", "pico2"}
+
+
+def radio_mismatch(mcu: Optional[str], radio: Optional[str]) -> Optional[str]:
+    """Why the board's radio contradicts the config's MCU, or None when it does not (or
+    when either side says nothing: an older image has no radio= field)."""
+    m = (mcu or "").strip().lower()
+    r = (radio or "").strip().lower()
+    if not m or not r:
+        return None
+    answered = r.startswith("cyw")
+    if m in RADIO_MCUS and not answered:
+        return (f"[NO RADIO] the config's mcu is '{m}', a board with a CYW43, but this board's "
+                f"radio did not answer (radio={radio}): it is not a W. Its LED (pin 64) and Wi-Fi "
+                f"cannot work -- use the plain '{'pico2' if m in ('pico2w', 'xrp') else 'pico'}' config.")
+    if m in NO_RADIO_MCUS and answered:
+        return (f"[IS A W] the config's mcu is '{m}', a board without a radio, but a CYW43 answered "
+                f"(radio={radio}): this is a W. Its led 25 would drive the radio's chip select -- "
+                f"use the '{m}w' config.")
+    return None
+
+
+def config_mcu(params: Optional[str]) -> Optional[str]:
+    """base_controller.mcu of a robot config, or None."""
+    if not params:
+        return None
+    try:
+        import yaml
+        with open(params) as fh:
+            return ((yaml.safe_load(fh) or {}).get("base_controller") or {}).get("mcu")
+    except Exception:
+        return None
+
+
 def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str],
                  params: Optional[str], baud: int, app_written: bool,
                  prebuilt_dir: Optional[str] = None):
@@ -2120,8 +2160,16 @@ def record_stamp(env: str, port: str, app: Optional[str], env_bin: Optional[str]
         stamp["banner_confirmed"] = False
         log("(the board did not print a boot banner in time — the stamp records "
             "what was written, not what was heard)")
+    radio_problem = None
+    if banner and banner.get("radio"):
+        stamp["radio"] = banner["radio"]
+        log(f"Board radio: {banner['radio']}")
+        radio_problem = radio_mismatch(config_mcu(params), banner["radio"])
     mcu_probe.write_stamp(env, port, stamp)
     log(f"Recorded {mcu_probe.stamp_path(env, port)}")
+    if radio_problem:
+        log(f"❌ {radio_problem}")
+        return False
     # The board must be running what was just written. A release profile names its
     # commit exactly, so a banner with another one means the write did not take: on
     # 2026-10-07 a USB flash after an OTA update left otadata on the other slot and the
@@ -2414,8 +2462,9 @@ def main() -> int:
             return 1
         if ok:
             log("✅ env block written.")
-            record_stamp(args.env, args.port, args.app, env_bin, args.params,
-                         args.baud, app_written=False, prebuilt_dir=prebuilt_dir)
+            if record_stamp(args.env, args.port, args.app, env_bin, args.params,
+                            args.baud, app_written=False, prebuilt_dir=prebuilt_dir) is False:
+                return 1
             return 0
         log("❌ The env block could not be written.")
         return 1
