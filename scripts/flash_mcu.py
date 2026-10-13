@@ -934,6 +934,29 @@ def usb_reset_target(port: str, settle_s: float = 10.0) -> bool:
     return False
 
 
+def tty_leads_to_expected_board(port: str, root: str = "/sys/bus/usb/devices") -> bool:
+    """The board behind `port` RIGHT NOW is the one this run flashes.
+
+    The [WRONG BOARD] guard reads the tty once, when the flash starts. A retry comes
+    later, and by then the node may lead elsewhere: on the bench (gate, 2026-10-13) two
+    cells on one USB controller flashed at once, the host handed /dev/ttyACM0 between
+    their boards four times in 18 s, and a Pico 2 whose load had died at 79 % sat in
+    BOOTSEL while its cell's /dev/ttyACM0 was the other cell's Pico W. A 1200-baud touch
+    there reboots someone else's board. So every touch asks the board's USB serial
+    first (on an RP2040 running our firmware that is its flash id), and touches nothing
+    that does not answer to this run's identity."""
+    if not _EXPECTED_IDS:
+        return True                    # nothing on record: the port is all we have
+    path = usb_path_for_tty(port)
+    serial = _sysfs_serial(path, root) if path else None
+    if serial and serial in _EXPECTED_IDS:
+        return True
+    log(f"❌ [WRONG BOARD] {port} now leads to {serial or 'no readable board'} "
+        f"(USB {path or 'unknown'}), but this run is flashing "
+        f"{', '.join(sorted(_EXPECTED_IDS))}. No reset, no 1200-baud touch.")
+    return False
+
+
 def pulse_1200_baud(port: str) -> bool:
     """Pulse serial port at 1200 baud to signal Pico CDC bootloader reboot.
 
@@ -957,6 +980,8 @@ def pulse_1200_baud(port: str) -> bool:
         # skipped its one working step read as a board that refused BOOTSEL.
         log(f"{port or 'no serial port'} is not present; cannot send the 1200-baud touch")
         return False
+    if not tty_leads_to_expected_board(port):
+        return False
     usb_reset_target(port)
     if not os.path.exists(port):
         # No tty, no touch. Measured on the bench 2026-09-22: after the reset the
@@ -967,6 +992,8 @@ def pulse_1200_baud(port: str) -> bool:
         # that never left the host. From the host, the same board reached
         # BOOTSEL 0.3 s after a real touch.
         log(f"{port} is gone after the usb reset; cannot send the 1200-baud touch")
+        return False
+    if not tty_leads_to_expected_board(port):   # the reset re-enumerates: ask again
         return False
     log(f"Attempting 1200-baud CDC pulse on {port} to trigger BOOTSEL mode...")
     touched = False
