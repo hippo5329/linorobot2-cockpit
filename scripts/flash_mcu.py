@@ -1281,6 +1281,23 @@ def find_picotool_binaries() -> List[str]:
     return valid
 
 
+def picotool_load_timeout(uf2_path: str) -> int:
+    """Seconds a `picotool load` of this image may take before it counts as hung.
+
+    A load erases, writes and (with -x) verifies the whole image over a
+    full-speed USB link, so its time grows with the image. A fixed 20 s held
+    until the RP2040 image reached 1.34 MB: on a slow host controller that load
+    takes 23 s, and every attempt was killed part-way, leaving the board in
+    BOOTSEL with half its flash erased (rc-20261013.2 gate). 60 s plus 60 s per
+    MB sits well past the slowest load seen (~17 s per MB).
+    """
+    try:
+        mb = os.path.getsize(uf2_path) / 1e6
+    except OSError:
+        mb = 2.0
+    return int(60 + 60 * mb)
+
+
 def flash_via_picotool(uf2_path: str, env: str = "pico2",
                        env_bin: Optional[str] = None) -> bool:
     """Attempt direct upload via picotool with family filter to prevent device confusion.
@@ -1324,14 +1341,17 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
     # picotool reset interface (AGENTS.md §6) -- and a board we can name is a
     # board we have already identified through its tty.
     forced = [] if target else ["-f"]
+    load_timeout = picotool_load_timeout(uf2_path)
 
     for pt in pts:
         log(f"Attempting direct picotool upload with: {pt} ({' '.join(family_flag + target)})...")
         # Standard load with family constraint
         cmd = [pt, "load", "-x"] + family_flag + [uf2_path] + target
-        res = run_tool(cmd, timeout=20)
+        t0 = time.monotonic()
+        res = run_tool(cmd, timeout=load_timeout)
         if res.returncode == 0:
-            log(f"✅ Firmware flashed successfully via {pt} ({' '.join(family_flag)})!")
+            log(f"✅ Firmware flashed successfully via {pt} ({' '.join(family_flag)})! "
+                f"(load {time.monotonic() - t0:.0f} s of {load_timeout} s allowed)")
             time.sleep(3.0)
             return True
 
@@ -1339,7 +1359,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
         out_combined = ((res.stderr or "") + (res.stdout or "")).lower()
         if "permission" in out_combined or "sudo" in out_combined:
             sudo_cmd = ["sudo", "-n", pt, "load", "-x"] + family_flag + [uf2_path] + target
-            sudo_res = run_tool(sudo_cmd, timeout=20)
+            sudo_res = run_tool(sudo_cmd, timeout=load_timeout)
             if sudo_res.returncode == 0:
                 log(f"✅ Firmware flashed successfully via sudo {pt} ({' '.join(family_flag)})!")
                 time.sleep(3.0)
@@ -1350,7 +1370,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
         out_f_combined = out_combined
         if forced:
             cmd_f = [pt, "load", "-f", "-x"] + family_flag + [uf2_path]
-            res_f = run_tool(cmd_f, timeout=20)
+            res_f = run_tool(cmd_f, timeout=load_timeout)
             if res_f.returncode == 0:
                 log(f"✅ Firmware flashed successfully via {pt} (-f {' '.join(family_flag)})!")
                 time.sleep(3.0)
@@ -1359,7 +1379,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
             out_f_combined = ((res_f.stderr or "") + (res_f.stdout or "")).lower()
             if "permission" in out_f_combined or "sudo" in out_f_combined:
                 sudo_cmd_f = ["sudo", "-n", pt, "load", "-f", "-x"] + family_flag + [uf2_path]
-                sudo_res_f = run_tool(sudo_cmd_f, timeout=20)
+                sudo_res_f = run_tool(sudo_cmd_f, timeout=load_timeout)
                 if sudo_res_f.returncode == 0:
                     log(f"✅ Firmware flashed successfully via sudo {pt} "
                         f"(-f {' '.join(family_flag)})!")
@@ -1368,7 +1388,7 @@ def flash_via_picotool(uf2_path: str, env: str = "pico2",
 
         # Fallback without family constraint if older picotool didn't support --family
         if "unknown option" in out_combined or "unknown option" in out_f_combined:
-            plain_res = run_tool([pt, "load", "-x", uf2_path] + target, timeout=20)
+            plain_res = run_tool([pt, "load", "-x", uf2_path] + target, timeout=load_timeout)
             if plain_res.returncode == 0:
                 log(f"✅ Firmware flashed successfully via {pt} (plain)!")
                 time.sleep(3.0)
