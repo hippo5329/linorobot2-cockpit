@@ -16,8 +16,9 @@
 #     34-39, which have no internal pull-ups: an open-collector encoder there needs its own.
 #   * I2C: SDA 21 / SCL 22 on the IIC and OLED headers. Nothing is fitted on the board.
 #   * No battery sense: the DC jack (6-16 V) reaches no ADC pin.
-#   * No user LED: GPIO 2 drives motor 2. The status blink goes out GPIO 33, a servo
-#     header (JP14) with nothing fitted: plug an LED in there to see it.
+#   * No user LED (led: -1): the board's only LEDs are the CH340's two yellow serial
+#     activity LEDs, D2 on TXD and D3 on RXD (schematic, maker-esp32-pro.pdf), which no
+#     GPIO drives -- and GPIO 2, the usual ESP32 LED, drives motor 2 here.
 #   * GPIO 2, 12 and 15 are strapping pins on motors 2-4 (the pin check warns): the
 #     vendor's own wiring, through 1k into the RZ7889; confirm the board still boots
 #     and flashes with the motors connected.
@@ -129,7 +130,7 @@ base_controller:
     i2c:
       sda: 21
       scl: 22
-    led: 33           # a servo header pin, nothing fitted (see the header)
+    led: -1           # no user LED on the board (see the header)
     battery:
       pin: -1
 kinematics:

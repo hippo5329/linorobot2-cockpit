@@ -149,7 +149,17 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
     assert _led(reference, "gendrv") == 2             # DevKit pin, N/C on the GenDrv
     assert _led(reference, "yb_eet01") == 45          # YB-EET01-V2.0 status LED
     for name in _reference_names():
+        if name in NO_USER_LED:
+            assert _led(reference, name) == -1, f"{name} has no LED to drive"
+            continue
         assert _led(reference, name) >= 0, f"{name} would fail silently"
+
+
+# Boards that have no LED a GPIO can drive: led -1 is the truth there, not a silent failure.
+# The NULLLAB Maker-ESP32 PRO's only LEDs are the CH340's TX/RX activity LEDs (schematic,
+# maker-esp32-pro.pdf: D2 on TXD, D3 on RXD), and its GPIO 2 drives motor 2. Seen on the
+# bench 2026-10-13: D3 blinked from serial traffic alone, with no firmware involved.
+NO_USER_LED = {"nulllab_esp32_pro"}
 
 
 def test_every_esp32_board_shares_one_led_pin(reference):

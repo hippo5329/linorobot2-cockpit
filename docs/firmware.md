@@ -644,7 +644,7 @@ OTA. It is a controller design on the one default chassis.
 | motors | RZ7889 x4 (`RZ7889`, the dual-PWM scheme): 27/13, 4/2, 17/12, 14/15 |
 | encoders | E0-E3: 18/19, 5/23, 35/36, 34/39 |
 | I2C | 21/22 |
-| LED | GPIO33, a servo header |
+| LED | none (`led: -1`): only the CH340's TX/RX activity LEDs, which no GPIO drives |
 
 The DIP switch must be on the motor side for the motors it shares with header pins. The encoder
 ports supply 5 V while the ESP32 takes 3.3 V, so use encoders with open-collector or 3.3 V outputs;
