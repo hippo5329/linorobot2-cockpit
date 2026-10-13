@@ -962,6 +962,13 @@ function syncSimForDesign() {
       ? "A real robot: built from a reference design, or it has pins assigned. It simulates nothing and needs its own board."
       : "A bare module: no pin assigned but the LED, every device simulated. Pick a reference design or assign a pin to make it real.";
   }
+  // A bare module is made real by a design or a pin; a real robot can go back to one.
+  const makeReal = document.getElementById("btn-toggle-sim-mode");
+  if (makeReal) makeReal.hidden = real;
+  for (const id of ["btn-revert-bare", "btn-revert-bare-pins"]) {
+    const b = document.getElementById(id);
+    if (b) b.hidden = !real;
+  }
   // The Sim MCU is a board-less SIMULATION: not offered to a real robot.
   for (const id of ["cfg-mcu", "cockpit-target-select", "hw-flash-env"]) {
     const opt = [...(document.getElementById(id)?.options || [])].find((o) => o.value === "sim");

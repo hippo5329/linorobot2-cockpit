@@ -221,6 +221,8 @@ def test_a_real_robot_is_refused_the_sim_mcu_in_the_ui(tmp_path):
 def test_applying_a_design_moves_every_controller_select():
     js = open(os.path.join(ROOT, "web", "frontend", "app-presets.js")).read()
     a = js.index("async function applyReferenceDesign(")
+    assert "await adoptRobotReply(res);" in js[a:js.index("\n}\n", a)]
+    a = js.index("async function adoptRobotReply(")   # shared with the revert to a bare module
     body = js[a:js.index("\n}\n", a)]
     assert '"cockpit-target-select"' in body and "loadedControllerName = bc.name" in body
 

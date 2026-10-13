@@ -81,6 +81,13 @@ async function applyReferenceDesign(designId) {
     updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
     return;
   }
+  await adoptRobotReply(res);
+  logLine(`✅ ${res.message}`);
+  showToast(bare ? `Bare ${mcu} module: every device simulated` : `⚡ ${res.message}`);
+}
+
+// The page follows a robot the backend just rebuilt (a design applied, a bare module, a revert).
+async function adoptRobotReply(res) {
   state.robots = res.robots || state.robots;
   state.config = res.config || state.config;
   // The controller follows the robot's config in EVERY select, as selectRobot does: the
@@ -101,8 +108,28 @@ async function applyReferenceDesign(designId) {
   syncSimForDesign();
   updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
   if (typeof refreshSaveState === "function") refreshSaveState();
-  logLine(`✅ ${res.message}`);
-  showToast(bare ? `Bare ${mcu} module: every device simulated` : `⚡ ${res.message}`);
+}
+
+// A real robot back to a bare module of its board (user, 2026-10-13): every pin unassigned but
+// the LED, every device simulated, no design. Its name, chassis and tuning stay.
+async function revertToBareModule() {
+  if (!robotIsNamed()) { askForRobotName(); return; }
+  if (!confirm(`Unassign every pin of ${state.robot_name} (but the LED) and simulate every device ` +
+               `again? Its name, chassis and Nav2 tuning stay. The pins can be assigned again later.`)) return;
+  if (typeof flushAutosave === "function") await flushAutosave();
+  let res = null;
+  robotEpoch++;
+  try {
+    res = await fetch("/api/robot/revert_bare", { method: "POST" }).then((r) => r.json());
+  } catch (e) { res = { detail: String(e) }; }
+  robotEpoch++;
+  if (!res || res.status !== "ok") {
+    logLine(`❌ ${res?.detail || res?.error || "could not revert to a bare module"}`);
+    return;
+  }
+  await adoptRobotReply(res);
+  logLine(`↩ ${res.message}`);
+  showToast(`↩ ${state.robot_name}: a bare module again, every device simulated`);
 }
 
 
@@ -297,6 +324,9 @@ function goMakeItReal() {
 function initSimModeWorkflow() {
   document.querySelectorAll(".btn-switch-real-hw").forEach((btn) => btn.addEventListener("click", goMakeItReal));
   document.getElementById("btn-toggle-sim-mode")?.addEventListener("click", goMakeItReal);
+  for (const id of ["btn-revert-bare", "btn-revert-bare-pins"]) {
+    document.getElementById(id)?.addEventListener("click", revertToBareModule);
+  }
   const jumpPreviewBtn = document.getElementById("btn-jump-preview");
   if (jumpPreviewBtn) {
     jumpPreviewBtn.addEventListener("click", () => {

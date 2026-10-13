@@ -268,6 +268,9 @@
           <button type="button" id="btn-toggle-sim-mode" class="btn btn-secondary" title="Pick a reference design or assign pins: the robot is then real">
             ⚡ Make it a real robot: pick a reference design, or assign its pins
           </button>
+          <button type="button" id="btn-revert-bare" class="btn btn-secondary" hidden title="Unassign every pin (but the LED) and simulate every device again. The robot keeps its name, chassis and tuning.">
+            ↩ Back to a bare module: unassign every pin
+          </button>
         </div>
         <div class="u-flex u-gap-8 u-items-center">
           <button type="button" id="btn-jump-preview" class="btn btn-secondary btn-sm" title="Jump to SLAM &amp; Nav tab to preview mapping and navigation in sim simulation">
@@ -1143,6 +1146,7 @@
         <div class="u-flex u-gap-8 u-flex-wrap" style="white-space:nowrap;">
           <button type="button" id="btn-smart-alloc" class="btn btn-primary btn-sm">⚡ Smart Auto-Assign</button>
           <button type="button" id="btn-wiring-table" class="btn btn-sm" title="The wiring chart for this robot, generated from the saved pins">🔌 Wiring Table</button>
+          <button type="button" id="btn-revert-bare-pins" class="btn btn-sm" hidden title="Unassign every pin (but the LED) and simulate every device again. The robot keeps its name, chassis and tuning.">↩ Back to a bare module</button>
         </div>
       <div id="pin-findings" class="pin-findings" hidden></div>
       </div>

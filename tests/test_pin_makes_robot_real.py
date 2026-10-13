@@ -124,3 +124,75 @@ def test_a_real_robot_cannot_be_put_back_into_simulation(monkeypatch):
 def test_the_page_unticks_what_the_save_turned_off():
     js = open(os.path.join(REPO_ROOT, "web", "frontend", "app-hardware.js")).read()
     assert "result.sim_turned_off" in js and "box.checked = false" in js
+
+
+# --- and back: a real robot reverted to a bare module (user, 2026-10-13: "offer an option to
+# revert a real robot to bare module, ie, every pin unassigned")
+
+import yaml  # noqa: E402
+import robot_templates  # noqa: E402
+
+
+def _real_from_design(design="gendrv"):
+    with open(os.path.join(REPO_ROOT, "config", "reference", f"{design}_config.yaml")) as fh:
+        d = yaml.safe_load(fh)
+    robot = _bare("myrobot")
+    robot["kinematics"]["wheel_diameter"] = 0.0812       # the user's own chassis
+    robot["nav2"] = {"marker": "my tuning"}
+    out, _kept, _kit = robot_templates.apply_design(robot, d, design)
+    out["base_controller"]["serial_port"] = "/dev/ttyUSB7"
+    out["base_controller"]["domain_id"] = 42
+    return out
+
+
+def test_revert_unassigns_every_pin_and_simulates_every_device():
+    real = _real_from_design()
+    assert not ocp.is_bare_config(real) and ocp.is_real_robot(real)
+    bare = robot_templates.revert_to_bare(real)
+    assert ocp.is_bare_config(bare), "only the LED may stay assigned"
+    assert not ocp.is_real_robot(bare)
+    assert ocp.robot_kind("myrobot", (bare.get("robot") or {}).get("reference"),
+                          ocp.is_bare_config(bare)) == "sim"
+    s = bare["base_controller"]["sensors"]
+    assert s.get("use_sim_wheel") and s.get("use_sim_imu") and s.get("use_sim_ld19")
+    assert "reference" not in bare["robot"] and bare["robot"]["name"] == "myrobot"
+
+
+def test_revert_keeps_the_robots_own_chassis_tuning_and_port():
+    real = _real_from_design()
+    bare = robot_templates.revert_to_bare(real)
+    assert bare["kinematics"] == real["kinematics"]
+    assert bare["geometry"] == real["geometry"]
+    assert bare["nav2"] == real["nav2"]
+    assert bare["base_controller"]["serial_port"] == "/dev/ttyUSB7"
+    assert bare["base_controller"]["domain_id"] == 42
+    assert bare["base_controller"]["mcu"] == real["base_controller"]["mcu"]
+
+
+def test_revert_on_every_design():
+    ref = os.path.join(REPO_ROOT, "config", "reference")
+    for fn in sorted(os.listdir(ref)):
+        if fn.endswith("_config.yaml"):
+            bare = robot_templates.revert_to_bare(_real_from_design(fn[:-len("_config.yaml")]))
+            assert ocp.is_bare_config(bare), fn
+
+
+def test_the_revert_endpoint(monkeypatch):
+    real = _real_from_design()
+    rc, saved = _backend(monkeypatch, real)
+    monkeypatch.setattr(rc, "_named_robot_or_400", lambda: ("/tmp/myrobot_config.yaml", real, "myrobot"))
+    monkeypatch.setattr(rc, "get_robots_list", lambda *a, **k: [])
+    body = asyncio.run(rc.revert_bare(_Req({})))
+    assert body["status"] == "ok" and "bare" in body["message"]
+    assert ocp.is_bare_config(saved["p"])
+
+
+def test_the_page_offers_the_revert_only_on_a_real_robot():
+    root = os.path.join(REPO_ROOT, "web", "frontend")
+    html = open(os.path.join(root, "index.html")).read()
+    presets = open(os.path.join(root, "app-presets.js")).read()
+    core = open(os.path.join(root, "app-core.js")).read()
+    assert 'id="btn-revert-bare"' in html and 'id="btn-revert-bare-pins"' in html
+    assert '"/api/robot/revert_bare"' in presets and "revertToBareModule" in presets
+    assert 'for (const id of ["btn-revert-bare", "btn-revert-bare-pins"])' in core
+    assert "if (b) b.hidden = !real;" in core

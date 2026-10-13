@@ -57,3 +57,35 @@ def apply_bare(robot_name: str, mcu: str) -> dict:
     out["robot"]["name"] = robot_name
     out["robot"].pop("reference", None)
     return out
+
+
+# Settings on the controller that are the user's, not the design's or the wiring's: kept when a
+# real robot goes back to a bare module.
+KEPT_CONTROLLER_KEYS = ("serial_port", "baudrate", "console", "domain_id", "robot_ip",
+                        "telemetry", "wifi")
+
+
+def revert_to_bare(robot: dict) -> dict:
+    """A real robot back to a bare module of its own board: every pin unassigned (but the
+    LED), every device simulated, no design -- and everything else the robot's own: its name,
+    its chassis (kinematics, geometry, Nav2/EKF/SLAM tuning) and its port, domain and network
+    names. The link is the bare module's (USB serial).
+
+    User, 2026-10-13: "offer an option to revert a real robot to bare module, ie, every pin
+    unassigned." apply_bare() is the board switch: it takes the bare module's chassis too."""
+    ctrl = robot.get("base_controller") or {}
+    mcu = str(ctrl.get("mcu") or ctrl.get("name") or "").lower()
+    if mcu not in gen_bare_config.KNOWN:
+        raise ValueError(f"no bare module for the board '{mcu}'")
+    out = gen_bare_config.bare_config(mcu)
+    for block in CHASSIS_BLOCKS + ("supervisor",):
+        if block in robot:
+            out[block] = copy.deepcopy(robot[block])
+    for key in KEPT_CONTROLLER_KEYS:
+        if key in ctrl:
+            out["base_controller"][key] = copy.deepcopy(ctrl[key])
+    name = (robot.get("robot") or {}).get("name")
+    out.setdefault("robot", {})["name"] = name
+    for key in ("reference", "kit"):
+        out["robot"].pop(key, None)
+    return out

@@ -683,6 +683,21 @@ async def apply_bare(request: Request):
     return _robot_reply(path, params, f"'{name}' is now a bare {mcu} module (every device simulated)")
 
 
+@app.post("/api/robot/revert_bare")
+async def revert_bare(request: Request):
+    """A real robot back to a bare module of its own board: every pin unassigned, every device
+    simulated, no design. Its name, chassis and Nav2 tuning stay (robot_templates.revert_to_bare)."""
+    path, old, name = _named_robot_or_400()
+    try:
+        params = robot_templates.revert_to_bare(old)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    save_params(params, path=path)
+    mcu = params["base_controller"]["mcu"]
+    return _robot_reply(path, params, f"'{name}' is a bare {mcu} module again: every pin "
+                        f"unassigned, every device simulated; its chassis and tuning kept")
+
+
 @app.post("/api/import_config")
 async def import_config(request: Request):
     data = await json_body(request)
