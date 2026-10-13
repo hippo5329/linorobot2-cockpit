@@ -232,6 +232,7 @@ slam:
     loop_match_minimum_chain_size: 15
     loop_search_maximum_distance: 2.0
     coarse_search_angle_offset: 0.175
+    correlation_search_space_dimension: 0.3   # +-0.15 m: in a spin a narrow scan matched at the 0.5 window's edge (0.25 m jumps)
   slam_toolbox:
     ros__parameters:
       solver_plugin: solver_plugins::CeresSolver

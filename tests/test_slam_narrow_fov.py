@@ -23,7 +23,8 @@ STRONG = {"angle_variance_penalty": 0.02, "minimum_angle_penalty": 0.3,
           "loop_match_minimum_response_coarse": 0.6, "loop_match_minimum_response_fine": 0.7,
           "loop_match_minimum_chain_size": 15,
           "loop_search_maximum_distance": 2.0,
-          "coarse_search_angle_offset": 0.175}
+          "coarse_search_angle_offset": 0.175,
+          "correlation_search_space_dimension": 0.3}
 # slam_toolbox's own defaults (mapper_params_online_async.yaml), which a full LiDAR keeps
 UPSTREAM = {"angle_variance_penalty": 1.0, "minimum_angle_penalty": 0.9,
             "distance_variance_penalty": 0.5, "minimum_distance_penalty": 0.5,
@@ -96,3 +97,20 @@ def test_a_narrow_scan_searches_half_the_angle():
         assert narrow < full and math.degrees(narrow) <= 10.1, name
         # the coarse step still divides the window into more than a few candidates
         assert narrow / slam["slam_toolbox"]["ros__parameters"]["coarse_angle_resolution"] >= 4, name
+
+
+def test_a_narrow_scan_searches_a_smaller_window():
+    """rc-20261013.2, explore_camera_mecanum (87 deg camera): during explore_lite's look-around
+    spin the robot stood still while SLAM's pose jumped +0.24 m, then +0.27 m -- each the edge
+    of correlation_search_space_dimension 0.5 (+-0.25 m). The walls drawn at the slipped pose
+    sealed the room and the return home failed. rc-20261013.4 did it again: 2.18 m. Like the
+    angle window (rc65), a narrow scan gets a smaller one; a 360 deg LiDAR keeps 0.5."""
+    for name in REFS + ("makerspet_mini", "unoq"):
+        slam = _ref(name)["slam"]
+        narrow = slam["narrow_fov_overrides"]["correlation_search_space_dimension"]
+        full = slam["slam_toolbox"]["ros__parameters"]["correlation_search_space_dimension"]
+        assert full == 0.5, name
+        assert narrow / 2 <= 0.15 < full / 2, name
+        # still several steps of the fine grid wide, or the matcher has nothing to choose from
+        step = slam["slam_toolbox"]["ros__parameters"]["correlation_search_space_resolution"]
+        assert narrow / step >= 20, name
