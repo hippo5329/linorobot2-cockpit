@@ -207,9 +207,9 @@ _DRIVER_ENV_NAMES = {
     "AT8236": "bts7960",
     "DRV8411A": "bts7960",   # IN/IN H-bridge: PWM on both inputs (SparkFun XRP Controller)
     "BDC30P": "bts7960",     # Maker's Pet BDC-30P: IN1/IN2, PWM on both inputs
-    "TB67H450": "bts7960",   # IN1/IN2, PWM on both inputs (NULLLAB Maker-ESP32)
+    "TB67H450": "bts7960",   # IN1/IN2, PWM on both inputs (Toshiba TB67H450FNG)
     "RZ7889": "bts7960",     # BI/FI, PWM on both inputs (NULLLAB Maker-ESP32 PRO)
-    "AT8833": "bts7960",     # IN1/IN2, PWM on both inputs (NULLLAB ESP32-UNO)
+    "AT8833": "bts7960",     # IN1/IN2, PWM on both inputs
     "DRV8833": "bts7960",    # IN1/IN2, PWM on both inputs (Pimoroni Motor 2040)
     "MX1508": "bts7960",     # IN1/IN2, PWM on both inputs (Cytron Maker Pi RP2040)
     "ESC": "esc",

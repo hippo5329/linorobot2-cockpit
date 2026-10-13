@@ -630,25 +630,25 @@ the default chassis, and the Nav2 limits are what `drivetrain_report.py` derives
 wheels. Motor and encoder directions follow the vendor config and are confirmed by driving a kit,
 not by the build.
 
-### The NULLLAB boards run the ESP32 image
-Three NULLLAB (emakefun) ESP32 motor boards are reference designs. Each is an ESP32 with a CH340G
-on USB and dual-PWM motor bridges, and runs `esp32-jazzy` / `esp32-lyrical` with its own env block;
-the pins are from the vendor's schematics (`github.com/nulllaborg`). None has an IMU or a battery
-sense pin, and the LD19 plugs into the robot computer. Transport is serial micro-ROS at 1.5 Mbaud
-over the CH340G (the GenDrv's rate; the chip runs to 2 Mbaud), with Wi-Fi for syslog and OTA. They are controller designs on the one default chassis.
+### The NULLLAB Maker-ESP32 PRO runs the ESP32 image
+The NULLLAB (emakefun) Maker-ESP32 PRO (`nulllab_esp32_pro`) is a reference design: an ESP32 with a
+CH340G on USB and four RZ7889 dual-PWM motor bridges. It runs `esp32-jazzy` / `esp32-lyrical` with its
+own env block; the pins are from the vendor's schematic (`github.com/nulllaborg`). It has no IMU or
+battery sense pin, and the LD19 plugs into the robot computer. Transport is serial micro-ROS at
+1.5 Mbaud over the CH340G (the GenDrv's rate; the chip runs to 2 Mbaud), with Wi-Fi for syslog and
+OTA. It is a controller design on the one default chassis.
 
-| | Maker-ESP32 (`nulllab_esp32`) | Maker-ESP32 PRO (`nulllab_esp32_pro`) | ESP32-UNO (`nulllab_esp32_uno`) |
-|---|---|---|---|
-| drivetrain | 2WD | mecanum, or 4WD with `kinematics.base_type: skid_steer` | 2WD |
-| motors | TB67H450 x4 (`TB67H450`), uses M1 27/13, M2 4/2 | RZ7889 x4 (`RZ7889`): 27/13, 4/2, 17/12, 14/15 | AT8833 (`AT8833`): M0 27/13, M1 4/2 |
-| encoders | no port: on the SPI-header pins 18/19 and 5/23 | E0-E3: 18/19, 5/23, 35/36, 34/39 | E0/E1: 19/18, 23/5 |
-| I2C | 21/22 | 21/22 | 21/22 |
-| LED | GPIO33, a servo header (GPIO2 is a motor, 16 the WS2812s) | GPIO33, a servo header | GPIO33, the analog header (the board's LED on 13 is a motor) |
+| part | wiring |
+|---|---|
+| drivetrain | mecanum, or 4WD with `kinematics.base_type: skid_steer` |
+| motors | RZ7889 x4 (`RZ7889`, the dual-PWM scheme): 27/13, 4/2, 17/12, 14/15 |
+| encoders | E0-E3: 18/19, 5/23, 35/36, 34/39 |
+| I2C | 21/22 |
+| LED | GPIO33, a servo header |
 
-All three driver names map to the dual-PWM scheme. On the PRO and the ESP32-UNO the DIP switch must
-be on the motor side for the motors it shares with header pins. The encoder ports supply 5 V while
-the ESP32 takes 3.3 V, so use encoders with open-collector or 3.3 V outputs; GPIO 34-39 have no
-internal pull-ups. Directions are confirmed by driving a robot, not by the build.
+The DIP switch must be on the motor side for the motors it shares with header pins. The encoder
+ports supply 5 V while the ESP32 takes 3.3 V, so use encoders with open-collector or 3.3 V outputs;
+GPIO 34-39 have no internal pull-ups. Directions are confirmed by driving a robot, not by the build.
 
 ### The Pimoroni Motor 2040 runs the Pico image
 `config/reference/pimoroni_motor2040_config.yaml` is the Pimoroni Motor 2040: an RP2040 with two DRV8833
