@@ -357,7 +357,7 @@ def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
             return 1
         # The image's own manifest names its commit: a prebuilt profile, or a --build-dir that
         # holds one (a staged release). Without either the tree's revision is the answer --
-        # never "unknown", which no board reports (a TS100 OTA, 2026-10-12, waited 120 s on it).
+        # never "unknown", which no board reports (an OTA waited 120 s on it).
         manifest_dir = prebuilt_dir or (build_dir if os.path.isfile(os.path.join(build_dir, "manifest.json")) else None)
         want_git = mcu_probe.local_build(args.env, manifest_dir).get("git")
         t0 = time.time()

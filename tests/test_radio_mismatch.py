@@ -1,9 +1,9 @@
 """The flash refuses a W config on a board whose radio did not answer, and the other way.
 
 Every RP2 image is built from a W env, so every RP2 board enumerates as a W and
-arduino-pico assumes one when it cannot tell. On 2026-10-13 m21's Pico 2 W answered
-cyw43439r5 and m15's plain Pico 2 answered noanswer(-6) to the same image -- the only
-evidence there is. A config that disagrees with it is a mix-up.
+arduino-pico assumes one when it cannot tell. Given the same image, a Pico 2 W answered
+cyw43439r5 and a plain Pico 2 answered noanswer(-6) -- the only evidence there is. A
+config that disagrees with it is a mix-up.
 """
 import os
 import sys
