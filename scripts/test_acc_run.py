@@ -35,8 +35,19 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 END_RE = re.compile(r"\[test_acc\] done|test_acc refused|\[test_acc\] STOPPED")
 RESULT_RE = re.compile(r"IDENT (gains|robot|plant|deadzone|done)|MAX VEL|MIN VEL|MAX ACC|MIN ACC|"
                        r"IMU ACC|time to|distance to stop|HOME |refused|STOPPED")
-SYSLOG_WAIT_S = 30
+# Longer than the base app's quietest syslog: a board at rest sends its [fw] banner once a
+# minute and little else, and a 30 s window that opened just after one heard nothing (TS100).
+SYSLOG_WAIT_S = 65
 STOP_TRIES = 20
+
+
+def heard(src, seconds: float) -> bool:
+    """True at the board's first syslog line, without waiting out the rest of `seconds`."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if src.lines(min(2.0, max(0.05, end - time.time()))):
+            return True
+    return False
 
 
 class SyslogSource:
@@ -157,7 +168,7 @@ def main(argv=None) -> int:
     src = SyslogSource(a.ip)
     print(f"  the board's syslog: {src.where}")
     try:
-        if not src.lines(SYSLOG_WAIT_S) and not (wifi_boards.ping(a.ip, timeout=1.5) and src.lines(10)):
+        if not heard(src, SYSLOG_WAIT_S) and not (wifi_boards.ping(a.ip, timeout=1.5) and heard(src, 10)):
             print(f"TEST_ACC_FAILED: no syslog line from {a.ip} in {SYSLOG_WAIT_S} s -- the results "
                   f"would be lost, so nothing moves")
             return 1
