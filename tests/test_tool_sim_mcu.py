@@ -143,7 +143,7 @@ def test_a_commands_own_argument_does_not_carry_over(sim):
     s.send("motor 1 30 7")
     s.wait("for 7 s")
     s.send("stop")
-    at = s.wait("stopped: you typed stop")
+    at = s.wait("stopped: motor 1 30 7 (you typed stop")
     s.send("motor 1 30")
     s.wait("for 120 s", after=at)
     s.send("stop")
