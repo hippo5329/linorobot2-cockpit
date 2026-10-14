@@ -282,8 +282,11 @@ static uint32_t i2c_next = 0;
 
 void toolMotorsOff(void)
 {
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 4; i++) {
         if (motor_controllers[i]) motor_controllers[i]->spin(0);
+        // the Sim MCU's walkthrough: the wheel model stops too (a real encoder ignores it)
+        if (toolWalk() && motor_encoders[i]) motor_encoders[i]->feed(0);
+    }
 }
 
 static void prompt(void) { Serial.print("tool> "); }

@@ -59,6 +59,7 @@
 namespace test_motors {
 
 // main.cpp's drivetrain (initDrivetrain(), every mode): the tool's commands share it.
+static void walkFeed(int m, int pwm);
 EncoderInterface *&motor1_encoder = motor_encoders[0], *&motor2_encoder = motor_encoders[1],
                  *&motor3_encoder = motor_encoders[2], *&motor4_encoder = motor_encoders[3];
 MotorInterface   *&motor1_controller = motor_controllers[0], *&motor2_controller = motor_controllers[1],
@@ -226,8 +227,11 @@ bool oneStep(void)
     const int pwm = onePwm();
     const char *dir = pwm < 0 ? "REV" : "FWD";
     // `all` is the wheels this robot has: a 2wd's m3/m4 are the header's pins, never driven.
-    for (int m = 0; m < 4; m++)
-        mot[m]->spin(running && ((only == 5 && m < (int)total_motors) || m == only - 1) ? pwm : 0);
+    for (int m = 0; m < 4; m++) {
+        const int p = running && ((only == 5 && m < (int)total_motors) || m == only - 1) ? pwm : 0;
+        mot[m]->spin(p);
+        walkFeed(m, p);
+    }
     if (!running) return false;
     if (only == 5) {
         // Interrupts only: no polling beside them, so the counts show what the pin interrupts
@@ -271,7 +275,7 @@ static int32_t enc_last[4];
 void encBegin(void)
 {
     EncoderInterface *enc[4] = {motor1_encoder, motor2_encoder, motor3_encoder, motor4_encoder};
-    for (int m = 0; m < 4; m++) { motor_controllers[m]->spin(0); enc_last[m] = enc[m]->count(); }
+    for (int m = 0; m < 4; m++) { motor_controllers[m]->spin(0); walkFeed(m, 0); enc_last[m] = enc[m]->count(); }
     Serial.println("ENC counts, motors off: turn a wheel by hand -- forward must count up. "
                    "'stop' ends it.");
 }
@@ -313,12 +317,21 @@ void rampBegin(void)
                   "ends it\n", ramp_wheel, ramp_max);
 }
 
+// The Sim MCU's walkthrough (toolWalk(), host build only): what a command gives a motor also
+// feeds the wheel model, as base's control loop does -- so the wheel turns and counts. A real
+// encoder's feed() does nothing, and on a board toolWalk() is false.
+static void walkFeed(int m, int pwm)
+{
+    if (toolWalk() && m >= 0 && m < 4 && motor_encoders[m]) motor_encoders[m]->feed(pwm);
+}
+
 bool rampStep(void)
 {
     MotorInterface *mot = motor_controllers[ramp_wheel - 1];
     EncoderInterface *enc = motor_encoders[ramp_wheel - 1];
     const int full = (1 << envU16("pwm_bits", PWM_BITS)) - 1;
     mot->spin(ramp_dir * full * ramp_pct / 100);
+    walkFeed(ramp_wheel - 1, ramp_dir * full * ramp_pct / 100);
     unsigned edges[4][2];
     int level[4][2];
     pollEncoders(250, edges, level);
@@ -328,6 +341,7 @@ bool rampStep(void)
         const int idx = ramp_dir > 0 ? 0 : 1;
         ramp_found[idx] = (e > 0 || fabsf(rpm) > 2.0f) ? ramp_pct : -1;
         mot->spin(0);
+        walkFeed(ramp_wheel - 1, 0);
         if (ramp_found[idx] >= 0)
             Serial.printf("RAMP motor %d %s: turns at %d %% (RPM %.1f, %u edges)\n", ramp_wheel,
                           ramp_dir > 0 ? "FWD" : "REV", ramp_pct, rpm, e);
@@ -376,6 +390,7 @@ bool step() {
     motor2_controller->spin((current_motor == 1) ? (direction ? -pwm_max : pwm_max) : 0);
     motor3_controller->spin((current_motor == 2) ? (direction ? -pwm_max : pwm_max) : 0);
     motor4_controller->spin((current_motor == 3) ? (direction ? -pwm_max : pwm_max) : 0);
+    for (int m = 0; m < 4; m++) walkFeed(m, (current_motor == m) ? (direction ? -pwm_max : pwm_max) : 0);
 
     unsigned edges[4][2];
     int level[4][2];

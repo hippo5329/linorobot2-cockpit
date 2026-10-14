@@ -48,6 +48,45 @@ void report(void)
         Serial.println("[ ] No BMP280/BME280 on the bus.");
 }
 
+#if defined(LINO_HOST)
+#include <strings.h>
+// The Sim MCU's walkthrough (toolWalk()): a robot standing still on a bench. Base's simulated
+// IMU rides on the wheel model's motion, which the tool does not run, so in the tool it read
+// all zeros -- no gravity -- and every page that shows a reading showed a dead chip. These
+// give what a resting chip gives: gravity on z, the Earth's field, and each one's noise.
+static float walkNoise(float s) { return s * (float)random(-1000, 1001) / 1000.0f; }
+
+class WalkIMU : public IMUInterface
+{
+public:
+    bool startSensor() override { return true; }
+    geometry_msgs__msg__Vector3 readAccelerometer() override
+    {
+        geometry_msgs__msg__Vector3 v;
+        v.x = walkNoise(0.04f); v.y = walkNoise(0.04f); v.z = 9.81f + walkNoise(0.04f);
+        return v;
+    }
+    geometry_msgs__msg__Vector3 readGyroscope() override
+    {
+        geometry_msgs__msg__Vector3 v;
+        v.x = walkNoise(0.005f); v.y = walkNoise(0.005f); v.z = walkNoise(0.005f);
+        return v;
+    }
+};
+
+class WalkMAG : public MAGInterface
+{
+public:
+    bool startSensor() override { return true; }
+    geometry_msgs__msg__Vector3 readMagnetometer() override
+    {
+        geometry_msgs__msg__Vector3 v;          // tesla: ~47 uT, the field at mid latitudes
+        v.x = 22e-6f + walkNoise(0.3e-6f); v.y = 5e-6f + walkNoise(0.3e-6f); v.z = -41e-6f + walkNoise(0.3e-6f);
+        return v;
+    }
+};
+#endif
+
 void init(void)
 {
     // Allocated here, not statically: base never runs this.
@@ -71,12 +110,12 @@ void init(void)
     if (toolWalk()) {
         // The Sim MCU's walkthrough: its simulated chips, as base builds them.
         Serial.println("[tool] walkthrough mode: the Sim MCU's simulated parts stand in for chips");
-        imu_name = envGet("imu", "sim");
-        mag_name = envGet("mag", "sim");
-        if ((imu = createIMU(imu_name)))
-            imu_ok = imu->init();
-        if ((mag = createMAG(mag_name)))
-            mag_ok = mag->init();
+#if defined(LINO_HOST)
+        imu_name = "sim (walkthrough: a robot standing still)";
+        mag_name = imu_name;
+        if (strcasecmp(envGet("imu", "sim"), "none") != 0) { imu = new WalkIMU(); imu_ok = imu->init(); }
+        if (strcasecmp(envGet("mag", "sim"), "none") != 0) { mag = new WalkMAG(); mag_ok = mag->init(); }
+#endif
     } else if (toolI2cUnassigned()) {
         Serial.println("[tool] no I2C bus in the env: no IMU, magnetometer or barometer");
     } else {
