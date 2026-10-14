@@ -52,7 +52,10 @@ ANG_RPS = 0.35         # turning speed while inching
 HEADINGS_DEG = 15      # candidate step headings
 STOP_MARGIN_M = 0.08   # stop when a return is this close to the robot's circle ahead
 SPIN_MARGIN_M = 0.02   # a turn in place needs this beyond the circle
-HOME_MIN_PAIRS = 150
+HOME_MIN_PAIRS = 150    # pairs a first fix needs -- or HOME_MIN_FRAC of a smaller snapshot,
+HOME_MIN_FRAC = 0.40    # never under HOME_FLOOR_PAIRS: a LiDAR with a masked sector (a UNO Q
+HOME_FLOOR_PAIRS = 100  # robot's ~290 points) moved 0.5 m sees 46 % of its snapshot at best
+HOME_RIVAL_FRAC = 0.80  # another pose with this share of the best's inliers: ambiguous
 TF_WAIT_TRIES = 100     # x 0.2 s: the base_link -> laser TF, before a snapshot is refused
 HOME_MAX_RMS = 0.025
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
@@ -393,6 +396,29 @@ def cmd_inch(a, r: Robot) -> int:
         r.stop()
 
 
+def home_min_pairs(snapshot_points: int) -> int:
+    """HOME_MIN_PAIRS, or HOME_MIN_FRAC of a smaller snapshot, never under HOME_FLOOR_PAIRS."""
+    return int(max(HOME_FLOOR_PAIRS, min(HOME_MIN_PAIRS, HOME_MIN_FRAC * snapshot_points)))
+
+
+def first_fix_fault(cands, snapshot_points: int) -> str:
+    """Why the first fix is not good enough to drive on, or ''. Weak (too few pairs for this
+    snapshot, or a loose fit), or AMBIGUOUS: a different pose that fits almost as well -- a
+    tracked robot's fix put it 0.3 m from home, turned the wrong way, and another strong fit
+    1.2 m behind home, while it stood beside the boxes (2026-10-14)."""
+    k_best, (th, x, y, rms, n) = cands[0]
+    need = home_min_pairs(snapshot_points)
+    if n < need or not rms <= HOME_MAX_RMS:
+        return "the first fix is weak (%d pairs, need %d of a %d-point snapshot; rms %.3f)" % (
+            n, need, snapshot_points, rms)
+    other = scan_match.rival(cands)
+    if other and other[0] > HOME_RIVAL_FRAC * k_best:
+        k, (oth, ox, oy, orms, on) = other
+        return ("the first fix is ambiguous: x %+.2f y %+.2f yaw %+.0f deg fits %d inliers against "
+                "the best's %d" % (ox, oy, math.degrees(oth), k, k_best))
+    return ""
+
+
 def cmd_home(a, r: Robot) -> int:
     snap = json.load(open(a.snap))
     if not r.claim_cmd_vel():
@@ -402,12 +428,15 @@ def cmd_home(a, r: Robot) -> int:
         return 2
     laser = r.mount()
     home = snapshot_points(snap, laser)
-    th, x, y, rms, n = scan_match.locate(scan_match.scan_points(r.scan, laser), home)
+    S = scan_match.scan_points(r.scan, laser)
+    cands = scan_match.locate_candidates(S, home)
+    k_best, (th, x, y, rms, n) = cands[0]
     pose = (scan_match.wrap(th), x, y)
     print("  first fix: x %+.3f y %+.3f yaw %+.1f deg -- %d pairs, rms %.3f"
           % (x, y, math.degrees(pose[0]), n, rms))
-    if n < HOME_MIN_PAIRS or not rms <= HOME_MAX_RMS:
-        print("HOME ABORT: the first fix is weak (%d pairs, rms %.3f) -- not driving on a guess" % (n, rms))
+    why = first_fix_fault(cands, len(home))
+    if why:
+        print(f"HOME ABORT: {why} -- not driving on a guess")
         return 2
     bad, verdict, positioned = 0, "TIMEOUT", False
     start = time.time()

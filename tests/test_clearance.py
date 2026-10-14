@@ -237,3 +237,47 @@ def test_the_tf_wait_outlasts_a_slow_robot_computer():
     assert clearance.TF_WAIT_TRIES * 0.2 >= 20.0
     src = open(os.path.join(REPO, "scripts", "clearance.py")).read()
     assert "laser_pose(self.node, self.frame or \"laser\", tries=TF_WAIT_TRIES)" in src
+
+
+# ---------------------------------------------------------------- the first fix's gate
+# A UNO Q robot's masked LiDAR saw 288 points; after test_acc it matched 133 of them at rms
+# 0.015 and the fixed 150 refused it. The minimum follows the snapshot now -- and, because a
+# tracked robot's fixes put it in two wrong places with 127-189 pairs the same day, a fix is
+# also refused when a different pose fits nearly as well.
+
+def _room(walls, step=0.03):
+    pts = []
+    for (x0, y0), (x1, y1) in walls:
+        n = max(2, int(math.hypot(x1 - x0, y1 - y0) / step))
+        pts += [(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(n + 1)]
+    return np.asarray(pts, float)
+
+
+RECT = [((-2, -1.5), (2, -1.5)), ((2, -1.5), (2, 1.5)), ((2, 1.5), (-2, 1.5)), ((-2, 1.5), (-2, -1.5))]
+
+
+def test_the_pair_minimum_follows_the_snapshot():
+    assert clearance.home_min_pairs(1000) == 150
+    assert clearance.home_min_pairs(288) == 115          # 133 pairs now pass
+    assert clearance.home_min_pairs(150) == 100          # never under the floor
+
+
+def test_a_symmetric_room_is_refused_as_ambiguous():
+    home = _room(RECT)
+    cands = scan_match.locate_candidates(home.copy(), home)
+    why = clearance.first_fix_fault(cands, len(home))
+    assert "ambiguous" in why, why
+
+
+def test_an_asymmetric_room_is_driven_on():
+    walls = RECT + [((0.8, -1.5), (0.8, -0.9)), ((0.8, -0.9), (1.4, -0.9)), ((-2, 0.6), (-1.3, 1.5))]
+    home = _room(walls)
+    c, s = math.cos(0.2), math.sin(0.2)
+    moved = (home - [0.3, -0.2]) @ np.array([[c, -s], [s, c]])      # the robot 0.36 m off, turned
+    cands = scan_match.locate_candidates(moved, home)
+    assert clearance.first_fix_fault(cands, len(home)) == "", cands[:3]
+
+
+def test_a_weak_fix_names_what_it_needed():
+    cands = [(90, (0.0, 0.0, 0.0, 0.015, 90))]
+    assert "need 115 of a 288-point snapshot" in clearance.first_fix_fault(cands, 288)

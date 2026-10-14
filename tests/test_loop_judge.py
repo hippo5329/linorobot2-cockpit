@@ -81,6 +81,21 @@ def first_order(sp, tau=0.04):
     return [sp * (1 - math.exp(-(t + 1) * 0.02 / tau)) for t in range(TICKS)]
 
 
+def jittered(true_rpm, seed=7, jitter=0.15):
+    """getRPM() on a real tick: whole counts over an interval that wanders (+-15 %), read as
+    counts over the NOMINAL 20 ms -- the flicker a crawl showed on the robot."""
+    import random
+    rnd = random.Random(seed)
+    out, acc = [], 0.0
+    for v in true_rpm:
+        dt = 0.02 * (1 + rnd.uniform(-jitter, jitter))
+        acc += v / 60.0 * CPR * dt
+        n = math.floor(acc)
+        acc -= n
+        out.append(n * 60.0 / (CPR * dt))
+    return out
+
+
 def test_a_calm_loop_on_a_coarse_encoder_is_calm(lib):
     for sp in (25.9, 71.3, 116.6):
         raw = quantised(first_order(sp))
@@ -89,6 +104,14 @@ def test_a_calm_loop_on_a_coarse_encoder_is_calm(lib):
         assert got["crossings"] == 0, (sp, got)
         assert 0 <= got["settle_ms"] <= 300, (sp, got)
         assert abs(got["err"]) < 0.02 * sp + 0.7, (sp, got)
+
+
+def test_a_calm_crawl_with_tick_jitter_is_not_ringing(lib):
+    """One count of the average is enough: flicker and tick jitter alone never cross it, so a
+    crawl that does cross it twice is a limit cycle worth printing as RINGS."""
+    for seed in range(5):
+        got = judge(lib, 25.9, jittered(first_order(25.9), seed=seed))
+        assert got["crossings"] <= 1 and got["settle_ms"] >= 0, (seed, got)
 
 
 def test_the_band_is_never_finer_than_the_average_can_resolve(lib):

@@ -89,19 +89,37 @@ def inliers(S, R, th: float, tx: float, ty: float, tol: float = 0.05) -> int:
     return int((d2.min(1) < tol * tol).sum())
 
 
-def locate(S, R, guess=None, spread=(0.0, -15.0, 15.0, -30.0, 30.0)):
-    """ICP from the guess and from the guess turned by each `spread` degrees -- or, with no
-    guess, from every 30 degrees round -- keeping the one with the most inliers.
-    (th, tx, ty, rms, pairs)."""
+def locate_candidates(S, R, guess=None, spread=(0.0, -15.0, 15.0, -30.0, 30.0)):
+    """Every ICP start's result, most inliers first: [(inliers, (th, tx, ty, rms, pairs))].
+    From the guess and the guess turned by each `spread` degrees -- or, with no guess, from
+    every 30 degrees round."""
     if guess is None:
         guess, spread = (0.0, 0.0, 0.0), tuple(range(0, 360, 30))
-    best, best_in = None, -1
+    out = []
     for d in spread:
         r = icp(S, R, guess[0] + math.radians(d), (guess[1], guess[2]))
-        k = inliers(S, R, r[0], r[1], r[2])
-        if k > best_in:
-            best, best_in = r, k
-    return (wrap(best[0]),) + tuple(best[1:])
+        out.append((inliers(S, R, r[0], r[1], r[2]), (wrap(r[0]),) + tuple(r[1:])))
+    out.sort(key=lambda c: -c[0])
+    return out
+
+
+def locate(S, R, guess=None, spread=(0.0, -15.0, 15.0, -30.0, 30.0)):
+    """The candidate with the most inliers (locate_candidates). (th, tx, ty, rms, pairs)."""
+    return locate_candidates(S, R, guess, spread)[0][1]
+
+
+def rival(cands, min_m: float = 0.25, min_deg: float = 25.0):
+    """The best candidate that is a DIFFERENT pose from the first (farther than min_m or
+    turned more than min_deg): (inliers, pose), or None. A mirror room or a symmetric
+    corner fits nearly as well as the truth from somewhere else, and only this says so."""
+    if not cands:
+        return None
+    th0, x0, y0 = cands[0][1][:3]
+    for k, c in cands[1:]:
+        th, x, y = c[:3]
+        if math.hypot(x - x0, y - y0) > min_m or abs(math.degrees(wrap(th - th0))) > min_deg:
+            return (k, c)
+    return None
 
 
 def median_points(scans: list, laser=(0.0, 0.0, 0.0), min_frac: float = 0.5, body: float = BODY_M):

@@ -7,7 +7,10 @@
 // numbers, while steps timed by the encoder distance told them apart at once).
 //
 // So the speed is averaged over WIN ticks (100 ms: the counts over 100 ms, one count = a fifth
-// of a tick's step), the band is never finer than that average can resolve, and a crossing is
+// of a tick's step), the band is never finer than one count of that average (BAND_COUNTS; a
+// whole-count wheel with +-15 % tick jitter stays inside it -- tests/test_loop_judge.py --
+// so the 2-8 crossings a crawl of the same wheel still showed, peaking two counts past the
+// setpoint, are the loop's own limit cycle at the dead zone, not the instrument), and a crossing is
 // counted only when the speed leaves the band on the OTHER side from where it last left it:
 // one overshoot that comes back inside is 1, ringing is 2 or more. Five floats a wheel; no
 // per-tick trace is kept.
@@ -18,6 +21,7 @@
 
 struct LoopJudge {
     static const unsigned WIN = 5;          // ticks averaged: 100 ms at the 50 Hz control rate
+    static constexpr float BAND_COUNTS = 1.0f;   // the band's floor, in counts of the average
 
     float sp = 0.0f, band = 0.0f, peak = 0.0f, last = 0.0f, err_sum = 0.0f;
     float win[WIN] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -30,7 +34,7 @@ struct LoopJudge {
         *this = LoopJudge();
         sp = setpoint;
         band = fabsf(setpoint) * 0.02f;
-        if (res_rpm > band) band = res_rpm;
+        if (res_rpm * BAND_COUNTS > band) band = res_rpm * BAND_COUNTS;
     }
 
     // One tick's RPM, at tick t of a step `ticks` long. The steady error is the raw mean over
