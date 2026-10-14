@@ -512,9 +512,15 @@ def cmd_rpm(robot: Robot, a) -> int:
         say("  " + ln)
     say(f"  counts_per_rev {cpr} -> {new_cpr} ({off * 100:.1f} % off)")
     wrote = write_changes(robot, changes, a)
-    ok = off <= 0.02 and not wrote
-    summary = "; ".join(notes) + (f"; counts_per_rev {cpr} -> {new_cpr}, confirm with a second run"
-                                  if wrote else f"; counts_per_rev {cpr} agrees")
+    # Only a counts_per_rev correction needs a second run to confirm; max_rpm is the
+    # measurement itself, written as read (TS100: the step failed on a max_rpm write
+    # alone and named a counts_per_rev change it had not made).
+    ok = off <= 0.02
+    summary = "; ".join(notes) + (f"; counts_per_rev {cpr} agrees" if ok else
+                                  f"; counts_per_rev {cpr} -> {new_cpr}" +
+                                  (", confirm with a second run" if wrote else ", not written"))
+    if wrote and "kinematics.max_rpm" in changes:
+        summary += f"; max_rpm {changes['kinematics.max_rpm']}"
     say(f"RPM {'PASS' if ok else 'FAIL'}: {summary}")
     if len(wheels) == n:
         bc.mark(robot.name, robot.params, "rpm", "pass" if ok else "fail", summary,
