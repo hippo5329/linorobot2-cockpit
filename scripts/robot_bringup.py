@@ -152,6 +152,36 @@ class Tool:
         raise SystemExit(f"no answer from the board to '{line}' in {self.lt.ACK_TIMEOUT_S:.0f} s "
                          "(flash the MCU: older firmware does not answer; or the link is down)")
 
+    def waiting(self, question, *args):
+        """Ask the person while a drive runs on. The tool's deadman stops a drive whose
+        console goes quiet, and a person reading a tachometer is quiet for as long as it
+        takes: the link keeps its keep-alives and is read meanwhile (the board's lines
+        would otherwise fill it), and a drive that ended anyway is said."""
+        import threading
+        import tool_answer
+        done, seen = threading.Event(), []
+
+        def pump():
+            while not done.is_set() and not getattr(self.link, "closed", False):
+                self.link.keepalive()
+                d = self.link.read()
+                if d:
+                    seen.append(d)
+                else:
+                    time.sleep(0.05)
+
+        t = threading.Thread(target=pump, daemon=True)
+        t.start()
+        try:
+            return question(*args)
+        finally:
+            done.set()
+            t.join(2.0)
+            for raw in b"".join(seen).decode(errors="replace").splitlines():
+                a = tool_answer.parse(raw)
+                if a and a["kind"] in ("stopped", "fail"):
+                    say(f"  {tool_answer.words(a)}")
+
     def lines(self, seconds: float, keep: bool = False):
         """(text, json-or-None) for every line the board prints in `seconds` -- first the
         ones read while waiting for an answer (send). keep=True: also kept for the next call."""
@@ -449,7 +479,8 @@ def cmd_rpm(robot: Robot, a) -> int:
                     rpms.append(abs(float(j["rpm"][w - 1])))
             enc = statistics.median(rpms) if rpms else 0.0
             say(f"  encoder: {enc:.1f} RPM")
-            tacho = a.tacho if a.tacho is not None else ask_float(f"  the tachometer reads (RPM) for wheel {w}:")
+            tacho = a.tacho if a.tacho is not None else \
+                tool.waiting(ask_float, f"  the tachometer reads (RPM) for wheel {w}:")
             tool.stop()
             rows[w] = {"encoder": round(enc, 1), "tacho": tacho}
     finally:

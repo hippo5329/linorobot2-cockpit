@@ -308,3 +308,35 @@ def test_the_command_line_works_on_the_robot_the_web_ui_selected(tmp_path, monke
     assert cockpit_paths.active_robot_path().endswith("walkbot_config.yaml")
     (tmp_path / ".active_robot").write_text("../secrets.yaml\n")
     assert cockpit_paths.active_robot_path().endswith("bare_sim_config.yaml")
+
+
+def test_a_question_asked_mid_drive_keeps_the_link_alive():
+    """The tool's deadman stops a drive whose console goes quiet (tools.cpp con_heartbeat). The
+    rpm step runs a wheel until the person reads the tachometer; its first TS100 run stopped the
+    wheel within seconds, because nothing was sent while the question waited."""
+    import time
+    import robot_bringup
+
+    class Link:
+        closed = False
+
+        def __init__(self):
+            self.keeps, self.reads = 0, [b"MOTOR 1 FWD\n", b"stopped: motor 1 100 0 (lost the console)\n"]
+
+        def keepalive(self):
+            self.keeps += 1
+
+        def read(self):
+            return self.reads.pop(0) if self.reads else b""
+
+    tool = robot_bringup.Tool.__new__(robot_bringup.Tool)
+    tool.link = Link()
+    said = []
+    robot_bringup.say, old = said.append, robot_bringup.say
+    try:
+        got = tool.waiting(lambda q: (time.sleep(0.6), 142.0)[1], "the tachometer reads:")
+    finally:
+        robot_bringup.say = old
+    assert got == 142.0
+    assert tool.link.keeps >= 5, "keep-alives while the question waits"
+    assert any("stopped: motor 1 100 0" in s for s in said), "a drive that ended anyway is said"
