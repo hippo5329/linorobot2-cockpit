@@ -1501,6 +1501,13 @@ def slam_pause_toggle(distro: str) -> bool:
     return r.returncode == 0 and "response" in (r.stdout or "")
 
 
+def holonomic_flag(params: dict) -> str:
+    """clearance.py home's --holonomic for a mecanum base, which slides home with its heading
+    held (a masked LiDAR keeps facing the snapshot); '' for the rest."""
+    base = str((params.get("kinematics") or {}).get("base_type", "2wd")).lower()
+    return " --holonomic" if base == "mecanum" else ""
+
+
 def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
                    serial_port: str, flash_baud: int, controller: str, robot_name: str,
                    sim: bool = False) -> tuple:
@@ -1590,7 +1597,7 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
     print("  Back to where test_acc started, by the LiDAR...")
     home = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} home --snap {snap} "
-                   f"--radius {radius:.2f}{stamped}", timeout=180, distro=args.distro)
+                   f"--radius {radius:.2f}{stamped}{holonomic_flag(params)}", timeout=180, distro=args.distro)
     for ln in (home.stdout or "").splitlines():
         print(ln if ln.startswith("  ") else "  " + ln)
     if home.returncode != 0:

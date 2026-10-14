@@ -281,3 +281,98 @@ def test_an_asymmetric_room_is_driven_on():
 def test_a_weak_fix_names_what_it_needed():
     cands = [(90, (0.0, 0.0, 0.0, 0.015, 90))]
     assert "need 115 of a 288-point snapshot" in clearance.first_fix_fault(cands, 288)
+
+
+# The drive home on a mecanum base with a masked LiDAR (2026-10-15): it turned to face home,
+# the masked rear swung across the snapshot, the match fell under 60 pairs mid-turn and the
+# run ended LOST 0.22 m from home.
+
+def test_a_holonomic_base_slides_home_without_turning():
+    # 0.22 m to the right of home, facing as it did: home is straight to its left
+    vx, vy, wz = clearance.home_step((math.radians(1.0), 0.006, -0.217), 0.217, holonomic=True)
+    assert vy > 0.1 and abs(vx) < 0.01 and wz == 0.0
+    # turned 90 deg left, home behind its right flank: it slides there and turns slowly back
+    vx, vy, wz = clearance.home_step((math.pi / 2, 0.0, -0.2), 0.2, holonomic=True)
+    assert vx > 0.1 and abs(vy) < 0.01 and wz == -0.3
+
+
+def test_a_diff_drive_base_still_turns_to_face_home_first():
+    vx, vy, wz = clearance.home_step((0.0, 0.006, -0.217), 0.217, holonomic=False)
+    assert vx == 0.0 and vy == 0.0 and abs(wz) >= 0.2
+
+
+def test_the_corridor_follows_the_direction_of_travel():
+    P = np.array([[0.0, 0.25]])                       # a box 0.25 m to the left
+    assert clearance.path_blocked(P, 0.0, 0.1, 0.20) == pytest.approx(0.25)
+    assert clearance.path_blocked(P, 0.1, 0.0, 0.20) == 0.0
+    assert clearance.path_blocked(P, 0.0, 0.0, 0.20) == 0.0
+
+
+class _StillRobot:
+    """Scans from a list (the last one repeats); commands are recorded, nothing moves."""
+
+    def __init__(self, scans):
+        self.scans, self.scan, self.sent = list(scans), None, []
+
+    def claim_cmd_vel(self):
+        return True
+
+    def next_scan(self, timeout=1.0):
+        self.scan = self.scans.pop(0) if len(self.scans) > 1 else self.scans[0]
+        return self.scan
+
+    def mount(self):
+        return (0.0, 0.0, 0.0)
+
+    def send(self, vx, wz, vy=0.0):
+        self.sent.append((vx, vy, wz))
+
+    def stop(self):
+        self.sent.append((0.0, 0.0, 0.0))
+
+    def spin(self, secs):
+        pass
+
+
+def _home_run(monkeypatch, tmp_path, scans, home):
+    import argparse
+    monkeypatch.setattr(clearance.scan_match, "scan_points", lambda s, laser: s)
+    monkeypatch.setattr(clearance, "snapshot_points", lambda snap, laser: home)
+    snap = tmp_path / "snap.json"
+    snap.write_text("{}")
+    a = argparse.Namespace(snap=str(snap), timeout=1.5, tol=0.05, tol_deg=3.0, radius=0.20,
+                           holonomic=True, trace=False)
+    return clearance.cmd_home(a, _StillRobot(scans))
+
+
+WALLS = RECT + [((0.8, -1.5), (0.8, -0.9)), ((0.8, -0.9), (1.4, -0.9)), ((-2, 0.6), (-1.3, 1.5))]
+
+
+def test_a_weak_match_stops_and_looks_again_instead_of_giving_up(monkeypatch, tmp_path, capsys):
+    home = _room(WALLS)
+    c, s = math.cos(0.2), math.sin(0.2)
+    good = (home - [0.3, -0.2]) @ np.array([[c, -s], [s, c]])   # 0.36 m off, turned
+    junk = np.random.default_rng(1).uniform(-5, 5, (40, 2))     # what a blurred turn matches
+    _home_run(monkeypatch, tmp_path, [good] + [junk] * clearance.TRACK_BAD_SCANS + [good], home)
+    out = capsys.readouterr().out
+    assert "relocate 1:" in out and "LOST" not in out, out
+
+
+def test_a_robot_that_cannot_be_found_again_is_lost_with_the_reason(monkeypatch, tmp_path, capsys):
+    home = _room(WALLS)
+    junk = np.random.default_rng(2).uniform(-5, 5, (40, 2))
+    c, s = math.cos(0.2), math.sin(0.2)
+    good = (home - [0.3, -0.2]) @ np.array([[c, -s], [s, c]])
+    assert _home_run(monkeypatch, tmp_path, [good] + [junk], home) == 1
+    out = capsys.readouterr().out
+    assert "HOME_FAILED" in out and "relocate 1:" in out and "LOST (the first fix is weak" in out, out
+
+
+def test_both_home_drives_pass_holonomic_for_a_mecanum_base_only():
+    import one_click_pipeline as ocp
+    assert ocp.holonomic_flag({"kinematics": {"base_type": "mecanum"}}) == " --holonomic"
+    assert ocp.holonomic_flag({"kinematics": {"base_type": "2wd"}}) == ""
+    assert ocp.holonomic_flag({}) == ""
+    for f in ("one_click_pipeline.py", "robot_bringup.py"):
+        src = open(os.path.join(REPO, "scripts", f)).read()
+        assert "holonomic_flag(" in src.split("clearance.py')} home --snap", 1)[1][:200], f

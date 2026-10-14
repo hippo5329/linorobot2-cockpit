@@ -211,13 +211,13 @@ class Robot:
         self.pub = self.node.create_publisher(self.T, "/cmd_vel", 10)
         return True
 
-    def send(self, vx: float, wz: float):
+    def send(self, vx: float, wz: float, vy: float = 0.0):
         m = self.T()
         t = m.twist if self.stamped else m
         if self.stamped:
             m.header.stamp = self.node.get_clock().now().to_msg()
             m.header.frame_id = "base_link"
-        t.linear.x, t.angular.z = float(vx), float(wz)
+        t.linear.x, t.linear.y, t.angular.z = float(vx), float(vy), float(wz)
         self.pub.publish(m)
 
     def stop(self):
@@ -419,6 +419,52 @@ def first_fix_fault(cands, snapshot_points: int) -> str:
     return ""
 
 
+# The drive home loses its match when this many scans in a row fit badly; it then stops and
+# looks again from a standstill (RELOCATE_TRIES times at most) before it calls the robot LOST.
+TRACK_BAD_SCANS = 5
+RELOCATE_TRIES = 3
+TRACK_MIN_PAIRS = 60
+TRACK_MAX_RMS = 0.08
+
+
+def home_step(pose, dist: float, holonomic: bool):
+    """(vx, vy, wz) toward home from `pose` = (yaw, x, y) of the robot in the home frame.
+
+    A holonomic base (mecanum) slides there with its heading held: turning first swung a
+    masked LiDAR sector (a UNO Q robot's 95 deg rear) across the snapshot, the match fell under
+    TRACK_MIN_PAIRS mid-turn and the run ended LOST 0.22 m from home (2026-10-14). The rest
+    turn to face the way and drive."""
+    th, x, y = pose
+    speed = min(0.12, 0.5 * dist + 0.04)
+    if holonomic:
+        # home's direction in base_link: (-x, -y) in the home frame, turned by -th
+        hx = -x * math.cos(th) - y * math.sin(th)
+        hy = x * math.sin(th) - y * math.cos(th)
+        norm = math.hypot(hx, hy) or 1.0
+        err = scan_match.wrap(-th)
+        wz = max(-0.3, min(0.3, 1.0 * err)) if abs(err) > math.radians(3) else 0.0
+        return speed * hx / norm, speed * hy / norm, wz
+    face, d = turn_for(math.atan2(-y, -x) - th)
+    if abs(face) > math.radians(8):
+        return 0.0, 0.0, max(0.2, min(0.6, abs(face))) * (1 if face > 0 else -1)
+    return d * speed, 0.0, max(-0.4, min(0.4, 1.5 * face))
+
+
+def path_blocked(P, vx: float, vy: float, radius: float) -> float:
+    """The nearest return in the robot's corridor along (vx, vy), when it is inside the stop
+    margin of its circle; 0 when the way is open or the robot is not translating."""
+    v = math.hypot(vx, vy)
+    if v == 0 or len(P) == 0:
+        return 0.0
+    ux, uy = vx / v, vy / v
+    along = P[:, 0] * ux + P[:, 1] * uy
+    across = np.abs(P[:, 1] * ux - P[:, 0] * uy)
+    ahead = along[(along > 0) & (across < radius)]
+    if len(ahead) and ahead.min() < radius + STOP_MARGIN_M:
+        return float(ahead.min())
+    return 0.0
+
+
 def cmd_home(a, r: Robot) -> int:
     snap = json.load(open(a.snap))
     if not r.claim_cmd_vel():
@@ -438,7 +484,7 @@ def cmd_home(a, r: Robot) -> int:
     if why:
         print(f"HOME ABORT: {why} -- not driving on a guess")
         return 2
-    bad, verdict, positioned = 0, "TIMEOUT", False
+    bad, verdict, positioned, relocs = 0, "TIMEOUT", False, 0
     start = time.time()
     try:
         while time.time() - start < a.timeout:
@@ -451,17 +497,37 @@ def cmd_home(a, r: Robot) -> int:
                 continue
             P = scan_match.scan_points(r.scan, laser)
             th, x, y, rms, n = scan_match.icp(P, home, pose[0], (pose[1], pose[2]))
-            if n < 60 or not rms < 0.08:
+            if a.trace:
+                print("  trace %6.2f s  %3d pts  %3d pairs rms %.3f  x %+.3f y %+.3f yaw %+6.1f"
+                      % (time.time() - start, len(P), n, rms, x, y, math.degrees(scan_match.wrap(th))),
+                      flush=True)
+            if n < TRACK_MIN_PAIRS or not rms < TRACK_MAX_RMS:
                 r.send(0, 0)
                 bad += 1
-                if bad >= 10:
-                    verdict = "LOST (no match: %d pairs, rms %.3f)" % (n, rms)
-                    break
+                if bad >= TRACK_BAD_SCANS:
+                    # Stopped, the scan is sharp again: look from scratch, with the first fix's gate.
+                    if relocs >= RELOCATE_TRIES:
+                        verdict = "LOST (no match: %d pairs, rms %.3f)" % (n, rms)
+                        break
+                    relocs += 1
+                    r.stop()
+                    r.spin(1.0)
+                    if r.next_scan(1.0) is None:
+                        continue
+                    cands = scan_match.locate_candidates(scan_match.scan_points(r.scan, laser), home)
+                    why = first_fix_fault(cands, len(home))
+                    k_best, (th, x, y, rms, n) = cands[0]
+                    print("  relocate %d: x %+.3f y %+.3f yaw %+.1f deg -- %d pairs, rms %.3f%s"
+                          % (relocs, x, y, math.degrees(th), n, rms, f" -- {why}" if why else ""))
+                    if why:
+                        verdict = f"LOST ({why})"
+                        break
+                    pose, bad = (scan_match.wrap(th), x, y), 0
                 continue
             bad = 0
             pose = (scan_match.wrap(th), x, y)
             dist = math.hypot(x, y)
-            vx = wz = 0.0
+            vx = vy = wz = 0.0
             if positioned and dist > 2 * a.tol:
                 positioned = False
             if not positioned and dist <= a.tol:
@@ -480,22 +546,17 @@ def cmd_home(a, r: Robot) -> int:
                         break
                 continue
             if not positioned:
-                face, d = turn_for(math.atan2(-y, -x) - pose[0])
-                err = face
-                if abs(err) > math.radians(8):
-                    wz = max(0.2, min(0.6, abs(err))) * (1 if err > 0 else -1)
-                else:
-                    vx = d * min(0.12, 0.5 * dist + 0.04)
-                    wz = max(-0.4, min(0.4, 1.5 * err))
+                vx, vy, wz = home_step(pose, dist, a.holonomic)
             else:
                 err = scan_match.wrap(-pose[0])
                 wz = max(0.2, min(0.6, abs(err))) * (1 if err > 0 else -1)
-            if vx:
-                ahead = P[(np.sign(P[:, 0]) == np.sign(vx)) & (np.abs(P[:, 1]) < a.radius)]
-                if len(ahead) and np.min(np.abs(ahead[:, 0])) < a.radius + STOP_MARGIN_M:
-                    verdict = "BLOCKED (%.2f m %s)" % (np.min(np.abs(ahead[:, 0])), "ahead" if vx > 0 else "behind")
-                    break
-            r.send(vx, wz)
+            near = path_blocked(P, vx, vy, a.radius)
+            if near:
+                verdict = "BLOCKED (%.2f m along the way home)" % near
+                break
+            if a.trace:
+                print("  trace          cmd vx %+.3f vy %+.3f wz %+.3f" % (vx, vy, wz), flush=True)
+            r.send(vx, wz, vy)
     finally:
         r.stop()
     print("%s after %.1f s: x %+.3f m y %+.3f m yaw %+.1f deg"
@@ -524,6 +585,10 @@ def main(argv=None) -> int:
             p.add_argument("--tol", type=float, default=0.05)
             p.add_argument("--tol-deg", type=float, default=3.0)
             p.add_argument("--timeout", type=float, default=90.0)
+            p.add_argument("--holonomic", action="store_true",
+                           help="a mecanum base: slide home with the heading held, turn last")
+            p.add_argument("--trace", action="store_true",
+                           help="one line per scan: the match (pairs, rms), the pose and the command")
     a = ap.parse_args(argv)
     r = Robot(stamped=a.stamped, scan_topic=a.scan_topic)
     try:
