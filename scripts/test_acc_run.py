@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""test_acc on a Wi-Fi robot, from start to "app=base" again -- the 1-Click's --test-acc step.
+"""test_acc on a robot, from start to "app=base" again -- the 1-Click's --test-acc step.
 
     test_acc_run.py --params CFG --env PIO_ENV --port PORT --baud B --controller NAME --ip BOARD_IP
                     [--timeout 300]
+    test_acc_run.py ... --serial          a serial robot: the console is PORT (no --ip)
 
 test_acc is the firmware's drivetrain tool: the PID identification (dead zone, open-loop
 step, closed-loop steps, one wheel at a time) and then twelve 1 s full-power runs,
@@ -19,6 +20,12 @@ first (clearance.py, 1.0 m all round).
      (the firmware latches it and halts the motors), then the env with app=base
 Prints the results (IDENT gains / plant / dead zone, MAX VEL / ACC) and TEST_ACC_DONE or
 TEST_ACC_FAILED. Exit 0 when test_acc finished.
+
+A serial robot (--serial: the UNO Q, whose STM32 has no radio) has no syslog and no ping
+port. While a tool runs its console is the micro-ROS tty itself, so the agent on that tty
+is paused (SIGSTOP: a dead one would be respawned by the launch onto the tty and eat the
+lines) and the port is read here. The stop is the env write with app=base, which restarts
+the board; then the agent is let go (SIGCONT), and the board opens a new session with it.
 """
 import argparse
 import os
@@ -39,6 +46,8 @@ RESULT_RE = re.compile(r"IDENT (gains|robot|plant|deadzone|done)|MAX VEL|MIN VEL
 # minute and little else, and a 30 s window that opened just after one heard nothing (a tracked robot).
 SYSLOG_WAIT_S = 65
 STOP_TRIES = 20
+# test_acc prints a line at least every few seconds; this long without one, the tty is reopened.
+SERIAL_QUIET_S = 15.0
 
 
 def heard(src, seconds: float) -> bool:
@@ -132,6 +141,130 @@ def stop_board(ip: str, port: int = wifi_boards.PING_PORT, tries: int = STOP_TRI
     return False
 
 
+class SerialSource:
+    """The board's console lines from its tty (a serial robot's test_acc)."""
+
+    def __init__(self, port: str, baud: int, env: str):
+        import lino_tool
+        self.link = lino_tool.SerialLink(port, baud, env)
+        self.buf = b""
+        self.where = f"the console on {port}"
+        self.heard = time.time()
+
+    def open(self) -> bool:
+        return self.link.open()
+
+    def lines(self, timeout: float) -> list:
+        out, end = [], time.time() + timeout
+        while time.time() < end:
+            data = self.link.read() if self.link.s else b""
+            if not data:
+                if time.time() - self.heard > SERIAL_QUIET_S:
+                    # The UNO Q's ttyHS1 can stop delivering mid-burst while the board has sent
+                    # everything (2026-10-14); a reopen brings the bytes back.
+                    self.heard = time.time()
+                    self.link._reopen()
+                time.sleep(0.05)
+                continue
+            self.heard = time.time()
+            self.buf += data
+            *done, self.buf = self.buf.split(b"\n")
+            out += [ln.decode("utf-8", errors="replace").strip("\r") for ln in done]
+        return [ln for ln in out if ln.strip()]
+
+    def close(self):
+        if self.link.s:
+            try:
+                self.link.s.close()
+            except Exception:
+                pass
+            self.link.s = None
+
+
+def pause_holders(port: str) -> list:
+    """SIGSTOP whatever holds the tty (the micro-ROS agent): stopped, it keeps the tty open
+    but reads nothing, and the launch respawns only a process that died."""
+    import signal
+    import flash_mcu
+    pids = flash_mcu._holders_of(port)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGSTOP)
+            print(f"  pid {pid} holds {port}: paused for the run")
+        except (ProcessLookupError, PermissionError) as exc:
+            print(f"  pid {pid} holds {port}: not paused ({exc})")
+    return pids
+
+
+def resume(pids: list):
+    import signal
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if pids:
+        print(f"  {len(pids)} paused process(es) let go: the agent takes the tty back")
+
+
+def run_serial(a) -> int:
+    """test_acc with its console on the tty: no syslog, no ping port; app=base is the stop."""
+    paused = pause_holders(a.port)
+    src = SerialSource(a.port, a.baud, a.env)
+    got, t0, base_ok = [], time.time(), False
+    try:
+        if not src.open():
+            print(f"TEST_ACC_FAILED: {a.port} did not open -- nothing moved")
+            return 1
+        print(f"  the board's console: {src.where}")
+        print("  app=test_acc -- THE ROBOT MOVES (full power runs)")
+        try:
+            if not write_app(a, "test_acc"):
+                print("TEST_ACC_FAILED: the env write with app=test_acc failed")
+                return 1
+            last = 0
+            while time.time() - t0 < a.timeout:
+                got += src.lines(2.0)
+                if ended(got):
+                    break
+                el = int(time.time() - t0)
+                if el // 20 != last // 20:
+                    print(f"  {el} s: {sum('IDENT' in ln for ln in got)} IDENT, "
+                          f"{sum('MAX PWM' in ln for ln in got)} runs", flush=True)
+                last = el
+        finally:
+            src.close()
+            print("  app=base (the board restarts: the motors stop)")
+            base_ok = write_app(a, "base")
+    finally:
+        src.close()
+        resume(paused)
+    return report(a, got, base_ok, t0)
+
+
+def report(a, got: list, base_ok: bool, t0: float) -> int:
+    end = ended(got)
+    if a.transcript:
+        # A transcript that cannot be written must not take the run's verdict with it.
+        try:
+            os.makedirs(os.path.dirname(a.transcript) or ".", exist_ok=True)
+            with open(a.transcript, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(got) + "\n")
+            print(f"  transcript: {len(got)} lines -> {a.transcript}")
+        except OSError as e:
+            print(f"  transcript not written ({e}); the results follow")
+    for ln in results(got):
+        print(f"  | {ln}")
+    if not base_ok:
+        print("TEST_ACC_FAILED: app=base was not written back -- the board is still in the tool")
+        return 1
+    if end and "[test_acc] done" in end:
+        print(f"TEST_ACC_DONE after {time.time() - t0:.0f} s")
+        return 0
+    print(f"TEST_ACC_FAILED: {end or f'no end line in {a.timeout:.0f} s'}")
+    return 1
+
+
 def write_app(a, app: str) -> bool:
     argv = [sys.executable, "-u", os.path.join(REPO_ROOT, "scripts", "flash_mcu.py"), "--env-only",
             "--env", a.env, "--port", a.port, "--baud", str(a.baud), "--params", a.params,
@@ -153,17 +286,23 @@ def results(lines: list) -> list:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="test_acc on a Wi-Fi robot, then app=base again")
+    ap = argparse.ArgumentParser(description="test_acc on a robot, then app=base again")
     ap.add_argument("--params", required=True)
     ap.add_argument("--env", required=True, help="the PlatformIO env (flash_mcu.py --env)")
     ap.add_argument("--port", required=True, help="the configured tty (absent = over the air)")
     ap.add_argument("--baud", type=int, required=True)
     ap.add_argument("--controller", required=True)
-    ap.add_argument("--ip", required=True, help="the board's address (its syslog source)")
+    ap.add_argument("--ip", default="", help="the board's address (its syslog source)")
+    ap.add_argument("--serial", action="store_true",
+                    help="a serial robot: the console is --port, the agent there is paused")
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--transcript", default="", help="write every line the board sent here "
                     "(drivetrain_report.py --from-test-acc reads it)")
     a = ap.parse_args(argv)
+    if a.serial:
+        return run_serial(a)
+    if not a.ip:
+        ap.error("--ip is required without --serial")
 
     src = SyslogSource(a.ip)
     print(f"  the board's syslog: {src.where}")
@@ -193,26 +332,7 @@ def main(argv=None) -> int:
             stop_board(a.ip)
             print("  app=base back over the air")
             base_ok = write_app(a, "base")
-        end = ended(got)
-        if a.transcript:
-            # A transcript that cannot be written must not take the run's verdict with it.
-            try:
-                os.makedirs(os.path.dirname(a.transcript) or ".", exist_ok=True)
-                with open(a.transcript, "w", encoding="utf-8") as fh:
-                    fh.write("\n".join(got) + "\n")
-                print(f"  transcript: {len(got)} lines -> {a.transcript}")
-            except OSError as e:
-                print(f"  transcript not written ({e}); the results follow")
-        for ln in results(got):
-            print(f"  | {ln}")
-        if not base_ok:
-            print("TEST_ACC_FAILED: app=base was not written back -- the board is still in the tool")
-            return 1
-        if end and "[test_acc] done" in end:
-            print(f"TEST_ACC_DONE after {time.time() - t0:.0f} s")
-            return 0
-        print(f"TEST_ACC_FAILED: {end or f'no end line in {a.timeout:.0f} s'}")
-        return 1
+        return report(a, got, base_ok, t0)
     finally:
         src.close()
 

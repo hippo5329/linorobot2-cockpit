@@ -24,7 +24,7 @@ shows as done in the other, and the 1-Click asks the same record before it moves
     robot_bringup.py cpr-turns --wheel 1 --turns 10   counts per rev by turning a wheel by hand
     robot_bringup.py lidar    [--seconds 10]      rate, coverage, ranges (robot stack running)
     robot_bringup.py speed                        speed_check.py: wheels vs LiDAR (floor, 0.6 m clear)
-    robot_bringup.py acc      [--write]           test_acc with 1.0 m clear and back home (floor, Wi-Fi)
+    robot_bringup.py acc      [--write]           test_acc with 1.0 m clear and back home (floor)
     robot_bringup.py mark STAGE pass|fail|skip [--summary TEXT]
     robot_bringup.py gate                         exit 0 when the 1-Click may move this robot
 
@@ -645,9 +645,9 @@ def cmd_acc(robot: Robot, a) -> int:
     step on its own, with the robot brought up and nothing else running."""
     import gen_firmware_header
     import one_click_pipeline as ocp
-    if not robot.parts["wifi"]:
-        say("ACC: test_acc runs over Wi-Fi (its results come by syslog); this robot is on serial")
-        return 2
+    # A Wi-Fi board sends its results by syslog; a serial one (the UNO Q) prints them on its
+    # tty, which test_acc_run.py --serial reads while the agent there is paused.
+    on_serial = not robot.parts["wifi"]
     held = _floor_held(robot)
     if held:
         say(f"ACC REFUSED: {held}")
@@ -664,8 +664,8 @@ def cmd_acc(robot: Robot, a) -> int:
     if chk.returncode != 0:
         say(f"ACC REFUSED: less than {a.clear:.1f} m clear -- move the robot (nothing moved)")
         return 2
-    found = ocp.wireless_board(robot.tgt, robot.path, robot.params)
-    if not found.get("ip"):
+    found = {} if on_serial else ocp.wireless_board(robot.tgt, robot.path, robot.params)
+    if not on_serial and not found.get("ip"):
         say("ACC REFUSED: the board did not answer on Wi-Fi")
         return 2
     pose0 = ocp.odom_pose(distro)
@@ -674,12 +674,12 @@ def cmd_acc(robot: Robot, a) -> int:
     # test_acc lost its whole transcript at the end (a tracked robot) -- the board had finished.
     os.makedirs(os.path.dirname(transcript), exist_ok=True)
     import mcu_identity
-    port = str(robot.tgt.get("serial_port") or "/dev/ttyACM0")
+    port = str((a.port if on_serial else None) or robot.tgt.get("serial_port") or "/dev/ttyACM0")
     argv = [sys.executable, "-u", os.path.join(HERE, "test_acc_run.py"), "--params", robot.path,
             "--env", mcu_identity.pio_env_for(robot.pio_env, "esp32"), "--port", port,
             "--baud", str(int(robot.env.get("baud") or 921600)),
-            "--controller", str(robot.tgt.get("name") or robot.pio_env), "--ip", found["ip"],
-            "--transcript", transcript]
+            "--controller", str(robot.tgt.get("name") or robot.pio_env),
+            "--transcript", transcript] + (["--serial"] if on_serial else ["--ip", found["ip"]])
     res = subprocess.run(argv)
     ocp.wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=distro)
     ocp.wait_for_topic("/scan", timeout_sec=90, distro=distro, require_message="header.frame_id")
