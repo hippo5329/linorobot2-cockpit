@@ -85,6 +85,11 @@ void toolMotorsOff(void);
 // The env names no I2C bus: neither both pins nor a fixed bus (`i2c_bus`). Nothing scans
 // a bus nobody wired -- its default pins may be a motor's.
 bool toolI2cUnassigned(void);
+// The running command's end answer, said once (tools.cpp): "fail: <command> -- why" when it
+// ends without doing its work (test_acc on simulated wheels, a halt on a fault), "stopped:
+// <command> (why)" when it was stopped. Otherwise the shell says "done: <command>".
+void toolJobFail(const char *why);
+void toolJobStopped(const char *why);
 // The Sim MCU's walkthrough mode (host build only; tools.cpp): its simulated parts count.
 bool toolWalk(void);
 

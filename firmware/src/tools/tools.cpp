@@ -304,6 +304,7 @@ static void prompt(void) { Serial.print("tool> "); }
 static char ack_line[72];
 static char job_line[72];
 static bool ack_pending = false;
+static bool job_ended = false;     // the running command's end answer is given (once)
 
 static void ackClean(char *dst, size_t n, const char *src)
 {
@@ -336,11 +337,27 @@ static void abortJump(const char *why)
     longjmp(to_prompt, 1);
 }
 
-void toolAbort(const char *why)
+void toolJobStopped(const char *why)
 {
-    // "stopped: you typed stop", "stopped: lino-stop", "stopped: the terminal went quiet".
+    if (job_ended) return;
+    job_ended = true;
+    // "you typed stop", "lino-stop", "the terminal went quiet".
     Serial.printf("\nstopped: %s (%s%s)\n", job_line, strcmp(why, "stop") == 0 ? "you typed stop" : why,
                   job_moves ? " -- motors off" : "");
+}
+
+void toolJobFail(const char *why)
+{
+    if (job_ended) return;
+    job_ended = true;
+    char m[120];
+    ackClean(m, sizeof(m), why);
+    Serial.printf("fail: %s -- %s\n", job_line, m);
+}
+
+void toolAbort(const char *why)
+{
+    toolJobStopped(why);
     abortJump(why);
 }
 
@@ -621,7 +638,7 @@ static bool cmdKey(const char *k, const char *v)
 
 static void startJob(const char *name, bool moves)
 {
-    if (ack_pending) strncpy(job_line, ack_line, sizeof(job_line) - 1);
+    if (ack_pending) { strncpy(job_line, ack_line, sizeof(job_line) - 1); job_ended = false; }
     ack(true, "running");
     stop_flag = false;
     stop_why = "stop";
@@ -647,8 +664,10 @@ static void runBlocking(const char *name, void (*fn)(void), bool moves)
     startJob(name, moves);
     fn();                       // a stop longjmps to toolLoop's to_prompt
     toolMotorsOff();
-    if (!i2c_every_ms)          // `i2c N` goes on scanning: it ends at its stop
+    if (!i2c_every_ms && !job_ended) {   // `i2c N` goes on scanning: it ends at its stop
+        job_ended = true;
         Serial.printf("done: %s\n", job_line);
+    }
     job_name = nullptr;
     job_moves = false;
 }
@@ -887,7 +906,7 @@ void toolLoop(void)
     if (job_step) {
         if (!job_step()) {
             toolMotorsOff();
-            Serial.printf("done: %s\n", job_line);
+            if (!job_ended) { job_ended = true; Serial.printf("done: %s\n", job_line); }
             job_step = nullptr;
             job_name = nullptr;
             job_moves = false;

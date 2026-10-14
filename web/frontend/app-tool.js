@@ -92,7 +92,10 @@ function toolParse(line) {
   // why", "done: <line>", "stopped: <line> (why)". Shown as they come -- they are the words
   // a person reads -- and the end of a running command clears STOP.
   const ans = /^\s*(ok|fail|done|stopped): /.exec(line);
-  if (ans && (ans[1] === "done" || ans[1] === "stopped")) {
+  // "fail" ends a running command too: refused at its start, or ended without its work
+  // ("fail: acc 500 30 -- the wheels are simulated ...").
+  if (ans && (ans[1] === "done" || ans[1] === "stopped" ||
+              (ans[1] === "fail" && tool.running && line.includes(`fail: ${tool.running}`)))) {
     tool.running = null;
     toolStatus(line.trim());
     toolSetControls();

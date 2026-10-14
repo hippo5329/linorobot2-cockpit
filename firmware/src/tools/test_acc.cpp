@@ -142,8 +142,11 @@ static void halt(const char *why)
     motor2_controller->spin(0);
     motor3_controller->spin(0);
     motor4_controller->spin(0);
-    // The line test_acc_run.py ends on; then back to the tool's prompt.
+    // The line test_acc_run.py ends on; then back to the tool's prompt. Its answer: stopped
+    // when someone stopped it, fail when it halted on a fault it found.
     Serial.printf("[test_acc] STOPPED: %s -- motors off\n", why);
+    if (why == toolStopReason()) toolJobStopped(why);
+    else toolJobFail(why);
     toolAbortQuiet(why);
 }
 
@@ -680,6 +683,7 @@ void runAcc() {
         Serial.println("[test_acc] or open the Config Studio's Kinematics HUD. "
                        "For a real measurement, flash a robot with motors.");
         syslog(LOG_INFO, "test_acc refused: sim_wheel=1, nothing to measure");
+        toolJobFail("the wheels are simulated (sim_wheel=1): nothing to measure");
         return;
     }
 

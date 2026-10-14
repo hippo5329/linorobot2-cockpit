@@ -15,7 +15,9 @@
 
     ok: motor 1 40 3 (running)        the command was taken (and what it is doing)
     fail: motor 3 40 -- this robot has 2 wheels: motor 1 or 2, or all
-    done: motor 1 40 3                a running command finished
+    done: motor 1 40 3                a running command finished its work
+    fail: acc 500 30 -- the wheels are simulated (sim_wheel=1): nothing to measure
+                                      ... or ended without doing it (or halted on a fault)
     stopped: motor 1 40 3 (you typed stop -- motors off)
 
 One reader for every program that drives the tool: the cockpit's backend (tool_session.py),

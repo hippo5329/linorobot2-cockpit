@@ -296,3 +296,21 @@ def test_the_firmware_answers_every_path():
         assert "ack(false" in body[max(0, at - 260):at], marker
     assert "ack(true, \"running\");" in src           # startJob: a running command answers at its start
     assert src.count("answerLine(line,") == 3          # console, terminal, boot command
+
+
+def test_a_command_that_ends_without_its_work_says_fail():
+    """test_acc on simulated wheels, or halted on a wheel turning against its encoder, ends
+    `fail: <command> -- why`, not `done` (the 2026-10-14 Sim MCU walk: `done: acc 500 30` after
+    a refusal read as success)."""
+    s, link, clock, _ = make()
+    s.send("acc 500 30")
+    s.feed(_ack("acc 500 30"))
+    assert s.running == "acc"
+    s.feed(b"fail: acc 500 30 -- the wheels are simulated (sim_wheel=1): nothing to measure\n")
+    assert s.running is None
+    acc = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "test_acc.cpp")).read()
+    assert 'toolJobFail("the wheels are simulated (sim_wheel=1): nothing to measure");' in acc
+    halt = acc[acc.index("static void halt(const char *why)"):acc.index("static float imu_heading")]
+    assert "if (why == toolStopReason()) toolJobStopped(why);" in halt and "else toolJobFail(why);" in halt
+    tools = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
+    assert tools.count("if (job_ended) return;") == 2         # one end answer per command

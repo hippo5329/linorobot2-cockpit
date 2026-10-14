@@ -214,6 +214,8 @@ class ToolSession:
         m = re.search(r"linorobot2_hardware app=(\S+)", ln)
         if m:
             self.banner_app = m.group(1)
+        if a and a["kind"] == "fail" and a["line"].split()[:1] == [self.running]:
+            self.running = None             # refused at its start, or ended without its work
         if ln.endswith(PROMPT) or (a and a["kind"] in ("done", "stopped")) or "[tool] stopped" in ln \
                 or "[test_acc] STOPPED" in ln or re.search(r"\[tool\] \w+ done", ln):
             self.running = None
