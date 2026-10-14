@@ -312,6 +312,105 @@ class TcpLink:
             self.s.close()
 
 
+# ---------------------------------------------------------------- the Sim MCU (the link)
+class SimUnavailable(RuntimeError):
+    """The Sim MCU cannot run the tool here (no host build)."""
+
+
+class SimLink:
+    """The Sim MCU, started for the tool: the host firmware booting straight into the tool
+    (app=tool), its console -- stdin and stdout -- as the session's link. The firmware is the
+    same code a board runs, so the panel can be learned and walked with no board: the tool
+    refuses what the Sim MCU simulates (its wheels, its sensors) in its own words.
+
+    `base` on this link ends the process rather than restarting it into micro-ROS: a second
+    Sim MCU on the agent's port beside a running stack would be a second robot.
+    COCKPIT_TOOL_SIM_WHEELS_REAL=1 (a walkthrough cell, never a robot) makes the wheels count
+    as real so the drive commands run -- the host's motors drive nothing and read 0."""
+
+    def __init__(self, params_path: str, walk: bool = None):
+        import subprocess
+        import tempfile
+        import host_firmware
+        import mcu_env
+        binary = host_firmware.binary()
+        if not binary:
+            raise SimUnavailable("This cockpit has no Sim MCU build to run the tool on.")
+        e = host_firmware.env(params_path)
+        e.update({"app": "tool", "tool_wait": "0", "term_port": "0"})
+        if os.environ.get("COCKPIT_TOOL_SIM_WHEELS_REAL") == "1":
+            e["sim_wheel"] = "0"
+        # The Sim MCU's walkthrough mode (user, 2026-10-14: "allow sim mcu walk mode, we need to
+        # test our web ui and tool command", "only for sim mcu, no other real mcu"): the tool
+        # takes the Sim MCU's models as its parts (firmware toolWalk(), host build only) -- the
+        # wheel model turns and counts, the simulated IMU, magnetometer and battery report.
+        # On for a walkthrough cockpit (COCKPIT_TOOL_SIM_WALK=1) or a --sim --walk command line.
+        if walk if walk is not None else os.environ.get("COCKPIT_TOOL_SIM_WALK") == "1":
+            e.update({"tool_walk": "1", "sim_wheel": "1", "sim_battery": "1"})
+            for k in ("imu", "mag"):
+                if str(e.get(k, "")).lower() != "none":
+                    e[k] = "sim"
+        self._dir = tempfile.mkdtemp(prefix="lino_tool_sim_")
+        path = os.path.join(self._dir, "env.bin")
+        with open(path, "wb") as fh:
+            fh.write(mcu_env.encode(e))
+        penv = dict(os.environ, LINO_ENV_BIN=path)
+        penv.pop("LINO_NEXT_BOOT", None)
+        # Exactly as bringup.launch.py starts it: the client workspace sourced for this
+        # process only (the binary links librclc and rmw_microxrcedds from there -- run bare
+        # it died, "librclc.so: cannot open shared object file"), and RMW_IMPLEMENTATION
+        # said, or rcl refuses the image's container-wide Fast DDS and exits 102.
+        # The launcher runs inside a sourced ROS; the backend does not, so ROS first
+        # (librcutils and the rest -- "librcutils.so: cannot open shared object file").
+        cmd = host_firmware.shell_command(binary)
+        self.p = subprocess.Popen(["bash", "-c", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, env=penv)
+        os.set_blocking(self.p.stdout.fileno(), False)
+        self.closed = False
+
+    def write(self, data: bytes):
+        if self.closed:
+            return
+        if data.strip().lower() in (b"base", b"exit", b"reboot"):
+            self.close()
+            return
+        try:
+            self.p.stdin.write(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+            self.p.stdin.flush()
+        except (BrokenPipeError, OSError):
+            self.close()
+
+    def read(self) -> bytes:
+        if self.closed:
+            return b""
+        try:
+            d = os.read(self.p.stdout.fileno(), 4096)
+        except BlockingIOError:
+            time.sleep(0.02)
+            return b""
+        except OSError:
+            d = b""
+        if not d and self.p.poll() is not None:
+            self.closed = True
+        return d
+
+    def keepalive(self):
+        pass
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.p.terminate()
+            self.p.wait(3)
+        except Exception:
+            try:
+                self.p.kill()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------- driving it
 def pump(link, seconds: float, until=None) -> bytes:
     """Copy the board's output for `seconds`, or until one of `until` appears."""
@@ -457,11 +556,25 @@ def interactive(link) -> None:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def connect(port, env, baud, params_path, ip, password, env_vals, no_reboot=False, window=15.0):
+def connect(port, env, baud, params_path, ip, password, env_vals, no_reboot=False, window=15.0,
+            sim=False, walk=None):
     """The board's tool, entered and at its prompt: a SerialLink on `port` (rebooted into the
     window unless no_reboot), else a TcpLink to `ip` -- or, without one, to the address
     `params_path`'s robot answers pings at. None (with the reason logged) when not reached.
-    robot_bringup.py drives the tool through this too."""
+    robot_bringup.py drives the tool through this too. sim=True: the Sim MCU, started here
+    from `params_path` straight into its tool (walk: its walkthrough mode, SimLink)."""
+    if sim:
+        try:
+            link = SimLink(params_path, walk=walk)
+        except SimUnavailable as e:
+            log(str(e))
+            return None
+        got = pump(link, 15, until=(PROMPT,))
+        if not any(e in got for e in ENTERED) and PROMPT not in got:
+            log("the Sim MCU did not start its tool")
+            link.close()
+            return None
+        return link
     if port:
         if not env and not no_reboot:
             log("--env is needed to reboot the board over USB (esp32, esp32s3, pico, pico2 ...)")
@@ -519,6 +632,10 @@ def main() -> int:
     ap.add_argument("--password", default=None,
                     help="OTA password (default: the robot's secrets; on the command line it shows in ps)")
     ap.add_argument("--no-reboot", action="store_true", help="the board is already in the tool")
+    ap.add_argument("--sim", action="store_true",
+                    help="the Sim MCU: the host firmware started here from --params, straight into its tool")
+    ap.add_argument("--walk", action="store_true",
+                    help="with --sim: the walkthrough mode -- the Sim MCU's own models count as parts")
     ap.add_argument("-c", "--command", action="append", default=[], help="a tool command; repeat")
     ap.add_argument("--base", action="store_true", help="leave the tool when done (restart into base)")
     ap.add_argument("--window", type=float, default=15.0, help="seconds to catch the tool window")
@@ -574,7 +691,8 @@ def main() -> int:
     password = args.password if args.password is not None else str(env_vals.get("ota_password") or "")
 
     link = connect(args.port, args.env, baud, os.path.abspath(args.params) if args.params else None,
-                   args.ip, password, env_vals, no_reboot=args.no_reboot, window=args.window)
+                   args.ip, password, env_vals, no_reboot=args.no_reboot, window=args.window,
+                   sim=args.sim, walk=True if args.walk else None)
     if link is None:
         return 1
 

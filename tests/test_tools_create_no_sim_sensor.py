@@ -156,13 +156,16 @@ def test_the_walkthrough_mode_is_the_sim_mcus_only():
     # every relaxation of real-only goes through toolWalk()
     assert "envSetRealOnly(false)" not in src
     assert "if (toolWalk()) return NULL;" in _func(src, "static const char *simulatedFor(const char *cmd)")
-    # the writers: the Sim MCU's SimLink, and nothing that writes a board's env
+    # the writer: the Sim MCU's link (lino_tool.SimLink), and nothing that writes a board's env
     writers = []
     for root in ("scripts", os.path.join("web", "backend")):
         for f in glob.glob(os.path.join(REPO_ROOT, root, "*.py")):
             if "tool_walk" in _read(f):
                 writers.append(os.path.relpath(f, REPO_ROOT))
-    assert writers == [os.path.join("web", "backend", "routes_tool.py")]
-    rt = _read(os.path.join(REPO_ROOT, "web", "backend", "routes_tool.py"))
-    simlink = rt[rt.index("class SimLink"):rt.index("def _open_sim")]
+    assert writers == [os.path.join("scripts", "lino_tool.py")]
+    lt = _read(os.path.join(REPO_ROOT, "scripts", "lino_tool.py"))
+    simlink = lt[lt.index("class SimLink"):lt.index("# ------------------------------------------------------------- driving it")
+                 if "# ------------------------------------------------------------- driving it" in lt
+                 else lt.index("def pump(")]
     assert '"tool_walk": "1"' in simlink and 'COCKPIT_TOOL_SIM_WALK' in simlink
+    assert "host_firmware.binary()" in simlink        # the host build, never a board

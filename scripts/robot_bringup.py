@@ -56,6 +56,10 @@ import bringup_checklist as bc  # noqa: E402
 import cockpit_paths  # noqa: E402
 
 
+SIM_FLAG = [False]
+WALK_FLAG = [None]
+
+
 def say(msg=""):
     print(msg, flush=True)
 
@@ -76,6 +80,10 @@ class Robot:
         self.name = mcu_env.robot_name_of(self.params, self.path)
         self.pio_env = str(self.tgt.get("pio_env") or self.tgt.get("mcu") or "")
         self.parts = bc.parts(self.params, self.path)
+        # The Sim MCU: its tool is the host firmware, started by this program (--sim, or a
+        # config whose controller is the Sim MCU); it reads the config each time it starts.
+        self.sim = SIM_FLAG[0] or str(self.tgt.get("name") or "").lower() == "sim" \
+            or str(self.tgt.get("mcu") or "").lower() in ("host", "sim")
 
 
 def ask(question: str, choices: str, default: str = None, yes: bool = False) -> str:
@@ -116,9 +124,10 @@ class Tool:
         baud = int(robot.env.get("baud") or 921600)
         if robot.parts and port is None and not robot.parts["wifi"]:
             port = str(robot.tgt.get("serial_port") or "") or None
-        say(f"entering the tool on {'USB ' + port if port else 'Wi-Fi'} (the robot leaves micro-ROS "
-            f"until this step ends)")
-        self.link = lino_tool.connect(port, robot.pio_env, baud, robot.path, ip, password, robot.env)
+        where = "the Sim MCU" if robot.sim else ("USB " + port if port else "Wi-Fi")
+        say(f"entering the tool on {where} (the robot leaves micro-ROS until this step ends)")
+        self.link = lino_tool.connect(port, robot.pio_env, baud, robot.path, ip, password, robot.env,
+                                      sim=robot.sim, walk=WALK_FLAG[0])
         if self.link is None:
             raise SystemExit("the tool was not reached (see above)")
         self.buf = b""
@@ -195,6 +204,9 @@ class Tool:
 def env_write(robot: Robot, port: str = None) -> bool:
     """The robot's env block from its (new) config, app=base: 4 KB, no reflash. Over USB
     when the port is here, else over the air (flash_mcu decides)."""
+    if robot.sim:
+        say("the Sim MCU reads the config each time it starts: nothing to write")
+        return True
     import mcu_identity
     env = mcu_identity.pio_env_for(robot.pio_env, "pico2")
     port = port or str(robot.tgt.get("serial_port") or "/dev/ttyACM0")
@@ -668,6 +680,9 @@ def main(argv=None) -> int:
     ap.add_argument("--port", help="the board's USB serial port (default: Wi-Fi for a Wi-Fi robot)")
     ap.add_argument("--ip", help="the board's address on Wi-Fi (default: found by its name)")
     ap.add_argument("--yes", action="store_true", help="take the default answer to every question")
+    ap.add_argument("--sim", action="store_true", help="the Sim MCU's tool (default for a Sim MCU robot)")
+    ap.add_argument("--walk", action="store_true",
+                    help="with the Sim MCU: its walkthrough mode -- its own models count as parts")
     ap.add_argument("--by", default="cli", help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
@@ -698,6 +713,8 @@ def main(argv=None) -> int:
     ac.add_argument("--clear", type=float, default=1.0, help="room needed all round, m (1.0)")
     ac.add_argument("--write", action="store_true", help="keep the derived gains and limits in the config")
     a = ap.parse_args(argv)
+    SIM_FLAG[0] = a.sim
+    WALK_FLAG[0] = True if a.walk else None
     robot = Robot(a.params)
     fn = {"status": cmd_status, "gate": cmd_gate, "mark": cmd_mark, "sensors": cmd_sensors,
           "battery": cmd_battery, "motors": cmd_motors, "rpm": cmd_rpm, "cpr-turns": cmd_cpr_turns,

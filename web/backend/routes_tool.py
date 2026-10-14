@@ -64,96 +64,15 @@ def _robot():
 
 
 class SimLink:
-    """The Sim MCU, started for the tool: the host firmware booting straight into the tool
-    (app=tool), its console -- stdin and stdout -- as the session's link. The firmware is the
-    same code a board runs, so the panel can be learned and walked with no board: the tool
-    refuses what the Sim MCU simulates (its wheels, its sensors) in its own words.
+    """The Sim MCU, started for the tool (lino_tool.SimLink: the host firmware booting straight
+    into the tool, its console as the link). Kept as this module's name for its callers."""
 
-    `base` on this link ends the process rather than restarting it into micro-ROS: a second
-    Sim MCU on the agent's port beside a running stack would be a second robot.
-    COCKPIT_TOOL_SIM_WHEELS_REAL=1 (a walkthrough cell, never a robot) makes the wheels count
-    as real so the drive commands run -- the host's motors drive nothing and read 0."""
-
-    def __init__(self, params_path: str):
-        import subprocess
-        import tempfile
-        import host_firmware
-        import mcu_env
-        binary = host_firmware.binary()
-        if not binary:
-            raise Unavailable("This cockpit has no Sim MCU build to run the tool on.")
-        e = host_firmware.env(params_path)
-        e.update({"app": "tool", "tool_wait": "0", "term_port": "0"})
-        if os.environ.get("COCKPIT_TOOL_SIM_WHEELS_REAL") == "1":
-            e["sim_wheel"] = "0"
-        # A walkthrough cockpit (never a robot's; user, 2026-10-14: "allow sim mcu walk mode"):
-        # the tool takes the Sim MCU's models as its parts (firmware toolWalk(), host build only)
-        # -- the wheel model turns and counts, the simulated IMU, magnetometer and battery report
-        # -- so the Web UI and every tool command can be walked with no board.
-        if os.environ.get("COCKPIT_TOOL_SIM_WALK") == "1":
-            e.update({"tool_walk": "1", "sim_wheel": "1", "sim_battery": "1"})
-            for k in ("imu", "mag"):
-                if str(e.get(k, "")).lower() != "none":
-                    e[k] = "sim"
-        self._dir = tempfile.mkdtemp(prefix="lino_tool_sim_")
-        path = os.path.join(self._dir, "env.bin")
-        with open(path, "wb") as fh:
-            fh.write(mcu_env.encode(e))
-        penv = dict(os.environ, LINO_ENV_BIN=path)
-        penv.pop("LINO_NEXT_BOOT", None)
-        # Exactly as bringup.launch.py starts it: the client workspace sourced for this
-        # process only (the binary links librclc and rmw_microxrcedds from there -- run bare
-        # it died, "librclc.so: cannot open shared object file"), and RMW_IMPLEMENTATION
-        # said, or rcl refuses the image's container-wide Fast DDS and exits 102.
-        # The launcher runs inside a sourced ROS; the backend does not, so ROS first
-        # (librcutils and the rest -- "librcutils.so: cannot open shared object file").
-        cmd = host_firmware.shell_command(binary)
-        self.p = subprocess.Popen(["bash", "-c", cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, env=penv)
-        os.set_blocking(self.p.stdout.fileno(), False)
-        self.closed = False
-
-    def write(self, data: bytes):
-        if self.closed:
-            return
-        if data.strip().lower() in (b"base", b"exit", b"reboot"):
-            self.close()
-            return
+    def __new__(cls, params_path: str):
+        import lino_tool
         try:
-            self.p.stdin.write(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
-            self.p.stdin.flush()
-        except (BrokenPipeError, OSError):
-            self.close()
-
-    def read(self) -> bytes:
-        if self.closed:
-            return b""
-        try:
-            d = os.read(self.p.stdout.fileno(), 4096)
-        except BlockingIOError:
-            time.sleep(0.02)
-            return b""
-        except OSError:
-            d = b""
-        if not d and self.p.poll() is not None:
-            self.closed = True
-        return d
-
-    def keepalive(self):
-        pass
-
-    def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        try:
-            self.p.terminate()
-            self.p.wait(3)
-        except Exception:
-            try:
-                self.p.kill()
-            except Exception:
-                pass
+            return lino_tool.SimLink(params_path)
+        except lino_tool.SimUnavailable as e:
+            raise Unavailable(str(e))
 
 
 def _open_sim(r: dict):
