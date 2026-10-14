@@ -294,3 +294,15 @@ def test_route_run_is_robot_bringup_py(client):
     cmd = actions.claim(h)
     assert "robot_bringup.py" in cmd and cmd.endswith("acc --write") and "--by gui" in cmd
     assert c.post("/api/bringup/run", json={"stage": "rm"}).status_code == 400
+
+
+def test_the_command_line_works_on_the_robot_the_web_ui_selected(tmp_path, monkeypatch):
+    import cockpit_paths
+    monkeypatch.setenv("COCKPIT_CONFIG_DIR", str(tmp_path))
+    for n in ("bare_sim", "walkbot"):
+        (tmp_path / f"{n}_config.yaml").write_text("robot: {name: %s}\n" % n)
+    assert cockpit_paths.active_robot_path().endswith("bare_sim_config.yaml")     # nothing selected
+    (tmp_path / ".active_robot").write_text("walkbot_config.yaml\n")
+    assert cockpit_paths.active_robot_path().endswith("walkbot_config.yaml")
+    (tmp_path / ".active_robot").write_text("../secrets.yaml\n")
+    assert cockpit_paths.active_robot_path().endswith("bare_sim_config.yaml")

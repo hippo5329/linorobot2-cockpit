@@ -107,6 +107,22 @@ def robot_config_files(directory: str = None) -> list:
             if f.endswith(("_config.yaml", "_config.yml")) and not f.startswith("secrets")]
 
 
+def active_robot_path(directory: str = None) -> str:
+    """The robot the cockpit has selected (`<dir>/.active_robot`, which the backend writes),
+    else robot_config_path()'s choice. A command-line tool that works "on the active robot"
+    must mean the one the web UI shows, not the first file in the directory."""
+    d = directory or config_dir()
+    try:
+        with open(os.path.join(d, ".active_robot")) as fh:
+            name = os.path.basename(fh.read().strip())
+        path = os.path.join(d, name)
+        if name.endswith((".yaml", ".yml")) and not name.startswith("secrets") and os.path.isfile(path):
+            return path
+    except OSError:
+        pass
+    return robot_config_path(directory=d)
+
+
 def robot_config_path(robot: str = None, directory: str = None) -> str:
     """`<dir>/<robot>_config.yaml`, or the default robot, or whichever exists.
 

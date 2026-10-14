@@ -63,7 +63,7 @@ def say(msg=""):
 class Robot:
     def __init__(self, params_path: str = None):
         import mcu_env
-        self.path = os.path.abspath(params_path or cockpit_paths.robot_config_path())
+        self.path = os.path.abspath(params_path or cockpit_paths.active_robot_path())
         if not os.path.isfile(self.path):
             raise SystemExit(f"no robot config at {self.path}: give --params")
         self.reload()

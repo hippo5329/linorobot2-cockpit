@@ -2177,7 +2177,7 @@ def main():
                       f"is not complete:")
                 for m in missing:
                     print(f"     - {m}")
-                print("   Finish it on Hardware Tests > Bring-up checklist, or with "
+                print("   Finish it on Hardware Tests > Real-robot bring-up, or with "
                       "scripts/robot_bringup.py (status lists the steps). --skip-bringup-check "
                       "runs anyway, at your own risk.")
                 return 1
