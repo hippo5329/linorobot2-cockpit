@@ -88,7 +88,7 @@ def test_firmware_and_host_refuse_the_same_tools():
             acc = open(os.path.join(tools, "test_acc.cpp")).read()
             assert "wheelsAreSim()" in acc and "test_acc refused" in acc
         elif tool == "test_sensors":
-            assert "envSetRealOnly(true);" in src
+            assert "envSetRealOnly(!toolWalk());" in src
         else:
             assert f'"{command[tool]}"' in fn, f"{tool} is refused on the host but not by the tool"
             assert f'"{key}"' in fn, f"the tool does not read {key} for {tool}"

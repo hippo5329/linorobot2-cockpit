@@ -86,6 +86,15 @@ class SimLink:
         e.update({"app": "tool", "tool_wait": "0", "term_port": "0"})
         if os.environ.get("COCKPIT_TOOL_SIM_WHEELS_REAL") == "1":
             e["sim_wheel"] = "0"
+        # A walkthrough cockpit (never a robot's; user, 2026-10-14: "allow sim mcu walk mode"):
+        # the tool takes the Sim MCU's models as its parts (firmware toolWalk(), host build only)
+        # -- the wheel model turns and counts, the simulated IMU, magnetometer and battery report
+        # -- so the Web UI and every tool command can be walked with no board.
+        if os.environ.get("COCKPIT_TOOL_SIM_WALK") == "1":
+            e.update({"tool_walk": "1", "sim_wheel": "1", "sim_battery": "1"})
+            for k in ("imu", "mag"):
+                if str(e.get(k, "")).lower() != "none":
+                    e[k] = "sim"
         self._dir = tempfile.mkdtemp(prefix="lino_tool_sim_")
         path = os.path.join(self._dir, "env.bin")
         with open(path, "wb") as fh:

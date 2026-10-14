@@ -68,7 +68,16 @@ void init(void)
     // The same probe and adoption rule as base, so the tool and the robot firmware
     // never disagree about what is fitted. Real chips only (envRealOnly). A board whose
     // env names no I2C bus is not scanned: the core's default pins may be a motor's.
-    if (toolI2cUnassigned()) {
+    if (toolWalk()) {
+        // The Sim MCU's walkthrough: its simulated chips, as base builds them.
+        Serial.println("[tool] walkthrough mode: the Sim MCU's simulated parts stand in for chips");
+        imu_name = envGet("imu", "sim");
+        mag_name = envGet("mag", "sim");
+        if ((imu = createIMU(imu_name)))
+            imu_ok = imu->init();
+        if ((mag = createMAG(mag_name)))
+            mag_ok = mag->init();
+    } else if (toolI2cUnassigned()) {
         Serial.println("[tool] no I2C bus in the env: no IMU, magnetometer or barometer");
     } else {
         Serial.println("Scanning I2C bus...");

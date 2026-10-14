@@ -99,6 +99,22 @@ static void nextBootSet(uint32_t v) { next_boot_plain = v; }
 #endif
 #endif
 
+// The Sim MCU's walkthrough mode (user, 2026-10-14: "allow sim mcu walk mode, we need to test
+// our web ui and tool command"). `tool_walk=1`, which the cockpit writes only when
+// COCKPIT_TOOL_SIM_WALK=1 -- a walkthrough cockpit, never a robot's: the tool then takes the
+// Sim MCU's own models as its parts -- the wheel model turns and counts, the simulated IMU,
+// magnetometer and battery report -- so the Web UI and every tool command can be walked with
+// no board. Compiled into the host build only: a board never reads the key, and the tools
+// on a board stay real-parts-only (user, 2026-10-12).
+bool toolWalk(void)
+{
+#if defined(LINO_HOST)
+    return envInt("tool_walk", 0) == 1;
+#else
+    return false;
+#endif
+}
+
 void toolRestart(bool tool)
 {
     toolMotorsOff();
@@ -161,7 +177,7 @@ AppMode toolSelect(void)
         return APP_BASE;
     if (next == NEXT_BOOT_TOOL) {
         app_name = "tool";
-        envSetRealOnly(true);
+        envSetRealOnly(!toolWalk());
         return APP_TOOL;
     }
     if (!want || !*want || strcmp(want, "base") == 0)
@@ -194,7 +210,7 @@ AppMode toolSelect(void)
     }
     // A real robot only: no simulated IMU, magnetometer, battery or barometer stands
     // in for a part the tool cannot find (mcu_env.h, envSetRealOnly).
-    envSetRealOnly(true);
+    envSetRealOnly(!toolWalk());
     return APP_TOOL;
 }
 
@@ -205,6 +221,7 @@ const char *toolName(AppMode mode) { return mode == APP_TOOL ? app_name : "base"
 // has nothing to measure. Same rules as scripts/mcu_env.py tool_refusal.
 static const char *simulatedFor(const char *cmd)
 {
+    if (toolWalk()) return NULL;       // the Sim MCU's walkthrough: its models are the parts
     if (!strcmp(cmd, "motor") || !strcmp(cmd, "motors") || !strcmp(cmd, "ramp"))
         return envInt("sim_wheel", 0) == 1 ? "the wheels" : NULL;
     if (!strcmp(cmd, "adc"))
@@ -490,7 +507,7 @@ bool toolEscape(void)
         return false;
     }
     app_name = "tool";
-    envSetRealOnly(true);
+    envSetRealOnly(!toolWalk());
     return true;
 }
 

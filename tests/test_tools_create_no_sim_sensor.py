@@ -45,13 +45,13 @@ def _func(src, signature):
 def test_tool_select_sets_real_only_before_starting_a_tool():
     body = _func(_src("tools"), "AppMode toolSelect(void)")
     assert body.rstrip().endswith("return APP_TOOL;")
-    assert "envSetRealOnly(true);" in body[body.rfind("strcmp(want, \"base\")"):]
+    assert "envSetRealOnly(!toolWalk());" in body[body.rfind("strcmp(want, \"base\")"):]
 
 
 def test_the_boot_window_turns_real_only_when_it_enters_the_tool():
     body = _func(_src("tools"), "bool toolEscape(void)")
     tail = body[body.index("if (!enter)"):]
-    assert tail.index("return false;") < tail.index("envSetRealOnly(true);") < tail.index("return true;")
+    assert tail.index("return false;") < tail.index("envSetRealOnly(!toolWalk());") < tail.index("return true;")
 
 
 def test_base_never_turns_real_only():
@@ -69,7 +69,7 @@ def test_base_never_turns_real_only():
     # And nothing else turns it on: only the tool's own selection and its boot window.
     sources = [f for d in ("src", "common") for ext in ("*.c", "*.cpp", "*.h")
                for f in glob.glob(os.path.join(REPO_ROOT, "firmware", d, "**", ext), recursive=True)]
-    setters = [f for f in sources if "envSetRealOnly(true)" in _read(f)]
+    setters = [f for f in sources if "envSetRealOnly(!toolWalk());" in _read(f) or "envSetRealOnly(true)" in _read(f)]
     assert [os.path.basename(f) for f in setters] == ["tools.cpp"]
 
 
@@ -93,8 +93,9 @@ def test_the_tool_asks_the_bus_before_creating():
     """One place builds the tool's sensors (tool_hw.cpp), by base's probe and rule."""
     src = _src("tool_hw")
     probe = src.index("i2cProbeSelect(&imu_name, &mag_name);")
-    assert probe < src.index("createIMU(imu_name)")
-    assert probe < src.index("createMAG(mag_name)")
+    # the bus branch's create (the Sim MCU's walkthrough branch comes first, toolWalk())
+    assert probe < src.rindex("createIMU(imu_name)")
+    assert probe < src.rindex("createMAG(mag_name)")
 
 
 @pytest.mark.parametrize("tool", ["test_sensors", "test_acc", "test_motors", "i2c_detect"])
@@ -141,3 +142,27 @@ def test_reference_designs_leave_add_on_sensors_to_the_bus():
         for field in ("imu", "mag", "current", "env"):
             if field in sensors:
                 assert str(sensors[field]).upper() != "NONE", f"{os.path.basename(path)}: {field} NONE"
+
+
+def test_the_walkthrough_mode_is_the_sim_mcus_only():
+    """User, 2026-10-14: "allow sim mcu walk mode, we need to test our web ui and tool command",
+    then "only for sim mcu, no other real mcu". toolWalk() is false on every board -- it is
+    compiled true only into the host build -- and only the Sim MCU's own session writes the
+    key: no config, no flash and no bench tool can put a board's tool on simulated parts."""
+    src = _src("tools")
+    fn = _func(src, "bool toolWalk(void)")
+    assert re.sub(r"\s+", " ", fn).strip() == \
+        '#if defined(LINO_HOST) return envInt("tool_walk", 0) == 1; #else return false; #endif'
+    # every relaxation of real-only goes through toolWalk()
+    assert "envSetRealOnly(false)" not in src
+    assert "if (toolWalk()) return NULL;" in _func(src, "static const char *simulatedFor(const char *cmd)")
+    # the writers: the Sim MCU's SimLink, and nothing that writes a board's env
+    writers = []
+    for root in ("scripts", os.path.join("web", "backend")):
+        for f in glob.glob(os.path.join(REPO_ROOT, root, "*.py")):
+            if "tool_walk" in _read(f):
+                writers.append(os.path.relpath(f, REPO_ROOT))
+    assert writers == [os.path.join("web", "backend", "routes_tool.py")]
+    rt = _read(os.path.join(REPO_ROOT, "web", "backend", "routes_tool.py"))
+    simlink = rt[rt.index("class SimLink"):rt.index("def _open_sim")]
+    assert '"tool_walk": "1"' in simlink and 'COCKPIT_TOOL_SIM_WALK' in simlink

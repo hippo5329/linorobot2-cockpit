@@ -22,7 +22,9 @@ SECRETS_EXAMPLE = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait",
               "banner_hold", "tm_pct", "tm_only", "tm_secs", "ta_ms",
               # the tool (tools.cpp): its boot window, boot command and terminal port
-              "tool_wait", "tool_run", "term_port", "ta_pct"}
+              "tool_wait", "tool_run", "term_port", "ta_pct",
+              # the Sim MCU's walkthrough mode: written by routes_tool.SimLink only
+              "tool_walk"}
 
 # A config exercising every optional key the writer knows, so the reference
 # set need not carry each one for it to count as written.

@@ -101,7 +101,7 @@ def test_a_refused_former_name_boots_base_as_it_did():
     without the host's check must not leave a robot out of micro-ROS."""
     sel = _toolselect()
     refusal = sel[sel.index("const char *why = legacyRefusal(want);"):]
-    assert refusal.index("return APP_BASE;") < refusal.index("envSetRealOnly(true);")
+    assert refusal.index("return APP_BASE;") < refusal.index("envSetRealOnly(!toolWalk());")
     src = _read("src", "tools", "tools.cpp")
     fn = src[src.index("static const char *legacyRefusal"):src.index("AppMode toolSelect(void)")]
     for app, key in (("test_sensors", '"imu"'), ("test_motors", '"sim_wheel"'), ("test_acc", '"sim_wheel"'),
