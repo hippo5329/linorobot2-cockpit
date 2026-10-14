@@ -195,9 +195,14 @@ def main(argv=None) -> int:
             base_ok = write_app(a, "base")
         end = ended(got)
         if a.transcript:
-            with open(a.transcript, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(got) + "\n")
-            print(f"  transcript: {len(got)} lines -> {a.transcript}")
+            # A transcript that cannot be written must not take the run's verdict with it.
+            try:
+                os.makedirs(os.path.dirname(a.transcript) or ".", exist_ok=True)
+                with open(a.transcript, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(got) + "\n")
+                print(f"  transcript: {len(got)} lines -> {a.transcript}")
+            except OSError as e:
+                print(f"  transcript not written ({e}); the results follow")
         for ln in results(got):
             print(f"  | {ln}")
         if not base_ok:

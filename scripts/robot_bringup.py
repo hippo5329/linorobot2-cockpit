@@ -670,6 +670,9 @@ def cmd_acc(robot: Robot, a) -> int:
         return 2
     pose0 = ocp.odom_pose(distro)
     transcript = os.path.join(ocp.LOG_DIR, f"test_acc_{time.strftime('%Y%m%d-%H%M%S')}.txt")
+    # LOG_DIR is the 1-Click's per-run folder, which only the 1-Click creates: run on its own,
+    # test_acc lost its whole transcript at the end (TS100) -- the board had finished.
+    os.makedirs(os.path.dirname(transcript), exist_ok=True)
     import mcu_identity
     port = str(robot.tgt.get("serial_port") or "/dev/ttyACM0")
     argv = [sys.executable, "-u", os.path.join(HERE, "test_acc_run.py"), "--params", robot.path,
