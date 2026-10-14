@@ -165,8 +165,12 @@ def _words(out, addr):
 def identify():
     """(dev_id, uid hex string). Raises unless it is an STM32U5."""
     # A command's result is not printed in batch mode (-c); only log lines are. echo it.
-    out = run(["init", f"echo [capture {{mdw 0x{DBGMCU_IDCODE:08x}}}]",
-               f"echo [capture {{mdw 0x{UID_ADDR:08x} 3}}]", "shutdown"])
+    # Halted: read while the core ran, the UID came back different from one flash to the
+    # next (2026-10-14, mc200: 2039..8F6FF3BF, then B662..8F6FF3BF; halted, and in the
+    # firmware's own banner, 2039..0018003C every time), and the uid is what the flash
+    # guard compares to tell this board from another.
+    out = run(["init", "halt", "wait_halt 2000", f"echo [capture {{mdw 0x{DBGMCU_IDCODE:08x}}}]",
+               f"echo [capture {{mdw 0x{UID_ADDR:08x} 3}}]", "resume", "shutdown"])
     idc = _words(out, DBGMCU_IDCODE)
     uid = _words(out, UID_ADDR)
     if not idc:

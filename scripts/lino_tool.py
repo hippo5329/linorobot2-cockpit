@@ -475,8 +475,16 @@ def say_answer(line: str, a) -> None:
         log(tool_words.words(a))
 
 
+# After "[app] tool" the board prints its hardware matrix (an I2C scan, the parts it found)
+# and only then its first prompt; a line sent before the prompt is lost. The UNO Q's STM32
+# scans its bus slowly: a 4 s wait sent robot_bringup's first command into the middle of the
+# scan ("no answer to 'sensors 10' in 2 s").
+TOOL_READY_S = 30.0
+
+
 def catch_window(link, seconds: float) -> bool:
-    """Type `tool` until the board says it is in the tool (its window is 3 s)."""
+    """Type `tool` until the board says it is in the tool (its window is 3 s), then wait for
+    its first prompt. False when the prompt never comes."""
     buf = b""
     end = time.time() + seconds
     nxt = 0.0
@@ -490,7 +498,9 @@ def catch_window(link, seconds: float) -> bool:
             sys.stdout.write(d.decode(errors="replace"))
             sys.stdout.flush()
             if any(e in buf for e in ENTERED):
-                pump(link, 4, until=(PROMPT,))
+                if PROMPT not in buf and PROMPT not in pump(link, TOOL_READY_S, until=(PROMPT,)):
+                    log(f"in the tool, but no prompt in {TOOL_READY_S:.0f} s")
+                    return False
                 return True
     return False
 
@@ -593,9 +603,16 @@ def connect(port, env, baud, params_path, ip, password, env_vals, no_reboot=Fals
                 link.close()
                 return None
             if not catch_window(link, window):
-                log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
+                # Once more, on a fresh open: the UNO Q's ttyHS1 has stopped delivering the
+                # board's output part-way through the tool's start-up burst (4 Mbaud) while the
+                # board itself had sent it all and sat at its prompt; a reopen read it again.
+                log("no prompt: reopening the port and rebooting the board once more")
                 link.close()
-                return None
+                link = SerialLink(port, baud, env or "")
+                if not link.reboot() or not catch_window(link, window):
+                    log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
+                    link.close()
+                    return None
         return link
     if not ip and params_path:
         import mcu_env
