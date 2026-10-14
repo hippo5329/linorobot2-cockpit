@@ -312,7 +312,7 @@ def test_the_command_line_works_on_the_robot_the_web_ui_selected(tmp_path, monke
 
 def test_a_question_asked_mid_drive_keeps_the_link_alive():
     """The tool's deadman stops a drive whose console goes quiet (tools.cpp con_heartbeat). The
-    rpm step runs a wheel until the person reads the tachometer; its first TS100 run stopped the
+    rpm step runs a wheel until the person reads the tachometer; its first run on a tracked robot stopped the
     wheel within seconds, because nothing was sent while the question waited."""
     import time
     import robot_bringup

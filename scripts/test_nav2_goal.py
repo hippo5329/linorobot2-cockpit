@@ -204,7 +204,7 @@ PHANTOM_SETTLE_SEC = 5.0
 # The leg home's heading is judged once the robot has stopped turning: the heading
 # held within HEADING_STILL_RAD for HEADING_STILL_SEC, waited for HEADING_REST_SEC at
 # most. Nav2's goal checker fires the moment the heading passes inside its tolerance,
-# turning at full rate; a TS100 called SUCCEEDED at +6.5 deg came to rest at -27 deg
+# turning at full rate; a tracked robot called SUCCEEDED at +6.5 deg came to rest at -27 deg
 # (2026-10-14), and the next run started SLAM in that turned frame.
 HEADING_REST_SEC = 8.0
 HEADING_STILL_SEC = 1.0

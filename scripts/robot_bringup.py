@@ -513,7 +513,7 @@ def cmd_rpm(robot: Robot, a) -> int:
     say(f"  counts_per_rev {cpr} -> {new_cpr} ({off * 100:.1f} % off)")
     wrote = write_changes(robot, changes, a)
     # Only a counts_per_rev correction needs a second run to confirm; max_rpm is the
-    # measurement itself, written as read (TS100: the step failed on a max_rpm write
+    # measurement itself, written as read (a tracked robot: the step failed on a max_rpm write
     # alone and named a counts_per_rev change it had not made).
     ok = off <= 0.02
     summary = "; ".join(notes) + (f"; counts_per_rev {cpr} agrees" if ok else
@@ -671,7 +671,7 @@ def cmd_acc(robot: Robot, a) -> int:
     pose0 = ocp.odom_pose(distro)
     transcript = os.path.join(ocp.LOG_DIR, f"test_acc_{time.strftime('%Y%m%d-%H%M%S')}.txt")
     # LOG_DIR is the 1-Click's per-run folder, which only the 1-Click creates: run on its own,
-    # test_acc lost its whole transcript at the end (TS100) -- the board had finished.
+    # test_acc lost its whole transcript at the end (a tracked robot) -- the board had finished.
     os.makedirs(os.path.dirname(transcript), exist_ok=True)
     import mcu_identity
     port = str(robot.tgt.get("serial_port") or "/dev/ttyACM0")

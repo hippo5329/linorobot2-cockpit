@@ -81,7 +81,7 @@ def test_home_held_inside_the_bound_passes_after_the_settle_time(monkeypatch):
 
 def _turning_home(monkeypatch, end_deg, step_deg=-2.0):
     """At home with the goal SUCCEEDED at +6.5 deg, still turning by step_deg per spin
-    until it stops at end_deg -- the TS100 on 2026-10-14."""
+    until it stops at end_deg -- a tracked robot on 2026-10-14."""
     node = _home_node(math.radians(6.5))
     on_home = {"spins": 0}
 
