@@ -23,8 +23,9 @@ empty line stops the running one. On exit this script sends `stop`: a wheel it s
 never left turning. On the Wi-Fi terminal it sends a keep-alive every second; the board
 stops a drive started there when the terminal goes quiet for 3 s.
 
-Every command gets the board's answer ([TOOL_ACK]: taken, or refused and why), printed as
-`[lino_tool] '<command>': ok, running` or `REFUSED -- <why>`; no answer in 2 s is said too.
+Every command gets the board's answer in words -- `ok: motor 1 30 (running)`, `fail: motor 3
+30 -- <why>`, and for a running one `done: ...` or `stopped: ... (why)` when it ends; no answer
+in 2 s is said too.
 Exit 0 when the tool was entered and the board took every command; 3 when it refused one or
 did not answer; the transcript is stdout.
 """
@@ -37,6 +38,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+import tool_answer as tool_words  # noqa: E402  (tool_answer() below is the login hash)
 
 PROMPT = b"tool> "
 ENTERED = (b"[app] tool", b"[tool] ready")
@@ -331,36 +334,16 @@ def pump(link, seconds: float, until=None) -> bytes:
     return buf
 
 
-ACK_TAG = b"[TOOL_ACK] "
-ACK_TIMEOUT_S = 2.0
+ACK_TIMEOUT_S = tool_words.TIMEOUT_S
 # Whether this board answers commands at all: firmware before 2026-10-14 does not, and its
 # silence is then not a fault.
 ANSWERS_SEEN = [False]
 
 
-def parse_answer(buf: bytes):
-    """The first [TOOL_ACK] answer in `buf` as {line, ok, msg}, or None."""
-    import json
-    at = buf.find(ACK_TAG)
-    if at < 0:
-        return None
-    end = buf.find(b"\n", at)
-    if end < 0:
-        return None
-    try:
-        a = json.loads(buf[at + len(ACK_TAG):end].decode(errors="replace"))
-        if isinstance(a, dict):
-            ANSWERS_SEEN[0] = True
-            return a
-        return None
-    except ValueError:
-        return None
-
-
 def answer(link, line: str, timeout: float = ACK_TIMEOUT_S):
-    """Send one line and wait for the board's answer to it (firmware tools.cpp ack()): every
-    line the shell receives is answered, taken or refused. Returns (answer or None, the
-    output read meanwhile, which is also printed)."""
+    """Send one line and wait for the board's answer to it (scripts/tool_answer.py): every
+    line the shell receives is answered `ok:` or `fail:`. Returns (answer or None, the output
+    read meanwhile, which is also printed)."""
     link.write(line.encode() + b"\r\n")
     buf = b""
     end = time.time() + timeout
@@ -375,14 +358,12 @@ def answer(link, line: str, timeout: float = ACK_TIMEOUT_S):
         buf += d
         sys.stdout.write(d.decode(errors="replace"))
         sys.stdout.flush()
-        while True:
-            a = parse_answer(buf)
-            if a is None:
-                break
-            cut = buf.find(b"\n", buf.find(ACK_TAG)) + 1
-            if a.get("line", "").strip() == line.strip():
-                return a, buf
-            buf = buf[cut:]                  # an answer to an earlier line
+        for raw in buf.split(b"\n")[:-1]:
+            a = tool_words.parse(raw.decode(errors="replace").replace("\r", ""))
+            if a and a["kind"] in ("ok", "fail"):
+                ANSWERS_SEEN[0] = True
+                if a["line"] == line.strip():
+                    return a, buf
     return None, buf
 
 
@@ -391,10 +372,8 @@ def say_answer(line: str, a) -> None:
         log(f"'{line}': sent (this firmware does not answer commands: flash the MCU for answers)")
     elif a is None:
         log(f"'{line}': NO ANSWER from the board in {ACK_TIMEOUT_S:.0f} s (the link is down?)")
-    elif a.get("ok"):
-        log(f"'{line}': ok, {a.get('msg') or 'done'}")
     else:
-        log(f"'{line}': REFUSED -- {a.get('msg')}")
+        log(tool_words.words(a))
 
 
 def catch_window(link, seconds: float) -> bool:

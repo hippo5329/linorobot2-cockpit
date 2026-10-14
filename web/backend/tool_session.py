@@ -24,12 +24,16 @@ Rules it keeps, each from the review:
 No FastAPI here: routes_tool.py wires it to HTTP, and the tests drive it with a fake link.
 """
 import collections
-import json
+import os
+import sys
 import re
 import socket
 import threading
 import time
 from typing import Callable, Dict, List, Optional
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
+import tool_answer  # noqa: E402
 
 PROMPT = "tool> "
 ENTERED = ("[app] tool", "[tool] ready")
@@ -47,10 +51,9 @@ SET_KEYS = {
     "ta_pct": (10, 100),
 }
 # Commands that keep running until `stop` (or their own end), and the drives among them.
-# The board answers every line it receives with one of these (firmware tools.cpp ack()):
-#   [TOOL_ACK] {"line":"motor 1 40 3","ok":true,"msg":"running"}
-ACK_TAG = "[TOOL_ACK] "
-ACK_TIMEOUT_S = 2.0
+# The board answers every line it receives, in words (scripts/tool_answer.py):
+#   ok: motor 1 40 3 (running)   fail: motor 3 40 -- why   done: ...   stopped: ... (why)
+ACK_TIMEOUT_S = tool_answer.TIMEOUT_S
 RUNNING = {"sensors", "enc", "motor", "motors", "ramp", "acc", "adc", "i2c"}
 DRIVES = {"motor", "motors", "ramp", "acc"}
 _LINE_OK = re.compile(r"^[ -~]{0,64}$")       # printable ASCII, no CR/LF/NUL, short
@@ -162,7 +165,7 @@ class ToolSession:
         self.banner_app: Optional[str] = None
         self.closed = False
         self._stopped_unwatched = False
-        # Command and response: every line sent waits for the board's [TOOL_ACK] answer.
+        # Command and response: every line sent waits for the board's answer (ok / fail).
         self._seq = 0
         self._pending: List[dict] = []
         self._answers: Dict[int, dict] = {}
@@ -205,29 +208,23 @@ class ToolSession:
         return out
 
     def _note(self, ln: str) -> None:
-        at = ln.find(ACK_TAG)
-        if at >= 0:
-            self._on_ack(ln[at + len(ACK_TAG):])
+        a = tool_answer.parse(ln)
+        if a and a["kind"] in ("ok", "fail"):
+            self._on_ack(a)
         m = re.search(r"linorobot2_hardware app=(\S+)", ln)
         if m:
             self.banner_app = m.group(1)
-        if ln.endswith(PROMPT) or "[tool] stopped" in ln or "[test_acc] STOPPED" in ln \
-                or re.search(r"\[tool\] \w+ done", ln):
+        if ln.endswith(PROMPT) or (a and a["kind"] in ("done", "stopped")) or "[tool] stopped" in ln \
+                or "[test_acc] STOPPED" in ln or re.search(r"\[tool\] \w+ done", ln):
             self.running = None
 
-    def _on_ack(self, body: str) -> None:
+    def _on_ack(self, a: dict) -> None:
         """The board's answer to a line: matched to the oldest line sent with that text (the
         shell answers in order), else to the oldest one waiting. Lock held (feed)."""
-        try:
-            a = json.loads(body)
-        except ValueError:
-            return
-        if not isinstance(a, dict):
-            return
         self.acks_seen = True
         p = next((x for x in self._pending if x["line"] == a.get("line")), None) \
             or (self._pending[0] if self._pending else None)
-        ans = {"line": str(a.get("line", "")), "ok": bool(a.get("ok")), "msg": str(a.get("msg", ""))}
+        ans = {"kind": a["kind"], "line": a["line"], "ok": a["ok"], "msg": a["msg"]}
         if p is None:
             return                          # an internal stop or leave: nobody waits
         self._pending.remove(p)
@@ -258,10 +255,10 @@ class ToolSession:
         with self._lock:
             for p in [x for x in self._pending if now - x["at"] > ACK_TIMEOUT_S]:
                 self._pending.remove(p)
-                why = (f"[cockpit] no answer from the board to '{p['line']}' in {ACK_TIMEOUT_S:.0f} s"
-                       + ("" if self.acks_seen else " -- its firmware may predate command answers "
-                          "(flash the MCU), or the link is down"))
-                ans = {"seq": p["seq"], "line": p["line"], "ok": None, "msg": "no answer"}
+                why = (f"no answer: {p['line']} (nothing from the board in {ACK_TIMEOUT_S:.0f} s"
+                       + (" -- check the link)" if self.acks_seen else " -- its firmware may predate "
+                          "command answers: flash the MCU; or the link is down)"))
+                ans = {"seq": p["seq"], "kind": "none", "line": p["line"], "ok": None, "msg": "no answer"}
                 self._answers[p["seq"]] = ans
                 self.last_answer = ans
                 self._lines.append(why)

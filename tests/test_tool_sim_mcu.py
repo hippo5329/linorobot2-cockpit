@@ -174,7 +174,8 @@ def test_stop_stops_a_drive_and_says_why(sim):
     s.send("motors 25")
     s.wait("MOTOR TEST")
     s.send("")                      # an empty line stops too
-    s.wait("[tool] stopped: you typed stop -- motors off")
+    s.wait("ok: motors 25 (running)")
+    s.wait("stopped: motors 25 (you typed stop -- motors off)")
 
 
 def test_base_leaves_for_the_robot_even_when_the_env_boots_the_tool(sim):

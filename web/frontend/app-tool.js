@@ -88,15 +88,14 @@ async function toolRefreshState() {
 }
 
 function toolParse(line) {
-  // [TOOL_ACK]: the board's answer to a command (firmware tools.cpp ack()), shown as one
-  // readable line under the command it answers.
-  const ta = line.indexOf("[TOOL_ACK] ");
-  if (ta >= 0) {
-    try {
-      const a = JSON.parse(line.slice(ta + 11));
-      toolTermAppend(a.ok ? `← '${a.line}': ok, ${a.msg || "done"}` : `← '${a.line}': REFUSED -- ${a.msg}`);
-    } catch { toolTermAppend(line); }
-    return true;
+  // The board's answers (scripts/tool_answer.py): "ok: <line> (running)", "fail: <line> --
+  // why", "done: <line>", "stopped: <line> (why)". Shown as they come -- they are the words
+  // a person reads -- and the end of a running command clears STOP.
+  const ans = /^\s*(ok|fail|done|stopped): /.exec(line);
+  if (ans && (ans[1] === "done" || ans[1] === "stopped")) {
+    tool.running = null;
+    toolStatus(line.trim());
+    toolSetControls();
   }
   // [TOOL_JSON]: the live readouts (firmware test_motors.cpp / test_sensors.cpp).
   const tj = line.indexOf("[TOOL_JSON] ");
@@ -137,7 +136,7 @@ function toolParse(line) {
     if ($t("tool-wheels")) $t("tool-wheels").textContent = `${w[1]}, ${w[2]}`;
     toolSetControls();
   }
-  if (/\[tool\] stopped/.test(line) || /\[test_acc\] STOPPED/.test(line)) toolStatus(line.replace(/^\s*\[\w+\]\s*/, ""));
+  if (/\[test_acc\] STOPPED/.test(line)) toolStatus(line.replace(/^\s*\[\w+\]\s*/, ""));
   return false;
 }
 
@@ -223,13 +222,13 @@ async function toolSend(line) {
     body: JSON.stringify({ line }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { toolStatus(j.detail || "Refused."); return false; }
-  // Command and response: the board answers every line ([TOOL_ACK]); the backend waits for
+  // Command and response: the board answers every line (ok / fail); the backend waits for
   // it (2 s) and hands it back. A refusal or silence is said here, and the caller is told.
   const a = j.answer || {};
   const word = String(j.sent || line).split(/\s+/)[0];
   tool.lastAnswer = a;
   if (a.ok === false) {
-    toolStatus(`The board refused '${j.sent}': ${a.msg}`);
+    toolStatus(`fail: ${j.sent} -- ${a.msg}`);
     if (tool.running === word) { tool.running = null; toolSetControls(); }
     return false;
   }
@@ -237,13 +236,13 @@ async function toolSend(line) {
     if (j.answers) {
       // The board answers commands, and not this one: the link is in trouble. A drive it
       // may have started is stopped rather than left to the deadman.
-      toolStatus(`No answer from the board to '${j.sent}' in 2 s: check the link.`);
+      toolStatus(`no answer: ${j.sent} (nothing from the board in 2 s -- check the link)`);
       if (TOOL_DRIVES.has(word)) toolStop();
       return false;
     }
     toolStatus(`Sent: ${j.sent} (this firmware does not answer commands: flash the MCU for answers)`);
   } else {
-    toolStatus(`${j.sent}: ${a.msg || "ok"}`);
+    toolStatus(`ok: ${j.sent}${a.msg ? ` (${a.msg})` : ""}`);
   }
   // STOP shows the moment a command that keeps running is accepted -- not when the next
   // state message arrives (the 2026-10-13 walk found it missing at phone width while a

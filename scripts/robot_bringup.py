@@ -130,18 +130,13 @@ class Tool:
         answer stops this step -- nothing is assumed to run."""
         self.link.write(line.encode() + b"\r\n")
         self.driving = self.driving or line.split()[0] in ("motor", "motors", "ramp", "acc")
+        import tool_answer
         for text, j in self.lines(self.lt.ACK_TIMEOUT_S, keep=True):
-            at = text.find("[TOOL_ACK] ")
-            if at < 0:
+            a = tool_answer.parse(text)
+            if not a or a["kind"] not in ("ok", "fail") or a["line"] != line.strip():
                 continue
-            try:
-                a = json.loads(text[at + 11:])
-            except ValueError:
-                continue
-            if str(a.get("line", "")).strip() != line.strip():
-                continue
-            say(f"  > {line}: {'ok, ' + (a.get('msg') or 'done') if a.get('ok') else 'REFUSED -- ' + str(a.get('msg'))}")
-            if not a.get("ok"):
+            say(f"  {tool_answer.words(a)}")
+            if not a["ok"]:
                 raise SystemExit(f"the board refused '{line}': {a.get('msg')}")
             return a
         self.stop()

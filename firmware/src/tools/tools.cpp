@@ -272,21 +272,24 @@ void toolMotorsOff(void)
 static void prompt(void) { Serial.print("tool> "); }
 
 // Command and response (user, 2026-10-14: "when we send command to tool, tool should
-// response"). Every line the shell receives gets exactly one tagged answer, the first thing
-// the board says about it:
-//     [TOOL_ACK] {"line":"motor 1 40 3","ok":true,"msg":"running"}
-//     [TOOL_ACK] {"line":"motor 9 40","ok":false,"msg":"this robot has 2 wheels: motor 1 or 2, or all"}
-// so a program (the cockpit, lino_tool.py, robot_bringup.py) knows the board heard it and
-// whether it was taken, and says so when no answer comes. A running command answers when it
-// starts, not when it ends; a command that only prints (status, get, help) after its output.
+// response", "more human like, eg, done ok fail"). Every line the shell receives is answered,
+// in words a person reads and a program matches:
+//     ok: motor 1 40 3 (running)          taken; a running command answers as it starts
+//     fail: motor 3 40 -- this robot has 2 wheels: motor 1 or 2, or all
+// and a command that keeps running answers again when it ends:
+//     done: motor 1 40 3
+//     stopped: motor 1 40 3 (you typed stop -- motors off)
+// status, get and help answer `ok:` after their output. The cockpit, lino_tool.py and
+// robot_bringup.py wait for the answer and say so when none comes.
 static char ack_line[72];
+static char job_line[72];
 static bool ack_pending = false;
 
 static void ackClean(char *dst, size_t n, const char *src)
 {
     size_t i = 0;
     for (; src && *src && i + 1 < n; src++)
-        dst[i++] = (*src == '"' || *src == '\\' || (unsigned char)*src < 0x20) ? '\'' : *src;
+        dst[i++] = ((unsigned char)*src < 0x20 || *src == '(' || *src == ')') ? ' ' : *src;
     dst[i] = '\0';
 }
 
@@ -296,8 +299,12 @@ static void ack(bool ok, const char *msg)
     ack_pending = false;
     char m[120];
     ackClean(m, sizeof(m), msg);
-    Serial.printf("[TOOL_ACK] {\"line\":\"%s\",\"ok\":%s,\"msg\":\"%s\"}\n", ack_line,
-                  ok ? "true" : "false", m);
+    if (!ok)
+        Serial.printf("fail: %s -- %s\n", ack_line, m);
+    else if (*m)
+        Serial.printf("ok: %s (%s)\n", ack_line, m);
+    else
+        Serial.printf("ok: %s\n", ack_line);
 }
 
 const char *toolStopReason(void) { return stop_why; }
@@ -312,7 +319,7 @@ static void abortJump(const char *why)
 void toolAbort(const char *why)
 {
     // "stopped: you typed stop", "stopped: lino-stop", "stopped: the terminal went quiet".
-    Serial.printf("\n[tool] stopped: %s%s\n", strcmp(why, "stop") == 0 ? "you typed stop" : why,
+    Serial.printf("\nstopped: %s (%s%s)\n", job_line, strcmp(why, "stop") == 0 ? "you typed stop" : why,
                   job_moves ? " -- motors off" : "");
     abortJump(why);
 }
@@ -594,6 +601,7 @@ static bool cmdKey(const char *k, const char *v)
 
 static void startJob(const char *name, bool moves)
 {
+    if (ack_pending) strncpy(job_line, ack_line, sizeof(job_line) - 1);
     ack(true, "running");
     stop_flag = false;
     stop_why = "stop";
@@ -619,6 +627,8 @@ static void runBlocking(const char *name, void (*fn)(void), bool moves)
     startJob(name, moves);
     fn();                       // a stop longjmps to toolLoop's to_prompt
     toolMotorsOff();
+    if (!i2c_every_ms)          // `i2c N` goes on scanning: it ends at its stop
+        Serial.printf("done: %s\n", job_line);
     job_name = nullptr;
     job_moves = false;
 }
@@ -857,7 +867,7 @@ void toolLoop(void)
     if (job_step) {
         if (!job_step()) {
             toolMotorsOff();
-            Serial.printf("[tool] %s done\n", job_name);
+            Serial.printf("done: %s\n", job_line);
             job_step = nullptr;
             job_name = nullptr;
             job_moves = false;

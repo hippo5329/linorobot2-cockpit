@@ -22,7 +22,7 @@ PASSWORD = "s3cret-ota-pw-7"
 
 
 class FakeLink:
-    """A board that answers every command line, as the firmware does ([TOOL_ACK])."""
+    """A board that answers every command line, as the firmware does ("ok: <line> (running)")."""
 
     def __init__(self):
         self.sent, self.closed, self.inbox = [], False, []
@@ -31,9 +31,7 @@ class FakeLink:
         self.sent.append(data)
         line = data.decode(errors="replace").strip()
         if data.endswith(b"\r\n") and line:
-            import json
-            self.inbox.append(("[TOOL_ACK] " + json.dumps({"line": line, "ok": True, "msg": "running"})
-                               + "\n").encode())
+            self.inbox.append(f"ok: {line} (running)\n".encode())
 
     def read(self):
         return self.inbox.pop(0) if self.inbox else b""

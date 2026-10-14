@@ -253,7 +253,9 @@ def client(cfgdir, monkeypatch):
     import routes_bringup
     from fastapi.testclient import TestClient
     path, _ = cfgdir
+    import routes_tool
     monkeypatch.setattr(routes_bringup, "get_active_params_path", lambda: path)
+    monkeypatch.setattr(routes_tool, "get_active_params_path", lambda: path)
     return TestClient(core.app), path
 
 

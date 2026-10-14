@@ -132,7 +132,7 @@ def test_the_prompt_or_a_stop_line_ends_the_running_command():
     s, _, _, _ = make()
     s.send("motors 25")
     assert s.running == "motors"
-    s.feed(b"MOTOR1 FWD RPM 1 2 3 4\n[tool] stopped: you typed stop -- motors off\n")
+    s.feed(b"MOTOR1 FWD RPM 1 2 3 4\nstopped: motors 25 (you typed stop -- motors off)\n")
     assert s.running is None
     s.send("sensors")
     s.feed(b"ACC none (no IMU)\ntool> ")
@@ -211,10 +211,10 @@ def test_the_keep_alive_beats_the_acc_deadman():
 
 # ---------------------------------------------------------------- command and response
 # user, 2026-10-14: "when we send command to tool, tool should response" -- the board answers
-# every line with one [TOOL_ACK] line (firmware tools.cpp ack()), and the cockpit waits for it.
+# every line in words, "ok: <line> (msg)" or "fail: <line> -- why", and the cockpit waits for it;
+# user, same day: "more human like, eg, done ok fail".
 def _ack(line, ok=True, msg="running"):
-    import json
-    return ("[TOOL_ACK] " + json.dumps({"line": line, "ok": ok, "msg": msg}) + "\n").encode()
+    return ((f"ok: {line} ({msg})" if ok else f"fail: {line} -- {msg}") + "\n").encode()
 
 
 def test_the_boards_answer_reaches_the_sender():
@@ -246,7 +246,7 @@ def test_silence_is_said_in_the_terminal():
     s.tick()
     a = s.wait_answer(seq, timeout=0.1)
     assert a["ok"] is None
-    said = [ln for ln in s.drain(wid) if "no answer from the board to 'status'" in ln]
+    said = [ln for ln in s.drain(wid) if ln.startswith("no answer: status")]
     assert said and "predate command answers" in said[0]      # no answer ever seen: old firmware?
 
 
@@ -258,8 +258,15 @@ def test_an_answer_nobody_waits_for_is_ignored():
 
 def test_lino_tool_reads_the_answer_to_its_own_line():
     import lino_tool
-    a = lino_tool.parse_answer(b"noise\n" + _ack("i2c", msg="done") + b"tool> ")
-    assert a == {"line": "i2c", "ok": True, "msg": "done"}
+    import tool_answer
+    assert tool_answer.parse("ok: i2c (done)") == {"kind": "ok", "line": "i2c", "ok": True, "msg": "done"}
+    assert tool_answer.parse("ok: status") == {"kind": "ok", "line": "status", "ok": True, "msg": ""}
+    assert tool_answer.parse("fail: motor 3 40 -- this robot has 2 wheels: motor 1 or 2, or all") == {
+        "kind": "fail", "line": "motor 3 40", "ok": False, "msg": "this robot has 2 wheels: motor 1 or 2, or all"}
+    assert tool_answer.parse("done: motor 1 40 3")["kind"] == "done"
+    assert tool_answer.parse("stopped: motors 25 (lino-stop -- motors off)")["msg"] == "lino-stop -- motors off"
+    assert tool_answer.parse("MOTOR 1 FWD  RPM 45.2") is None
+    assert tool_answer.words(tool_answer.parse("fail: i2c -- no pins")) == "fail: i2c -- no pins"
 
     class L:
         def __init__(self):
@@ -279,7 +286,8 @@ def test_lino_tool_reads_the_answer_to_its_own_line():
 
 def test_the_firmware_answers_every_path():
     src = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
-    assert '[TOOL_ACK] {\\"line\\":\\"%s\\",\\"ok\\":%s,\\"msg\\":\\"%s\\"}' in src
+    for form in ('"fail: %s -- %s\\n"', '"ok: %s (%s)\\n"', '"ok: %s\\n"', '"done: %s\\n"', '"\\nstopped: %s (%s%s)\\n"'):
+        assert form in src, form
     body = src[src.index("static void handleLine(char *line, bool busy)\n{"):src.index("void toolSetup(void)")]
     # every refusal the shell prints is answered first
     for marker in ("unknown command", "busy: %s is running -- 'stop' first", "is not a test setting", "tests %s, and this robot",

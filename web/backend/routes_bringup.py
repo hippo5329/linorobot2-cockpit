@@ -157,7 +157,12 @@ async def api_bringup_apply(request: Request):
         tool_session.REGISTRY.remove(robot)
         closed = True
     import routes_tool
-    handle = actions.prepare(routes_tool._env_base_command(routes_tool._robot(), str(data.get("port") or "")))
+    r = routes_tool._robot()
+    tgt = params.get("base_controller") or {}
+    if str(tgt.get("name") or "").lower() == "sim" or str(tgt.get("mcu") or "").lower() in ("host", "sim"):
+        # The Sim MCU builds its env from the config each time it starts: nothing to write.
+        return {"ok": True, "written": done, "tool_closed": closed, "handle": None}
+    handle = actions.prepare(routes_tool._env_base_command(r, str(data.get("port") or "")))
     return {"ok": True, "written": done, "tool_closed": closed, "handle": handle}
 
 

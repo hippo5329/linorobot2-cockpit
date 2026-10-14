@@ -249,6 +249,10 @@ async function buApply(changes, title) {
   const j = await buJson("/api/bringup/apply", { changes, port: ($b("hw-flash-port")?.value || "").trim() });
   const wrote = Object.entries(j.written || {}).map(([k, v]) => `${k.split(".").slice(-2).join(".")} ${v.from} -> ${v.to}`).join(", ");
   if (j.tool_closed && typeof toolDetached === "function") toolDetached("The tool closed for the env write.");
+  if (!j.handle) {             // the Sim MCU: it reads the config when the tool starts again
+    buRefresh();
+    return { ok: true, wrote };
+  }
   return await new Promise((resolve) => {
     runCommand({ handle: j.handle }, {
       slot: "main", title: `${title}: env write`,
