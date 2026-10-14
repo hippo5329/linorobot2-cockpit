@@ -206,6 +206,10 @@ async function toolOpen() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toolStatus(j.detail || `Could not open the tool (${r.status}).`); if (op) op.disabled = false; return false; }
     toolStatus("In the tool. The robot is out of micro-ROS until Back to robot.");
+    // Open from the moment the backend holds the session -- not from the stream's first
+    // message: a step that opens the tool and sends at once (the Bring-up card) found it
+    // "closed" and was told "Enter the tool first" (the 2026-10-14 Sim MCU walk).
+    tool.open = true;
     await toolAttach();
     return true;
   } catch (e) {

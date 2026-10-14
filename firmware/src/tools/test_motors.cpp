@@ -160,6 +160,15 @@ static void pollEncoders(unsigned ms, unsigned edges[4][2], int level[4][2])
             if (toolStopRequested())
                 toolAbort(toolStopReason());
         }
+        // The Sim MCU's walkthrough: step the wheel models at 50 Hz, as base's control loop
+        // does. Read once a second, each step was a gap past the model's 1 s re-seed guard,
+        // and a wheel could read 0 RPM for seconds while it was driven.
+        static unsigned long walk_ms = 0;
+        if (toolWalk() && millis() - walk_ms >= 20) {
+            walk_ms = millis();
+            for (int m = 0; m < 4; m++)
+                if (motor_encoders[m]) motor_encoders[m]->getRPM();
+        }
     }
 }
 
