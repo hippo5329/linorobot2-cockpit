@@ -24,7 +24,8 @@ STRONG = {"angle_variance_penalty": 0.02, "minimum_angle_penalty": 0.3,
           "loop_match_minimum_chain_size": 15,
           "loop_search_maximum_distance": 2.0,
           "coarse_search_angle_offset": 0.175,
-          "correlation_search_space_dimension": 0.3}
+          "correlation_search_space_dimension": 0.3,
+          "use_response_expansion": False}
 # slam_toolbox's own defaults (mapper_params_online_async.yaml), which a full LiDAR keeps
 UPSTREAM = {"angle_variance_penalty": 1.0, "minimum_angle_penalty": 0.9,
             "distance_variance_penalty": 0.5, "minimum_distance_penalty": 0.5,
@@ -114,3 +115,18 @@ def test_a_narrow_scan_searches_a_smaller_window():
         # still several steps of the fine grid wide, or the matcher has nothing to choose from
         step = slam["slam_toolbox"]["ros__parameters"]["correlation_search_space_resolution"]
         assert narrow / step >= 20, name
+
+
+def test_a_narrow_scan_never_widens_its_angle_search():
+    """r136 (d7a3e26): each large error of a narrow scan's map was ONE map->odom step of
+    30, 50 or 70 deg -- 10 deg plus karto's response expansion, which re-runs a match that
+    scored zero at +20, +40, +60 deg (ScanMatcher::MatchScan). An 87 deg camera (or the
+    58 deg Astra) turning to a wall the running buffer has not seen scores zero, and the
+    widened search takes the wrong wall: explore_camera_mecanum lyrical -70 deg (never got
+    home), astra_mecanum lyrical +30, astra_skid_steer jazzy -51. With loop closing off the
+    jumps stayed (trial, Astra 30/26/50 deg), so it was never the closures. Without the
+    expansion a zero match keeps the odometry's pose. A 360 deg LiDAR keeps the expansion."""
+    for name in REFS + ("makerspet_mini", "unoq"):
+        slam = _ref(name)["slam"]
+        assert slam["narrow_fov_overrides"]["use_response_expansion"] is False, name
+        assert slam["slam_toolbox"]["ros__parameters"]["use_response_expansion"] is True, name

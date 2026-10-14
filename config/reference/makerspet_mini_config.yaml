@@ -202,6 +202,7 @@ slam:
     loop_search_maximum_distance: 2.0
     coarse_search_angle_offset: 0.175
     correlation_search_space_dimension: 0.3   # +-0.15 m: in a spin a narrow scan matched at the 0.5 window's edge (0.25 m jumps)
+    use_response_expansion: false   # a scan matching nothing retried at +-30/50/70 deg and took the wrong wall: map turned 30-70 deg in one step (r136)
   slam_toolbox:
     ros__parameters:
       solver_plugin: solver_plugins::CeresSolver
