@@ -1369,7 +1369,9 @@
         <summary><span class="bu-pill" data-for="battery">—</span> 2. Battery voltage agrees with a multimeter</summary>
         <p class="hint">Put a multimeter on the battery terminals. An ADC divider is trimmed to it (R1 is
           adjusted, the board gets the new value); a current monitor such as the INA219 reads its own volts --
-          behind the board's input diode it reads about 0.6 V under the pack, which is expected.</p>
+          behind the board's input diode it reads about 0.6 V under the pack, which is expected. On an
+          <b>ESP32</b> board run the <b>ADC sweep</b> in the tool below first (Checks): it measures the
+          ADC's own curve with the DAC and stores it on the board, so the divider trim starts from a straight line.</p>
         <div class="tool-row">
           <button type="button" class="btn btn-secondary" id="bu-bat-read">Read the board (5 s)</button>
           <span>Board <b id="bu-bat-board">—</b></span>
@@ -1395,7 +1397,7 @@
           <input type="number" id="bu-mot-secs" class="form-input tool-num" min="2" max="10" value="3" inputmode="numeric">
         </div>
         <table class="data-table bu-table"><caption class="sr-only">Wheels</caption>
-          <thead><tr><th>Wheel</th><th>Spin</th><th>Encoder</th><th>It turned…</th><th>Result</th><th>Invert motor / encoder</th></tr></thead>
+          <thead><tr><th>Wheel</th><th>Spin</th><th>Encoder</th><th>It turned…</th><th>Result</th><th>Invert</th></tr></thead>
           <tbody id="bu-mot-rows"></tbody>
         </table>
         <div class="tool-row mt-2">

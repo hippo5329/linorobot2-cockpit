@@ -272,13 +272,18 @@ function buBuildWheelRows() {
         + `<button type="button" class="btn btn-sm" data-ans="${w}:f" disabled>Forward</button>`
         + `<button type="button" class="btn btn-sm" data-ans="${w}:b" disabled>Backward</button>`
         + `<button type="button" class="btn btn-sm" data-ans="${w}:n" disabled>Did not turn</button></td>`
-        + `<td id="bu-mot-res-${w}">—</td><td id="bu-mot-inv-${w}">—</td>`;
+        + `<td id="bu-mot-res-${w}">—</td><td class="u-flex u-gap-6">`
+        + `<label class="checkbox"><input type="checkbox" data-inv="${w}:motor"> <span>motor</span></label>`
+        + `<label class="checkbox"><input type="checkbox" data-inv="${w}:encoder"> <span>encoder</span></label></td>`;
       mt.append(tr);
     }
   }
+  // The invert flags as the config has them; a box changed by hand is queued like a fix.
   for (let w = 1; w <= n; w++) {
-    const e = $b(`bu-mot-inv-${w}`);
-    if (e && inv[w]) e.textContent = `${inv[w].motor ? "yes" : "no"} / ${inv[w].encoder ? "yes" : "no"}`;
+    for (const part of ["motor", "encoder"]) {
+      const box = document.querySelector(`[data-inv="${w}:${part}"]`);
+      if (box && inv[w] && !box.dataset.touched) box.checked = !!inv[w][part];
+    }
   }
   if (rt && rt.dataset.n !== String(n)) {
     rt.dataset.n = String(n);
@@ -348,10 +353,26 @@ async function buMotorsVerdict() {
   buRefresh();
 }
 
+function buInvertToggled(box) {
+  const [w, part] = box.dataset.inv.split(":");
+  box.dataset.touched = "1";
+  bu.motManual = bu.motManual || {};
+  const key = `base_controller.pins.${part}${w}.invert`;
+  const cur = !!(bu.list?.current?.invert?.[w] || {})[part];
+  if (box.checked === cur) delete bu.motManual[key]; else bu.motManual[key] = box.checked;
+  const any = Object.keys(bu.motManual).length || Object.keys(bu.motChanges || {}).length;
+  $b("bu-mot-apply").hidden = !any;
+  $b("bu-mot-msg").textContent = any ? "Save, then spin the changed wheels again." : "";
+}
+
 async function buMotorsApply() {
   $b("bu-mot-apply").hidden = true;
   $b("bu-mot-msg").textContent = "Writing the config and the board's env…";
-  const r = await buApply(bu.motChanges, "Motor directions");
+  const changes = Object.assign({}, bu.motChanges || {}, bu.motManual || {});
+  const r = await buApply(changes, "Motor directions");
+  bu.motManual = {};
+  bu.motChanges = {};
+  for (const box of document.querySelectorAll("[data-inv]")) delete box.dataset.touched;
   // the wheels that changed are checked again
   for (const [w, m] of Object.entries(bu.mot)) {
     if (m.changes && Object.keys(m.changes).length) {
@@ -512,6 +533,9 @@ function buInit() {
     const r = await buApply(bu.batChanges, "Battery divider");
     $b("bu-bat-result").textContent = r.ok ? `Written (${r.wrote}). Read the board again and compare.` : "The env write failed: see the console.";
     $b("bu-bat-check").disabled = true;
+  });
+  $b("bu-mot-rows")?.addEventListener("change", (e) => {
+    const box = e.target.closest("[data-inv]"); if (box) buInvertToggled(box);
   });
   $b("bu-mot-rows")?.addEventListener("click", (e) => {
     const s = e.target.closest("[data-spin]"); if (s) return buSpin(parseInt(s.dataset.spin, 10));
