@@ -391,7 +391,9 @@ def api_tool_close():
         return {"ok": True, "open": False}
     s.leave()
     time.sleep(1.0)
-    needs = s.needs_env_base()
+    # The Sim MCU's env is the temp file SimLink wrote for this session (app=tool): nothing
+    # boots from it again, so there is no board env to set back to base.
+    needs = s.needs_env_base() and s.kind != "sim"
     tool_session.REGISTRY.remove(r["robot"])
     out = {"ok": True, "open": False, "needs_env_base": needs}
     if needs:

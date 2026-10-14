@@ -106,3 +106,16 @@ def test_commands_need_an_open_session(robot):
 def test_the_stream_is_a_protected_ticketed_path():
     import access
     assert "/api/tool/stream" in access.PROTECTED_GETS and access.is_stream_path("/api/tool/stream")
+
+
+def test_leaving_the_sim_mcus_tool_writes_no_board_env(monkeypatch):
+    """SimLink boots the host firmware with app=tool in a temp env: Back to robot must not
+    hand the page an env write for a board that does not exist (the 2026-10-14 Sim MCU walk)."""
+    r = {"robot": "bare_sim", "sim": True, "wifi": False, "pio_env": "host", "tgt": {}, "env": {},
+         "params_path": "/nonexistent/bare_sim_config.yaml"}
+    monkeypatch.setattr(routes_tool, "_robot", lambda: r)
+    s = tool_session.ToolSession("bare_sim", FakeLink(), "sim")
+    s.feed(b"[fw] linorobot2_hardware app=tool distro=lyrical\n")
+    tool_session.REGISTRY.add(s, start_threads=False)
+    res = TestClient(core.app).post("/api/tool/close").json()
+    assert res["needs_env_base"] is False and "handle" not in res
