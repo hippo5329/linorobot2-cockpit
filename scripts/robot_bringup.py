@@ -675,11 +675,15 @@ def cmd_acc(robot: Robot, a) -> int:
     os.makedirs(os.path.dirname(transcript), exist_ok=True)
     import mcu_identity
     port = str((a.port if on_serial else None) or robot.tgt.get("serial_port") or "/dev/ttyACM0")
+    baud = int(robot.env.get("baud") or 921600)
+    # the env writes go at the upload rate (esptool's ceiling); a serial robot's console is
+    # read at the micro-ROS rate
     argv = [sys.executable, "-u", os.path.join(HERE, "test_acc_run.py"), "--params", robot.path,
             "--env", mcu_identity.pio_env_for(robot.pio_env, "esp32"), "--port", port,
-            "--baud", str(int(robot.env.get("baud") or 921600)),
+            "--baud", str(min(baud, ocp.FLASH_BAUD_CEILING)),
             "--controller", str(robot.tgt.get("name") or robot.pio_env),
-            "--transcript", transcript] + (["--serial"] if on_serial else ["--ip", found["ip"]])
+            "--transcript", transcript] + (["--serial", "--console-baud", str(baud)] if on_serial
+                                           else ["--ip", found["ip"]])
     res = subprocess.run(argv)
     ocp.wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=distro)
     ocp.wait_for_topic("/scan", timeout_sec=90, distro=distro, require_message="header.frame_id")

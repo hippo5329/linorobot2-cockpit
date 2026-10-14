@@ -2586,8 +2586,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <input type="number" id="cockpit-goal-y" step="0.1" min="-50" max="50" placeholder="0.0" style="width:80px; min-width:unset;" inputmode="decimal">
           </label>
           <label class="checkbox u-mb-8 u-cursor-pointer"
-                 title="On the initial map, before the goals: 1.0 m clear all round, test_acc at full power, back to the start by the LiDAR, and the run continues with the derived gains (Wi-Fi robots).">
-            <input type="checkbox" id="cockpit-test-acc">
+                 title="On the initial map, before the goals: 1.0 m clear all round, test_acc at full power, back to the start by the LiDAR, and the run continues with the derived gains (serial and Wi-Fi robots; on by default).">
+            <input type="checkbox" id="cockpit-test-acc" checked>
             <span>Measure the drivetrain first (test_acc)</span>
           </label>
           <label class="checkbox u-mb-8 u-cursor-pointer">

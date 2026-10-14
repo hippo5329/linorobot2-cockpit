@@ -1542,8 +1542,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     """--test-acc, between the initial map and the goals: (failure, tuned_params_path).
 
     Nav2 is already stopped. In order: room for full-power runs (test_acc_clearance all
-    round, inching up to 1.5 m to find it) and that scan kept; test_acc over Wi-Fi
-    (test_acc_run.py, which always ends with lino-stop and app=base); back to the kept
+    round, inching up to 1.5 m to find it) and that scan kept; test_acc over Wi-Fi or, on a
+    serial robot, on its tty (test_acc_run.py, which always ends with the stop and app=base); back to the kept
     scan by the LiDAR (clearance.py home), which is where test_acc_phase() then sets
     the EKF back to its pose before test_acc (state["home"] says it got there); the plant identified and the PID
     gains and Nav2 limits derived from it (drivetrain_report.tune_from_test_acc) into
@@ -1554,8 +1554,9 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     import mcu_env
     import drivetrain_report
     print(f"\n[6.2/6] [TEST_ACC] Measuring the drivetrain on the initial map...")
-    found = {} if sim else wireless_board(controller_cfg, params_path, params)
-    if not sim and not found.get("ip"):
+    on_serial = not sim and not mcu_env.transport_is_wifi(controller_cfg.get("transport"))
+    found = {} if (sim or on_serial) else wireless_board(controller_cfg, params_path, params)
+    if not sim and not on_serial and not found.get("ip"):
         return f"test_acc: '{robot_name}' did not answer on Wi-Fi", None
     snap = os.path.join(tempfile.gettempdir(), f"lino_testacc_start_{os.getpid()}.json")
     if not clearance_step(args, params, controller_cfg, args.test_acc_clearance, save=snap, max_travel=1.5):
@@ -1575,8 +1576,11 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     else:
         res = run_streamed([sys.executable, "-u", os.path.join(REPO_ROOT, "scripts", "test_acc_run.py"),
                             "--params", params_path, "--env", pio_env, "--port", serial_port,
-                            "--baud", str(flash_baud), "--controller", controller, "--ip", found["ip"],
-                            "--transcript", transcript],
+                            "--baud", str(flash_baud), "--controller", controller, "--transcript", transcript]
+                           # a serial robot's tool console is its tty at the micro-ROS rate, not the
+                           # upload rate the env writes use
+                           + (["--serial", "--console-baud", str(int(controller_cfg.get("baudrate", 921600)))]
+                              if on_serial else ["--ip", found["ip"]]),
                            timeout=900, log_tag="test_acc", prefix="  ")
         # app=base reboots the board: a new micro-ROS session, then the scan again
         if not wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=args.distro):
@@ -1914,8 +1918,8 @@ def main():
                         help="Give up inching after this many metres (default: 0.60)")
     parser.add_argument("--test-acc", action="store_true",
                         help="Measure the drivetrain between the initial map and the goals: the map is "
-                             "built on conservative Nav2 limits, test_acc runs (a real Wi-Fi robot: the "
-                             "firmware's PID identification and full-power runs; the Sim MCU: the same "
+                             "built on conservative Nav2 limits, test_acc runs (a real robot, serial or "
+                             "Wi-Fi: the firmware's PID identification and full-power runs; the Sim MCU: the same "
                              "model run on the host), and Nav2 restarts on the gains and limits derived "
                              "from it")
     parser.add_argument("--test-acc-clearance", type=float, default=1.0,
@@ -2725,10 +2729,12 @@ def main():
             # --test-acc: the initial map on conservative limits, then the drivetrain
             # measured on it and Nav2 restarted on what was measured (test_acc_phase).
             import mcu_env
-            do_test_acc = (args.test_acc and not args.map
-                           and (sim_mcu or (is_real and mcu_env.transport_is_wifi(controller_cfg.get("transport")))))
+            # A serial robot too (2026-10-15, user: "serial is more popular than wifi"): its
+            # results come on the micro-ROS tty while the agent there is paused (test_acc_run.py
+            # --serial), where a Wi-Fi robot sends them by syslog.
+            do_test_acc = args.test_acc and not args.map and (sim_mcu or is_real)
             if args.test_acc and not do_test_acc:
-                print("  ⚠️ --test-acc needs the Sim MCU or a real Wi-Fi robot, mapping with SLAM "
+                print("  ⚠️ --test-acc needs the Sim MCU or a real robot, mapping with SLAM "
                       "(not --map); skipped.")
             nav2_cfg = params_path
             if do_test_acc:

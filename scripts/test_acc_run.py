@@ -3,7 +3,8 @@
 
     test_acc_run.py --params CFG --env PIO_ENV --port PORT --baud B --controller NAME --ip BOARD_IP
                     [--timeout 300]
-    test_acc_run.py ... --serial          a serial robot: the console is PORT (no --ip)
+    test_acc_run.py ... --serial [--console-baud B2]
+                                          a serial robot: the console is PORT at B2 (no --ip)
 
 test_acc is the firmware's drivetrain tool: the PID identification (dead zone, open-loop
 step, closed-loop steps, one wheel at a time) and then twelve 1 s full-power runs,
@@ -21,11 +22,15 @@ first (clearance.py, 1.0 m all round).
 Prints the results (IDENT gains / plant / dead zone, MAX VEL / ACC) and TEST_ACC_DONE or
 TEST_ACC_FAILED. Exit 0 when test_acc finished.
 
-A serial robot (--serial: the UNO Q, whose STM32 has no radio) has no syslog and no ping
-port. While a tool runs its console is the micro-ROS tty itself, so the agent on that tty
-is paused (SIGSTOP: a dead one would be respawned by the launch onto the tty and eat the
-lines) and the port is read here. The stop is the env write with app=base, which restarts
-the board; then the agent is let go (SIGCONT), and the board opens a new session with it.
+A serial robot (--serial: any board on a serial transport -- the UNO Q, an ESP32 or an RP2 on
+USB) has no syslog and no ping port. While a tool runs its console is the micro-ROS tty
+itself, at the micro-ROS rate (--console-baud; --baud stays the env write's), so the agent
+on that tty is paused (SIGSTOP: a dead one would be respawned by the launch onto the tty and
+eat the lines) and the port is read here. The stop is the env write with app=base, which
+restarts the board; then the agent is let go (SIGCONT), and the board opens a new session
+with it. The UNO Q's env goes over SWD, so the tty stays open across it; an ESP32's goes
+through esptool and an RP2's through BOOTSEL on that same tty, so the reader lets go of it
+for the write and opens it again after (the RP2's port re-enumerates).
 """
 import argparse
 import os
@@ -151,8 +156,9 @@ class SerialSource:
         self.where = f"the console on {port}"
         self.heard = time.time()
 
-    def open(self) -> bool:
-        return self.link.open()
+    def open(self, timeout: float = 15.0) -> bool:
+        self.heard = time.time()
+        return self.link.open(timeout)
 
     def lines(self, timeout: float) -> list:
         out, end = [], time.time() + timeout
@@ -207,20 +213,32 @@ def resume(pids: list):
         print(f"  {len(pids)} paused process(es) let go: the agent takes the tty back")
 
 
+def env_over_tty(env: str) -> bool:
+    """True when the env write goes through the console's own tty (esptool, an RP2's BOOTSEL),
+    False for the UNO Q, whose env goes over SWD."""
+    return not env.startswith("unoq")
+
+
 def run_serial(a) -> int:
     """test_acc with its console on the tty: no syslog, no ping port; app=base is the stop."""
     paused = pause_holders(a.port)
-    src = SerialSource(a.port, a.baud, a.env)
+    src = SerialSource(a.port, a.console_baud or a.baud, a.env)
+    shared = env_over_tty(a.env)
     got, t0, base_ok = [], time.time(), False
     try:
         if not src.open():
             print(f"TEST_ACC_FAILED: {a.port} did not open -- nothing moved")
             return 1
-        print(f"  the board's console: {src.where}")
+        print(f"  the board's console: {src.where} at {a.console_baud or a.baud} baud")
         print("  app=test_acc -- THE ROBOT MOVES (full power runs)")
         try:
+            if shared:
+                src.close()      # esptool / the 1200-baud touch need the tty to themselves
             if not write_app(a, "test_acc"):
                 print("TEST_ACC_FAILED: the env write with app=test_acc failed")
+                return 1
+            if shared and not src.open(timeout=30.0):
+                print(f"TEST_ACC_FAILED: {a.port} did not come back after the env write")
                 return 1
             last = 0
             while time.time() - t0 < a.timeout:
@@ -295,6 +313,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ip", default="", help="the board's address (its syslog source)")
     ap.add_argument("--serial", action="store_true",
                     help="a serial robot: the console is --port, the agent there is paused")
+    ap.add_argument("--console-baud", type=int, default=0,
+                    help="--serial: the console's rate, the micro-ROS one (default: --baud)")
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--transcript", default="", help="write every line the board sent here "
                     "(drivetrain_report.py --from-test-acc reads it)")

@@ -49,7 +49,7 @@ def _source(chunks, boom=False):
 def _args(**kw):
     import argparse
     d = dict(params="c.yaml", env="unoq", port="/dev/ttyHS1", baud=4000000, controller="unoq",
-             ip="", serial=True, timeout=5.0, transcript="")
+             ip="", serial=True, console_baud=0, timeout=5.0, transcript="")
     d.update(kw)
     return argparse.Namespace(**d)
 
@@ -111,5 +111,51 @@ def test_wifi_still_needs_an_ip():
 
 def test_the_acc_step_no_longer_refuses_a_serial_robot():
     assert "this robot is on serial" not in BRINGUP
-    assert '(["--serial"] if on_serial else ["--ip", found["ip"]])' in BRINGUP
+    assert '(["--serial", "--console-baud", str(baud)] if on_serial' in BRINGUP
     assert "found = {} if on_serial else ocp.wireless_board(" in BRINGUP
+
+
+def test_an_esp32_or_rp2_reader_lets_go_of_the_tty_for_each_env_write(monkeypatch):
+    # esptool and an RP2's 1200-baud touch write through the console's own tty; the UNO Q's
+    # env goes over SWD, so only there does the reader keep it open
+    calls, src = [], _source(RUN)
+    _wire(monkeypatch, src, calls)
+    src.open = lambda timeout=15.0: calls.append("open") or True
+    src.close = lambda: calls.append("close")
+    assert tar.run_serial(_args(env="esp32", port="/dev/ttyUSB0", baud=921600, console_baud=1500000)) == 0
+    i = calls.index("test_acc")
+    assert calls[:i] == ["pause", "open", "close"]
+    assert calls[i + 1] == "open"
+    j = calls.index("base")
+    assert calls[j - 1] == "close" and calls[-1] == ("resume", (4242,))
+    assert not tar.env_over_tty("unoq") and tar.env_over_tty("esp32") and tar.env_over_tty("pico2w")
+
+
+def test_the_console_is_read_at_the_micro_ros_rate(monkeypatch):
+    seen, src = {}, _source(RUN)
+    monkeypatch.setattr(tar, "SerialSource", lambda port, baud, env: seen.update(baud=baud) or src)
+    monkeypatch.setattr(tar, "pause_holders", lambda port: [])
+    monkeypatch.setattr(tar, "write_app", lambda a, app: True)
+    tar.run_serial(_args(env="unoq", baud=921600, console_baud=4000000))
+    assert seen["baud"] == 4000000
+
+
+def test_the_acc_step_writes_at_the_upload_rate_and_reads_at_the_runtime_one():
+    assert '"--baud", str(min(baud, ocp.FLASH_BAUD_CEILING))' in BRINGUP
+    assert '["--serial", "--console-baud", str(baud)]' in BRINGUP
+
+
+OCP = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+
+
+def test_the_one_click_measures_a_serial_robot_too():
+    # it skipped every serial robot with "--test-acc needs ... a real Wi-Fi robot"
+    assert "do_test_acc = args.test_acc and not args.map and (sim_mcu or is_real)" in OCP
+    assert "a real Wi-Fi robot" not in OCP
+    assert 'on_serial = not sim and not mcu_env.transport_is_wifi(controller_cfg.get("transport"))' in OCP
+    assert '["--serial", "--console-baud", str(int(controller_cfg.get("baudrate", 921600)))]' in OCP
+
+
+def test_the_web_ui_measures_by_default():
+    html = open(os.path.join(REPO_ROOT, "web", "frontend", "index.html")).read()
+    assert '<input type="checkbox" id="cockpit-test-acc" checked>' in html
