@@ -64,6 +64,11 @@ bool wheelsAreSim(void)
     return envFlag("sim_wheel", SIM_WHEEL_DEFAULT);
 }
 
+int encoderCpr(int index)
+{
+    return envPin(index, "cpr", ENC_CPR[index - 1]);
+}
+
 EncoderInterface *createEncoder(int index)
 {
     const int i = index - 1;

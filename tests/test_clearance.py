@@ -193,3 +193,47 @@ def test_conservative_halves_what_the_config_sets():
     assert vs["max_accel"] == [0.4, 0.0, 0.7]
     assert params["nav2"]["controller_server"]["ros__parameters"]["FollowPath"]["desired_linear_vel"] == 0.09
     assert len(changed) == 3          # keys it does not set are left to the template
+
+
+# ---------------------------------------------------------------- the home snapshot's frame
+# 2026-10-14, a UNO Q: /scan was up 6 s before the base_link -> laser TF, the 5 s wait gave up,
+# and the start snapshot was saved in the scan frame. After test_acc the drive home matched
+# base_link points against it and refused a weak fix, 0.5 m and 60 deg from the start.
+
+class _R:
+    def __init__(self, tf_ok, laser=(0.095, 0.0, 0.0)):
+        self.tf_ok, self.laser, self.frame = tf_ok, laser, "laser"
+
+
+def test_a_snapshot_without_the_tf_is_refused(tmp_path):
+    import numpy as np
+    P = np.array([[1.0, 0.0], [0.0, 1.0]])
+    assert not clearance.save(str(tmp_path / "s.json"), P, _R(False))
+    assert not (tmp_path / "s.json").exists()
+    assert clearance.save(str(tmp_path / "s.json"), P, _R(True))
+    import json
+    assert json.load(open(tmp_path / "s.json"))["laser"] == [0.095, 0.0, 0.0]
+
+
+def test_an_old_snapshot_in_the_scan_frame_is_re_expressed_in_base_link():
+    import math
+    import numpy as np
+    in_laser = np.array([[1.0, 0.0], [0.0, 2.0]])
+    got = clearance.snapshot_points({"points": in_laser.tolist()}, (0.095, 0.0, 0.0))
+    assert np.allclose(got, [[1.095, 0.0], [0.095, 2.0]])
+    turned = clearance.snapshot_points({"points": in_laser.tolist(), "laser": [0.0, 0.0, 0.0]},
+                                       (0.0, 0.1, math.pi / 2))
+    assert np.allclose(turned, [[0.0, 1.1], [-2.0, 0.1]])
+
+
+def test_a_snapshot_with_the_same_mount_is_used_as_saved():
+    import numpy as np
+    P = [[1.0, 0.5], [-0.3, 2.0]]
+    got = clearance.snapshot_points({"points": P, "laser": [0.095, 0.0, 0.0]}, (0.095, 0.0, 0.0))
+    assert np.allclose(got, P)
+
+
+def test_the_tf_wait_outlasts_a_slow_robot_computer():
+    assert clearance.TF_WAIT_TRIES * 0.2 >= 20.0
+    src = open(os.path.join(REPO, "scripts", "clearance.py")).read()
+    assert "laser_pose(self.node, self.frame or \"laser\", tries=TF_WAIT_TRIES)" in src

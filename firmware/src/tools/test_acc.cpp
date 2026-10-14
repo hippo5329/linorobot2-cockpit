@@ -33,6 +33,7 @@
 #include "motor.h"
 #include "kinematics.h"
 #include "pid.h"
+#include "loop_judge.h"
 #include "odometry.h"
 #include "imu.h"
 #include "mag.h"
@@ -544,8 +545,11 @@ void plant()
 // wheel's own loop runs at once, the robot driving straight at the setpoint.
 //
 // Overshoot alone is not enough -- a loop can creep past the setpoint once and
-// settle, or cross it repeatedly by a hair and never settle. The crossing count
-// is the second test, and it is the one that catches ringing. 1.5 s, not 3: at
+// settle, or cross it repeatedly and never settle. The crossing count is the
+// second test, and it is the one that catches ringing. Both are judged on the
+// speed over 100 ms, with a band no finer than that can resolve (LoopJudge):
+// a single tick's RPM is one encoder count of flicker, which read as ringing on
+// every gain set. 1.5 s, not 3: at
 // 90% of top that is ~0.5 m of floor each way (user, 2026-10-08: "or we need to
 // shorten motor run"), and the tracked test robot's loops settled in ~0.5 s; the steady error
 // is still the last 0.5 s. A shorter `ta_ms` shortens it in proportion, to no less than
@@ -569,10 +573,9 @@ void loopStep(float magnitude_rpm)
                 mot(i)->spin((int)pid(i)->compute(0.0f, readRPM(i)));
             waitMs(TICK_MS);
         }
-        float peak[4] = {0, 0, 0, 0}, last[4] = {0, 0, 0, 0}, err_sum[4] = {0, 0, 0, 0};
-        int crossings[4] = {0, 0, 0, 0};
-        unsigned settle_tick[4] = {ticks, ticks, ticks, ticks};
-        bool was_below[4] = {true, true, true, true};
+        LoopJudge judge[4];
+        for (unsigned i = 0; i < total_motors; i++)
+            judge[i].begin(setpoint_rpm, loopJudgeResRpm(encoderCpr(i + 1), TICK_MS));
         unsigned wrong[4] = {0, 0, 0, 0};
         const int pwm_cap = pwmMax();
         for (unsigned t = 0; t < ticks; t++) {
@@ -592,30 +595,22 @@ void loopStep(float magnitude_rpm)
                 } else {
                     wrong[i] = 0;
                 }
-                if (fabs(rpm) > peak[i]) peak[i] = fabs(rpm);
-                const bool below = rpm < setpoint_rpm;
-                if (t > 0 && below != was_below[i]) crossings[i]++;
-                was_below[i] = below;
-                // Settling: the LAST tick outside the 2% band, so a curve that
+                // Settling: the LAST tick outside the band, so a curve that
                 // wanders back out is not called settled at its first touch.
-                if (fabs(rpm - setpoint_rpm) > fabs(setpoint_rpm) * 0.02f)
-                    settle_tick[i] = t + 1;
-                if (t >= ticks - 25) err_sum[i] += (setpoint_rpm - rpm);   // last 0.5 s
-                last[i] = rpm;
+                judge[i].add(t, ticks, rpm);
             }
             waitMs(TICK_MS);
         }
         stopAll();
         for (unsigned i = 0; i < total_motors; i++) {
-            const float over = (peak[i] - fabs(setpoint_rpm)) / fabs(setpoint_rpm);
             // -1, not 0, for "never settled". Zero reads as "settled instantly",
             // which is the opposite of what it means and is exactly the wheel you
-            // most want to notice.
+            // most want to notice. band= is the judge's: the host reads it.
+            const LoopJudge &j = judge[i];
             REPORT("IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d "
-                   "settle_ms=%d err=%.2f final=%.1f\n",
-                   dir > 0 ? "loop" : "loop_rev", i + 1, setpoint_rpm, over, crossings[i],
-                   settle_tick[i] >= ticks ? -1 : (int)(settle_tick[i] * TICK_MS),
-                   err_sum[i] / 25.0f, last[i]);
+                   "settle_ms=%d err=%.2f final=%.1f band=%.2f\n",
+                   dir > 0 ? "loop" : "loop_rev", i + 1, setpoint_rpm, j.overshoot(), j.crossings,
+                   j.settleMs(ticks, TICK_MS), j.err(), j.last, j.band);
         }
     }
 }

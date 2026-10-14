@@ -53,6 +53,7 @@ HEADINGS_DEG = 15      # candidate step headings
 STOP_MARGIN_M = 0.08   # stop when a return is this close to the robot's circle ahead
 SPIN_MARGIN_M = 0.02   # a turn in place needs this beyond the circle
 HOME_MIN_PAIRS = 150
+TF_WAIT_TRIES = 100     # x 0.2 s: the base_link -> laser TF, before a snapshot is refused
 HOME_MAX_RMS = 0.025
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
 
@@ -159,6 +160,7 @@ class Robot:
         self.node.create_subscription(LaserScan, self.topic, on_scan, qos_profile_sensor_data)
         self.node.create_subscription(Odometry, "/odom", on_odom, 10)
         self.laser = None
+        self.tf_ok = False
 
     def spin(self, secs: float):
         end = time.time() + secs
@@ -173,8 +175,12 @@ class Robot:
         return self.scan
 
     def mount(self):
+        # TF_WAIT_TRIES: a stack whose /scan is up can still be seconds from its static TF --
+        # on a UNO Q, 6 s after the scan there was none, and a 5 s wait saved the home
+        # snapshot in the scan frame (2026-10-14; the drive home then refused a weak fix).
         if self.laser is None:
-            self.laser = scan_match.laser_pose(self.node, self.frame or "laser")
+            self.laser = scan_match.laser_pose(self.node, self.frame or "laser", tries=TF_WAIT_TRIES)
+            self.tf_ok = self.laser is not None
             if self.laser is None:
                 print(f"  ⚠️ no TF base_link -> {self.frame}; using the scan frame as base_link")
                 self.laser = (0.0, 0.0, 0.0)
@@ -289,10 +295,34 @@ def report(P, need: float) -> bool:
     return near >= need
 
 
-def save(path: str, P):
+def save(path: str, P, r: "Robot") -> bool:
+    """The start snapshot, in base_link, with the laser mount it was taken with. Refused
+    without the TF: points in the scan frame are not where the robot is, and `home` would
+    later match them against base_link points."""
+    if not r.tf_ok:
+        print(f"  no start snapshot: no TF base_link -> {r.frame} in {TF_WAIT_TRIES * 0.2:.0f} s")
+        return False
     with open(path, "w") as fh:
-        json.dump({"points": P.tolist(), "quadrants": quadrants(P)}, fh)
+        json.dump({"points": P.tolist(), "quadrants": quadrants(P), "laser": list(r.laser)}, fh)
     print(f"  start snapshot: {len(P)} points -> {path}")
+    return True
+
+
+def snapshot_points(snap: dict, laser) -> "np.ndarray":
+    """The snapshot's points in base_link as the laser is mounted NOW. A snapshot saved with
+    another mount (an old one in the scan frame, laser (0, 0, 0)) is taken back to the
+    scan frame with its own mount and out again with this one."""
+    P = np.asarray(snap["points"], float)
+    then = snap.get("laser") or [0.0, 0.0, 0.0]
+    if all(abs(a - b) < 1e-6 for a, b in zip(then, laser)):
+        return P
+    c, s_ = math.cos(-then[2]), math.sin(-then[2])
+    d = P - np.asarray(then[:2], float)
+    q = np.c_[c * d[:, 0] - s_ * d[:, 1], s_ * d[:, 0] + c * d[:, 1]]       # the scan frame
+    c, s_ = math.cos(laser[2]), math.sin(laser[2])
+    print(f"  the snapshot's laser mount ({then[0]:+.3f}, {then[1]:+.3f}, "
+          f"{math.degrees(then[2]):+.1f} deg) differs from now's: re-expressed in base_link")
+    return np.c_[laser[0] + c * q[:, 0] - s_ * q[:, 1], laser[1] + s_ * q[:, 0] + c * q[:, 1]]
 
 
 def cmd_check(a, r: Robot) -> int:
@@ -303,8 +333,9 @@ def cmd_check(a, r: Robot) -> int:
     print(f"  reading {r.topic}; laser at x={r.laser[0]:.3f} y={r.laser[1]:.3f} "
           f"yaw={math.degrees(r.laser[2]):.1f} deg in base_link")
     ok = report(P, a.need)
-    if a.save and ok:
-        save(a.save, P)
+    if a.save and ok and not save(a.save, P, r):
+        print("CLEARANCE_REFUSED: no start snapshot, so no way home (nothing moved)")
+        return 1
     print("CLEARANCE_OK" if ok else "CLEARANCE_REFUSED")
     return 0 if ok else 1
 
@@ -316,8 +347,10 @@ def cmd_inch(a, r: Robot) -> int:
         return 2
     print(f"  reading {r.topic}")
     if report(P, a.need):
-        if a.save:
-            save(a.save, P)
+        r.mount()
+        if a.save and not save(a.save, P, r):
+            print("CLEARANCE_REFUSED: no start snapshot, so no way home (nothing moved)")
+            return 1
         print("CLEARANCE_OK (no inching needed)")
         return 0
     if not r.claim_cmd_vel():
@@ -348,8 +381,9 @@ def cmd_inch(a, r: Robot) -> int:
                 print("CLEARANCE FAIL: the scan stopped")
                 return 2
             if report(P, a.need):
-                if a.save:
-                    save(a.save, P)
+                if a.save and not save(a.save, P, r):
+                    print("CLEARANCE_REFUSED: no start snapshot, so no way home")
+                    return 1
                 print(f"CLEARANCE_OK after {k} inch(es), {travel:.2f} m")
                 return 0
         print(f"CLEARANCE_REFUSED: still under {a.need:.2f} m after {travel:.2f} m of inching "
@@ -360,13 +394,14 @@ def cmd_inch(a, r: Robot) -> int:
 
 
 def cmd_home(a, r: Robot) -> int:
-    home = np.asarray(json.load(open(a.snap))["points"], float)
+    snap = json.load(open(a.snap))
     if not r.claim_cmd_vel():
         return 1
     if r.next_scan(10.0) is None:
         print(f"HOME ABORT: no scan on {r.topic}")
         return 2
     laser = r.mount()
+    home = snapshot_points(snap, laser)
     th, x, y, rms, n = scan_match.locate(scan_match.scan_points(r.scan, laser), home)
     pose = (scan_match.wrap(th), x, y)
     print("  first fix: x %+.3f y %+.3f yaw %+.1f deg -- %d pairs, rms %.3f"

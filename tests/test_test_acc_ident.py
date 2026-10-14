@@ -96,7 +96,10 @@ def test_never_settled_is_not_reported_as_instant():
     assert never and "never" in never[0], never
     assert "RINGS" in never[0]
     src = open(ACC, encoding="utf-8").read()
-    assert "settle_tick[i] >= ticks ? -1" in src, "the firmware must emit -1, not 0"
+    judge = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "pid", "loop_judge.h"),
+                 encoding="utf-8").read()
+    assert "j.settleMs(ticks, TICK_MS)" in src
+    assert "if (settle_tick >= ticks) return -1;" in judge, "the firmware must emit -1, not 0"
 
 
 def test_the_firmware_emits_every_field_the_parser_reads():
@@ -150,8 +153,13 @@ def test_identification_is_skipped_on_a_sim_wheel_board():
 
 def test_no_trace_is_stored_for_the_closed_loop_pass():
     """Everything is accumulated online. A per-wheel trace at the control rate is
-    several kilobytes on a board whose whole static segment is 124580 bytes."""
+    several kilobytes on a board whose whole static segment is 124580 bytes. The
+    judge keeps a 100 ms window (five floats a wheel), never the step."""
     src = open(ACC, encoding="utf-8").read()
     body = src[src.index("void loopStep"):src.index("void run()")]
-    assert "[" not in body.split("for (unsigned t")[1].split("}")[0], \
-        "the closed-loop pass appears to index an array"
+    tick_loop = body.split("for (unsigned t")[2].split("waitMs(TICK_MS);")[0]
+    assert "[t]" not in tick_loop and "[ticks]" not in body, \
+        "the closed-loop pass appears to keep a per-tick trace"
+    judge = open(os.path.join(REPO_ROOT, "firmware", "common", "lib", "pid", "loop_judge.h"),
+                 encoding="utf-8").read()
+    assert "static const unsigned WIN = 5;" in judge

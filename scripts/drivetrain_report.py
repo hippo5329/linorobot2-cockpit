@@ -780,6 +780,23 @@ def wheels_disagree(ident, tol=0.15):
     return findings
 
 
+def loop_verdict(run):
+    """calm / overshoots / RINGS for one measured IDENT loop line.
+
+    A line with band= comes from the 100 ms judge (firmware loop_judge.h): its crossings
+    count the times the speed left the band on the other side, so one overshoot that
+    settles is 1 and ringing is 2 or more. A line without it is the old per-tick judge,
+    whose crossings were one encoder count flickering across the setpoint: judged as
+    before, and it reads RINGS on nearly any real wheel."""
+    if run.get("settle_ms", -1) < 0:
+        return "RINGS"             # it never stayed inside the band at all
+    if "band" in run:
+        crossings = run.get("crossings", 9)
+        return "calm" if crossings == 0 else ("overshoots" if crossings == 1 else "RINGS")
+    return ("calm" if run.get("overshoot", 1) <= PID_MAX_OVERSHOOT
+            and run.get("crossings", 9) <= PID_MAX_CROSSINGS else "RINGS")
+
+
 def ident_report(ident, d=None):
     """What a real board's IDENT block says, and what to do about it."""
     out = ["--- measured on the robot (test_acc IDENT)"]
@@ -812,12 +829,9 @@ def ident_report(ident, d=None):
         out.append("    closed loop, as configured:")
         for w in sorted(loops):
             for run in loops[w]:
-                verdict = ("calm" if run.get("overshoot", 1) <= PID_MAX_OVERSHOOT
-                           and run.get("crossings", 9) <= PID_MAX_CROSSINGS else "RINGS")
+                verdict = loop_verdict(run)
                 settle = run.get("settle_ms", -1)
                 settle_txt = "never    " if settle < 0 else f"{settle:.0f} ms"
-                if settle < 0:
-                    verdict = "RINGS"      # it never got inside the band at all
                 out.append(f"       wheel {w} at {run.get('sp', 0):5.1f} rpm: "
                            f"overshoot {run.get('overshoot', 0) * 100:5.1f}%  "
                            f"crossings {run.get('crossings', 0):.0f}  "

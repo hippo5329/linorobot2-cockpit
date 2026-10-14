@@ -20,6 +20,8 @@
 
 // index is 1..4, matching MOTOR1_* .. MOTOR4_* and the env keys m1_* .. m4_*.
 EncoderInterface *createEncoder(int index);
+// The counts per wheel revolution createEncoder(index) used (the env's m<index>_cpr, else the build's).
+int encoderCpr(int index);
 MotorInterface   *createMotor(int index);
 PID              *createPID(void);
 Kinematics       *createKinematics(void);

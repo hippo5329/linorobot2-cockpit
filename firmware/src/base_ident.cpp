@@ -15,6 +15,8 @@
 #include <math.h>
 #include "config.h"
 #include "base_ident.h"
+#include "hw_factory.h"
+#include "loop_judge.h"
 #include "mcu_env.h"
 #include "ota.h"
 #include "syslog.h"
@@ -63,10 +65,7 @@ unsigned step = 0, tick = 0;
 // per-step results
 int dz_found[4];
 float plant[4][30];
-float lp_peak[4], lp_last[4], lp_err[4];
-int lp_cross[4];
-unsigned lp_settle[4];
-bool lp_below[4];
+LoopJudge lp[4];                         // the loop step's verdict, per wheel (loop_judge.h)
 float run_peak_v, run_peak_w, run_vel[50];
 
 float topRpm(void)
@@ -89,10 +88,6 @@ void beginStep(void)
     tick = 0;
     for (int i = 0; i < 4; i++) {
         dz_found[i] = -1;
-        lp_peak[i] = lp_last[i] = lp_err[i] = 0.0f;
-        lp_cross[i] = 0;
-        lp_settle[i] = 0;
-        lp_below[i] = true;
     }
     run_peak_v = run_peak_w = 0.0f;
 }
@@ -123,9 +118,9 @@ void report(const Step &s, unsigned motors, int pwm_max, Kinematics *kin)
         const float sp = s.dir * s.level * topRpm();
         const unsigned n = s.ticks - LOOP_PRE;
         for (unsigned i = 0; i < motors; i++)
-            syslog(LOG_INFO, "IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d settle_ms=%d err=%.2f final=%.1f",
-                   fwd ? "loop" : "loop_rev", i + 1, sp, (lp_peak[i] - fabsf(sp)) / fabsf(sp), lp_cross[i],
-                   lp_settle[i] >= n ? -1 : (int)(lp_settle[i] * TICK_MS), lp_err[i] / 25.0f, lp_last[i]);
+            syslog(LOG_INFO, "IDENT %s wheel=%u sp=%.1f overshoot=%.3f crossings=%d settle_ms=%d err=%.2f final=%.1f band=%.2f",
+                   fwd ? "loop" : "loop_rev", i + 1, sp, lp[i].overshoot(), lp[i].crossings,
+                   lp[i].settleMs(n, TICK_MS), lp[i].err(), lp[i].last, lp[i].band);
         break;
     }
     case K_LIN:
@@ -215,13 +210,8 @@ bool baseIdentTick(const float cur[4], int pwm[4], PID *const pids[4], Kinematic
         for (unsigned i = 0; i < motors; i++) {
             const float rpm = cur[i];
             pwm[i] = (int)pids[i]->compute(sp, rpm);
-            if (fabsf(rpm) > lp_peak[i]) lp_peak[i] = fabsf(rpm);
-            const bool below = rpm < sp;
-            if (t > 0 && below != lp_below[i]) lp_cross[i]++;
-            lp_below[i] = below;
-            if (fabsf(rpm - sp) > fabsf(sp) * 0.02f) lp_settle[i] = t + 1;
-            if (t >= n - 25) lp_err[i] += (sp - rpm);
-            lp_last[i] = rpm;
+            if (t == 0) lp[i].begin(sp, loopJudgeResRpm(encoderCpr(i + 1), TICK_MS));
+            lp[i].add(t, n, rpm);
         }
         break;
     }
