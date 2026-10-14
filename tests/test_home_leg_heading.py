@@ -77,3 +77,41 @@ def test_home_held_inside_the_bound_passes_after_the_settle_time(monkeypatch):
     node = _home_node(math.radians(9.0), status=2)
     assert _run(monkeypatch, node, timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
                 home_yaw_tolerance=0.20) is True
+
+
+def _turning_home(monkeypatch, end_deg, step_deg=-2.0):
+    """At home with the goal SUCCEEDED at +6.5 deg, still turning by step_deg per spin
+    until it stops at end_deg -- the TS100 on 2026-10-14."""
+    node = _home_node(math.radians(6.5))
+    on_home = {"spins": 0}
+
+    def spin(*_a, **_k):
+        if (node.goal_x, node.goal_y) != (0.0, 0.0):
+            return
+        on_home["spins"] += 1
+        if on_home["spins"] > 1:
+            node.world_yaw = max(math.radians(end_deg), node.world_yaw + math.radians(step_deg))
+
+    monkeypatch.setattr(MOD, "Nav2GoalTester", lambda **_: node)
+    monkeypatch.setattr(MOD.rclpy, "init", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "shutdown", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "spin_once", spin, raising=False)
+    monkeypatch.setattr(MOD, "HEADING_STILL_SEC", 0.05)
+    return node
+
+
+def test_a_heading_passed_mid_turn_is_judged_where_the_robot_stops(monkeypatch, capsys):
+    """SUCCEEDED at +6.5 deg, inside the tolerance, and at rest -27 deg: a fail."""
+    _turning_home(monkeypatch, end_deg=-27.0)
+    assert MOD.run_test(timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
+                        home_yaw_tolerance=0.20) is False
+    out = capsys.readouterr().out
+    assert "HOME WITHOUT ITS HEADING" in out and "-27.0 deg" in out, out
+
+
+def test_a_small_settle_inside_the_tolerance_still_passes(monkeypatch, capsys):
+    _turning_home(monkeypatch, end_deg=2.0, step_deg=-1.0)
+    assert MOD.run_test(timeout=3.0, round_trips=1, goal_x=3.0, goal_y=0.0,
+                        home_yaw_tolerance=0.20) is True
+    out = capsys.readouterr().out
+    assert "heading +2.0 deg" in out, out

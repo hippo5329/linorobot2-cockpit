@@ -201,6 +201,15 @@ PHANTOM_CONFIRM_SEC = 2.0
 HOME_SETTLE_SEC = 15.0
 PHANTOM_SETTLE_SEC = 5.0
 
+# The leg home's heading is judged once the robot has stopped turning: the heading
+# held within HEADING_STILL_RAD for HEADING_STILL_SEC, waited for HEADING_REST_SEC at
+# most. Nav2's goal checker fires the moment the heading passes inside its tolerance,
+# turning at full rate; a TS100 called SUCCEEDED at +6.5 deg came to rest at -27 deg
+# (2026-10-14), and the next run started SLAM in that turned frame.
+HEADING_REST_SEC = 8.0
+HEADING_STILL_SEC = 1.0
+HEADING_STILL_RAD = math.radians(0.5)
+
 # Breathing room between one leg's terminal status and the next leg's dispatch.
 # Cheap insurance against the same race: a goal accepted while the tree is
 # still halting is the one that comes back instantly.
@@ -1379,6 +1388,22 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         err = heading_err()
         return err == err and abs(err) <= home_yaw_tolerance
 
+    def heading_at_rest() -> bool:
+        """heading_ok() once the heading has stopped changing (HEADING_REST_SEC)."""
+        last, still_since = heading_err(), None
+        t_end = time.time() + HEADING_REST_SEC
+        while time.time() < t_end:
+            rclpy.spin_once(node, timeout_sec=0.2)
+            err = heading_err()
+            if err == err and last == last and abs(math.remainder(err - last, 2 * math.pi)) <= HEADING_STILL_RAD:
+                still_since = still_since or time.time()
+                if time.time() - still_since >= HEADING_STILL_SEC:
+                    break
+            else:
+                still_since = None
+            last = err
+        return heading_ok()
+
     def run_legs(legs) -> bool:
         """Drive every leg in turn; each must arrive, and each that crosses the
         wall must have planned around it. One failure ends the run -- the
@@ -1420,6 +1445,9 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                     arrived = time.time() - settled_since > HOME_SETTLE_SEC
                 elif not arrived:
                     settled_since = None
+                # ... and the heading it passed with must be the one it stops at.
+                if arrived and heading_leg and not heading_at_rest():
+                    arrived = False
                 if arrived:
                     return True
                 # Home by position but not by heading, and Nav2 has finished with the
