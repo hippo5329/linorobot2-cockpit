@@ -305,10 +305,20 @@ def save(path: str, P, r: "Robot") -> bool:
     if not r.tf_ok:
         print(f"  no start snapshot: no TF base_link -> {r.frame} in {TF_WAIT_TRIES * 0.2:.0f} s")
         return False
+    odom = r.wait_odom(2.0)
     with open(path, "w") as fh:
-        json.dump({"points": P.tolist(), "quadrants": quadrants(P), "laser": list(r.laser)}, fh)
+        json.dump({"points": P.tolist(), "quadrants": quadrants(P), "laser": list(r.laser),
+                   "odom": list(odom) if odom else None}, fh)
     print(f"  start snapshot: {len(P)} points -> {path}")
     return True
+
+
+def odom_since(then, now) -> tuple:
+    """(yaw, x, y): the robot's pose now in its own frame at `then`, from two /odom poses
+    (x, y, yaw) -- the same quantity the scan match returns, as the odometry has it."""
+    c, s = math.cos(then[2]), math.sin(then[2])
+    dx, dy = now[0] - then[0], now[1] - then[1]
+    return scan_match.wrap(now[2] - then[2]), c * dx + s * dy, -s * dx + c * dy
 
 
 def snapshot_points(snap: dict, laser) -> "np.ndarray":
@@ -450,6 +460,31 @@ def home_step(pose, dist: float, holonomic: bool):
     return d * speed, 0.0, max(-0.4, min(0.4, 1.5 * face))
 
 
+ODOM_TURN_WZ = 0.30       # rad/s: a turn closed on /odom, as teleop_step's (-89.5 deg for -90)
+ODOM_TURN_DONE_DEG = 2.0
+ODOM_TURNS = 4            # odom turns per drive home before the LiDAR-closed turn takes over
+
+
+def odom_turn(r, angle: float) -> bool:
+    """Turn by `angle` (rad, + = CCW) closed on /odom (the EKF: the gyro's yaw at 50 Hz), then
+    stop. False when there is no /odom. The last turn on the spot used to be closed on the
+    LiDAR match, ~0.9 s behind the robot on a UNO Q (scan, ICP, stop): at 0.2 rad/s each
+    correction carried ~10 deg past and the robot hunted for 25 s (2026-10-15)."""
+    o = r.wait_odom(2.0)
+    if o is None:
+        return False
+    target = scan_match.wrap(o[2] + angle)
+    end = time.time() + abs(angle) / ODOM_TURN_WZ * 3 + 3
+    while time.time() < end:
+        r.spin(0.02)
+        e = scan_match.wrap(target - r.odom[2])
+        if abs(e) < math.radians(ODOM_TURN_DONE_DEG):
+            break
+        r.send(0.0, math.copysign(ODOM_TURN_WZ, e))
+    r.stop()
+    return True
+
+
 def path_blocked(P, vx: float, vy: float, radius: float) -> float:
     """The nearest return in the robot's corridor along (vx, vy), when it is inside the stop
     margin of its circle; 0 when the way is open or the robot is not translating."""
@@ -476,6 +511,16 @@ def cmd_home(a, r: Robot) -> int:
     home = snapshot_points(snap, laser)
     S = scan_match.scan_points(r.scan, laser)
     cands = scan_match.locate_candidates(S, home)
+    # The odometry's account of the move seeds more starts: from home's spot alone, every 30
+    # degrees, a robot 0.32 m off and turned 15 deg fell into a wrong fit (2026-10-15). Only
+    # more candidates under the same gate: odometry that drifted (the EKF while test_acc ran)
+    # fits worse and loses.
+    now = r.wait_odom(2.0) if snap.get("odom") else None
+    if now:
+        seed = odom_since(snap["odom"], now)
+        print("  odometry since the snapshot: x %+.3f y %+.3f yaw %+.1f deg"
+              % (seed[1], seed[2], math.degrees(seed[0])))
+        cands = sorted(cands + scan_match.locate_candidates(S, home, guess=seed), key=lambda c: -c[0])
     k_best, (th, x, y, rms, n) = cands[0]
     pose = (scan_match.wrap(th), x, y)
     print("  first fix: x %+.3f y %+.3f yaw %+.1f deg -- %d pairs, rms %.3f"
@@ -484,7 +529,7 @@ def cmd_home(a, r: Robot) -> int:
     if why:
         print(f"HOME ABORT: {why} -- not driving on a guess")
         return 2
-    bad, verdict, positioned, relocs = 0, "TIMEOUT", False, 0
+    bad, verdict, positioned, relocs, turns = 0, "TIMEOUT", False, 0, 0
     start = time.time()
     try:
         while time.time() - start < a.timeout:
@@ -549,6 +594,14 @@ def cmd_home(a, r: Robot) -> int:
                 vx, vy, wz = home_step(pose, dist, a.holonomic)
             else:
                 err = scan_match.wrap(-pose[0])
+                if turns < ODOM_TURNS and odom_turn(r, err):
+                    # on /odom by the whole error, then the LiDAR looks again from a standstill
+                    turns += 1
+                    pose = (scan_match.wrap(pose[0] + err), pose[1], pose[2])   # the match's seed
+                    if a.trace:
+                        print("  trace          odom turn %+.1f deg" % math.degrees(err), flush=True)
+                    r.spin(0.5)
+                    continue
                 wz = max(0.2, min(0.6, abs(err))) * (1 if err > 0 else -1)
             near = path_blocked(P, vx, vy, a.radius)
             if near:

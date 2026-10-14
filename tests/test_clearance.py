@@ -204,6 +204,9 @@ class _R:
     def __init__(self, tf_ok, laser=(0.095, 0.0, 0.0)):
         self.tf_ok, self.laser, self.frame = tf_ok, laser, "laser"
 
+    def wait_odom(self, timeout=5.0):
+        return (1.0, 2.0, 0.5)
+
 
 def test_a_snapshot_without_the_tf_is_refused(tmp_path):
     import numpy as np
@@ -213,6 +216,18 @@ def test_a_snapshot_without_the_tf_is_refused(tmp_path):
     assert clearance.save(str(tmp_path / "s.json"), P, _R(True))
     import json
     assert json.load(open(tmp_path / "s.json"))["laser"] == [0.095, 0.0, 0.0]
+    assert json.load(open(tmp_path / "s.json"))["odom"] == [1.0, 2.0, 0.5]
+
+
+def test_the_odometry_since_the_snapshot_is_in_the_snapshot_frame():
+    import math
+    # facing +y at (1, 2); now 0.2 m further along +y and turned 15 deg more: 0.2 m ahead
+    th, x, y = clearance.odom_since((1.0, 2.0, math.pi / 2),
+                                    (1.0, 2.2, math.pi / 2 + math.radians(15)))
+    assert abs(x - 0.2) < 1e-9 and abs(y) < 1e-9 and abs(math.degrees(th) - 15) < 1e-9
+    # moved 0.3 m to its right
+    th, x, y = clearance.odom_since((0.0, 0.0, math.pi / 2), (0.3, 0.0, math.pi / 2))
+    assert abs(x) < 1e-9 and abs(y + 0.3) < 1e-9
 
 
 def test_an_old_snapshot_in_the_scan_frame_is_re_expressed_in_base_link():
@@ -332,6 +347,45 @@ class _StillRobot:
 
     def spin(self, secs):
         pass
+
+    def wait_odom(self, timeout=5.0):
+        return None
+
+
+class _TurningRobot:
+    """/odom follows the last command 0.1 s late; enough of a robot for odom_turn."""
+
+    def __init__(self):
+        self.odom, self.cmds, self.wz, self.t = (0.0, 0.0, 0.0), [], 0.0, 0.0
+
+    def wait_odom(self, timeout=5.0):
+        return self.odom
+
+    def spin(self, secs):
+        self.t += secs
+        if len(self.cmds) > 5:                     # 0.1 s of commands still in flight
+            self.wz = self.cmds[-6]
+        x, y, yaw = self.odom
+        self.odom = (x, y, scan_match.wrap(yaw + self.wz * secs))
+
+    def send(self, vx, wz, vy=0.0):
+        self.cmds.append(wz)
+
+    def stop(self):
+        self.cmds += [0.0] * 6
+        for _ in range(6):
+            self.spin(0.02)
+
+
+def test_the_last_turn_is_closed_on_odom_and_lands_within_a_few_degrees():
+    r = _TurningRobot()
+    assert clearance.odom_turn(r, math.radians(-9.0))
+    assert abs(math.degrees(r.odom[2]) + 9.0) < 3.0, math.degrees(r.odom[2])
+    assert max(abs(w) for w in r.cmds) <= clearance.ODOM_TURN_WZ
+
+
+def test_no_odom_falls_back_to_the_lidar_closed_turn():
+    assert clearance.odom_turn(_StillRobot([np.zeros((1, 2))]), 0.2) is False
 
 
 def _home_run(monkeypatch, tmp_path, scans, home):
