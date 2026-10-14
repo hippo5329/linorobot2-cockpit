@@ -1652,3 +1652,22 @@ body.console-collapsed {
   .hdr-field, .preset-selector-group { flex-wrap: wrap; }
   #hdr-workspace-pill, #hdr-run-mode { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* ---------------------------------------------------------------------------
+   The Real-robot bring-up card (Hardware Tests, app-bringup.js). */
+.bu-steps { margin: 8px 0 12px 1.2em; padding: 0; display: grid; gap: 6px; font-size: 0.9rem; }
+.bu-steps .pill { margin-left: 6px; }
+.bu-step { border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 12px; margin-top: 8px; }
+.bu-step > summary { cursor: pointer; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-height: 32px; }
+.bu-step[hidden] { display: none; }
+.bu-pill { font-weight: 400; }
+.bu-table { width: 100%; margin-top: 8px; font-family: var(--font-mono, monospace); font-size: 0.85rem; }
+.bu-table th, .bu-table td { padding: 4px 6px; text-align: left; }
+.bu-plot { width: 100%; height: 140px; background: #020617; border-radius: 6px; margin-top: 8px; }
+.bu-verdict { margin: 8px 0 0 1.2em; font-size: 0.9rem; }
+.cockpit-real-opts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; width: 100%;
+  padding: 8px 10px; border: 1px solid #f59e0b55; border-radius: 8px; background: #f59e0b0d; }
+.cockpit-real-opts[hidden] { display: none; }
+@media (max-width: 600px) {
+  .bu-table { display: block; overflow-x: auto; }
+}

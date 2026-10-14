@@ -1320,6 +1320,171 @@
   <!-- 6. HARDWARE TESTS -->
   <section class="tab-pane" id="tab-hw-tests">
     <button type="button" id="btn-tool-stop" class="tool-stop" hidden>■ STOP MOTORS <span class="tool-stop-key">(Esc)</span></button>
+    <!-- The real robot's bring-up, step by step (app-bringup.js, routes_bringup.py). The
+         command-line twin is scripts/robot_bringup.py: both write one record, and the
+         1-Click on Operations asks it before it moves a real robot. -->
+    <div class="card" id="bu-card">
+      <div class="section-header-flex">
+        <h2 style="margin:0;">Real-robot bring-up</h2>
+        <span id="bu-gate" class="pill pill-unknown" role="status">—</span>
+      </div>
+      <p class="hint">Bring a real robot up one checked step at a time: sensors, battery, motors and
+        wheel speed on the bench, then the LiDAR, and only then the floor. Each step records its
+        result; the <b>1-Click</b> moves a real robot only once the bench steps have passed. The same
+        steps run on the command line: <code>python3 scripts/robot_bringup.py status</code>.</p>
+      <p id="bu-robot" class="tool-small"></p>
+      <p id="bu-simnote" class="tool-refusal" hidden>This robot's wheels are simulated: it is not a real robot,
+        and nothing here gates it. Make it a real robot (a reference design, or pins) to bring it up.</p>
+      <ol id="bu-steps" class="bu-steps"></ol>
+
+      <!-- 1. sensors -->
+      <details class="bu-step" id="bu-step-sensors" data-stage="sensors">
+        <summary><span class="bu-pill" data-for="sensors">—</span> 1. Sensors answer and follow the robot</summary>
+        <p class="hint">Robot in your hands, wheels off the floor. The board enters its tool and streams every
+          sensor 10 times a second. First hold it <b>still</b> (gravity is measured), then <b>turn it</b> --
+          yaw, pitch and roll -- and <b>shake it</b>. Every real IMU and magnetometer must follow.</p>
+        <div class="tool-row">
+          <button type="button" class="btn btn-primary" id="bu-sens-still">① Hold still (5 s)</button>
+          <button type="button" class="btn btn-primary" id="bu-sens-move" disabled>② Turn and shake (20 s)</button>
+          <span id="bu-sens-timer" class="tool-small" role="timer"></span>
+        </div>
+        <div class="bu-live" aria-label="Sensor readings">
+          <table class="data-table bu-table"><caption class="sr-only">Sensor readings</caption>
+            <thead><tr><th>Sensor</th><th>X</th><th>Y</th><th>Z</th><th>span (min..max)</th></tr></thead>
+            <tbody>
+              <tr><th>Accel m/s²</th><td id="bu-acc-x">—</td><td id="bu-acc-y">—</td><td id="bu-acc-z">—</td><td id="bu-acc-s">—</td></tr>
+              <tr><th>Gyro rad/s</th><td id="bu-gyr-x">—</td><td id="bu-gyr-y">—</td><td id="bu-gyr-z">—</td><td id="bu-gyr-s">—</td></tr>
+              <tr><th>Mag µT</th><td id="bu-mag-x">—</td><td id="bu-mag-y">—</td><td id="bu-mag-z">—</td><td id="bu-mag-s">—</td></tr>
+              <tr><th>Roll/pitch/yaw °</th><td id="bu-rpy-x">—</td><td id="bu-rpy-y">—</td><td id="bu-rpy-z">—</td><td id="bu-rpy-s">—</td></tr>
+            </tbody>
+          </table>
+          <canvas id="bu-sens-plot" class="bu-plot" width="640" height="140" aria-label="Gyro and magnetometer, the last 10 s"></canvas>
+          <p class="tool-small">Plot, the last 10 s: |gyro| (blue, full scale 4 rad/s) and |mag| (amber, full scale 100 µT). Battery <b id="bu-bat-live">—</b>, range <b id="bu-range-live">—</b>.</p>
+        </div>
+        <ul id="bu-sens-verdict" class="bu-verdict"></ul>
+      </details>
+
+      <!-- 2. battery -->
+      <details class="bu-step" id="bu-step-battery" data-stage="battery">
+        <summary><span class="bu-pill" data-for="battery">—</span> 2. Battery voltage agrees with a multimeter</summary>
+        <p class="hint">Put a multimeter on the battery terminals. An ADC divider is trimmed to it (R1 is
+          adjusted, the board gets the new value); a current monitor such as the INA219 reads its own volts --
+          behind the board's input diode it reads about 0.6 V under the pack, which is expected.</p>
+        <div class="tool-row">
+          <button type="button" class="btn btn-secondary" id="bu-bat-read">Read the board (5 s)</button>
+          <span>Board <b id="bu-bat-board">—</b></span>
+          <label for="bu-bat-meter" class="tool-small">Multimeter reads (V)</label>
+          <input type="number" id="bu-bat-meter" class="form-input tool-num" step="0.01" min="1" max="60" inputmode="decimal">
+          <button type="button" class="btn btn-primary" id="bu-bat-check" disabled>Compare</button>
+        </div>
+        <p id="bu-bat-result" class="tool-small" role="status"></p>
+        <button type="button" class="btn btn-accent" id="bu-bat-apply" hidden>Save the new R1 and write it to the board</button>
+      </details>
+
+      <!-- 3. motors -->
+      <details class="bu-step" id="bu-step-motors" data-stage="motors">
+        <summary><span class="bu-pill" data-for="motors">—</span> 3. Every wheel turns forward, every encoder counts up</summary>
+        <p class="hint"><b>Lift the robot: the wheels turn.</b> Spin each wheel forward, then say which way it
+          turned -- the way that would drive the robot forward, or backward. The encoder's sign is read from the
+          board. A wrong motor or encoder direction is fixed by its <b>invert</b> flag, saved to the config and
+          written to the board; then spin the wheel again to confirm.</p>
+        <div class="tool-row">
+          <label for="bu-mot-pct" class="tool-small">power %</label>
+          <input type="number" id="bu-mot-pct" class="form-input tool-num" min="10" max="100" value="40" inputmode="numeric">
+          <label for="bu-mot-secs" class="tool-small">seconds</label>
+          <input type="number" id="bu-mot-secs" class="form-input tool-num" min="2" max="10" value="3" inputmode="numeric">
+        </div>
+        <table class="data-table bu-table"><caption class="sr-only">Wheels</caption>
+          <thead><tr><th>Wheel</th><th>Spin</th><th>Encoder</th><th>It turned…</th><th>Result</th><th>Invert motor / encoder</th></tr></thead>
+          <tbody id="bu-mot-rows"></tbody>
+        </table>
+        <div class="tool-row mt-2">
+          <button type="button" class="btn btn-accent" id="bu-mot-apply" hidden>Save the fixes and write them to the board</button>
+          <span id="bu-mot-msg" class="tool-small" role="status"></span>
+        </div>
+      </details>
+
+      <!-- 4. rpm -->
+      <details class="bu-step" id="bu-step-rpm" data-stage="rpm">
+        <summary><span class="bu-pill" data-for="rpm">—</span> 4. Wheel RPM agrees with a tachometer</summary>
+        <p class="hint"><b>Wheels lifted.</b> Stick reflective tape on each wheel. Run it at full power, read the laser
+          tachometer, and type the reading. The encoder's RPM depends on <code>counts_per_rev</code>; the tachometer
+          does not, so their ratio corrects it. At 100 % the slowest wheel's RPM is the robot's <code>max_rpm</code>.
+          No tachometer? Count by hand below.</p>
+        <div class="tool-row">
+          <label for="bu-rpm-pct" class="tool-small">power %</label>
+          <input type="number" id="bu-rpm-pct" class="form-input tool-num" min="20" max="100" value="100" inputmode="numeric">
+          <span class="tool-small">counts_per_rev now <b id="bu-rpm-cpr">—</b>, max_rpm <b id="bu-rpm-max">—</b></span>
+        </div>
+        <table class="data-table bu-table"><caption class="sr-only">Wheel speeds</caption>
+          <thead><tr><th>Wheel</th><th>Run</th><th>Encoder RPM</th><th>Tachometer RPM</th><th>counts_per_rev</th></tr></thead>
+          <tbody id="bu-rpm-rows"></tbody>
+        </table>
+        <div class="tool-row mt-2">
+          <button type="button" class="btn btn-primary" id="bu-rpm-calc">Compute</button>
+          <button type="button" class="btn btn-accent" id="bu-rpm-apply" hidden>Save and write to the board</button>
+          <span id="bu-rpm-msg" class="tool-small" role="status"></span>
+        </div>
+        <details class="mt-2"><summary>Count by hand instead (no tachometer)</summary>
+          <p class="hint">Mark a wheel, press Start, turn it <b>forward</b> by hand exactly N turns, press Done.</p>
+          <div class="tool-row">
+            <label for="bu-turn-wheel" class="tool-small">wheel</label>
+            <select id="bu-turn-wheel" class="form-input tool-num"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+            <label for="bu-turn-n" class="tool-small">turns</label>
+            <input type="number" id="bu-turn-n" class="form-input tool-num" min="1" max="50" value="10" inputmode="numeric">
+            <button type="button" class="btn btn-secondary" id="bu-turn-start">Start counting</button>
+            <span>count <b id="bu-turn-count">—</b></span>
+            <button type="button" class="btn btn-primary" id="bu-turn-done" disabled>Done</button>
+          </div>
+          <p id="bu-turn-msg" class="tool-small" role="status"></p>
+        </details>
+      </details>
+
+      <!-- 5. lidar -->
+      <details class="bu-step" id="bu-step-lidar" data-stage="lidar">
+        <summary><span class="bu-pill" data-for="lidar">—</span> 5. LiDAR scans all round at its rate</summary>
+        <p class="hint">Start the robot first (<a href="#" data-goto-tab="bringup">8. Bringup</a>: Start bringup) -- the LiDAR needs
+          the battery, not USB. Nothing moves. The check reads the scan for 10 s: its rate, how much of the circle
+          has returns, the ranges, and the nearest return in each quadrant. Watch the scan itself on
+          <a href="#" data-goto-tab="lidar">7. LiDAR / Scan</a>.</p>
+        <div class="tool-row">
+          <button type="button" class="btn btn-primary" id="bu-lidar-run">Check the LiDAR</button>
+          <span id="bu-lidar-msg" class="tool-small" role="status"></span>
+        </div>
+      </details>
+
+      <!-- 6. speed -->
+      <details class="bu-step" id="bu-step-speed" data-stage="speed">
+        <summary><span class="bu-pill" data-for="speed">—</span> 6. Speeds agree with the LiDAR (on the floor)</summary>
+        <p class="hint"><b>The robot drives.</b> On the floor, 0.6 m clear all round, robot started, no SLAM or Nav2.
+          It drives forward and back at 0.10 and 0.20 m/s and spins both ways (and strafes, on mecanum), never more
+          than ~0.4 m from where it starts, and compares the command, the wheels and the LiDAR's own track.
+          A ratio off by more than 5 % prints the <code>wheel_diameter</code> / <code>angular_scale</code> change to make.
+          It refuses to move with anything nearer than 0.6 m.</p>
+        <div class="tool-row">
+          <button type="button" class="btn btn-danger" id="bu-speed-run">Speed check (THE ROBOT MOVES)</button>
+          <span id="bu-speed-msg" class="tool-small" role="status"></span>
+        </div>
+      </details>
+
+      <!-- 7. acc -->
+      <details class="bu-step" id="bu-step-acc" data-stage="acc">
+        <summary><span class="bu-pill" data-for="acc">—</span> 7. test_acc identifies the drivetrain (on the floor)</summary>
+        <p class="hint"><b>The robot drives at full power.</b> Wi-Fi robots only (the results come by syslog). It needs
+          <b>1.0 m clear all round</b> by the LiDAR, or it refuses; then the PID identification and twelve short runs, then
+          the robot is driven back to where it started by the LiDAR. The derived gains and limits are kept if you tick
+          the box.</p>
+        <div class="tool-row">
+          <label class="checkbox"><input type="checkbox" id="bu-acc-write"> <span>Keep the derived gains and limits</span></label>
+          <button type="button" class="btn btn-danger" id="bu-acc-run">Run test_acc (THE ROBOT MOVES)</button>
+          <span id="bu-acc-msg" class="tool-small" role="status"></span>
+        </div>
+      </details>
+
+      <p class="hint mt-3">Then <a href="#" data-goto-tab="cockpit">11. Operations</a>: the 1-Click maps the room (SLAM),
+        explores or drives to your goal (Nav2), and saves the map.</p>
+    </div>
+
     <div class="card">
       <div class="section-header-flex">
         <h2 style="margin:0;">6. Hardware Tests</h2>
@@ -1352,7 +1517,7 @@
           <legend>Checks</legend>
           <div class="tool-row">
             <button type="button" class="btn btn-secondary" id="btn-tool-i2c" data-cmd="i2c">Scan I2C</button>
-            <button type="button" class="btn btn-secondary" id="btn-tool-sensors" data-cmd="sensors">Sensors</button>
+            <button type="button" class="btn btn-secondary" id="btn-tool-sensors" data-cmd="sensors 10">Sensors</button>
             <button type="button" class="btn btn-secondary" id="btn-tool-enc" data-cmd="enc">Encoder counts</button>
             <span class="tool-inline">
               <button type="button" class="btn btn-secondary tool-drive" id="btn-tool-motors">All motors</button>
@@ -1407,6 +1572,8 @@
             <span>M1 <b id="tool-live-m1">—</b></span><span>M2 <b id="tool-live-m2">—</b></span>
             <span>M3 <b id="tool-live-m3">—</b></span><span>M4 <b id="tool-live-m4">—</b></span>
             <span>BAT <b id="tool-live-bat">—</b></span><span>IMU <b id="tool-live-imu">—</b></span>
+            <span>GYR <b id="tool-live-gyr">—</b></span><span>MAG <b id="tool-live-mag">—</b></span>
+            <span>RANGE <b id="tool-live-range">—</b></span>
           </div>
         </div>
 
@@ -2406,6 +2573,27 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           <span>Force firmware update</span>
         </label>
 
+        <!-- A real robot (app-bringup.js): its bench bring-up gates the run, its room has its
+             own goal, and test_acc can measure the drivetrain on the initial map. -->
+        <div id="grp-cockpit-real" class="cockpit-real-opts" hidden>
+          <p id="cockpit-bringup-state" class="tool-small" role="status"></p>
+          <label>Goal X (m)
+            <input type="number" id="cockpit-goal-x" step="0.1" min="-50" max="50" placeholder="3.0" style="width:80px; min-width:unset;" inputmode="decimal">
+          </label>
+          <label>Goal Y (m)
+            <input type="number" id="cockpit-goal-y" step="0.1" min="-50" max="50" placeholder="0.0" style="width:80px; min-width:unset;" inputmode="decimal">
+          </label>
+          <label class="checkbox u-mb-8 u-cursor-pointer"
+                 title="On the initial map, before the goals: 1.0 m clear all round, test_acc at full power, back to the start by the LiDAR, and the run continues with the derived gains (Wi-Fi robots).">
+            <input type="checkbox" id="cockpit-test-acc">
+            <span>Measure the drivetrain first (test_acc)</span>
+          </label>
+          <label class="checkbox u-mb-8 u-cursor-pointer">
+            <input type="checkbox" id="cockpit-skip-bringup">
+            <span>Run without a complete bring-up (at your own risk)</span>
+          </label>
+        </div>
+
         <button type="button" id="btn-cockpit-oneclick" class="btn btn-primary">▶ Start 1-Click Pipeline</button>
         <button type="button" id="btn-cockpit-stop-pipeline" class="btn btn-danger" disabled>⏹ Abort</button>
       </div>
@@ -3115,6 +3303,7 @@ podman run --rm hello-world</code></pre>
 <script src="app-hardware.js"></script>
 <script src="app-adc.js"></script>
 <script src="app-tool.js"></script>
+<script src="app-bringup.js"></script>
 <script src="app-presets.js"></script>
 <script src="rosviz.js"></script>
 <script src="webserial.js"></script>

@@ -19,6 +19,8 @@ const tool = {
   simulatedWheels: false,
   scanThenLeave: false,
   lines: 0,
+  // Each [TOOL_JSON] object, to whoever listens (the Bring-up checklist, app-bringup.js).
+  jsonHooks: [],
 };
 
 const $t = (id) => document.getElementById(id);
@@ -86,6 +88,16 @@ async function toolRefreshState() {
 }
 
 function toolParse(line) {
+  // [TOOL_ACK]: the board's answer to a command (firmware tools.cpp ack()), shown as one
+  // readable line under the command it answers.
+  const ta = line.indexOf("[TOOL_ACK] ");
+  if (ta >= 0) {
+    try {
+      const a = JSON.parse(line.slice(ta + 11));
+      toolTermAppend(a.ok ? `← '${a.line}': ok, ${a.msg || "done"}` : `← '${a.line}': REFUSED -- ${a.msg}`);
+    } catch { toolTermAppend(line); }
+    return true;
+  }
   // [TOOL_JSON]: the live readouts (firmware test_motors.cpp / test_sensors.cpp).
   const tj = line.indexOf("[TOOL_JSON] ");
   if (tj >= 0) {
@@ -104,6 +116,11 @@ function toolParse(line) {
       if ("bat" in j) { const e = $t("tool-live-bat"); if (e) e.textContent = j.bat == null ? "none" : `${j.bat.toFixed(2)} V`; }
       if (j.rpy) { const e = $t("tool-live-imu"); if (e) e.textContent = `RPY ${j.rpy.map((v) => v.toFixed(1)).join(" ")}`; }
       else if (j.acc) { const e = $t("tool-live-imu"); if (e) e.textContent = `ACC ${j.acc.map((v) => v.toFixed(2)).join(" ")}`; }
+      // The gyro and the magnetometer too: turning the robot in your hands shows here.
+      if (j.gyr) { const e = $t("tool-live-gyr"); if (e) e.textContent = j.gyr.map((v) => v.toFixed(2)).join(" "); }
+      if (j.mag_ut) { const e = $t("tool-live-mag"); if (e) e.textContent = `${j.mag_ut.map((v) => v.toFixed(1)).join(" ")} uT`; }
+      if ("range" in j) { const e = $t("tool-live-range"); if (e) e.textContent = j.range == null ? "none" : `${j.range.toFixed(2)} m`; }
+      for (const h of tool.jsonHooks) { try { h(j); } catch { /* one listener's fault is its own */ } }
     } catch { /* a cut line: the next one comes in a second */ }
     return true;            // not shown in the terminal: the readouts are its view
   }
@@ -198,6 +215,7 @@ async function toolOpen() {
 
 // Commands that keep running until stop or their own end (web/backend/tool_session.py RUNNING).
 const TOOL_RUNNING = new Set(["sensors", "enc", "motor", "motors", "ramp", "acc", "adc", "i2c"]);
+const TOOL_DRIVES = new Set(["motor", "motors", "ramp", "acc"]);
 
 async function toolSend(line) {
   if (!tool.open) { toolStatus("Enter the tool first."); return false; }
@@ -205,11 +223,31 @@ async function toolSend(line) {
     body: JSON.stringify({ line }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { toolStatus(j.detail || "Refused."); return false; }
-  toolStatus(`Sent: ${j.sent}`);
+  // Command and response: the board answers every line ([TOOL_ACK]); the backend waits for
+  // it (2 s) and hands it back. A refusal or silence is said here, and the caller is told.
+  const a = j.answer || {};
+  const word = String(j.sent || line).split(/\s+/)[0];
+  tool.lastAnswer = a;
+  if (a.ok === false) {
+    toolStatus(`The board refused '${j.sent}': ${a.msg}`);
+    if (tool.running === word) { tool.running = null; toolSetControls(); }
+    return false;
+  }
+  if (a.ok == null) {
+    if (j.answers) {
+      // The board answers commands, and not this one: the link is in trouble. A drive it
+      // may have started is stopped rather than left to the deadman.
+      toolStatus(`No answer from the board to '${j.sent}' in 2 s: check the link.`);
+      if (TOOL_DRIVES.has(word)) toolStop();
+      return false;
+    }
+    toolStatus(`Sent: ${j.sent} (this firmware does not answer commands: flash the MCU for answers)`);
+  } else {
+    toolStatus(`${j.sent}: ${a.msg || "ok"}`);
+  }
   // STOP shows the moment a command that keeps running is accepted -- not when the next
   // state message arrives (the 2026-10-13 walk found it missing at phone width while a
   // wheel turned). The stream's state confirms it, or clears it on a refusal.
-  const word = String(j.sent || line).split(/\s+/)[0];
   if (TOOL_RUNNING.has(word)) { tool.running = word; toolSetControls(); }
   return true;
 }

@@ -14,6 +14,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "web", "backend"))
 
 import tool_session as ts  # noqa: E402
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
 
 class FakeLink:
@@ -206,3 +207,84 @@ def test_the_keep_alive_beats_the_acc_deadman():
     """The board stops an acc drive whose terminal is quiet for 2 s: send more often than that."""
     import tool_session
     assert tool_session.KEEPALIVE_S <= 0.5
+
+
+# ---------------------------------------------------------------- command and response
+# user, 2026-10-14: "when we send command to tool, tool should response" -- the board answers
+# every line with one [TOOL_ACK] line (firmware tools.cpp ack()), and the cockpit waits for it.
+def _ack(line, ok=True, msg="running"):
+    import json
+    return ("[TOOL_ACK] " + json.dumps({"line": line, "ok": ok, "msg": msg}) + "\n").encode()
+
+
+def test_the_boards_answer_reaches_the_sender():
+    s, link, clock, _ = make()
+    s.send("motor 1 30 3")
+    seq = s.last_seq
+    s.feed(_ack("motor 1 30 3"))
+    a = s.wait_answer(seq, timeout=0.1)
+    assert a["ok"] is True and a["msg"] == "running" and a["line"] == "motor 1 30 3"
+    assert s.running == "motor" and s.describe()["answers"] is True
+
+
+def test_a_refusal_is_the_senders_and_nothing_runs():
+    s, link, clock, _ = make()
+    s.send("sensors 10")
+    s.send("motor 2 40")
+    seq = s.last_seq
+    s.feed(_ack("sensors 10") + _ack("motor 2 40", ok=False, msg="busy: sensors is running -- stop first"))
+    a = s.wait_answer(seq, timeout=0.1)
+    assert a["ok"] is False and "busy" in a["msg"]
+
+
+def test_silence_is_said_in_the_terminal():
+    s, link, clock, _ = make()
+    wid = s.watch()
+    s.send("status")
+    seq = s.last_seq
+    clock.t += 2.5
+    s.tick()
+    a = s.wait_answer(seq, timeout=0.1)
+    assert a["ok"] is None
+    said = [ln for ln in s.drain(wid) if "no answer from the board to 'status'" in ln]
+    assert said and "predate command answers" in said[0]      # no answer ever seen: old firmware?
+
+
+def test_an_answer_nobody_waits_for_is_ignored():
+    s, link, clock, _ = make()
+    s.feed(_ack("stop", msg="idle, motors off"))                # an internal stop
+    assert s.describe()["last_answer"] is None
+
+
+def test_lino_tool_reads_the_answer_to_its_own_line():
+    import lino_tool
+    a = lino_tool.parse_answer(b"noise\n" + _ack("i2c", msg="done") + b"tool> ")
+    assert a == {"line": "i2c", "ok": True, "msg": "done"}
+
+    class L:
+        def __init__(self):
+            self.out, self.inbox, self.closed = [], [_ack("status", msg="done"), _ack("i2c", ok=False, msg="no pins")], False
+
+        def write(self, d):
+            self.out.append(d)
+
+        def read(self):
+            return self.inbox.pop(0) if self.inbox else b""
+
+        def keepalive(self):
+            pass
+    got, _ = lino_tool.answer(L(), "i2c", timeout=0.5)
+    assert got["ok"] is False and got["msg"] == "no pins"         # the earlier line's answer skipped
+
+
+def test_the_firmware_answers_every_path():
+    src = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
+    assert '[TOOL_ACK] {\\"line\\":\\"%s\\",\\"ok\\":%s,\\"msg\\":\\"%s\\"}' in src
+    body = src[src.index("static void handleLine(char *line, bool busy)\n{"):src.index("void toolSetup(void)")]
+    # every refusal the shell prints is answered first
+    for marker in ("unknown command", "busy: %s is running -- 'stop' first", "is not a test setting", "tests %s, and this robot",
+                   "'adc' would drive"):
+        at = body.index(marker)
+        assert "ack(false" in body[max(0, at - 260):at], marker
+    assert "ack(true, \"running\");" in src           # startJob: a running command answers at its start
+    assert src.count("answerLine(line,") == 3          # console, terminal, boot command

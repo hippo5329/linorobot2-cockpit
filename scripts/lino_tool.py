@@ -23,7 +23,10 @@ empty line stops the running one. On exit this script sends `stop`: a wheel it s
 never left turning. On the Wi-Fi terminal it sends a keep-alive every second; the board
 stops a drive started there when the terminal goes quiet for 3 s.
 
-Exit 0 when the tool was entered and every command was sent; the transcript is stdout.
+Every command gets the board's answer ([TOOL_ACK]: taken, or refused and why), printed as
+`[lino_tool] '<command>': ok, running` or `REFUSED -- <why>`; no answer in 2 s is said too.
+Exit 0 when the tool was entered and the board took every command; 3 when it refused one or
+did not answer; the transcript is stdout.
 """
 import argparse
 import hashlib
@@ -328,6 +331,72 @@ def pump(link, seconds: float, until=None) -> bytes:
     return buf
 
 
+ACK_TAG = b"[TOOL_ACK] "
+ACK_TIMEOUT_S = 2.0
+# Whether this board answers commands at all: firmware before 2026-10-14 does not, and its
+# silence is then not a fault.
+ANSWERS_SEEN = [False]
+
+
+def parse_answer(buf: bytes):
+    """The first [TOOL_ACK] answer in `buf` as {line, ok, msg}, or None."""
+    import json
+    at = buf.find(ACK_TAG)
+    if at < 0:
+        return None
+    end = buf.find(b"\n", at)
+    if end < 0:
+        return None
+    try:
+        a = json.loads(buf[at + len(ACK_TAG):end].decode(errors="replace"))
+        if isinstance(a, dict):
+            ANSWERS_SEEN[0] = True
+            return a
+        return None
+    except ValueError:
+        return None
+
+
+def answer(link, line: str, timeout: float = ACK_TIMEOUT_S):
+    """Send one line and wait for the board's answer to it (firmware tools.cpp ack()): every
+    line the shell receives is answered, taken or refused. Returns (answer or None, the
+    output read meanwhile, which is also printed)."""
+    link.write(line.encode() + b"\r\n")
+    buf = b""
+    end = time.time() + timeout
+    while time.time() < end:
+        link.keepalive()
+        d = link.read()
+        if not d:
+            if getattr(link, "closed", False):
+                break
+            time.sleep(0.02)
+            continue
+        buf += d
+        sys.stdout.write(d.decode(errors="replace"))
+        sys.stdout.flush()
+        while True:
+            a = parse_answer(buf)
+            if a is None:
+                break
+            cut = buf.find(b"\n", buf.find(ACK_TAG)) + 1
+            if a.get("line", "").strip() == line.strip():
+                return a, buf
+            buf = buf[cut:]                  # an answer to an earlier line
+    return None, buf
+
+
+def say_answer(line: str, a) -> None:
+    if a is None and not ANSWERS_SEEN[0]:
+        log(f"'{line}': sent (this firmware does not answer commands: flash the MCU for answers)")
+    elif a is None:
+        log(f"'{line}': NO ANSWER from the board in {ACK_TIMEOUT_S:.0f} s (the link is down?)")
+    elif a.get("ok"):
+        log(f"'{line}': ok, {a.get('msg') or 'done'}")
+    else:
+        log(f"'{line}': REFUSED -- {a.get('msg')}")
+
+
 def catch_window(link, seconds: float) -> bool:
     """Type `tool` until the board says it is in the tool (its window is 3 s)."""
     buf = b""
@@ -348,8 +417,9 @@ def catch_window(link, seconds: float) -> bool:
     return False
 
 
-def run_commands(link, commands) -> bool:
-    """Send each; returns whether something that drives may still be running."""
+def run_commands(link, commands, answers: list = None) -> bool:
+    """Send each and wait for its answer; returns whether something that drives may still
+    be running. Each command's answer ({line, ok, msg} or None) is appended to `answers`."""
     driving = False
     for cmd in commands:
         words = cmd.split()
@@ -359,8 +429,14 @@ def run_commands(link, commands) -> bool:
                 continue
             pump(link, float(words[1]))
             continue
-        link.write(cmd.encode() + b"\r\n")
+        a, got = answer(link, cmd)
+        say_answer(cmd, a)
+        if answers is not None:
+            answers.append(a)
         head = words[0] if words else ""
+        if a is not None and not a.get("ok"):
+            pump(link, 0.5, until=(PROMPT,))     # refused: nothing started
+            continue
         if not words or head in ("stop", "s"):
             driving = False
             pump(link, 2.0, until=(PROMPT,))
@@ -400,6 +476,58 @@ def interactive(link) -> None:
                 sys.stdout.flush()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def connect(port, env, baud, params_path, ip, password, env_vals, no_reboot=False, window=15.0):
+    """The board's tool, entered and at its prompt: a SerialLink on `port` (rebooted into the
+    window unless no_reboot), else a TcpLink to `ip` -- or, without one, to the address
+    `params_path`'s robot answers pings at. None (with the reason logged) when not reached.
+    robot_bringup.py drives the tool through this too."""
+    if port:
+        if not env and not no_reboot:
+            log("--env is needed to reboot the board over USB (esp32, esp32s3, pico, pico2 ...)")
+            return None
+        link = SerialLink(port, baud, env or "")
+        if no_reboot:
+            if not link.open():
+                log(f"cannot open {port}")
+                return None
+            link.write(b"\r\n")
+            pump(link, 1, until=(PROMPT,))
+        else:
+            log(f"rebooting the board on {port} into its tool window")
+            if not link.reboot():
+                log("the reboot failed: nothing to catch")
+                link.close()
+                return None
+            if not catch_window(link, window):
+                log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
+                link.close()
+                return None
+        return link
+    if not ip and params_path:
+        import mcu_env
+        import wifi_boards
+        params = mcu_env.load_yaml(params_path)
+        robot = mcu_env.robot_name_of(params, params_path)
+        _, entry = wifi_boards.find_robot_board(
+            robot, port=int(env_vals.get("syslog_port") or wifi_boards.syslog_port()),
+            ping_port=int(env_vals.get("ping_port") or wifi_boards.PING_PORT),
+            mdns_name=mcu_env.robot_mdns_name(params, params_path),
+            pinned_ip=mcu_env.robot_ip_for(params))
+        ip = entry and entry.get("ip")
+    if not ip:
+        log("no board address: give --port, --ip, or --params of a robot this computer knows")
+        return None
+    ping_port = int(env_vals.get("ping_port") or 3233)
+    if not no_reboot and not request_tool_udp(ip, ping_port, password):
+        return None
+    link = TcpLink(ip, int(env_vals.get("term_port") or 2323), password)
+    if not link.open():
+        log(f"no terminal at {ip}:{link.port}")
+        return None
+    link.ip, link.ping_port = ip, ping_port
+    return link
 
 
 def main() -> int:
@@ -466,55 +594,16 @@ def main() -> int:
         return 0
     password = args.password if args.password is not None else str(env_vals.get("ota_password") or "")
 
-    if args.port:
-        if not args.env and not args.no_reboot:
-            log("--env is needed to reboot the board over USB (esp32, esp32s3, pico, pico2 ...)")
-            return 2
-        link = SerialLink(args.port, baud, args.env or "")
-        if args.no_reboot:
-            if not link.open():
-                log(f"cannot open {args.port}")
-                return 1
-            link.write(b"\r\n")
-            pump(link, 1, until=(PROMPT,))
-        else:
-            log(f"rebooting the board on {args.port} into its tool window")
-            if not link.reboot():
-                log("the reboot failed: nothing to catch")
-                link.close()
-                return 1
-            if not catch_window(link, args.window):
-                log("the board did not enter the tool (is tool_wait 0, or is this firmware older?)")
-                link.close()
-                return 1
-    else:
-        ip = args.ip
-        if not ip and args.params:
-            import mcu_env
-            import wifi_boards
-            params = mcu_env.load_yaml(os.path.abspath(args.params))
-            robot = mcu_env.robot_name_of(params, os.path.abspath(args.params))
-            _, entry = wifi_boards.find_robot_board(
-                robot, port=int(env_vals.get("syslog_port") or wifi_boards.syslog_port()),
-                ping_port=int(env_vals.get("ping_port") or wifi_boards.PING_PORT),
-                mdns_name=mcu_env.robot_mdns_name(params, os.path.abspath(args.params)),
-                pinned_ip=mcu_env.robot_ip_for(params))
-            ip = entry and entry.get("ip")
-        if not ip:
-            log("no board address: give --port, --ip, or --params of a robot this computer knows")
-            return 1
-        ping_port = int(env_vals.get("ping_port") or 3233)
-        if not args.no_reboot and not request_tool_udp(ip, ping_port, password):
-            return 1
-        link = TcpLink(ip, int(env_vals.get("term_port") or 2323), password)
-        if not link.open():
-            log(f"no terminal at {ip}:{link.port}")
-            return 1
+    link = connect(args.port, args.env, baud, os.path.abspath(args.params) if args.params else None,
+                   args.ip, password, env_vals, no_reboot=args.no_reboot, window=args.window)
+    if link is None:
+        return 1
 
     driving = True
+    answers = []
     try:
         if args.command:
-            driving = run_commands(link, args.command)
+            driving = run_commands(link, args.command, answers)
         elif sys.stdin.isatty():
             interactive(link)
         if args.base:
@@ -532,7 +621,10 @@ def main() -> int:
             except Exception:
                 pass
         link.close()
-    return 0
+    # A command the board refused, or never answered, is a failed run.
+    refused = any(a is not None and not a.get("ok") for a in answers)
+    silent = ANSWERS_SEEN[0] and any(a is None for a in answers)
+    return 3 if refused or silent else 0
 
 
 if __name__ == "__main__":

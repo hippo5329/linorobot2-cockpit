@@ -4,7 +4,8 @@
                     write) and hold one session for the active robot
 /api/tool/stream    its output, to every open tab (server-sent events)
 /api/tool/beat      a tab says it is still watching (once a second)
-/api/tool/cmd       one command line, validated against the shell's grammar
+/api/tool/cmd       one command line, validated against the shell's grammar, and the board's
+                    answer to it ([TOOL_ACK]: taken or refused, and why; or none in 2 s)
 /api/tool/stop      `stop`, and on Wi-Fi the ping port's lino-stop as well
 /api/tool/close     `base`, then close; and, when the board's env still names a tool, the
                     handle of the env-only write that makes it boot the robot again
@@ -367,7 +368,11 @@ async def api_tool_cmd(request: Request):
         sent = s.send(str(data.get("line") or ""))
     except tool_session.Refused as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, "sent": sent}
+    # Command and response: the board's own answer, or that none came (ACK_TIMEOUT_S).
+    seq = s.last_seq
+    answer = await _run_blocking(s.wait_answer, seq)
+    return {"ok": True, "sent": sent, "answers": s.acks_seen,
+            "answer": answer or {"seq": seq, "line": sent, "ok": None, "msg": "no answer"}}
 
 
 @app.post("/api/tool/stop")

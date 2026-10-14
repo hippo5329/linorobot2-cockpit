@@ -67,6 +67,11 @@ static unsigned long lastLogTime = 0;
 // What was found, again every 5 s: a host that opened the port after the tool started (an
 // RP2's USB drops what nobody reads) still sees the "[+] IMU initialized" lines.
 static unsigned long lastReport = 0;
+// `sensors [hz]`: the [TOOL_JSON] line's rate, 1-20 Hz. A person turning the robot in their
+// hands watches the page's readouts follow it -- at 1 Hz a shake was over between two
+// lines. The prose line and syslog stay at 1 Hz: the terminal stays readable.
+static unsigned json_ms = 1000;
+static unsigned long lastJson = 0;
 
 // `sensors`: the header and what was found, then the stream until stop.
 void begin()
@@ -75,9 +80,55 @@ void begin()
     Serial.println("   Linorobot2 Hardware Sensor Diagnostics ");
     Serial.println("==========================================");
     tool_hw::report();
-    Serial.println("Starting real-time sensor stream (50 Hz poll, 1 Hz output)...\n");
+    Serial.printf("Starting real-time sensor stream (50 Hz poll, 1 Hz output, %u Hz [TOOL_JSON])...\n\n",
+                  1000u / json_ms);
     lastLogTime = 0;
+    lastJson = 0;
     lastReport = millis();
+}
+
+void rate(int hz)
+{
+    if (hz < 1) hz = 1;
+    if (hz > 20) hz = 20;
+    json_ms = 1000u / (unsigned)hz;
+}
+
+// Roll, pitch and yaw in degrees from the IMU message's quaternion; false when the chip
+// reports no orientation of its own.
+static bool rpyOf(float *roll, float *pitch, float *yaw)
+{
+    // Only a chip that fuses on its own (a BNO08x without its magnetometer in use)
+    // reports a rotation here; the board's AHRS does not run in the tool. The others
+    // leave the identity -- w=1 -- and printed "RPY 0.0 0.0 0.0" in place of their
+    // magnetometer (a QMI8658 robot, 2026-10-12).
+    const float qx = imu_msg->orientation.x, qy = imu_msg->orientation.y;
+    const float qz = imu_msg->orientation.z, qw = imu_msg->orientation.w;
+    *roll = *pitch = *yaw = 0.0f;
+    if (qx == 0.0f && qy == 0.0f && qz == 0.0f) return false;
+    *roll = atan2(2.0f * (qw * qx + qy * qz), 1.0f - 2.0f * (qx * qx + qy * qy)) * RAD_TO_DEG;
+    const float sinp = 2.0f * (qw * qy - qz * qx);
+    *pitch = fabs(sinp) >= 1.0f ? copysign(90.0f, sinp) : asin(sinp) * RAD_TO_DEG;
+    *yaw = atan2(2.0f * (qw * qz + qx * qy), 1.0f - 2.0f * (qy * qy + qz * qz)) * RAD_TO_DEG;
+    return true;
+}
+
+// One tagged line for a program (the Web UI's readouts): never parse the prose.
+static void printJson(bool has_orientation, float roll, float pitch, float yaw)
+{
+    Serial.print("[TOOL_JSON] {\"cmd\":\"sensors\"");
+    if (imu)
+        Serial.printf(",\"acc\":[%.2f,%.2f,%.2f],\"gyr\":[%.3f,%.3f,%.3f]",
+            imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
+            imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+    if (has_orientation)
+        Serial.printf(",\"rpy\":[%.1f,%.1f,%.1f]", roll, pitch, yaw);
+    if (mag)
+        Serial.printf(",\"mag_ut\":[%.2f,%.2f,%.2f]", mag_msg->magnetic_field.x * 1e6f,
+            mag_msg->magnetic_field.y * 1e6f, mag_msg->magnetic_field.z * 1e6f);
+    if (batteryPresent()) Serial.printf(",\"bat\":%.2f", battery_msg->voltage);
+    if (rangePresent())   Serial.printf(",\"range\":%.2f", range_msg->range);
+    Serial.print("}\n");
 }
 
 bool step()
@@ -105,39 +156,16 @@ bool step()
         lastReport = currentTime;
         tool_hw::report();
     }
+    float roll, pitch, yaw;
+    const bool has_orientation = rpyOf(&roll, &pitch, &yaw);
+    if (currentTime - lastJson >= json_ms)
+    {
+        lastJson = currentTime;
+        printJson(has_orientation, roll, pitch, yaw);
+    }
     if (currentTime - lastLogTime >= 1000)
     {
         lastLogTime = currentTime;
-
-        // Convert quaternion to Euler angles (Roll, Pitch, Yaw) if orientation is available
-        float qx = imu_msg->orientation.x;
-        float qy = imu_msg->orientation.y;
-        float qz = imu_msg->orientation.z;
-        float qw = imu_msg->orientation.w;
-        // Only a chip that fuses on its own (a BNO08x without its magnetometer in use)
-        // reports a rotation here; the board's AHRS does not run in the tool. The others
-        // leave the identity -- w=1 -- and printed "RPY 0.0 0.0 0.0" in place of their
-        // magnetometer (a QMI8658 robot, 2026-10-12).
-        bool has_orientation = (qx != 0.0f || qy != 0.0f || qz != 0.0f);
-        (void)qw;
-
-        float roll = 0.0f, pitch = 0.0f, yaw = 0.0f;
-        if (has_orientation)
-        {
-            float sinr_cosp = 2.0f * (qw * qx + qy * qz);
-            float cosr_cosp = 1.0f - 2.0f * (qx * qx + qy * qy);
-            roll = atan2(sinr_cosp, cosr_cosp) * RAD_TO_DEG;
-
-            float sinp = 2.0f * (qw * qy - qz * qx);
-            if (fabs(sinp) >= 1.0f)
-                pitch = copysign(90.0f, sinp);
-            else
-                pitch = asin(sinp) * RAD_TO_DEG;
-
-            float siny_cosp = 2.0f * (qw * qz + qx * qy);
-            float cosy_cosp = 1.0f - 2.0f * (qy * qy + qz * qz);
-            yaw = atan2(siny_cosp, cosy_cosp) * RAD_TO_DEG;
-        }
 
         if (!imu)
         {
@@ -179,20 +207,6 @@ bool step()
         else                  Serial.print("  BAT: none (no battery sense)");
         if (rangePresent()) Serial.printf(" | RANGE: %5.2fm\n", range_msg->range);
         else                Serial.print(" | RANGE: none\n");
-        // One tagged line for a program (the Web UI's readouts): never parse the prose.
-        Serial.print("[TOOL_JSON] {\"cmd\":\"sensors\"");
-        if (imu)
-            Serial.printf(",\"acc\":[%.2f,%.2f,%.2f],\"gyr\":[%.3f,%.3f,%.3f]",
-                imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z,
-                imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
-        if (has_orientation)
-            Serial.printf(",\"rpy\":[%.1f,%.1f,%.1f]", roll, pitch, yaw);
-        if (mag)
-            Serial.printf(",\"mag_ut\":[%.2f,%.2f,%.2f]", mag_msg->magnetic_field.x * 1e6f,
-                mag_msg->magnetic_field.y * 1e6f, mag_msg->magnetic_field.z * 1e6f);
-        if (batteryPresent()) Serial.printf(",\"bat\":%.2f", battery_msg->voltage);
-        if (rangePresent())   Serial.printf(",\"range\":%.2f", range_msg->range);
-        Serial.print("}\n");
         // envOk() is false when nothing answered the probe, so this prints only
         // on a board that actually has the chip -- no macro needed.
         if (envOk())
@@ -221,3 +235,4 @@ bool step()
 
 extern "C" void test_sensors_begin(void) { test_sensors::begin(); }
 extern "C" bool test_sensors_step(void)  { return test_sensors::step(); }
+extern "C" void test_sensors_rate(int hz)  { test_sensors::rate(hz); }

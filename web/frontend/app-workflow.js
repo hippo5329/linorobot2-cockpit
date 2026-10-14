@@ -1066,6 +1066,23 @@ function initCockpitDashboard() {
     const autoUpdate = document.getElementById("cockpit-auto-update")?.checked ?? true;
 
     const isReal = mode === "real";
+    // A real robot moves only once its bench bring-up has passed (app-bringup.js); the
+    // pipeline refuses too, this says so before anything starts.
+    let realParams = "";
+    if (isReal && typeof buOneClickGate === "function") {
+      const held = await buOneClickGate();
+      if (held) {
+        if (pipelineMsg) pipelineMsg.textContent = held;
+        if (typeof showActionBanner === "function") showActionBanner("1-Click held: bring-up not complete", held);
+        return;
+      }
+      if (document.getElementById("cockpit-skip-bringup")?.checked) realParams += "&skip_bringup_check=true";
+      if (document.getElementById("cockpit-test-acc")?.checked) realParams += "&test_acc=true";
+      for (const ax of ["x", "y"]) {
+        const v = document.getElementById(`cockpit-goal-${ax}`)?.value.trim();
+        if (v !== "" && v != null && !isNaN(parseFloat(v))) realParams += `&goal_${ax}=${encodeURIComponent(parseFloat(v))}`;
+      }
+    }
     const exploreCheck = document.getElementById("cockpit-explore");
     const explore = exploreCheck ? exploreCheck.checked : true;
     const worldSel = document.getElementById("cockpit-pipeline-world");
@@ -1108,7 +1125,7 @@ function initCockpitDashboard() {
       const worldParam = world ? `&world=${encodeURIComponent(world)}` : "";
       const worldMapParam = worldMap ? `&world_map=${encodeURIComponent(worldMap)}` : "";
       const exploreParam = `&explore=${explore}`;
-      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}&explore_sec=${sec}${exploreParam}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}${worldParam}${worldMapParam}`;
+      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}&explore_sec=${sec}${exploreParam}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}${worldParam}${worldMapParam}${realParams}`;
       const res = await fetch(url, { signal: abortCtrl.signal });
       if (!res.ok || !res.body) {
         logLine(`[pipeline] Failed to start: HTTP ${res.status}`);

@@ -22,14 +22,21 @@ PASSWORD = "s3cret-ota-pw-7"
 
 
 class FakeLink:
+    """A board that answers every command line, as the firmware does ([TOOL_ACK])."""
+
     def __init__(self):
-        self.sent, self.closed = [], False
+        self.sent, self.closed, self.inbox = [], False, []
 
     def write(self, data):
         self.sent.append(data)
+        line = data.decode(errors="replace").strip()
+        if data.endswith(b"\r\n") and line:
+            import json
+            self.inbox.append(("[TOOL_ACK] " + json.dumps({"line": line, "ok": True, "msg": "running"})
+                               + "\n").encode())
 
     def read(self):
-        return b""
+        return self.inbox.pop(0) if self.inbox else b""
 
     def close(self):
         self.closed = True
@@ -81,9 +88,14 @@ def test_a_session_end_to_end_without_the_password(robot):
         assert PASSWORD not in b, "the OTA password reached a response or a command line"
 
 
-def test_the_sim_mcu_is_refused_with_its_reason(monkeypatch):
+def test_a_cockpit_without_the_sim_mcu_build_says_so(monkeypatch):
+    """The Sim MCU runs the tool (routes_tool.SimLink); without its binary the page is told
+    why, not handed a traceback."""
+    import host_firmware
+    monkeypatch.setattr(host_firmware, "binary", lambda: None)
     monkeypatch.setattr(routes_tool, "_robot", lambda: {"robot": "bare_sim", "sim": True, "wifi": False,
-                                                        "pio_env": "host", "tgt": {}, "env": {}})
+                                                        "pio_env": "host", "tgt": {}, "env": {},
+                                                        "params_path": "/nonexistent/bare_sim_config.yaml"})
     res = TestClient(core.app).post("/api/tool/open", json={})
     assert res.status_code == 409 and "Sim MCU" in res.json()["detail"]
 

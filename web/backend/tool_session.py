@@ -24,6 +24,7 @@ Rules it keeps, each from the review:
 No FastAPI here: routes_tool.py wires it to HTTP, and the tests drive it with a fake link.
 """
 import collections
+import json
 import re
 import socket
 import threading
@@ -46,6 +47,10 @@ SET_KEYS = {
     "ta_pct": (10, 100),
 }
 # Commands that keep running until `stop` (or their own end), and the drives among them.
+# The board answers every line it receives with one of these (firmware tools.cpp ack()):
+#   [TOOL_ACK] {"line":"motor 1 40 3","ok":true,"msg":"running"}
+ACK_TAG = "[TOOL_ACK] "
+ACK_TIMEOUT_S = 2.0
 RUNNING = {"sensors", "enc", "motor", "motors", "ramp", "acc", "adc", "i2c"}
 DRIVES = {"motor", "motors", "ramp", "acc"}
 _LINE_OK = re.compile(r"^[ -~]{0,64}$")       # printable ASCII, no CR/LF/NUL, short
@@ -74,9 +79,14 @@ def validate(line: str) -> str:
     if not words:
         raise Refused("an empty line stops -- use Stop")
     cmd, args = words[0].lower(), words[1:]
-    if cmd in ("stop", "s", "status", "help", "base", "enc", "sensors", "adc"):
+    if cmd in ("stop", "s", "status", "help", "base", "enc", "adc"):
         if args:
             raise Refused(f"{cmd} takes no arguments")
+    elif cmd == "sensors":
+        if len(args) > 1:
+            raise Refused("sensors [hz]")
+        if args:
+            _int(args[0], 1, 20, "sensors hz")
     elif cmd == "i2c":
         if len(args) > 1:
             raise Refused("i2c [secs]")
@@ -152,13 +162,21 @@ class ToolSession:
         self.banner_app: Optional[str] = None
         self.closed = False
         self._stopped_unwatched = False
+        # Command and response: every line sent waits for the board's [TOOL_ACK] answer.
+        self._seq = 0
+        self._pending: List[dict] = []
+        self._answers: Dict[int, dict] = {}
+        self._answered = threading.Condition(self._lock)
+        self.acks_seen = False
+        self.last_answer: Optional[dict] = None
 
     # -- public state, never the password ----------------------------------
     def describe(self) -> dict:
         with self._lock:
             return {"robot": self.robot, "kind": self.kind, "running": self.running,
                     "watchers": len(self._watchers), "closed": self.closed,
-                    "env_app": self.banner_app}
+                    "env_app": self.banner_app, "last_answer": self.last_answer,
+                    "answers": self.acks_seen}
 
     # -- the board's output --------------------------------------------------
     def feed(self, data: bytes) -> List[str]:
@@ -187,12 +205,69 @@ class ToolSession:
         return out
 
     def _note(self, ln: str) -> None:
+        at = ln.find(ACK_TAG)
+        if at >= 0:
+            self._on_ack(ln[at + len(ACK_TAG):])
         m = re.search(r"linorobot2_hardware app=(\S+)", ln)
         if m:
             self.banner_app = m.group(1)
         if ln.endswith(PROMPT) or "[tool] stopped" in ln or "[test_acc] STOPPED" in ln \
                 or re.search(r"\[tool\] \w+ done", ln):
             self.running = None
+
+    def _on_ack(self, body: str) -> None:
+        """The board's answer to a line: matched to the oldest line sent with that text (the
+        shell answers in order), else to the oldest one waiting. Lock held (feed)."""
+        try:
+            a = json.loads(body)
+        except ValueError:
+            return
+        if not isinstance(a, dict):
+            return
+        self.acks_seen = True
+        p = next((x for x in self._pending if x["line"] == a.get("line")), None) \
+            or (self._pending[0] if self._pending else None)
+        ans = {"line": str(a.get("line", "")), "ok": bool(a.get("ok")), "msg": str(a.get("msg", ""))}
+        if p is None:
+            return                          # an internal stop or leave: nobody waits
+        self._pending.remove(p)
+        ans["seq"] = p["seq"]
+        self._answers[p["seq"]] = ans
+        self.last_answer = ans
+        if not ans["ok"] and self.running == p["line"].split()[0]:
+            self.running = None             # refused: nothing runs
+        self._answered.notify_all()
+
+    def wait_answer(self, seq: int, timeout: float = None) -> Optional[dict]:
+        """The board's answer to line `seq`: {ok, msg, line}; {ok: None} when none came in
+        time (ACK_TIMEOUT_S, measured from the send)."""
+        timeout = ACK_TIMEOUT_S if timeout is None else timeout
+        end = time.monotonic() + timeout
+        with self._answered:
+            while seq not in self._answers and not self.closed:
+                left = end - time.monotonic()
+                if left <= 0:
+                    break
+                self._answered.wait(left)
+            return self._answers.get(seq)
+
+    def _expire(self) -> None:
+        """Lines with no answer in ACK_TIMEOUT_S: said so in the terminal, and answered
+        {ok: None} for whoever waits."""
+        now = self._clock()
+        with self._lock:
+            for p in [x for x in self._pending if now - x["at"] > ACK_TIMEOUT_S]:
+                self._pending.remove(p)
+                why = (f"[cockpit] no answer from the board to '{p['line']}' in {ACK_TIMEOUT_S:.0f} s"
+                       + ("" if self.acks_seen else " -- its firmware may predate command answers "
+                          "(flash the MCU), or the link is down"))
+                ans = {"seq": p["seq"], "line": p["line"], "ok": None, "msg": "no answer"}
+                self._answers[p["seq"]] = ans
+                self.last_answer = ans
+                self._lines.append(why)
+                for w in self._watchers.values():
+                    w["queue"].append(why)
+                self._answered.notify_all()
 
     def pump(self) -> None:
         """One read from the link (the reader thread calls this in a loop)."""
@@ -243,7 +318,8 @@ class ToolSession:
     # -- liveness ---------------------------------------------------------------
     def tick(self) -> None:
         """Once a second: the board's keep-alive while a browser watches; a stop when the
-        last one went away with a command running."""
+        last one went away with a command running; lines the board never answered."""
+        self._expire()
         now = self._clock()
         if self.watched():
             self._stopped_unwatched = False
@@ -258,6 +334,14 @@ class ToolSession:
     def send(self, line: str) -> str:
         clean = validate(line)
         word = clean.split()[0]
+        with self._lock:
+            self._seq += 1
+            self.last_seq = self._seq
+            self._pending.append({"seq": self._seq, "line": clean, "at": self._clock()})
+            del self._pending[:-32]
+            if len(self._answers) > 64:
+                for k in sorted(self._answers)[:-32]:
+                    self._answers.pop(k, None)
         if word in ("stop", "s"):
             self.stop()
             return clean

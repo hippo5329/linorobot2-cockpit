@@ -633,7 +633,7 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
 
 
 @app.get("/api/workflow/one-click/stream")
-def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None, explore: bool = True, world: Optional[str] = None, world_map: Optional[str] = None):
+def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None, explore: bool = True, world: Optional[str] = None, world_map: Optional[str] = None, skip_bringup_check: bool = False, test_acc: bool = False, goal_x: Optional[float] = None, goal_y: Optional[float] = None):
     # `robot` is not optional decoration: without it the pipeline resolves the
     # config from --controller alone, and where two robots declare the same
     # base_controller it takes the alphabetically first one. Measured with
@@ -685,6 +685,18 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
         cmd.append("--flash")
     if not auto_update:
         cmd.append("--no-auto-update")
+    # A real robot: its bench bring-up gates the run (one_click_pipeline refuses until the
+    # Bring-up checklist is complete); the page asks before it passes the override.
+    if skip_bringup_check:
+        cmd.append("--skip-bringup-check")
+    if test_acc:
+        cmd.append("--test-acc")
+    # The sim world's goal is (3.0, 0.0) behind its wall; a real room has its own.
+    for flag, v in (("--goal-x", goal_x), ("--goal-y", goal_y)):
+        if v is not None:
+            if not -50.0 <= float(v) <= 50.0:
+                raise HTTPException(status_code=400, detail=f"{flag}: within 50 m")
+            cmd.extend([flag, f"{float(v):.3f}"])
 
     def event_generator():
         if _one_click_running():

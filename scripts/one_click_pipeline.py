@@ -1909,6 +1909,9 @@ def main():
     parser.add_argument("--no-pose-reset", dest="pose_reset", action="store_false",
                         help="do not return the simulated robot to the origin between the "
                              "drive suite and SLAM (simulation mode only; a real base is never touched)")
+    parser.add_argument("--skip-bringup-check", action="store_true",
+                        help="Move a real robot even when its bench bring-up (robot_bringup.py "
+                             "status) is not complete")
     parser.add_argument("--require-goal", action="store_true",
                         help="the Nav2 goal must actually be reached -- judged by the "
                              "displacement from the goal pose, with Nav2's error_code "
@@ -2159,6 +2162,26 @@ def main():
     # silent about.
     required_aux = sensor_topics(controller_cfg) if is_real else []
 
+    # A real robot moves only once its bench bring-up is on record (bringup_checklist.py:
+    # sensors, battery, motors, rpm, lidar -- the steps the robot really has). A wheel that
+    # turns backwards, an encoder that counts down or a counts_per_rev off by 4x sends the
+    # first SLAM rotation or Nav2 goal anywhere (user, 2026-10-14: "one click can be used
+    # on real robot only after sensors and motors are working correctly"). Simulated wheels
+    # are not a real robot, and --topics-only commands nothing.
+    if is_real and not sim_mcu and not args.topics_only and not args.skip_bringup_check:
+        import bringup_checklist
+        if bringup_checklist.parts(params, params_path)["wheels_real"]:
+            ok, missing = bringup_checklist.gate(robot_name, params, params_path)
+            if not ok:
+                print(f"\n❌ [BRINGUP REQUIRED] '{robot_name}' has real wheels, and its bench bring-up "
+                      f"is not complete:")
+                for m in missing:
+                    print(f"     - {m}")
+                print("   Finish it on Hardware Tests > Bring-up checklist, or with "
+                      "scripts/robot_bringup.py (status lists the steps). --skip-bringup-check "
+                      "runs anyway, at your own risk.")
+                return 1
+            print("   Bring-up: every bench step is on record (bringup_checklist)")
     print("==================================================================")
     print(f"🚀 Linorobot2 Cockpit 1-Click Pipeline [robot: {robot_name}, controller: {controller}, "
           f"distro: {args.distro}, mode: {'REAL' if is_real else 'SIM'}]")

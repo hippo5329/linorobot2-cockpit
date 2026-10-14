@@ -16,7 +16,7 @@
 // begin once, then step from every loop() until step returns false.
 extern "C" {
 void i2c_detect_scan(void);
-void test_sensors_begin(void);   bool test_sensors_step(void);
+void test_sensors_begin(void);   bool test_sensors_step(void);   void test_sensors_rate(int hz);
 void test_motors_begin(void);    bool test_motors_step(void);
 void test_motors_one_begin(void); bool test_motors_one_step(void);
 void test_motors_enc_begin(void); bool test_motors_enc_step(void);
@@ -271,6 +271,35 @@ void toolMotorsOff(void)
 
 static void prompt(void) { Serial.print("tool> "); }
 
+// Command and response (user, 2026-10-14: "when we send command to tool, tool should
+// response"). Every line the shell receives gets exactly one tagged answer, the first thing
+// the board says about it:
+//     [TOOL_ACK] {"line":"motor 1 40 3","ok":true,"msg":"running"}
+//     [TOOL_ACK] {"line":"motor 9 40","ok":false,"msg":"this robot has 2 wheels: motor 1 or 2, or all"}
+// so a program (the cockpit, lino_tool.py, robot_bringup.py) knows the board heard it and
+// whether it was taken, and says so when no answer comes. A running command answers when it
+// starts, not when it ends; a command that only prints (status, get, help) after its output.
+static char ack_line[72];
+static bool ack_pending = false;
+
+static void ackClean(char *dst, size_t n, const char *src)
+{
+    size_t i = 0;
+    for (; src && *src && i + 1 < n; src++)
+        dst[i++] = (*src == '"' || *src == '\\' || (unsigned char)*src < 0x20) ? '\'' : *src;
+    dst[i] = '\0';
+}
+
+static void ack(bool ok, const char *msg)
+{
+    if (!ack_pending) return;
+    ack_pending = false;
+    char m[120];
+    ackClean(m, sizeof(m), msg);
+    Serial.printf("[TOOL_ACK] {\"line\":\"%s\",\"ok\":%s,\"msg\":\"%s\"}\n", ack_line,
+                  ok ? "true" : "false", m);
+}
+
 const char *toolStopReason(void) { return stop_why; }
 
 static void abortJump(const char *why)
@@ -291,6 +320,16 @@ void toolAbort(const char *why)
 void toolAbortQuiet(const char *why) { abortJump(why); }
 
 static void handleLine(char *line, bool busy);
+
+// Every received line through here: its answer is owed until handleLine gives it, and a
+// command that only prints (status, get, help, i2c's one scan) answers once it has.
+static void answerLine(char *line, bool busy)
+{
+    ackClean(ack_line, sizeof(ack_line), line);
+    ack_pending = true;
+    handleLine(line, busy);
+    ack(true, "done");
+}
 
 // The console, a line at a time. A line ends at CR or LF -- minicom, screen and PuTTY
 // send CR alone -- and the LF of a CR LF pair is swallowed.
@@ -337,11 +376,11 @@ static void pollInput(bool busy)
     char line[96];
     while (consoleLine(line, sizeof(line))) {
         line_from_term = false;
-        handleLine(line, busy);
+        answerLine(line, busy);
     }
     while (termLine(line, sizeof(line))) {
         line_from_term = true;
-        handleLine(line, busy);
+        answerLine(line, busy);
         line_from_term = false;
     }
     if (hostStopRequested()) {
@@ -455,7 +494,7 @@ static void help(void)
     Serial.println(
         "commands (a word, then numbers; 'stop', 's' or an empty line stops):\n"
         "  i2c [secs]                scan the I2C bus (again every secs)\n"
-        "  sensors                   IMU, magnetometer, battery, range, barometer, 1 Hz\n"
+        "  sensors [hz]              IMU, magnetometer, battery, range, barometer; 1 Hz, JSON 1-20 Hz\n"
         "  motor <1-4|all> <pct> [secs]\n"
         "                            run a wheel at pct % power (minus = reverse); 120 s,\n"
         "                            or secs (0: until stop). `motor` alone: the env's.\n"
@@ -555,6 +594,7 @@ static bool cmdKey(const char *k, const char *v)
 
 static void startJob(const char *name, bool moves)
 {
+    ack(true, "running");
     stop_flag = false;
     stop_why = "stop";
     hostStopClear();
@@ -585,6 +625,7 @@ static void runBlocking(const char *name, void (*fn)(void), bool moves)
 
 static void usage(const char *what)
 {
+    ack(false, what);
     Serial.printf("[tool] %s\n", what);
     prompt();
 }
@@ -600,22 +641,28 @@ static void handleLine(char *line, bool busy)
     for (char *p = (char *)cmd; *p; p++) *p = (char)tolower(*p);
 
     if (!*cmd || !strcmp(cmd, "stop") || !strcmp(cmd, "s")) {
+        ack(true, busy ? "stopping" : "idle, motors off");
         if (busy) { stop_flag = true; stop_why = "stop"; }
         else { toolMotorsOff(); prompt(); }
         return;
     }
     // While a command runs, only these: the rest waits for its prompt.
     if (!strcmp(cmd, "set")) {
-        if (argc < 2)
+        if (argc < 2) {
+            ack(false, "set <key> <value>");
             Serial.println("[tool] set <key> <value>");
-        else if (!settable(argv[1]))
+        } else if (!settable(argv[1])) {
+            ack(false, "not a test setting (tm_pct tm_only tm_secs ta_ms ta_pct)");
             Serial.printf("[tool] %s is not a test setting -- change it in the cockpit and "
                           "press Flash MCU (the tool's settings: tm_pct tm_only tm_secs ta_ms "
                           "ta_pct)\n", argv[1]);
-        else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr)) {
+        } else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr)) {
             const int i = cmdKeyIndex(argv[1]);
             if (i >= 0) cmd_wrote[i] = false;   // the person's now: commands leave it alone
+            ack(true, "set");
             Serial.printf("[tool] %s = %s\n", argv[1], argc >= 3 ? argv[2] : "(stored value)");
+        } else {
+            ack(false, "could not set it");
         }
         if (!busy) prompt();
         return;
@@ -629,14 +676,20 @@ static void handleLine(char *line, bool busy)
     if (!strcmp(cmd, "status")) { status(); if (!busy) prompt(); return; }
     if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) { help(); if (!busy) prompt(); return; }
     if (busy) {
+        char m[64];
+        snprintf(m, sizeof(m), "busy: %s is running -- stop first", job_name);
+        ack(false, m);
         Serial.printf("[tool] busy: %s is running -- 'stop' first\n", job_name);
         return;
     }
 
-    if (!strcmp(cmd, "base") || !strcmp(cmd, "exit") || !strcmp(cmd, "reboot"))
+    if (!strcmp(cmd, "base") || !strcmp(cmd, "exit") || !strcmp(cmd, "reboot")) {
+        ack(true, "restarting into base");
         toolRestart(false);
+    }
     const char *why = simulatedFor(cmd);
     if (why) {
+        ack(false, "this robot's config simulates what it tests -- the tool runs on real parts only");
         Serial.printf("[tool] '%s' tests %s, and this robot's config simulates them -- the "
                       "tool runs on real parts only. Turn the simulation off on the Sensors "
                       "tab and press Flash MCU.\n", cmd, why);
@@ -658,6 +711,10 @@ static void handleLine(char *line, bool busy)
             return;              // toolLoop repeats it until stop
         }
     } else if (!strcmp(cmd, "sensors")) {
+        // sensors [hz]: the [TOOL_JSON] readouts at 1-20 Hz (the prose stays at 1 Hz)
+        if (argc >= 2 && (!toInt(argv[1], &n) || n < 1 || n > 20))
+            return usage("sensors [hz 1..20]");
+        test_sensors_rate(argc >= 2 ? (int)n : 1);
         startStepped("sensors", test_sensors_begin, test_sensors_step, false);
         return;
     } else if (!strcmp(cmd, "enc")) {
@@ -686,6 +743,7 @@ static void handleLine(char *line, bool busy)
             snprintf(b, sizeof(b), "%ld", pct);
             snprintf(c, sizeof(c), "%ld", secs);
             if (!cmdKey("tm_only", a) || !cmdKey("tm_pct", b) || !cmdKey("tm_secs", secs >= 0 ? c : nullptr)) {
+                ack(false, "could not store its setting");
                 prompt();
                 return;
             }
@@ -708,14 +766,14 @@ static void handleLine(char *line, bool busy)
         char a[12], b[12];
         snprintf(a, sizeof(a), "%ld", wheel);
         snprintf(b, sizeof(b), "%ld", max);
-        if (!cmdKey("tm_only", a) || !cmdKey("tm_pct", b)) { prompt(); return; }
+        if (!cmdKey("tm_only", a) || !cmdKey("tm_pct", b)) { ack(false, "could not store its setting"); prompt(); return; }
         startStepped("ramp", test_motors_ramp_begin, test_motors_ramp_step, true);
         return;
     } else if (!strcmp(cmd, "motors")) {
         if (argc >= 2 && (!toInt(argv[1], &n) || n < 1 || n > 100))
             return usage("motors [pct 1..100]");
         // Its own power, or the stored one: never the last `motor`'s.
-        if (!cmdKey("tm_pct", argc >= 2 ? argv[1] : nullptr)) { prompt(); return; }
+        if (!cmdKey("tm_pct", argc >= 2 ? argv[1] : nullptr)) { ack(false, "could not store its setting"); prompt(); return; }
         startStepped("motors", test_motors_begin, test_motors_step, true);
         return;
     } else if (!strcmp(cmd, "acc")) {
@@ -724,12 +782,13 @@ static void handleLine(char *line, bool busy)
             || (argc >= 3 && (!toInt(argv[2], &pct) || pct < 10 || pct > 100)))
             return usage("acc [ms 300..1000] [pct 10..100]");
         if (!cmdKey("ta_ms", argc >= 2 ? argv[1] : nullptr)
-            || !cmdKey("ta_pct", argc >= 3 ? argv[2] : nullptr)) { prompt(); return; }
+            || !cmdKey("ta_pct", argc >= 3 ? argv[2] : nullptr)) { ack(false, "could not store its setting"); prompt(); return; }
         runBlocking("acc", test_acc_run, true);
 #if ADC_LUT_SUPPORTED
     } else if (!strcmp(cmd, "adc")) {
         const char *pin = adcPinConflict();
         if (pin) {
+            ack(false, "adc would drive a pin a motor driver uses");
             Serial.printf("[tool] 'adc' would drive %s, which a motor driver uses -- set "
                           "dac_pin / battery_pin in the env to free pins\n", pin);
             prompt();
@@ -738,6 +797,7 @@ static void handleLine(char *line, bool busy)
         runBlocking("adc", adc_calibrate_run, false);
 #endif
     } else {
+        ack(false, "unknown command -- help lists them");
         Serial.printf("[tool] unknown command '%s' -- 'help' lists them\n", cmd);
     }
     prompt();
@@ -787,7 +847,7 @@ void toolLoop(void)
             char line[48];
             strncpy(line, boot_run, sizeof(line) - 1);
             line[sizeof(line) - 1] = '\0';
-            handleLine(line, false);
+            answerLine(line, false);
             return;
         }
     }
