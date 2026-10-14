@@ -856,6 +856,36 @@ def launch_bg(cmd_str: str, log_tag: str = "launch", distro: str = "lyrical") ->
     return subprocess.Popen(full_cmd, stdout=f, stderr=subprocess.STDOUT, text=True, preexec_fn=os.setsid)
 
 
+def start_motion_guard(params_path: str, ns: str, room_bound: bool, distro: str):
+    """motion_guard.py beside a real robot's motion: (process, trip_file, why-not) -- why-not
+    is '' once the guard says the scan and battery are good enough to move on."""
+    trip, ready = run_log_path("motion_guard_trip"), run_log_path("motion_guard_ready")
+    for f in (trip, ready):
+        if os.path.exists(f):
+            os.remove(f)
+    cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'motion_guard.py')} --params {params_path} "
+           f"--trip-file {trip} --ready-file {ready}" + (f" --ns {ns}" if ns else "")
+           + (" --room-bound" if room_bound else ""))
+    proc = launch_bg(cmd, log_tag="motion_guard", distro=distro)
+    t0 = time.time()
+    while time.time() - t0 < 30:
+        if os.path.exists(trip):
+            return proc, trip, open(trip).read().strip().replace("MOTION_GUARD_TRIPPED: ", "")
+        if os.path.exists(ready):
+            return proc, trip, ""
+        if proc.poll() is not None:
+            break
+        time.sleep(0.5)
+    return proc, trip, "the guard never said the robot may move (logs/motion_guard.log)"
+
+
+def motion_guard_tripped(trip_file: str) -> str:
+    """The guard's reason, when it stopped the motion, else ''."""
+    if trip_file and os.path.exists(trip_file):
+        return open(trip_file).read().strip().replace("MOTION_GUARD_TRIPPED: ", "")
+    return ""
+
+
 def stop_bg(proc, first=signal.SIGINT, step_s: float = 3.0):
     """Stop a background step: its process GROUP, by the pid we started, SIGINT
     first because `ros2 launch` tears its nodes down on SIGINT and is merely
@@ -1850,6 +1880,9 @@ def main():
                              "instead of the fixed Nav2 goal; the robot returns to its start (default: on)")
     parser.add_argument("--no-explore", dest="explore", action="store_false",
                         help="Skip frontier exploration and fall back to the fixed Nav2 goal")
+    parser.add_argument("--explore-beyond-room", action="store_true",
+                        help="a real robot's goals may lie outside the room its LiDAR saw at the start "
+                             "(several rooms); by default the motion guard cancels them")
     parser.add_argument("--explore-timeout", type=int, default=900,
                         help="Seconds the frontier exploration may take (default 900)")
     parser.add_argument("--explore-min-area", type=float, default=0.0,
@@ -2741,12 +2774,26 @@ def main():
             if not nav2_ok:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
+            # A real robot moves only while its LiDAR and battery hold up, and only inside the
+            # room it saw at the start (motion_guard.py): a tracked robot at 8 % charge explored
+            # on 6.9 Hz scans toward a frontier beyond a wall, reached the wall, and lost its
+            # LiDAR there.
+            guard, guard_trip, motion_ok = None, "", True
+            if is_real and nav2_ok:
+                guard, guard_trip, why_not = start_motion_guard(
+                    params_path, cockpit_paths.robot_namespace(params),
+                    not args.explore_beyond_room, args.distro)
+                bg_processes.append(guard)
+                if why_not:
+                    motion_ok = False
+                    print(f"  ❌ NOTHING MOVES: {why_not}")
+                    failures.append(f"Motion guard: {why_not}")
             if args.explore:
                 # Frontier exploration instead of the fixed goal: explore_lite
                 # drives Nav2 to the edge of the known map until none is left and
                 # then home -- how a robot maps a space it has never seen.
                 print(f"  Frontier exploration (explore_lite), up to {args.explore_timeout} s...")
-                if nav2_ok:
+                if nav2_ok and motion_ok:
                     explore = launch_bg(f"ros2 launch linorobot2_cockpit explore.launch.py "
                                         f"config_file:={params_path}", log_tag="explore_lite",
                                         distro=args.distro)
@@ -2756,6 +2803,11 @@ def main():
                                      timeout=args.explore_timeout + 60, distro=args.distro)
                     stop_bg(explore)
                     print(ex_res.stdout)
+                    tripped = motion_guard_tripped(guard_trip)
+                    if tripped:
+                        print(f"  ❌ MOTION GUARD STOPPED THE EXPLORATION: {tripped}")
+                        failures.append(f"Motion guard: {tripped}")
+                        motion_ok = False
                     if ex_res.returncode != 0:
                         print(_nav2_complaints(nav2_log))
                         failures.append(f"Explore: exit {ex_res.returncode}")
@@ -2763,6 +2815,8 @@ def main():
                         # the explored map is the initial map: measure on it, and leave
                         # Nav2 running on what was measured
                         nav2_ok, nav2_detail, nav2_log = measure_and_restart()
+                elif nav2_ok:
+                    print("  ❌ EXPLORE NOT STARTED: the motion guard refused (above).")
                 else:
                     print(f"  ❌ EXPLORE NOT STARTED: Nav2 never activated ({nav2_detail}).")
                     failures.append("Explore: Nav2 never activated")
@@ -2786,10 +2840,19 @@ def main():
                     goal_args += f" --home-yaw-tolerance {args.home_yaw_tolerance}"
                 if is_real:
                     goal_args += " --no-wall"     # the room's own obstacles, not the sim's wall
-                if nav2_ok:
+                if nav2_ok and motion_ok:
                     test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
                                        + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
                                        distro=args.distro)
+                    tripped = motion_guard_tripped(guard_trip)
+                    if tripped:
+                        test_res.stdout += f"\n  ❌ MOTION GUARD STOPPED THE GOALS: {tripped}"
+                        failures.append(f"Motion guard: {tripped}")
+                        motion_ok = False
+                elif nav2_ok:
+                    test_res = subprocess.CompletedProcess(
+                        args=[], returncode=3, stderr="",
+                        stdout="❌ NAV2 GOAL NOT SENT: the motion guard refused (above).")
                 else:
                     # A goal sent to a stack that never activated is rejected on
                     # arrival ("Action server is inactive") and the transcript then
