@@ -430,3 +430,124 @@ def test_both_home_drives_pass_holonomic_for_a_mecanum_base_only():
     for f in ("one_click_pipeline.py", "robot_bringup.py"):
         src = open(os.path.join(REPO, "scripts", f)).read()
         assert "holonomic_flag(" in src.split("clearance.py')} home --snap", 1)[1][:200], f
+
+
+# ---- a LiDAR with a blind sector looks around (MC200: its rear 130..225 deg is the mast) ----
+
+BLIND = [(129.0, 97.0)]
+
+
+def test_blind_sectors_wrap_and_parse():
+    assert clearance.parse_blind(["129:97", "350:20"]) == [(129.0, 97.0), (350.0, 20.0)]
+    m = clearance.in_blind([128.0, 130.0, 225.0, 227.0, 355.0, 5.0, 11.0], [(129, 97), (350, 20)])
+    assert m.tolist() == [False, True, True, False, True, True, False]
+    with pytest.raises(ValueError):
+        clearance.parse_blind(["10:0"])
+
+
+def test_an_unseen_bearing_is_named_and_not_judged(capsys):
+    P = wall(1.2, -1.0, 1.2, 1.0)                       # only the front wall; behind is blind
+    assert clearance.report(P, 1.0, unseen=BLIND)
+    assert "unseen: 129..226 deg" in capsys.readouterr().out
+
+
+def test_no_step_heads_into_a_blind_sector():
+    P = wall(0.30, -1.0, 0.30, 1.0)                     # a wall just ahead: backing off is best
+    h, _ = clearance.best_step(P, 0.20)
+    assert abs(math.degrees(scan_match.wrap(h))) > 150.0
+    step = clearance.best_step(P, 0.20, unseen=BLIND)
+    assert step is None or not clearance.in_blind([math.degrees(step[0]) % 360], BLIND)[0]
+
+
+def test_a_carried_look_keeps_the_old_points_only_where_it_is_blind():
+    old = np.array([[-0.5, 0.0], [0.5, 0.0]])            # one behind, one ahead
+    new = np.array([[0.6, 0.0]])
+    out = clearance.carry(old, (0.0, 0.1, 0.0), new, BLIND)   # moved 0.1 m forward
+    assert out.tolist() == [[0.6, 0.0], [-0.6, 0.0]]
+    assert clearance.carry(old, (0.0, 0.1, 0.0), new, []) is new
+
+
+class _LookRobot:
+    """Turns in place instantly; each look sees the room from its heading, minus the blind
+    sector and the chassis -- and, from `intruder_after` turns on, a box just behind."""
+
+    def __init__(self, world, blind=BLIND, odom_err_deg=0.0, intruder_after=None):
+        self.world, self.blind, self.yaw, self.turns = world, blind, 0.0, []
+        self.err, self.intruder_after = math.radians(odom_err_deg), intruder_after
+
+    def wait_odom(self, timeout=5.0):
+        return (0.0, 0.0, scan_match.wrap(self.yaw * (1.0 + self.err)))
+
+    def turn_by(self, angle, timeout=15.0, guard=0.0):
+        if guard and self.intruder_after is not None and len(self.turns) >= self.intruder_after:
+            return False
+        self.turns.append(math.degrees(angle))
+        self.yaw = scan_match.wrap(self.yaw + angle)
+        return True
+
+    def spin(self, secs):
+        pass
+
+    def stop(self):
+        pass
+
+    def points(self, n=5, timeout=15.0):
+        P = clearance.into_frame(self.world, (self.yaw, 0.0, 0.0))
+        keep = ~clearance.in_blind(clearance.bearings(P), self.blind)
+        return P[keep & (np.hypot(P[:, 0], P[:, 1]) >= scan_match.BODY_M)]
+
+
+L_ROOM = [((-1.6, -1.2), (2.2, -1.2)), ((2.2, -1.2), (2.2, 0.4)), ((2.2, 0.4), (1.4, 1.3)),
+          ((1.4, 1.3), (-1.6, 1.3)), ((-1.6, 1.3), (-1.6, -1.2))]
+
+
+def test_a_blind_lidar_sees_the_whole_circle_and_turns_back(capsys):
+    world = np.vstack([_room(L_ROOM), wall(-0.45, -0.3, -0.45, 0.3)])   # a box behind, 0.45 m
+    r = _LookRobot(world)
+    P0 = r.points()
+    assert clearance.nearest(P0) > 0.9                  # the first look misses the box
+    P = clearance.look_around(r, P0, BLIND, 0.20, 5)
+    assert P is not None and abs(clearance.nearest(P) - 0.45) < 0.03
+    assert sum(r.turns[:-1]) >= 97.0 and len(r.turns) <= 6
+    assert abs(math.degrees(r.yaw)) < 1.0               # back at the start heading
+    assert not clearance.report(P, 1.0)
+    assert "deg still unseen" in capsys.readouterr().out
+
+
+def test_the_merge_follows_the_match_not_a_drifting_odom():
+    world = np.vstack([_room(L_ROOM), wall(-0.8, -0.3, -0.8, 0.3)])
+    r = _LookRobot(world, odom_err_deg=8.0)             # /odom reads 8 % more turn than happened
+    P = clearance.look_around(r, r.points(), BLIND, 0.20, 5)
+    box = P[(P[:, 0] < -0.5) & (P[:, 0] > -1.2) & (np.abs(P[:, 1]) < 0.3)]
+    assert len(box) and np.abs(box[:, 0] + 0.8).max() < 0.03
+
+
+def test_no_look_around_with_something_inside_the_turning_circle(capsys):
+    world = np.vstack([_room(L_ROOM), wall(0.21, -0.1, 0.21, 0.1)])
+    r = _LookRobot(world)
+    assert clearance.look_around(r, r.points(), BLIND, 0.20, 5) is None
+    assert r.turns == [] and "LOOK-AROUND REFUSED" in capsys.readouterr().out
+
+
+def test_a_turn_stopped_by_the_guard_turns_back_and_refuses():
+    r = _LookRobot(_room(L_ROOM), intruder_after=2)
+    assert clearance.look_around(r, r.points(), BLIND, 0.20, 5) is None
+    assert np.allclose(r.turns[:2], [30.0, 30.0]) and abs(math.degrees(r.yaw)) < 1.0
+
+
+def test_a_whole_circle_lidar_never_turns():
+    r = _LookRobot(_room(L_ROOM), blind=[])
+    P = clearance.look_around(r, r.points(), [], 0.20, 5)
+    assert P is not None and r.turns == []
+
+
+def test_the_callers_pass_the_mask_as_blind_and_look_only_when_the_run_moves():
+    import one_click_pipeline as ocp
+    cfg = {"lidar": {"mask": {"sectors": [[130, 225]]}}}
+    assert ocp.blind_flags(cfg) == " --blind 129:97 --look-around"
+    assert ocp.blind_flags(cfg, look=False) == " --blind 129:97"
+    assert ocp.blind_flags({"lidar": {}}) == ""
+    src = open(os.path.join(REPO, "scripts", "one_click_pipeline.py")).read()
+    assert "blind_flags(controller_cfg, look=moves)" in src
+    src = open(os.path.join(REPO, "scripts", "robot_bringup.py")).read()
+    assert "blind_flags(robot.tgt)" in src.split("clearance.py')} check --need", 1)[1][:200]

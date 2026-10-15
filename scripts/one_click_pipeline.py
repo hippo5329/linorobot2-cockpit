@@ -1463,7 +1463,7 @@ def clearance_step(args, params: dict, controller_cfg: dict, need: float, save: 
     moves = not args.topics_only
     verb = "inch" if (moves and args.inch) else "check"
     cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} {verb} --need {need:.2f} "
-           f"--radius {radius:.2f}{stamped}"
+           f"--radius {radius:.2f}{stamped}{blind_flags(controller_cfg, look=moves)}"
            + (f" --max-travel {max_travel if max_travel is not None else args.inch_max:.2f}"
               if verb == "inch" else "")
            + (f" --save {save}" if save else ""))
@@ -1504,6 +1504,18 @@ def slam_pause_toggle(distro: str) -> bool:
     r = run_ros("ros2 service call /slam_toolbox/pause_new_measurements slam_toolbox/srv/Pause \"{}\"",
                 timeout=30, distro=distro)
     return r.returncode == 0 and "response" in (r.stdout or "")
+
+
+def blind_flags(controller_cfg: dict, look: bool = True) -> str:
+    """clearance.py's --blind for each lidar.mask sector (its margin included): the robot's own
+    mast or deck is there, so the LiDAR sees nothing beyond it. With `look` (a run that moves
+    the robot), --look-around too: it turns in place to see those bearings before judging the
+    room. '' for a LiDAR with nothing masked."""
+    import lidar_mask
+    m = lidar_mask.mask_config(controller_cfg)
+    out = "".join(f" --blind {(a - m['margin_deg']) % 360.0:g}:{min(359.0, w + 2 * m['margin_deg']):g}"
+                  for a, w in m["sectors"])
+    return out + (" --look-around" if out and look else "")
 
 
 def holonomic_flag(params: dict) -> str:

@@ -2,15 +2,23 @@
 """Room round a real robot before it moves, from its LiDAR -- and, when there is not
 enough, inch it slowly to where there is.
 
-    clearance.py check --need M [--save SNAP.json]
+    clearance.py check --need M [--save SNAP.json] [--blind START:WIDTH ... [--look-around]]
     clearance.py inch  --need M --radius R [--max-travel 0.6] [--stamped] [--save SNAP.json]
+                       [--blind START:WIDTH ... [--look-around]]
     clearance.py home  --snap SNAP.json [--stamped] [--tol 0.05] [--tol-deg 3]
 
 The 1-Click runs this on a real robot before anything drives it (SLAM's mapping, Nav2,
 test_acc). A simulated robot needs none of it: its room is the one the simulation draws.
 
 check   N scans (the whole circle: scan_raw when a lidar.mask makes /scan a narrower
-        view), the median return per beam, the chassis left out. Prints the nearest
+        view), the median return per beam, the chassis left out. A LiDAR that cannot see
+        all round (--blind: the robot's own mast or deck in the way, its lidar.mask
+        sectors) leaves those bearings unseen, and an unseen bearing is not a clear one:
+        with --look-around the robot turns in place in 30 deg steps until every bearing
+        has been seen, merges the scans by the match (/odom as the guess), and turns
+        back to its start heading -- before the turn, the part of its circle it can see
+        must be clear, and a return inside it stops the turn. Without --look-around the
+        unseen bearings are reported, not judged. Prints the nearest
         return in each quadrant (front, left, back, right; +-45 deg about 0 = ahead,
         counter-clockwise) and exits 0 when nothing is nearer than --need, 1 when
         something is. --save keeps the points as the start snapshot for `home`.
@@ -19,7 +27,10 @@ inch    check, and while something is nearer than --need: pick the 5 cm step tha
         15 deg, turned to first, with the path swept by the robot's circle (--radius)
         kept clear -- take it at 0.05 m/s, and look again. A turn in place sweeps that
         circle too, so with something inside radius + 2 cm only straight steps are tried.
-        Gives up (exit 1) when no step helps, or after --max-travel metres. Every step
+        Gives up (exit 1) when no step helps, or after --max-travel metres. With --blind,
+        the look-around comes first and each new look keeps the remembered points in the
+        unseen bearings (moved by /odom), so a step is never chosen into a blind sector
+        just because nothing shows there. Every step
         is closed on /odom (the EKF: a tracked base's wheel yaw slips) with a timeout,
         and stops at once if a return comes within 0.08 m of the robot's circle in the
         direction of travel.
@@ -58,6 +69,10 @@ HOME_FLOOR_PAIRS = 100  # robot's ~290 points) moved 0.5 m sees 46 % of its snap
 HOME_RIVAL_FRAC = 0.80  # another pose with this share of the best's inliers: ambiguous
 TF_WAIT_TRIES = 100     # x 0.2 s: the base_link -> laser TF, before a snapshot is refused
 HOME_MAX_RMS = 0.025
+LOOK_STEP_DEG = 30.0    # one turn of the look-around
+LOOK_MIN_PAIRS = 40     # a look-around step's match against the cloud so far; else /odom alone
+LOOK_MAX_RMS = 0.05
+THIN_M = 0.02           # merged clouds keep one point per cell this size
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
 
 
@@ -93,6 +108,68 @@ def segment_clearance(P, d) -> float:
     return float(np.min(np.hypot(P[:, 0] - t * d[0], P[:, 1] - t * d[1])))
 
 
+def parse_blind(specs) -> list:
+    """[(start_deg, width_deg)] from "START:WIDTH" strings (robot frame, counter-clockwise)."""
+    out = []
+    for spec in specs or []:
+        a, w = (float(v) for v in str(spec).split(":"))
+        if not 0.0 < w < 360.0:
+            raise ValueError(f"--blind {spec}: the width must be between 0 and 360 deg")
+        out.append((a % 360.0, w))
+    return out
+
+
+def in_blind(bearing_deg, blind) -> "np.ndarray":
+    """True where a bearing (deg, base_link) lies in one of the blind sectors."""
+    b = np.asarray(bearing_deg, float) % 360.0
+    m = np.zeros(b.shape, bool)
+    for a, w in blind:
+        m |= ((b - a) % 360.0) < w
+    return m
+
+
+def bearings(P) -> "np.ndarray":
+    return np.degrees(np.arctan2(P[:, 1], P[:, 0])) % 360.0 if len(P) else np.zeros(0)
+
+
+def move_points(P, pose) -> "np.ndarray":
+    """P, given in a frame at `pose` (yaw, x, y), expressed in the frame `pose` is given in."""
+    c, s_ = math.cos(pose[0]), math.sin(pose[0])
+    return np.c_[pose[1] + c * P[:, 0] - s_ * P[:, 1], pose[2] + s_ * P[:, 0] + c * P[:, 1]]
+
+
+def into_frame(P, pose) -> "np.ndarray":
+    """P, given in a frame, expressed in the frame at `pose` (yaw, x, y) in it."""
+    c, s_ = math.cos(pose[0]), math.sin(pose[0])
+    d = P - np.array([pose[1], pose[2]])
+    return np.c_[c * d[:, 0] + s_ * d[:, 1], -s_ * d[:, 0] + c * d[:, 1]]
+
+
+def thin(P, cell: float = THIN_M) -> "np.ndarray":
+    """One point per grid cell: overlapping looks do not weigh a wall twice in the match."""
+    if not len(P):
+        return P
+    _, i = np.unique(np.floor(P / cell).astype(np.int64), axis=0, return_index=True)
+    return P[np.sort(i)]
+
+
+def seen_bins(yaw_deg: float, blind) -> "np.ndarray":
+    """The whole-degree bearings of the START frame that a look at heading yaw_deg sees."""
+    w = np.arange(360) + 0.5
+    return ~in_blind(w - yaw_deg, blind)
+
+
+def carry(P_old, moved, P_new, blind) -> "np.ndarray":
+    """A new look with the old cloud's points kept where it is blind: P_old moved into the
+    frame of the robot now (at `moved`, (yaw, x, y), in the old one); only the bearings the
+    LiDAR cannot see keep remembered points."""
+    if not blind or P_old is None or not len(P_old):
+        return P_new
+    Q = into_frame(P_old, moved)
+    Q = Q[in_blind(bearings(Q), blind) & (np.hypot(Q[:, 0], Q[:, 1]) >= scan_match.BODY_M)]
+    return np.r_[P_new, Q] if len(Q) else P_new
+
+
 def turn_for(heading: float) -> tuple:
     """(turn, direction): reach a step along `heading` (base_link, rad) by turning `turn`
     and driving forward (+1) or backward (-1), whichever is the smaller turn."""
@@ -102,13 +179,16 @@ def turn_for(heading: float) -> tuple:
     return scan_match.wrap(h + math.pi), -1.0
 
 
-def best_step(P, radius: float, step: float = STEP_M, spin_ok: bool = True):
+def best_step(P, radius: float, step: float = STEP_M, spin_ok: bool = True, unseen=()):
     """The step that most increases the nearest distance: (heading, nearest_after), or None
     when no step keeps the robot's circle off everything along its path or improves on
-    standing still. Ties go to the smaller turn."""
+    standing still. Ties go to the smaller turn. No step heads into an `unseen` sector: an
+    empty bearing there is a blind one, not a clear one."""
     here = nearest(P)
     best, best_score = None, -math.inf
     for deg in range(0, 360, HEADINGS_DEG):
+        if unseen and in_blind([deg], unseen)[0]:
+            continue
         h = math.radians(deg)
         turn, _ = turn_for(h)
         if not spin_ok and abs(turn) > 1e-6:
@@ -202,6 +282,8 @@ class Robot:
 
     def claim_cmd_vel(self) -> bool:
         """Refuse to drive a robot something else is driving."""
+        if self.pub is not None:
+            return True
         self.spin(1.0)
         others = len(self.node.get_publishers_info_by_topic("/cmd_vel"))
         if others:
@@ -243,7 +325,9 @@ class Robot:
             return float(np.min(np.abs(ahead[:, 0])))
         return 0.0
 
-    def turn_by(self, angle: float, timeout: float = 15.0) -> bool:
+    def turn_by(self, angle: float, timeout: float = 15.0, guard: float = 0.0) -> bool:
+        """Turn in place by `angle`, closed on /odom; with a guard, stop the moment a return
+        comes nearer the centre than that (the circle the turn sweeps, plus a margin)."""
         start = self.wait_odom()
         if start is None:
             print("  ❌ no /odom: cannot close a turn")
@@ -251,6 +335,12 @@ class Robot:
         end = time.time() + timeout
         while time.time() < end:
             self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            if guard and self.scan is not None:
+                near = nearest(scan_match.scan_points(self.scan, self.mount()))
+                if near < guard:
+                    self.stop()
+                    print(f"  ⚠️ turn stopped: a return {near:.2f} m from the centre")
+                    return False
             left = scan_match.wrap(angle - scan_match.wrap(self.odom[2] - start[2]))
             if abs(left) < math.radians(3):
                 self.stop()
@@ -289,23 +379,92 @@ class Robot:
         self.rclpy.shutdown()
 
 
-def report(P, need: float) -> bool:
+def report(P, need: float, unseen=()) -> bool:
+    """Print the quadrants; True when nothing is nearer than `need`. `unseen` sectors (a
+    blind LiDAR that did not look round) are named, never counted as clear or as blocked."""
     q = quadrants(P)
     near = nearest(P)
     fmt = lambda v: "none" if v == math.inf else f"{v:.2f} m"
     print("  quadrants (+-45 deg): " + ", ".join(f"{k} {fmt(v)}" for k, v in q.items())
           + f"; nearest {fmt(near)} (need {need:.2f} m)")
+    for a, w in unseen:
+        print(f"  ⚠️ unseen: {a:.0f}..{(a + w) % 360:.0f} deg (the LiDAR's blind sector; "
+              f"--look-around turns to see it) -- not judged")
     return near >= need
 
 
-def save(path: str, P, r: "Robot") -> bool:
+def spin_match(P, cloud, guess, spread_deg: float = 10.0):
+    """icp's (th, tx, ty, rms, pairs) of a look turned in place against the cloud so far: the
+    heading searched first in half degrees about /odom's, then refined. ICP from /odom alone
+    slid along the walls of a box room and kept 5-7 deg of a drifting yaw."""
+    offs = np.arange(-spread_deg, spread_deg + 1e-9, 0.5)
+    k = max(offs, key=lambda d: scan_match.inliers(P, cloud, guess[0] + math.radians(d), guess[1], guess[2]))
+    return scan_match.icp(P, cloud, guess[0] + math.radians(k), (guess[1], guess[2]))
+
+
+def look_around(r: "Robot", P0, blind, radius: float, scans: int):
+    """A blind LiDAR's whole circle: turn in place in LOOK_STEP_DEG steps until every bearing
+    of the start frame has been seen, merge each look into the start frame (matched against
+    the cloud so far, /odom as the guess), and turn back. None when it may not or could not
+    turn: something inside the visible part of the circle the turn sweeps, no /odom, or a
+    return that came inside it while turning."""
+    guard = radius + SPIN_MARGIN_M
+    if nearest(P0) < guard:
+        print(f"  LOOK-AROUND REFUSED: a return {nearest(P0):.2f} m from the centre, inside the "
+              f"{guard:.2f} m a turn in place sweeps")
+        return None
+    odom0 = r.wait_odom(5.0)
+    if odom0 is None:
+        print("  LOOK-AROUND REFUSED: no /odom to close the turns")
+        return None
+    seen = seen_bins(0.0, blind)
+    cloud, turned, ok = P0, 0.0, True
+    print(f"  looking around: {360 - int(seen.sum())} deg unseen, turning in "
+          f"{LOOK_STEP_DEG:.0f} deg steps (THE ROBOT TURNS IN PLACE)", flush=True)
+    try:
+        while not seen.all() and turned < 360.0 - 1e-6:
+            if not r.turn_by(math.radians(LOOK_STEP_DEG), guard=guard):
+                ok = False
+                break
+            r.spin(0.5)
+            P = r.points(scans)
+            now = r.wait_odom(1.0)
+            if P is None or now is None:
+                print("  ❌ the scan or /odom stopped while looking around")
+                ok = False
+                break
+            guess = odom_since(odom0, now)
+            th, x, y, rms, n = spin_match(P, cloud, guess)
+            pose = (th, x, y) if n >= LOOK_MIN_PAIRS and rms < LOOK_MAX_RMS else guess
+            turned += LOOK_STEP_DEG
+            cloud = thin(np.r_[cloud, move_points(P, pose)])
+            seen |= seen_bins(math.degrees(pose[0]), blind)
+            print(f"  look at {math.degrees(pose[0]):+.0f} deg: {len(P)} points "
+                  + (f"({n} pairs, rms {rms:.3f})" if pose is not guess else "(by /odom: the match was weak)")
+                  + f"; {360 - int(seen.sum())} deg still unseen", flush=True)
+    finally:
+        # back over ground the turn has just swept, so unguarded: a return that stopped the
+        # turn would otherwise keep the robot facing away from its start
+        now = r.wait_odom(1.0)
+        if now is not None:
+            back = -scan_match.wrap(now[2] - odom0[2])
+            if abs(back) > math.radians(2.0):
+                r.turn_by(back, timeout=30.0)
+        r.stop()
+    if not ok:
+        return None
+    return cloud
+
+
+def save(path: str, P, r: "Robot", odom=None) -> bool:
     """The start snapshot, in base_link, with the laser mount it was taken with. Refused
     without the TF: points in the scan frame are not where the robot is, and `home` would
-    later match them against base_link points."""
+    later match them against base_link points. `odom`: the /odom pose the points are
+    relative to (the start of a look-around), else /odom now."""
     if not r.tf_ok:
         print(f"  no start snapshot: no TF base_link -> {r.frame} in {TF_WAIT_TRIES * 0.2:.0f} s")
         return False
-    odom = r.wait_odom(2.0)
+    odom = odom or r.wait_odom(2.0)
     with open(path, "w") as fh:
         json.dump({"points": P.tolist(), "quadrants": quadrants(P), "laser": list(r.laser),
                    "odom": list(odom) if odom else None}, fh)
@@ -338,15 +497,38 @@ def snapshot_points(snap: dict, laser) -> "np.ndarray":
     return np.c_[laser[0] + c * q[:, 0] - s_ * q[:, 1], laser[1] + s_ * q[:, 0] + c * q[:, 1]]
 
 
-def cmd_check(a, r: Robot) -> int:
+def first_look(a, r: Robot):
+    """(P, unseen, odom0, rc): the first look, the whole circle when the LiDAR is blind
+    somewhere and --look-around lets the robot turn to see it; P None (and the exit code)
+    when it could not."""
+    blind = parse_blind(a.blind)
     P = r.points(a.scans)
     if P is None:
         print(f"CLEARANCE FAIL: no scan on {r.topic}")
-        return 2
+        return None, blind, None, 2
+    r.mount()
+    if not (blind and a.look_around):
+        return P, blind, None, 0
+    odom0 = r.wait_odom(5.0)
+    if not r.claim_cmd_vel():
+        return None, blind, None, 1
+    P360 = look_around(r, P, blind, a.radius, a.scans)
+    if P360 is None:
+        print("CLEARANCE_REFUSED: the LiDAR's blind sector could not be looked at -- "
+              "move the robot by hand")
+        return None, blind, None, 1
+    print(f"  the whole circle: {len(P360)} points")
+    return P360, (), odom0, 0
+
+
+def cmd_check(a, r: Robot) -> int:
+    P, unseen, odom0, rc = first_look(a, r)
+    if P is None:
+        return rc
     print(f"  reading {r.topic}; laser at x={r.laser[0]:.3f} y={r.laser[1]:.3f} "
           f"yaw={math.degrees(r.laser[2]):.1f} deg in base_link")
-    ok = report(P, a.need)
-    if a.save and ok and not save(a.save, P, r):
+    ok = report(P, a.need, unseen)
+    if a.save and ok and not save(a.save, P, r, odom=odom0):
         print("CLEARANCE_REFUSED: no start snapshot, so no way home (nothing moved)")
         return 1
     print("CLEARANCE_OK" if ok else "CLEARANCE_REFUSED")
@@ -354,14 +536,13 @@ def cmd_check(a, r: Robot) -> int:
 
 
 def cmd_inch(a, r: Robot) -> int:
-    P = r.points(a.scans)
+    P, unseen, odom0, rc = first_look(a, r)
     if P is None:
-        print(f"CLEARANCE FAIL: no scan on {r.topic}")
-        return 2
+        return rc
+    blind = parse_blind(a.blind)
     print(f"  reading {r.topic}")
-    if report(P, a.need):
-        r.mount()
-        if a.save and not save(a.save, P, r):
+    if report(P, a.need, unseen):
+        if a.save and not save(a.save, P, r, odom=odom0):
             print("CLEARANCE_REFUSED: no start snapshot, so no way home (nothing moved)")
             return 1
         print("CLEARANCE_OK (no inching needed)")
@@ -369,10 +550,11 @@ def cmd_inch(a, r: Robot) -> int:
     if not r.claim_cmd_vel():
         return 1
     travel, k = 0.0, 0
+    last = odom0 or r.wait_odom(2.0)
     try:
         while travel + STEP_M <= a.max_travel + 1e-9:
             here = nearest(P)
-            step = best_step(P, a.radius, spin_ok=here >= a.radius + SPIN_MARGIN_M)
+            step = best_step(P, a.radius, spin_ok=here >= a.radius + SPIN_MARGIN_M, unseen=unseen)
             if step is None:
                 print(f"CLEARANCE_REFUSED: no step improves on {here:.2f} m -- move the robot by hand")
                 return 1
@@ -389,11 +571,18 @@ def cmd_inch(a, r: Robot) -> int:
                 pass
             travel += STEP_M
             r.spin(0.5)
-            P = r.points(a.scans)
-            if P is None:
+            P_new = r.points(a.scans)
+            if P_new is None:
                 print("CLEARANCE FAIL: the scan stopped")
                 return 2
-            if report(P, a.need):
+            now = r.wait_odom(1.0)
+            if blind and last is not None and now is not None:
+                # the blind bearings keep what was seen there, moved by the step
+                P = carry(P, odom_since(last, now), P_new, blind)
+            else:
+                P = P_new
+            last = now
+            if report(P, a.need, unseen):
                 if a.save and not save(a.save, P, r):
                     print("CLEARANCE_REFUSED: no start snapshot, so no way home")
                     return 1
@@ -631,6 +820,12 @@ def main(argv=None) -> int:
         if name in ("check", "inch"):
             p.add_argument("--need", type=float, required=True, help="nothing nearer than this, m")
             p.add_argument("--save", default="", help="keep the clear scan as the start snapshot")
+            p.add_argument("--blind", action="append", default=[], metavar="START:WIDTH",
+                           help="a bearing sector the LiDAR cannot see (deg, base_link, counter-"
+                                "clockwise; the robot's lidar.mask sectors); repeat for more")
+            p.add_argument("--look-around", action="store_true",
+                           help="with --blind: turn in place until every bearing has been seen, "
+                                "then back (THE ROBOT TURNS)")
         if name == "inch":
             p.add_argument("--max-travel", type=float, default=0.60, help="give up after this much inching, m")
         if name == "home":

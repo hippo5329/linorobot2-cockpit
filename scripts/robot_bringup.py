@@ -657,8 +657,10 @@ def cmd_acc(robot: Robot, a) -> int:
     snap = os.path.join(tempfile.gettempdir(), f"bringup_acc_{os.getpid()}.json")
     radius = gen_firmware_header.nav2_robot_radius(robot.params)
     say(f"the room: {a.clear:.1f} m all round (THE ROBOT DRIVES AT FULL POWER next)")
-    chk = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} check --need {a.clear:.2f} --save {snap}",
-                      timeout=60, distro=distro)
+    # a LiDAR with a masked sector turns in place first, to see behind its own mast
+    chk = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} check --need {a.clear:.2f} --save {snap} "
+                      f"--radius {radius:.2f}{stamped}{ocp.blind_flags(robot.tgt)}",
+                      timeout=180, distro=distro)
     for ln in (chk.stdout or "").splitlines():
         say("  " + ln)
     if chk.returncode != 0:
