@@ -212,3 +212,11 @@ def test_a_battery_without_percentage_or_limits_is_not_judged():
 def test_a_goal_accepted_or_running_is_one_to_cancel():
     assert mg.goal_running([1]) and mg.goal_running([4, 2])
     assert not mg.goal_running([4, 5, 6]) and not mg.goal_running([])
+
+
+def test_the_battery_is_read_best_effort():
+    # the firmware publishes /battery best effort: a reliable (depth 10) reader matches nothing
+    # and the guard reported "battery: NOT JUDGED" on MC200 (rc-20261015.2)
+    import re
+    src = open(os.path.join(os.path.dirname(__file__), "..", "scripts", "motion_guard.py")).read()
+    assert re.search(r'create_subscription\(BatteryState, "battery", on_battery, qos_profile_sensor_data\)', src)

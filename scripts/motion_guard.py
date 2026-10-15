@@ -312,7 +312,9 @@ def main(argv=None) -> int:
             cancel_all()
 
     node.create_subscription(LaserScan, "scan", on_scan, qos_profile_sensor_data)
-    node.create_subscription(BatteryState, "battery", on_battery, 10)
+    # best effort: matches the firmware's best-effort /battery and a reliable one (sim_base_node);
+    # a reliable reader never hears a best-effort writer -- the guard judged no battery on MC200
+    node.create_subscription(BatteryState, "battery", on_battery, qos_profile_sensor_data)
     node.create_subscription(Path, "plan", on_plan, 10)
     # an action's status is published reliable and transient-local (rcl_action's default)
     node.create_subscription(GoalStatusArray, "navigate_to_pose/_action/status", on_status,
