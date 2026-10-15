@@ -285,6 +285,14 @@ def goal_timeout_default(require_goal: bool, round_trips: int) -> int:
 SIM_MCU = "sim"
 # Step 4.8: the room a real robot needs round it before anything drives it.
 CLEARANCE_REAL_M = 0.40
+CLEARANCE_EDGE_M = 0.15     # beyond the robot's own radius
+
+
+def clearance_real(params: dict) -> float:
+    """The room a real robot needs before anything moves it: 0.40 m, or its radius plus
+    0.15 m when it is bigger -- a fixed 0.40 m left a robot of radius 0.35 m with 5 cm."""
+    import gen_firmware_header
+    return max(CLEARANCE_REAL_M, round(gen_firmware_header.nav2_robot_radius(params) + CLEARANCE_EDGE_M, 2))
 
 
 _DESIGN_NAME_CACHE = {}
@@ -901,8 +909,9 @@ def watch_exploration(args, trip_file: str, poll_s: float = 0.5) -> subprocess.C
     else:
         stop_bg(proc)
         rc = 124
+    log = run_log_path("explore_watch")      # launch_bg wrote it; read it back
     try:
-        out = open(run_log_path("explore_watch"), encoding="utf-8", errors="replace").read()
+        out = open(log, encoding="utf-8", errors="replace").read()
     except OSError:
         out = ""
     return subprocess.CompletedProcess(cmd, rc, out, "")
@@ -1570,6 +1579,29 @@ def home_guesses(transcript: str) -> str:
     return "".join(f" --guess {yaw}:{x}:{y}" for yaw in dict.fromkeys((yi, yw)))
 
 
+TEST_ACC_PHASE_S = 1.0      # each run's drive phase (the firmware's ta_ms, 1000 unless --set)
+TEST_ACC_COAST_S = 0.1      # what the robot rolls on after the motors stop
+TEST_ACC_MARGIN_M = 0.05
+
+
+def test_acc_room(params: dict, floor: float) -> float:
+    """The room test_acc needs all round, m: its full-power phase carries the robot's edge
+    v_max * (phase + coast) past where it stood, plus the robot's own radius and a margin --
+    or `floor`, whichever is more. A fixed 1.0 m let a mecanum robot doing 0.73 m/s reach
+    1.11 m from where it started (and the firmware itself asks for 2 m); a faster robot
+    would have met the wall."""
+    import drivetrain_report
+    import gen_firmware_header
+    try:
+        d = drivetrain_report.drivetrain(params)
+        v = float(d["motor_rpm"]) * float(d["circ"]) / 60.0
+    except Exception:
+        return floor
+    need = (gen_firmware_header.nav2_robot_radius(params)
+            + v * (TEST_ACC_PHASE_S + TEST_ACC_COAST_S) + TEST_ACC_MARGIN_M)
+    return max(floor, round(need, 2))
+
+
 def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
                    serial_port: str, flash_baud: int, controller: str, robot_name: str,
                    sim: bool = False) -> tuple:
@@ -1632,8 +1664,12 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     if not sim and not on_serial and not found.get("ip"):
         return f"test_acc: '{robot_name}' did not answer on Wi-Fi", None
     snap = os.path.join(tempfile.gettempdir(), f"lino_testacc_start_{os.getpid()}.json")
-    if not clearance_step(args, params, controller_cfg, args.test_acc_clearance, save=snap, max_travel=1.5):
-        return f"test_acc: no room of {args.test_acc_clearance:.2f} m found", None
+    need = test_acc_room(params, args.test_acc_clearance)
+    if need > args.test_acc_clearance:
+        print(f"  room for test_acc: {need:.2f} m all round (its full-power phase at this "
+              f"robot's top speed, plus its radius), not {args.test_acc_clearance:.2f} m")
+    if not clearance_step(args, params, controller_cfg, need, save=snap, max_travel=1.5):
+        return f"test_acc: no room of {need:.2f} m found", None
     if state is not None:
         try:
             odom = json.load(open(snap)).get("odom")
@@ -1992,7 +2028,7 @@ def main():
     # A simulated robot is not: its room is the one the simulation draws.
     parser.add_argument("--clearance", type=float, default=None,
                         help="Nothing nearer than this (m) before SLAM, Nav2 or test_acc moves the robot; "
-                             "0 skips the check (default: 0.40 on a real robot with a LiDAR, off in "
+                             "0 skips the check (default: 0.40, or the robot's radius + 0.15 when bigger, on a real robot with a LiDAR, off in "
                              "simulation -- give it to rehearse the step on the Sim MCU)")
     parser.add_argument("--no-inch", dest="inch", action="store_false", default=True,
                         help="When the room is short of --clearance, stop instead of inching the robot "
@@ -2006,7 +2042,8 @@ def main():
                              "model run on the host), and Nav2 restarts on the gains and limits derived "
                              "from it")
     parser.add_argument("--test-acc-clearance", type=float, default=1.0,
-                        help="The room test_acc needs all round, m (default: 1.0)")
+                        help="The least room test_acc needs all round, m (default: 1.0; a fast robot needs more: "
+                             "its full-power phase at top speed plus its radius, and the run asks for that)")
     # The stack STAYS UP. Pressing Start 1-Click is how a person gets a running
     # robot; tearing bringup, SLAM and Nav2 down the instant the pipeline
     # finished handed them one that had just been switched off, with no way to
@@ -2745,7 +2782,7 @@ def main():
         # is -- slowly, each step closed on /odom and stopped by the LiDAR. A run that
         # commands no motion (--topics-only) only reports.
         if args.clearance is None:
-            args.clearance = CLEARANCE_REAL_M if is_real else 0.0
+            args.clearance = clearance_real(params) if is_real else 0.0
         if scan_from == "lidar" and has_lidar and args.clearance > 0:
             print(f"\n[4.8/6] [CLEARANCE] Nothing within {args.clearance:.2f} m of the robot before it moves"
                   + (" (inching to clear space if needed)" if (args.inch and not args.topics_only) else "") + "...")
@@ -2797,7 +2834,7 @@ def main():
                 import gen_firmware_header
                 nudge = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_nudge.py')}"
                                 + (" --stamped" if stamped_cmd else "")
-                                + (f" --guard {CLEARANCE_REAL_M} --radius "
+                                + (f" --guard {clearance_real(params)} --radius "
                                    f"{gen_firmware_header.nav2_robot_radius(params):.3f}" if is_real else ""),
                                 timeout=200, distro=args.distro)
                 print((nudge.stdout or "").rstrip())
@@ -3041,7 +3078,7 @@ def main():
                                 + (" --lidar" if drive_lidar else "")
                                 # a real room: no simulated walls, and the scan checked
                                 # before every manoeuvre (shortened or skipped, never blind)
-                                + (f" --real --guard {CLEARANCE_REAL_M}" if is_real else ""),
+                                + (f" --real --guard {clearance_real(params)}" if is_real else ""),
                                 timeout=240 if drive_lidar else 140, distro=args.distro)
             if drive_res.stdout:
                 print(drive_res.stdout)

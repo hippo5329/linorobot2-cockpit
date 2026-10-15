@@ -69,4 +69,4 @@ def test_the_ekf_goes_to_the_snapshot_pose_not_the_pose_before_inching():
     assert 'pose_home = state.get("pose_home") or pose0' in body
     assert "ekf_set_pose(pose_home, args.distro)" in body
     inner = PIPELINE[PIPELINE.index("def _test_acc_body("):]
-    assert inner.index('state["pose_home"]') > inner.index("clearance_step(args, params, controller_cfg, args.test_acc_clearance")
+    assert inner.index('state["pose_home"]') > inner.index("if not clearance_step(args, params, controller_cfg, need, save=snap")

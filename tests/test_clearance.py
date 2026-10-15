@@ -114,7 +114,7 @@ def _pipeline():
 def test_step_4_8_sits_before_slam_and_is_on_by_default_only_on_real_robots():
     src = _pipeline()
     i_topics = src.index("Topic verification passed.")
-    assert "args.clearance = CLEARANCE_REAL_M if is_real else 0.0" in src
+    assert "args.clearance = clearance_real(params) if is_real else 0.0" in src
     i_gate = src.index('if scan_from == "lidar" and has_lidar and args.clearance > 0:')
     i_clear = src.index("if not clearance_step(args, params, controller_cfg, args.clearance):")
     i_slam = src.index("# Step 5: SLAM.")

@@ -105,6 +105,27 @@ SIM_RADIUS_MARGIN_M = 0.05
 SIM_RADIUS_FALLBACK_M = 0.20
 
 
+def footprint_radius(footprint):
+    """The circle round a Nav2 footprint polygon ("[[x, y], ...]" or a list), m; None when
+    there is none. Nav2 plans with the footprint when one is given and ignores robot_radius,
+    so a rectangular robot's sweeps must use the corner farthest from its centre -- the
+    0.20 m fallback made every clearance check of such a robot too small."""
+    if footprint in (None, "", "[]"):
+        return None
+    pts = footprint
+    if isinstance(footprint, str):
+        try:
+            import yaml as _yaml
+            pts = _yaml.safe_load(footprint)
+        except Exception:
+            return None
+    try:
+        r = max(math.hypot(float(x), float(y)) for x, y in pts)
+    except (TypeError, ValueError):
+        return None
+    return r if r > 0.0 else None
+
+
 def nav2_robot_radius(params: dict) -> float:
     """The largest robot_radius any costmap in this config plans with, plus margin.
 
@@ -117,10 +138,12 @@ def nav2_robot_radius(params: dict) -> float:
         node = nav2.get(cm) or {}
         node = node.get(cm) or node      # nav2 keys are <name>: <name>: ros__parameters
         rp = node.get("ros__parameters", node) or {}
-        try:
-            r = float(rp.get("robot_radius"))
-        except (TypeError, ValueError):
-            continue
+        r = footprint_radius(rp.get("footprint"))
+        if r is None:
+            try:
+                r = float(rp.get("robot_radius"))
+            except (TypeError, ValueError):
+                continue
         best = max(best, r)
     if best <= 0.0:
         return SIM_RADIUS_FALLBACK_M

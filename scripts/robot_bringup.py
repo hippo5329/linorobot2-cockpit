@@ -24,7 +24,7 @@ shows as done in the other, and the 1-Click asks the same record before it moves
     robot_bringup.py cpr-turns --wheel 1 --turns 10   counts per rev by turning a wheel by hand
     robot_bringup.py lidar    [--seconds 10]      rate, coverage, ranges (robot stack running)
     robot_bringup.py speed                        speed_check.py: wheels vs LiDAR (floor, 0.6 m clear)
-    robot_bringup.py acc      [--write]           test_acc with 1.0 m clear and back home (floor)
+    robot_bringup.py acc      [--write]           test_acc with room all round (1.0 m or more) and back home (floor)
     robot_bringup.py mark STAGE pass|fail|skip [--summary TEXT]
     robot_bringup.py gate                         exit 0 when the 1-Click may move this robot
 
@@ -656,16 +656,17 @@ def cmd_acc(robot: Robot, a) -> int:
     stamped = " --stamped" if ocp.wants_stamped_cmd_vel(distro, robot.tgt, robot.params) else ""
     snap = os.path.join(tempfile.gettempdir(), f"bringup_acc_{os.getpid()}.json")
     radius = gen_firmware_header.nav2_robot_radius(robot.params)
-    say(f"the room: {a.clear:.1f} m all round (THE ROBOT DRIVES AT FULL POWER next)")
+    need = ocp.test_acc_room(robot.params, a.clear)
+    say(f"the room: {need:.2f} m all round (THE ROBOT DRIVES AT FULL POWER next)")
     # a LiDAR with a masked sector turns in place first, to see behind its own mast
-    chk = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} check --need {a.clear:.2f} --save {snap} "
+    chk = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} check --need {need:.2f} --save {snap} "
                       f"--radius {radius:.2f}{stamped}{ocp.blind_flags(robot.tgt)}"
                       f"{ocp.holonomic_flag(robot.params)}",
                       timeout=180, distro=distro)
     for ln in (chk.stdout or "").splitlines():
         say("  " + ln)
     if chk.returncode != 0:
-        say(f"ACC REFUSED: less than {a.clear:.1f} m clear -- move the robot (nothing moved)")
+        say(f"ACC REFUSED: less than {need:.2f} m clear -- move the robot (nothing moved)")
         return 2
     found = {} if on_serial else ocp.wireless_board(robot.tgt, robot.path, robot.params)
     if not on_serial and not found.get("ip"):
@@ -759,7 +760,8 @@ def main(argv=None) -> int:
     li.add_argument("--seconds", type=float, default=10.0)
     sub.add_parser("speed")
     ac = sub.add_parser("acc")
-    ac.add_argument("--clear", type=float, default=1.0, help="room needed all round, m (1.0)")
+    ac.add_argument("--clear", type=float, default=1.0,
+                    help="room needed all round, m (1.0, or more for a fast robot: its full-power phase plus its radius)")
     ac.add_argument("--write", action="store_true", help="keep the derived gains and limits in the config")
     a = ap.parse_args(argv)
     SIM_FLAG[0] = a.sim
