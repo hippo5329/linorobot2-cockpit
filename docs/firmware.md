@@ -1279,6 +1279,7 @@ What gets written, and the rule behind each fraction:
 | `velocity_smoother.max_velocity` | 47% of the measured top speed; 26% of the measured yaw rate. Rotation gets the *smaller* share because that is where tracking error grows fastest and, on a mecanum, where wheel speed is most expensive. |
 | `velocity_smoother.max_accel` | 31% of the **settled** acceleration, not the first kick: a rate limit the base meets only while the pack is still stiff is one it misses for the rest of the manoeuvre. Angular: whatever reaches the angular ceiling in 0.8 s, capped at the same 31% of settled angular acceleration. |
 | `FollowPath.desired_linear_vel`, `rotate_to_heading_angular_vel` | 83% of the smoother's ceiling, so the controller asks for something the smoother can pass through. |
+| `FollowPath.rotate_to_heading_angular_vel`, capped | never above `kinematics.heading_turn_max_vel` (rad/s) when the config sets it. The turn to the goal heading has no slow-down and Nav2's goal checker fires mid-turn, so a robot that coasts (tracks) ends past its heading; the cap is a heading-accuracy choice that a test_acc run must not undo. |
 | `behavior_server` spin limits | brisker than path following — a recovery spin happens when the robot is stuck, with nothing to track. |
 | `kinematics.max_rpm_ratio` | the driver margin, above. |
 

@@ -1133,6 +1133,16 @@ def config_plant(params, d=None):
     return identify_plant(d)
 
 
+def _heading_turn_cap(params):
+    """`kinematics.heading_turn_max_vel` in rad/s, or None when unset or not a positive number."""
+    raw = (params.get("kinematics") or {}).get("heading_turn_max_vel")
+    try:
+        cap = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return cap if cap > 0 else None
+
+
 def derived_limits(params):
     """Everything auto-tuning would write, as dotted paths -> values.
 
@@ -1168,6 +1178,16 @@ def derived_limits(params):
         # the measurement and not on what was written to the config last time.
         d["command_rpm"] = d["motor_rpm"] * suggest_max_rpm_ratio(d, measured, raw=True)
     out.update(suggest_nav2_limits(d, measured=measured))
+    # The turn in place to the goal heading is a heading-accuracy choice, not a
+    # capability: RPP turns at this rate with no slow-down and Nav2's goal checker
+    # fires mid-turn, so a robot that coasts (the TS100's tracks: -27 deg at rest
+    # at 0.94 rad/s, 2026-10-14) needs it slower than it can turn.
+    # `kinematics.heading_turn_max_vel` (rad/s) caps it; derived limits never raise
+    # it past that (a --test-acc run wrote 0.73 over a hand-set 0.5, 2026-10-16).
+    cap = _heading_turn_cap(params)
+    key = "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel"
+    if cap is not None and key in out:
+        out[key] = min(out[key], cap)
 
     # The wheel loop's gains, from the step response -- the robot's own if it
     # has been measured, the model's otherwise. Only written when the closed-loop

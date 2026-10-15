@@ -140,3 +140,23 @@ def test_it_runs_as_a_command_and_exits_nonzero_when_over_budget():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "what it can do" in r.stdout
     assert "VERDICT" in r.stdout
+
+
+def test_heading_turn_cap_holds_the_derived_turn_in_place():
+    """A robot that coasts past its goal heading sets kinematics.heading_turn_max_vel;
+    derived limits (a --test-acc run's too) never raise the turn in place past it."""
+    key = "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel"
+    free = dr.derived_limits(_cfg())[key]
+    assert free > 0.5
+    capped = _cfg()
+    capped["kinematics"]["heading_turn_max_vel"] = 0.5
+    assert dr.derived_limits(capped)[key] == 0.5
+    capped["kinematics"]["heading_turn_max_vel"] = free + 1.0   # above: no change
+    assert dr.derived_limits(capped)[key] == free
+    for bad in ("x", 0, -1, None):
+        capped["kinematics"]["heading_turn_max_vel"] = bad
+        assert dr.derived_limits(capped)[key] == free
+    capped["kinematics"]["heading_turn_max_vel"] = 0.5
+    dr.apply_derived_limits(capped)
+    fp = capped["nav2"]["controller_server"]["ros__parameters"]["FollowPath"]   # the flat path it writes
+    assert fp["rotate_to_heading_angular_vel"] == 0.5
