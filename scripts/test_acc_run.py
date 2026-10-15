@@ -299,6 +299,15 @@ def agents_on(port: str) -> list:
     return out
 
 
+def _fds_readable(pid: int) -> bool:
+    """Whether this user can list a process's open files (/proc/<pid>/fd)."""
+    try:
+        os.listdir(f"/proc/{pid}/fd")
+        return True
+    except OSError:
+        return False
+
+
 def pause_refusal(port: str, paused: list) -> str:
     """Why test_acc must not start on this tty, or ''. A holder left running reads the tool's
     lines as micro-ROS frames (the results are lost) and keeps writing to the board; and when
@@ -309,7 +318,10 @@ def pause_refusal(port: str, paused: list) -> str:
     if left:
         return (f"pid {', '.join(map(str, left))} holds {port} and could not be paused -- run this "
                 f"as the user that started the stack (or root), or stop the stack first")
-    hidden = [p for p in agents_on(port) if p not in paused]
+    # Hidden = an agent naming the tty whose fds this user cannot read. One whose fds ARE
+    # readable and hold no such tty is not on it: `ros2 run micro_ros_agent ... --dev <tty>`,
+    # the launcher whose child is the agent -- counted as hidden, it refused every serial run.
+    hidden = [p for p in agents_on(port) if p not in paused and not _fds_readable(p)]
     if hidden:
         return (f"a micro-ROS agent (pid {', '.join(map(str, hidden))}) runs on {port} but this user "
                 f"cannot see its open files, so it cannot be paused -- run this as the user that "

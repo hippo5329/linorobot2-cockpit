@@ -297,3 +297,17 @@ def test_resume_lets_each_pid_go_once(monkeypatch):
     tar.resume(pids)
     tar.resume(pids)
     assert sent == [5, 6] and pids == []
+
+
+def test_the_ros2_run_launcher_naming_the_tty_is_not_a_hidden_agent(monkeypatch):
+    # on a robot: pid 472 = `ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyHS1`
+    # (holds nothing), pid 586 = the agent itself, paused. The launcher refused every run.
+    import flash_mcu
+    monkeypatch.setattr(flash_mcu, "_holders_of", lambda port: [586])
+    monkeypatch.setattr(tar, "agents_on", lambda port: [472, 586])
+    monkeypatch.setattr(tar, "_fds_readable", lambda pid: True)
+    assert tar.pause_refusal("/dev/ttyHS1", [586]) == ""
+    # an agent whose fds cannot be read is still refused: it may hold the tty unseen
+    monkeypatch.setattr(tar, "_fds_readable", lambda pid: pid != 472)
+    assert "cannot see its open files" in tar.pause_refusal("/dev/ttyHS1", [586])
+
