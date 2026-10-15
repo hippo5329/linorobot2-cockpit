@@ -849,6 +849,130 @@ function connectSyslogStream() {
 // Linorobot2 Cockpit Dashboard Integration
 // ==============================================================================
 
+// ==============================================================================
+// 1-CLICK RUN OPTIONS -- pure functions (no DOM), so tests can run them under node.
+// ==============================================================================
+
+// A run is starting or running from this page. Set synchronously, first thing, by the click
+// that owns the run: Start disabled itself only after several awaits, so a double click (or
+// the header's Start beside the card's) began a second run, and the refused one's cleanup
+// re-enabled Start and disabled Abort while the first still drove.
+let oneClickBusy = false;
+
+// A map's name under maps/, as the backend accepts it (routes_hardware.MAP_NAME_RE).
+const ONE_CLICK_MAP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+// The Run options as query parameters, from the raw field values (strings as typed, booleans
+// for boxes). An empty field sends nothing: the pipeline's own default applies. Every range
+// is the backend's too. Returns {params: ["k=v", ...], errors: [...], zeroClearance}.
+function oneClickRunOptions(v) {
+  const params = [], errors = [];
+  const add = (k, val) => params.push(`${k}=${encodeURIComponent(val)}`);
+  const num = (raw, key, label, lo, hi, int = false) => {
+    const t = String(raw ?? "").trim();
+    if (t === "") return null;
+    const n = Number(t);
+    if (!Number.isFinite(n) || (int && !Number.isInteger(n)) || n < lo || n > hi) {
+      errors.push(`${label}: ${int ? "a whole number " : ""}from ${lo} to ${hi}`);
+      return null;
+    }
+    add(key, n);
+    return n;
+  };
+  const scope = v.scope || "full";
+  const full = scope === "full";
+  if (scope === "topics_drive" || scope === "topics_only") add("topics_only", "true");
+  if (scope === "topics_only" || (full && v.noDriveTest)) add("no_drive_test", "true");
+  const saved = full && v.mapSource === "saved";
+  const explore = full && !saved && !!v.explore;
+  if (saved) {
+    const name = String(v.savedMap || "").trim();
+    if (!ONE_CLICK_MAP_NAME.test(name)) errors.push("Saved map: pick one from the list");
+    else add("saved_map", name);
+  }
+  if (full && !saved) {
+    const out = String(v.mapOutput || "").trim();
+    if (out !== "") {
+      if (!ONE_CLICK_MAP_NAME.test(out)) errors.push("Save map as: letters, digits, _ and -, at most 64");
+      else add("map_output", out);
+    }
+  }
+  if (explore) {
+    num(v.exploreTimeout, "explore_timeout", "Exploration time limit (s)", 60, 3600, true);
+    num(v.exploreMinArea, "explore_min_area", "Minimum map area (m²)", 0, 2000);
+    if (v.real && v.exploreBeyondRoom) add("explore_beyond_room", "true");
+  }
+  if (full && !explore) {
+    if (v.real) {
+      num(v.goalX, "goal_x", "Goal X (m)", -50, 50);
+      num(v.goalY, "goal_y", "Goal Y (m)", -50, 50);
+    }
+    num(v.roundTrips, "goal_round_trips", "Round trips", 0, 50, true);
+    if (v.requireGoal) add("require_goal", "true");
+    num(v.goalTolerance, "goal_tolerance", "Goal tolerance (m)", 0.05, 1.0);
+    num(v.homeYawDeg, "home_yaw_tolerance_deg", "Home heading tolerance (°)", 1, 180);
+  }
+  let zeroClearance = false;
+  if (v.real) {
+    zeroClearance = num(v.clearance, "clearance", "Clearance before moving (m)", 0, 2.0) === 0;
+    if (v.inch === false) add("inch", "false");
+    num(v.inchMax, "inch_max", "Inch at most (m)", 0.1, 2.0);
+    if (v.testAcc && !saved) num(v.testAccClearance, "test_acc_clearance", "test_acc needs (m)", 0.6, 3.0);
+  }
+  return { params, errors, zeroClearance };
+}
+
+// The backend's refusal, in its own words: FastAPI's {detail: "..."} or, for a value out of
+// range, {detail: [{loc, msg}, ...]}.
+function oneClickStartError(status, bodyText) {
+  let detail = "";
+  try {
+    const j = JSON.parse(bodyText || "{}");
+    if (typeof j.detail === "string") detail = j.detail;
+    else if (Array.isArray(j.detail)) {
+      detail = j.detail.map((d) => `${(d.loc || []).slice(-1)[0] || "?"}: ${d.msg}`).join("; ");
+    }
+  } catch { /* not JSON: the status says it */ }
+  return detail || `HTTP ${status}`;
+}
+
+// What the run did, from the options it was given and the pipeline's own last lines -- not
+// "Map saved and Nav2 verified" after a topics-only check, nor "Flashing failed" after a
+// failed goal. `lines` is the run's output; the pipeline lists its failures after
+// "FAILED STEP(S):" (or "finished with problems:") as "   - x" / "   • x".
+function oneClickVerdict(o, exitCode, lines) {
+  lines = lines || [];
+  if (exitCode === 0) {
+    if (o.scope === "topics_only") return "✅ Topics verified; nothing was commanded to move.";
+    if (o.scope === "topics_drive") return "✅ Topics verified and the drive manoeuvres passed.";
+    const parts = [];
+    const saved = lines.map((l) => /MAP SAVED: (.+)$/.exec(l)).filter(Boolean).pop();
+    if (o.savedMap) parts.push(`navigated on the saved map ${o.savedMap}`);
+    else if (saved) parts.push(`map saved (${saved[1].trim()})`);
+    if (o.noNav2) parts.push("Nav2 skipped (SLAM only)");
+    else if (o.explore && !o.savedMap) parts.push("frontier exploration finished");
+    else parts.push(o.requireGoal ? "the goal was reached" : "Nav2 goal verified");
+    if (o.noDriveTest) parts.push("drive manoeuvres skipped");
+    return `✅ Mission succeeded: ${parts.join(", ")}.`;
+  }
+  const failures = [];
+  let inList = false;
+  for (const l of lines) {
+    if (/FAILED STEP\(S\):|finished with problems:/.test(l)) { inList = true; failures.length = 0; continue; }
+    if (inList) {
+      const m = /^\s+[-•]\s+(.+)$/.exec(l);
+      if (m) failures.push(m[1].trim());
+      else if (l.trim() && !/^=+$/.test(l.trim())) inList = false;
+    }
+  }
+  let why = failures.join("; ");
+  if (!why) {
+    const last = lines.filter((l) => /❌/.test(l)).pop();
+    why = last ? last.replace(/^\s*❌\s*/, "").trim() : "see the Output console";
+  }
+  return `❌ Pipeline halted (exit code ${exitCode}): ${why}`;
+}
+
 function initCockpitDashboard() {
   const btnOneClick = document.getElementById("btn-cockpit-oneclick");
   const btnStopPipeline = document.getElementById("btn-cockpit-stop-pipeline");
@@ -912,6 +1036,18 @@ function initCockpitDashboard() {
     }
   }
 
+  // Run options > "Use a saved map": the maps this cockpit lists (the backend accepts only these).
+  function fillSavedMapSelect(maps) {
+    const sel = document.getElementById("cockpit-saved-map");
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = "";
+    const names = maps.map((m) => m.name).filter((n) => ONE_CLICK_MAP_NAME.test(n));
+    if (!names.length) sel.append(new Option("(no saved map)", ""));
+    for (const n of names) sel.append(new Option(n, n));
+    if (names.includes(keep)) sel.value = keep;
+  }
+
   // --- 3. Saved Maps Gallery ---
   async function loadMaps() {
     if (!mapsContainer) return;
@@ -920,6 +1056,7 @@ function initCockpitDashboard() {
       const res = await fetch("/api/maps");
       const data = await res.json();
       const maps = data.maps || [];
+      fillSavedMapSelect(maps);
       if (maps.length === 0) {
         mapsContainer.innerHTML = "<span class='hint'>No maps found in maps/. Run 1-Click Pipeline or SLAM to create one.</span>";
         return;
@@ -1030,9 +1167,65 @@ function initCockpitDashboard() {
 
   // --- 7. One-Click Autonomous Pipeline ---
   const grpSimWorld = document.getElementById("grp-cockpit-sim-world");
-  // The simulated world is for a robot that simulates: the robot's own mode, not a select.
+  const grpReal = document.getElementById("grp-cockpit-real");
+  const $w = (id) => document.getElementById(id);
+  const val = (id) => ($w(id)?.value ?? "").trim();
+  const ticked = (id, dflt = false) => $w(id)?.checked ?? dflt;
+
+  // Run options: each fieldset is enabled only when the run as set uses it, and says why not.
+  const exploreCheck = $w("cockpit-explore");
+  const testAccCheck = $w("cockpit-test-acc");
+  function syncRunOptions() {
+    const scope = val("cockpit-run-scope") || "full";
+    const full = scope === "full";
+    const saved = full && document.querySelector('input[name="cockpit-map-source"]:checked')?.value === "saved";
+    // On a saved map there is no new SLAM map: no exploration, no test_acc (it measures on one).
+    for (const box of [exploreCheck, testAccCheck]) {
+      if (!box) continue;
+      if (saved && !box.disabled) { box.dataset.before = box.checked ? "1" : ""; box.checked = false; }
+      if (!saved && box.disabled && box.dataset.before !== undefined) { box.checked = box.dataset.before === "1"; delete box.dataset.before; }
+      box.disabled = saved;
+    }
+    const explore = full && !saved && !!exploreCheck?.checked;
+    const noNav2 = ticked("cockpit-no-nav2");
+    const lblSec = $w("lbl-cockpit-explore-sec");
+    if (lblSec) lblSec.hidden = !noNav2;
+    const nd = $w("cockpit-no-drive-test");
+    if (nd) nd.disabled = !full;
+    const sel = $w("cockpit-saved-map");
+    if (sel) sel.disabled = !saved;
+    const note = $w("cockpit-saved-map-note");
+    if (note) note.hidden = !saved;
+    const out = $w("cockpit-map-output");
+    if (out) out.disabled = !full || saved;
+    const fsExplore = $w("cockpit-opt-explore"), fsGoal = $w("cockpit-opt-goal");
+    if (fsExplore) fsExplore.disabled = !explore;
+    if (fsGoal) fsGoal.disabled = !full || explore;
+    const en = $w("cockpit-opt-explore-note"), gn = $w("cockpit-opt-goal-note");
+    if (en) en.textContent = explore ? "" : (full ? "(used when exploration is on)" : "(full mission only)");
+    if (gn) gn.textContent = !full ? "(full mission only)" : (explore ? "(used when exploration is off)" : "");
+    const tac = $w("lbl-cockpit-test-acc-clearance");
+    if (tac) tac.hidden = !(testAccCheck?.checked && !saved);
+  }
+  window.__syncRunOptions = syncRunOptions;
+  for (const id of ["cockpit-run-scope", "cockpit-explore", "cockpit-no-nav2", "cockpit-test-acc"]) {
+    $w(id)?.addEventListener("change", syncRunOptions);
+  }
+  for (const r of document.querySelectorAll('input[name="cockpit-map-source"]')) r.addEventListener("change", syncRunOptions);
+  syncRunOptions();
+
+  // The robot changed (syncSimForDesign): the real-robot group follows the NEW robot's
+  // checklist, and an override ticked for the previous robot does not carry over.
+  let seenRobot = null;
   const updateSimWorldVisibility = () => {
     if (grpSimWorld) grpSimWorld.style.display = robotRunMode() === "real" ? "none" : "flex";
+    const key = `${state.robot_name}|${robotRunMode()}`;
+    if (seenRobot !== null && key !== seenRobot) {
+      const skip = $w("cockpit-skip-bringup");
+      if (skip) skip.checked = false;
+      if (typeof buRefresh === "function") buRefresh();
+    }
+    seenRobot = key;
   };
   window.__updateSimWorld = updateSimWorldVisibility;   // syncSimForDesign: the robot changed
   updateSimWorldVisibility();
@@ -1047,71 +1240,164 @@ function initCockpitDashboard() {
 
   const btnHdrDeploy = document.getElementById("btn-header-start-pipeline");
   const btnHdrDeployText = document.getElementById("hdr-deploy-btn-text");
+  const btnHdrAbort = document.getElementById("btn-header-abort-pipeline");
+
+  function setRunUi(running) {
+    if (btnOneClick) btnOneClick.disabled = running;
+    if (btnHdrDeploy) btnHdrDeploy.disabled = running;
+    if (btnHdrDeployText) btnHdrDeployText.innerHTML = running ? "<strong>Running...</strong>" : "<strong>Start 1-Click</strong>";
+    if (btnStopPipeline) btnStopPipeline.disabled = !running;
+    // Abort from any tab: the header is always on screen.
+    if (btnHdrAbort) btnHdrAbort.hidden = !running;
+  }
+
+  function setBadge(cls, text) {
+    if (pipelineBadge) { pipelineBadge.className = `pill ${cls}`; pipelineBadge.textContent = text; }
+  }
+
+  function notStarted(why) {
+    // Said beside the button and as a toast; the badge says the run never began.
+    if (pipelineMsg) pipelineMsg.textContent = `Not started: ${why}`;
+    showToast(`⚠️ 1-Click not started: ${why}`, 7000);
+    setBadge("pill-off", "Not started");
+  }
 
   async function runOneClick() {
     if (!btnOneClick && !btnHdrDeploy) return;
+    // Refused without touching the buttons or the badge: they belong to the run going on.
+    if (oneClickBusy) {
+      showToast("A 1-Click run is already starting or running.", 3500);
+      return;
+    }
+    oneClickBusy = true;
+    let started = false;       // this click set the page to "running"
+    try {
+      await startOneClick(() => { started = true; setRunUi(true); });
+    } finally {
+      oneClickBusy = false;
+      if (started) {
+        activePipelineAbort = null;
+        setRunUi(false);
+        // The override is for one run (app-bringup.js asks again next time).
+        const skip = $w("cockpit-skip-bringup");
+        if (skip) skip.checked = false;
+        loadMaps();
+      }
+    }
+  }
+
+  async function startOneClick(markStarted) {
     const controller = targetSelect ? controllerForRun(targetSelect.value) : (state.status?.controller || "pico2");
     if (!(await configReadyOrWarn("1-Click"))) return;
     if (!(await boardMatchesOrWarn(controller, "1-Click"))) return;
-    const sec = exploreSec ? parseInt(exploreSec.value, 10) || 15 : 15;
     const noNav2 = noNav2Check ? noNav2Check.checked : false;
+    // The mapping spin, used only when Nav2 is skipped (the pipeline's --explore-sec).
+    let sec = null;
+    if (noNav2 && exploreSec) {
+      sec = Number(exploreSec.value);
+      if (!Number.isInteger(sec) || sec < 5 || sec > 120) {
+        if (pipelineMsg) pipelineMsg.textContent = "Mapping spin: a whole number of seconds from 5 to 120.";
+        return;
+      }
+    }
     // What the robot IS decides the mode (a bare module: sim; a design or any pin: real).
     const mode = robotRunMode();
     // Force a write even over a board that already runs this build (--flash).
     // Unticked by default; auto-update below is what handles the ordinary case.
-    const updateFw = document.getElementById("cockpit-update-firmware")?.checked || false;
+    const updateFw = $w("cockpit-update-firmware")?.checked || false;
     // Ticked by default, and the default must survive a missing element: `?? true`
     // rather than `|| true`, since `|| true` would read an UNTICKED box as on and
     // make the setting impossible to turn off from the UI.
-    const autoUpdate = document.getElementById("cockpit-auto-update")?.checked ?? true;
+    const autoUpdate = $w("cockpit-auto-update")?.checked ?? true;
 
     const isReal = mode === "real";
     // A real robot moves only once its bench bring-up has passed (app-bringup.js); the
     // pipeline refuses too, this says so before anything starts.
     let realParams = "";
     if (isReal && typeof buOneClickGate === "function") {
+      const wasHidden = grpReal ? grpReal.hidden : true;
       const held = await buOneClickGate();
       if (held) {
         if (pipelineMsg) pipelineMsg.textContent = held;
         if (typeof showActionBanner === "function") showActionBanner("1-Click held: bring-up not complete", held);
         return;
       }
-      if (document.getElementById("cockpit-skip-bringup")?.checked) realParams += "&skip_bringup_check=true";
-      if (document.getElementById("cockpit-test-acc")?.checked) realParams += "&test_acc=true";
-      for (const ax of ["x", "y"]) {
-        const v = document.getElementById(`cockpit-goal-${ax}`)?.value.trim();
-        if (v !== "" && v != null && !isNaN(parseFloat(v))) realParams += `&goal_${ax}=${encodeURIComponent(parseFloat(v))}`;
+      // The gate's refresh just showed the real-robot options (the robot changed, or the page
+      // had not asked yet): they were never seen, so nothing starts on their defaults.
+      if (wasHidden && grpReal && !grpReal.hidden) {
+        if (pipelineMsg) pipelineMsg.textContent = "This is a real robot: review its options below (test_acc, Run options), then press Start again.";
+        grpReal.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
       }
     }
-    const exploreCheck = document.getElementById("cockpit-explore");
+    // The real-robot options count only while they are on screen.
+    const realShown = !!(grpReal && !grpReal.hidden);
+    const testAcc = realShown && ticked("cockpit-test-acc");
+    if (realShown) {
+      if (ticked("cockpit-skip-bringup")) realParams += "&skip_bringup_check=true";
+      if (testAcc) realParams += "&test_acc=true";
+    }
     const explore = exploreCheck ? exploreCheck.checked : true;
-    const worldSel = document.getElementById("cockpit-pipeline-world");
+    const scope = val("cockpit-run-scope") || "full";
+    const mapSource = document.querySelector('input[name="cockpit-map-source"]:checked')?.value || "slam";
+    const optIn = {
+      scope, noDriveTest: ticked("cockpit-no-drive-test"), mapSource,
+      savedMap: val("cockpit-saved-map"), mapOutput: val("cockpit-map-output"),
+      explore, real: realShown,
+      exploreTimeout: val("cockpit-explore-timeout"), exploreMinArea: val("cockpit-explore-min-area"),
+      exploreBeyondRoom: ticked("cockpit-explore-beyond-room"),
+      goalX: val("cockpit-goal-x"), goalY: val("cockpit-goal-y"),
+      roundTrips: val("cockpit-goal-round-trips"), requireGoal: ticked("cockpit-require-goal"),
+      goalTolerance: val("cockpit-goal-tolerance"), homeYawDeg: val("cockpit-home-yaw-tolerance"),
+      clearance: val("cockpit-clearance"), inch: ticked("cockpit-inch", true), inchMax: val("cockpit-inch-max"),
+      testAcc, testAccClearance: val("cockpit-test-acc-clearance"),
+    };
+    const opts = oneClickRunOptions(optIn);
+    const optsMsg = $w("cockpit-opts-msg");
+    if (opts.errors.length) {
+      const why = opts.errors.join("; ");
+      if (optsMsg) optsMsg.textContent = why;
+      if (pipelineMsg) pipelineMsg.textContent = `Run options: ${why}`;
+      const adv = $w("cockpit-advanced");
+      if (adv) adv.open = true;
+      return;
+    }
+    if (optsMsg) optsMsg.textContent = "";
+    if (opts.zeroClearance && !window.confirm("Clearance 0 skips the room check: the robot moves without looking "
+                                              + "for room around it first. Start anyway?")) return;
+    if (isReal) {
+      const acc = testAcc && mapSource !== "saved" && scope === "full";
+      const msg = `Start the 1-Click on the REAL robot ${state.robot_name || ""}?\n\n`
+        + "The robot will move by itself within a few minutes"
+        + (scope === "topics_only" ? " -- no: 'Topics only' commands nothing" : "")
+        + ". The room check may inch and turn it."
+        + (acc ? `\n\ntest_acc is ticked: it runs at FULL POWER and needs ${optIn.testAccClearance || "1.0"} m clear all round.` : "")
+        + "\n\nStay clear of the robot. Abort (here or in the header) stops it.";
+      if (!window.confirm(msg)) return;
+    }
+    const worldSel = $w("cockpit-pipeline-world");
     const world = (!isReal && worldSel) ? worldSel.value : "";
-    const worldMapInput = document.getElementById("cockpit-pipeline-world-map");
+    const worldMapInput = $w("cockpit-pipeline-world-map");
     const worldMap = (!isReal && world === "map" && worldMapInput) ? worldMapInput.value.trim() : "";
 
-    if (btnOneClick) btnOneClick.disabled = true;
-    if (btnHdrDeploy) btnHdrDeploy.disabled = true;
-    if (btnHdrDeployText) btnHdrDeployText.innerHTML = "<strong>Running...</strong>";
-    if (btnStopPipeline) btnStopPipeline.disabled = false;
-    if (pipelineBadge) {
-      pipelineBadge.className = "pill pill-ok";
-      pipelineBadge.textContent = "Running...";
-    }
-    if (pipelineMsg) pipelineMsg.textContent = `Pipeline active: ${controller} [mode: ${mode}${world ? `, world: ${world}` : ""}], ${explore ? "autonomous exploration" : `fixed goal (${sec}s)`}...`;
+    markStarted();
+    setBadge("pill-ok", "Running...");
+    const usesExplore = scope === "full" && mapSource !== "saved" && explore;
+    if (pipelineMsg) pipelineMsg.textContent = `Pipeline active: ${controller} [mode: ${mode}${world ? `, world: ${world}` : ""}], ${scope !== "full" ? scope.replace("_", " + ") : (usesExplore ? "autonomous exploration" : (mapSource === "saved" ? `saved map ${optIn.savedMap}` : "fixed goal"))}...`;
 
     openTerminal(`One-Click Pipeline (${controller})`);
-    logLine(`[pipeline] Starting automated pipeline for robot '${state.robot_name || "?"}', base controller '${controller}' (explore: ${explore ? "autonomous" : "fixed goal"}, duration: ${sec}s, no_nav2: ${noNav2}, mode: ${mode}, world: ${world || "config"}${worldMap ? ` [map: ${worldMap}]` : ""}, auto_update: ${autoUpdate}, force_update: ${updateFw})...`);
+    logLine(`[pipeline] Starting automated pipeline for robot '${state.robot_name || "?"}', base controller '${controller}' (scope: ${scope}, explore: ${usesExplore ? "autonomous" : "off"}${sec != null ? `, mapping spin: ${sec}s` : ""}, no_nav2: ${noNav2}, mode: ${mode}, world: ${world || "config"}${worldMap ? ` [map: ${worldMap}]` : ""}, auto_update: ${autoUpdate}, force_update: ${updateFw})...`);
 
     const abortCtrl = new AbortController();
     activePipelineAbort = abortCtrl;
     // flash_mcu.py prints one "NEXT ACTION: ..." line when a flash fails; it
     // becomes the banner instead of "see terminal for recovery instructions".
     let nextAction = "";
+    const outLines = [];
     hideActionBanner();
 
     try {
-      const distroSel = document.getElementById("hdr-distro-select");
+      const distroSel = $w("hdr-distro-select");
       const distroVal = distroSel ? distroSel.value : "";
       const distroParam = distroVal ? `&distro=${encodeURIComponent(distroVal)}` : "";
       // Send the robot, not just the controller. Without it the pipeline picks
@@ -1120,15 +1406,19 @@ function initCockpitDashboard() {
       // selected in this very header executed linorobot2_config.yaml's
       // kinematics, pins, EKF, SLAM and Nav2 parameters, and said so only in
       // one line deep in the log.
-      const robotName = state.robot_name || document.getElementById("hdr-robot-name")?.value || "";
+      const robotName = state.robot_name || $w("hdr-robot-name")?.value || "";
       const robotParam = robotName ? `&robot=${encodeURIComponent(robotName)}` : "";
       const worldParam = world ? `&world=${encodeURIComponent(world)}` : "";
       const worldMapParam = worldMap ? `&world_map=${encodeURIComponent(worldMap)}` : "";
       const exploreParam = `&explore=${explore}`;
-      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}&explore_sec=${sec}${exploreParam}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}${worldParam}${worldMapParam}${realParams}`;
+      const secParam = sec != null ? `&explore_sec=${sec}` : "";
+      const optParams = opts.params.length ? `&${opts.params.join("&")}` : "";
+      const url = `/api/workflow/one-click/stream?controller=${encodeURIComponent(controller)}${secParam}${exploreParam}&no_nav2=${noNav2}&mode=${encodeURIComponent(mode)}&flash_firmware=${updateFw}&auto_update=${autoUpdate}${distroParam}${robotParam}${worldParam}${worldMapParam}${realParams}${optParams}`;
       const res = await fetch(url, { signal: abortCtrl.signal });
       if (!res.ok || !res.body) {
-        logLine(`[pipeline] Failed to start: HTTP ${res.status}`);
+        const why = oneClickStartError(res.status, await res.text().catch(() => ""));
+        logLine(`[pipeline] Not started: ${why}`);
+        notStarted(why);
         return;
       }
       const reader = res.body.getReader();
@@ -1149,23 +1439,21 @@ function initCockpitDashboard() {
             const payload = JSON.parse(dataMatch[1]);
             if (evType === "output") {
               logLine(payload.line);
+              outLines.push(payload.line || "");
+              if (outLines.length > 400) outLines.splice(0, outLines.length - 400);
               const na = /NEXT ACTION: (.+)$/.exec(payload.line || "");
               if (na) nextAction = na[1].trim();
             } else if (evType === "done") {
-              logLine(`[pipeline] Mission finished with exit code ${payload.exit_code}`);
-              if (payload.exit_code !== 0 && nextAction) {
+              const code = payload.exit_code;
+              logLine(`[pipeline] Mission finished with exit code ${code}`);
+              if (code !== 0 && nextAction) {
                 showActionBanner(`Flashing failed. Next: ${nextAction}`, "The full recovery steps are in the Output console.");
               }
-              if (pipelineBadge) {
-                pipelineBadge.className = payload.exit_code === 0 ? "pill pill-ok" : "pill pill-off";
-                pipelineBadge.textContent = payload.exit_code === 0 ? "PASSED" : `FAILED (${payload.exit_code})`;
-              }
-              if (pipelineMsg) {
-                pipelineMsg.textContent = payload.exit_code === 0 ? "✅ Mission succeeded! Map saved and Nav2 verified." : `❌ Pipeline halted (exit code ${payload.exit_code}). Flashing or verification failed; see terminal for recovery instructions.`;
-              }
-              if (payload.exit_code !== 0) {
-                showToast(`❌ Pipeline halted: Execution failed (exit code ${payload.exit_code}). Check terminal for recovery steps!`, 7000);
-              }
+              setBadge(code === 0 ? "pill-ok" : "pill-off", code === 0 ? "PASSED" : `FAILED (${code})`);
+              const verdict = oneClickVerdict({ ...optIn, savedMap: mapSource === "saved" && scope === "full" ? optIn.savedMap : "",
+                                                explore: usesExplore, noNav2 }, code, outLines);
+              if (pipelineMsg) pipelineMsg.textContent = verdict;
+              if (code !== 0) showToast(verdict, 9000);
             }
           } catch {}
         }
@@ -1175,14 +1463,9 @@ function initCockpitDashboard() {
         logLine("[pipeline] Aborted by user.");
       } else {
         logLine("[pipeline error] " + e.message);
+        setBadge("pill-off", "Connection lost");
+        if (pipelineMsg) pipelineMsg.textContent = `Lost the run's output: ${e.message}. The run may still be going: Abort stops it.`;
       }
-    } finally {
-      activePipelineAbort = null;
-      if (btnOneClick) btnOneClick.disabled = false;
-      if (btnHdrDeploy) btnHdrDeploy.disabled = false;
-      if (btnHdrDeployText) btnHdrDeployText.innerHTML = "<strong>Start 1-Click</strong>";
-      if (btnStopPipeline) btnStopPipeline.disabled = true;
-      loadMaps();
     }
   }
 
@@ -1197,18 +1480,15 @@ function initCockpitDashboard() {
       activePipelineAbort.abort();
       activePipelineAbort = null;
     }
-    if (btnHdrDeploy) btnHdrDeploy.disabled = false;
-    if (btnHdrDeployText) btnHdrDeployText.innerHTML = "<strong>Start 1-Click</strong>";
-    if (pipelineBadge) {
-      pipelineBadge.className = "pill pill-off";
-      pipelineBadge.textContent = "Aborted";
-    }
+    setRunUi(false);
+    setBadge("pill-off", "Aborted");
   }
 
   // Wire event listeners
   if (btnOneClick) btnOneClick.addEventListener("click", runOneClick);
   if (btnHdrDeploy) btnHdrDeploy.addEventListener("click", runOneClick);
   if (btnStopPipeline) btnStopPipeline.addEventListener("click", abortOneClick);
+  if (btnHdrAbort) btnHdrAbort.addEventListener("click", abortOneClick);
   if (btnVerifyTopics) btnVerifyTopics.addEventListener("click", verifyTopics);
   if (btnReloadParams) btnReloadParams.addEventListener("click", loadParams);
   if (btnSaveParams) btnSaveParams.addEventListener("click", saveParams);

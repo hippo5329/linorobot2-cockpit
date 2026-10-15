@@ -1671,3 +1671,26 @@ body.console-collapsed {
 @media (max-width: 600px) {
   .bu-table { display: block; overflow-x: auto; }
 }
+
+/* Operations > Run options (app-workflow.js syncRunOptions): one fieldset per question; a
+   fieldset that does not apply to the run as set is disabled, with a note saying why. */
+.cockpit-advanced { width: 100%; border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 12px; }
+.cockpit-advanced > summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.cockpit-opts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid var(--border-soft);
+  border-radius: 8px; padding: 8px 10px; margin: 8px 0 0 0; min-width: 0; }
+.cockpit-opts > legend { font-weight: 600; padding: 0 4px; }
+.cockpit-opts[disabled] { opacity: 0.55; }
+/* `.row label` sets display: flex, which beats the hidden attribute without these. */
+.cockpit-opts[hidden], .cockpit-real-only[hidden], #lbl-cockpit-explore-sec[hidden],
+#lbl-cockpit-test-acc-clearance[hidden] { display: none; }
+.cockpit-opts-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.hdr-abort-btn[hidden] { display: none; }
+
+/* STOP that did not reach the board: said in red, with what to do instead. */
+.tool-status.tool-stop-failed { color: var(--accent-danger, #ef4444); font-weight: 700; }
+
+@media (max-width: 600px) {
+  /* The fixed STOP bar is 56 px tall at the bottom: while it shows, the page's last 56 px
+     would sit under it, out of reach. */
+  body.tool-stop-on { padding-bottom: 64px; }
+}

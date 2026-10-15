@@ -122,7 +122,8 @@ def test_the_unoq_never_reaches_the_usb_paths(monkeypatch, tmp_path):
 
 def test_the_ui_offers_the_unoq_and_assigns_its_reference_pins():
     html = open(os.path.join(ROOT, "web", "frontend", "index.html")).read()
-    assert html.count('<option value="unoq"') == 2          # cfg-mcu and hw-flash-env
+    # cfg-mcu, hw-flash-env and the Operations tab's Base Controller (which lacked it)
+    assert html.count('<option value="unoq"') == 3
     hw = open(os.path.join(ROOT, "web", "frontend", "app-hardware.js")).read()
     assert 'mcu === "unoq"' in hw
     presets = open(os.path.join(ROOT, "web", "frontend", "app-presets.js")).read()

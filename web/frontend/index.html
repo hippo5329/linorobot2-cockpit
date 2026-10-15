@@ -80,19 +80,19 @@
         <span class="btn-icon">🚀</span>
         <span id="hdr-deploy-btn-text"><strong>Start 1-Click</strong></span>
       </button>
+      <button type="button" id="btn-header-abort-pipeline" class="btn btn-danger hdr-abort-btn" hidden
+              title="Stop the running 1-Click: the pipeline, and the robot stack it started">⏹ Abort 1-Click</button>
     </div>
 
     <!-- Right Stack: Workflow Settings (ROS 2 Distro, Mode [Sim Default], Agent Engine, Registry, Detected MCU) -->
     <div class="workflow-settings-stack">
       <div id="hdr-settings-rows" class="hdr-settings-rows" hidden>
       <div class="hdr-wf-row">
-        <div class="hdr-field hdr-wf-field" title="Target ROS 2 Distribution (Jazzy, Lyrical, Rolling, Humble)">
+        <div class="hdr-field hdr-wf-field" title="Target ROS 2 Distribution (Lyrical or Jazzy)">
           <label for="hdr-distro-select">🌐 ROS 2:</label>
           <select id="hdr-distro-select" class="hdr-select distro-select" title="Switch ROS 2 Distribution">
             <option value="lyrical" selected>Lyrical (Resolute 26.04)</option>
             <option value="jazzy">Jazzy (Noble 24.04)</option>
-            <option value="rolling">Rolling (Nightly)</option>
-            <option value="humble">Humble (Container)</option>
           </select>
         </div>
         <div class="hdr-field hdr-wf-field" title="Build &amp; Execution Mode (Auto, Native Host, Docker, Podman)">
@@ -193,6 +193,9 @@
 </nav>
 
 <main class="tab-content">
+  <!-- The tool's STOP (app-tool.js): outside every tab, so a wheel started on Hardware Tests can
+       be stopped from whatever tab is open. Esc stops too. -->
+  <button type="button" id="btn-tool-stop" class="tool-stop" hidden>■ STOP MOTORS <span class="tool-stop-key">(Esc)</span></button>
 
   <!-- 1. MCU & SIM -->
   <section class="tab-pane active" id="tab-mcu-sim">
@@ -299,7 +302,7 @@
             <label for="cfg-mcu" class="form-label">Base Controller</label>
             <select id="cfg-mcu" class="form-select">
               <option value="pico2" selected>Raspberry Pi Pico 2 (RP2350 - Default USB Serial)</option>
-              <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi UDP/Syslog)</option>
+              <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi when its transport is Wi-Fi)</option>
               <option value="pico">Raspberry Pi Pico (RP2040)</option>
               <option value="picow">Raspberry Pi Pico W (RP2040 Wireless)</option>
               <option value="xrp">SparkFun XRP Controller (RP2350B + RM2 Wi-Fi)</option>
@@ -1319,7 +1322,6 @@
 
   <!-- 6. HARDWARE TESTS -->
   <section class="tab-pane" id="tab-hw-tests">
-    <button type="button" id="btn-tool-stop" class="tool-stop" hidden>■ STOP MOTORS <span class="tool-stop-key">(Esc)</span></button>
     <!-- The real robot's bring-up, step by step (app-bringup.js, routes_bringup.py). The
          command-line twin is scripts/robot_bringup.py: both write one record, and the
          1-Click on Operations asks it before it moves a real robot. -->
@@ -1472,7 +1474,8 @@
       <!-- 7. acc -->
       <details class="bu-step" id="bu-step-acc" data-stage="acc">
         <summary><span class="bu-pill" data-for="acc">—</span> 7. test_acc identifies the drivetrain (on the floor)</summary>
-        <p class="hint"><b>The robot drives at full power.</b> Wi-Fi robots only (the results come by syslog). It needs
+        <p class="hint"><b>The robot drives at full power.</b> Serial and Wi-Fi robots: on serial the results come over the
+          micro-ROS port while the agent is paused, on Wi-Fi by syslog. It needs
           <b>1.0 m clear all round</b> by the LiDAR, or it refuses; then the PID identification and twelve short runs, then
           the robot is driven back to where it started by the LiDAR. The derived gains and limits are kept if you tick
           the box.</p>
@@ -2513,19 +2516,22 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
         <label>Base Controller
           <select id="cockpit-target-select" style="min-width:260px;">
             <option value="pico2" selected>Raspberry Pi Pico 2 (Default - Recommended for Beginners)</option>
-            <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
-            <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Serial uROS + Wi-Fi Syslog/OTA)</option>
-            <option value="xrp">SparkFun XRP Controller (RP2350B - Serial uROS + Wi-Fi Syslog/OTA)</option>
+            <option value="pico2w">Raspberry Pi Pico 2 W (RP2350 Wireless - Wi-Fi when its transport is Wi-Fi)</option>
+            <option value="picow">Raspberry Pi Pico W (RP2040 Wireless - Wi-Fi when its transport is Wi-Fi)</option>
+            <option value="xrp">SparkFun XRP Controller (RP2350B - Wi-Fi when its transport is Wi-Fi)</option>
             <option value="esp32">ESP32 DevKit (serial or Wi-Fi UDP - the env partition picks)</option>
             <option value="esp32s3">ESP32-S3 DevKit (native USB CDC)</option>
             <option value="pico">Raspberry Pi Pico (RP2040)</option>
+            <option value="unoq">Arduino UNO Q (STM32U585 on board, flashed over SWD)</option>
             <option value="sim">Sim MCU — no board (the firmware on this computer, nothing to flash)</option>
           </select>
         </label>
 
-<label>Explore Duration
+<!-- The pipeline's --explore-sec: how long the robot spins to map when Nav2 is skipped.
+             Frontier exploration's own limit is Run options > Exploration. -->
+        <label id="lbl-cockpit-explore-sec" hidden>Mapping spin (s), when Nav2 is skipped
           <div class="u-flex u-items-center u-gap-6">
-            <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" style="width:75px; min-width:unset;">
+            <input type="number" id="cockpit-explore-sec" value="15" min="5" max="120" step="1" style="width:75px; min-width:unset;">
             <span class="u-text-12" style="color:var(--text-dim);">sec</span>
           </div>
         </label>
@@ -2579,12 +2585,6 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
              own goal, and test_acc can measure the drivetrain on the initial map. -->
         <div id="grp-cockpit-real" class="cockpit-real-opts" hidden>
           <p id="cockpit-bringup-state" class="tool-small" role="status"></p>
-          <label>Goal X (m)
-            <input type="number" id="cockpit-goal-x" step="0.1" min="-50" max="50" placeholder="3.0" style="width:80px; min-width:unset;" inputmode="decimal">
-          </label>
-          <label>Goal Y (m)
-            <input type="number" id="cockpit-goal-y" step="0.1" min="-50" max="50" placeholder="0.0" style="width:80px; min-width:unset;" inputmode="decimal">
-          </label>
           <label class="checkbox u-mb-8 u-cursor-pointer"
                  title="On the initial map, before the goals: 1.0 m clear all round, test_acc at full power, back to the start by the LiDAR, and the run continues with the derived gains (serial and Wi-Fi robots; on by default).">
             <input type="checkbox" id="cockpit-test-acc" checked>
@@ -2595,6 +2595,97 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <span>Run without a complete bring-up (at your own risk)</span>
           </label>
         </div>
+
+        <!-- Run options: the 1-Click's own command-line flags (scripts/one_click_pipeline.py
+             --help). An empty field sends nothing, so the pipeline's default applies; the
+             backend checks every range again. Real-robot fields show for a real robot only. -->
+        <details id="cockpit-advanced" class="cockpit-advanced">
+          <summary>Run options</summary>
+          <p id="cockpit-opts-msg" class="tool-small" role="status"></p>
+
+          <fieldset class="cockpit-opts" id="cockpit-opt-what">
+            <legend>What to run</legend>
+            <label>Run
+              <select id="cockpit-run-scope">
+                <option value="full" selected>Full mission</option>
+                <option value="topics_drive">Topics + drive manoeuvres</option>
+                <option value="topics_only">Topics only, nothing moves</option>
+              </select>
+            </label>
+            <label class="checkbox u-cursor-pointer" title="Full mission only: skip the eight-manoeuvre drive suite after the topic gate.">
+              <input type="checkbox" id="cockpit-no-drive-test">
+              <span>Skip the drive manoeuvres</span>
+            </label>
+            <div class="cockpit-opts-row" role="radiogroup" aria-label="Map">
+              <label class="checkbox u-cursor-pointer"><input type="radio" name="cockpit-map-source" value="slam" checked> <span>Map the room (SLAM)</span></label>
+              <label class="checkbox u-cursor-pointer"><input type="radio" name="cockpit-map-source" value="saved"> <span>Use a saved map (AMCL)</span></label>
+              <label>Saved map
+                <select id="cockpit-saved-map" disabled><option value="">(no saved map)</option></select>
+              </label>
+            </div>
+            <p id="cockpit-saved-map-note" class="tool-small" hidden>On a saved map the robot must start at the
+              map's origin; exploration and test_acc are off (they need a new SLAM map).</p>
+            <label>Save map as
+              <input type="text" id="cockpit-map-output" placeholder="one_click_map" pattern="[A-Za-z0-9_\-]{1,64}"
+                     maxlength="64" autocomplete="off" spellcheck="false" style="width:160px; min-width:unset;">
+            </label>
+          </fieldset>
+
+          <fieldset class="cockpit-opts" id="cockpit-opt-explore">
+            <legend>Exploration <span class="tool-small" id="cockpit-opt-explore-note"></span></legend>
+            <label>Time limit (s)
+              <input type="number" id="cockpit-explore-timeout" min="60" max="3600" step="1" placeholder="900" style="width:90px; min-width:unset;" inputmode="numeric">
+            </label>
+            <label>Minimum map area (m², 0 = no check)
+              <input type="number" id="cockpit-explore-min-area" min="0" max="2000" step="0.5" placeholder="0" style="width:90px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label class="checkbox u-cursor-pointer cockpit-real-only" hidden
+                   title="By default the motion guard cancels a goal outside the room the LiDAR saw at the start.">
+              <input type="checkbox" id="cockpit-explore-beyond-room">
+              <span>Goals may leave the starting room</span>
+            </label>
+          </fieldset>
+
+          <fieldset class="cockpit-opts" id="cockpit-opt-goal">
+            <legend>Fixed goal <span class="tool-small" id="cockpit-opt-goal-note"></span></legend>
+            <label class="cockpit-real-only" hidden>Goal X (m)
+              <input type="number" id="cockpit-goal-x" step="0.1" min="-50" max="50" placeholder="3.0" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label class="cockpit-real-only" hidden>Goal Y (m)
+              <input type="number" id="cockpit-goal-y" step="0.1" min="-50" max="50" placeholder="0.0" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label title="To the goal and back home this many times; 0 = a single one-way goal.">Round trips (0 = one way)
+              <input type="number" id="cockpit-goal-round-trips" min="0" max="50" step="1" placeholder="4" style="width:70px; min-width:unset;" inputmode="numeric">
+            </label>
+            <label class="checkbox u-cursor-pointer" title="Judged by the distance from the goal pose: a verified plan is not enough.">
+              <input type="checkbox" id="cockpit-require-goal">
+              <span>The goal must be reached</span>
+            </label>
+            <label>Goal tolerance (m)
+              <input type="number" id="cockpit-goal-tolerance" min="0.05" max="1" step="0.01" placeholder="auto" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label title="The leg home must end facing the start heading within this.">Home heading tolerance (°)
+              <input type="number" id="cockpit-home-yaw-tolerance" min="1" max="180" step="1" placeholder="auto" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+          </fieldset>
+
+          <fieldset class="cockpit-opts cockpit-real-only" id="cockpit-opt-room" hidden>
+            <legend>Room safety</legend>
+            <label title="Nothing nearer than this before SLAM, Nav2 or test_acc moves the robot; 0 skips the check.">Clearance before moving (m)
+              <input type="number" id="cockpit-clearance" min="0" max="2" step="0.05" placeholder="0.40" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label class="checkbox u-cursor-pointer" title="When the room is short of the clearance, inch slowly to where it is not; unticked, stop instead.">
+              <input type="checkbox" id="cockpit-inch" checked>
+              <span>Creep slowly to find room</span>
+            </label>
+            <label>Inch at most (m)
+              <input type="number" id="cockpit-inch-max" min="0.1" max="2" step="0.05" placeholder="0.60" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+            <label id="lbl-cockpit-test-acc-clearance">test_acc needs (m) all round
+              <input type="number" id="cockpit-test-acc-clearance" min="0.6" max="3" step="0.1" placeholder="1.0" style="width:80px; min-width:unset;" inputmode="decimal">
+            </label>
+          </fieldset>
+        </details>
 
         <button type="button" id="btn-cockpit-oneclick" class="btn btn-primary">▶ Start 1-Click Pipeline</button>
         <button type="button" id="btn-cockpit-stop-pipeline" class="btn btn-danger" disabled>⏹ Abort</button>
@@ -2648,7 +2739,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
             <b style="font-family:var(--font-mono); color:var(--text-primary);">/imu/data</b>
             <span id="topic-badge-imu" class="pill pill-unknown">-- Hz</span>
           </div>
-          <div class="u-text-11-5 u-text-dim u-mt-6">Min Threshold: <b>10.0 Hz</b></div>
+          <div class="u-text-11-5 u-text-dim u-mt-6">Min Threshold: <b>20.0 Hz</b></div>
           <div class="u-max-h-60 u-overflow-hidden" id="topic-echo-imu" style="font-family:var(--font-mono); font-size:11px; color:#94a3b8; margin-top:6px; background:#020617; padding:6px; border-radius:4px;">Waiting for audit...</div>
         </div>
 
@@ -2961,7 +3052,6 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           <select id="cfg-ros-distro">
             <option value="lyrical">Lyrical (Ubuntu 26.04 LTS)</option>
             <option value="jazzy">Jazzy (Ubuntu 24.04 LTS)</option>
-            <option value="rolling">Rolling (Rolling Development)</option>
           </select>
         </label>
       </div>
