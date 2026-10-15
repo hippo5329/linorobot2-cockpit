@@ -1708,7 +1708,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
     print("  Back to where test_acc started, by the LiDAR...")
     home = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} home --snap {snap} "
-                   f"--radius {radius:.2f}{stamped}{holonomic_flag(params)}{home_guesses(transcript)}",
+                   f"--radius {radius:.2f}{stamped}{holonomic_flag(params)}{home_guesses(transcript)}"
+                   f"{blind_flags(controller_cfg, look=False)}",
                    timeout=180, distro=args.distro)
     for ln in (home.stdout or "").splitlines():
         print(ln if ln.startswith("  ") else "  " + ln)

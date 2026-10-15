@@ -23,7 +23,7 @@ shows as done in the other, and the 1-Click asks the same record before it moves
     robot_bringup.py rpm      [--pct 100]         each wheel at power, a tachometer's RPM: CPR, max_rpm
     robot_bringup.py cpr-turns --wheel 1 --turns 10   counts per rev by turning a wheel by hand
     robot_bringup.py lidar    [--seconds 10]      rate, coverage, ranges (robot stack running)
-    robot_bringup.py speed                        speed_check.py: wheels vs LiDAR (floor, 0.6 m clear)
+    robot_bringup.py speed                        speed_check.py: wheels vs LiDAR (floor, radius + 0.45 m clear)
     robot_bringup.py acc      [--write]           test_acc with room all round (1.0 m or more) and back home (floor)
     robot_bringup.py mark STAGE pass|fail|skip [--summary TEXT]
     robot_bringup.py gate                         exit 0 when the 1-Click may move this robot
@@ -644,9 +644,14 @@ def cmd_speed(robot: Robot, a) -> int:
     import speed_check
     rat = res.get("ratios") or {}
     bad = {k: v for k, v in rat.items() if k in ("lin", "ang", "lat") and not speed_check.fine(v, 0.05)}
-    ok = rc == 0 and bool(rat) and not bad
+    # A negative ratio or a gyro off the LiDAR's yaw rate is a wiring or mounting fault
+    # (speed_check.faults), never a scale to apply.
+    faults = res.get("faults") or []
+    ok = rc == 0 and bool(rat) and not bad and not faults
     summary = ", ".join(f"{k} LiDAR/odom {v:.3f}" for k, v in rat.items())
-    if bad:
+    if faults:
+        summary += " -- " + "; ".join(str(f) for f in faults)
+    elif bad:
         summary += " -- outside 5 %: apply the change printed above (wheel_diameter / angular_scale)"
     say(f"SPEED {'PASS' if ok else 'FAIL'}: {summary or 'no ratios'}")
     bc.mark(robot.name, robot.params, "speed", "pass" if ok else "fail", summary, values=rat, by=a.by)
@@ -715,7 +720,7 @@ def cmd_acc(robot: Robot, a) -> int:
     say("back to where test_acc started, by the LiDAR...")
     home = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} home --snap {snap} "
                        f"--radius {radius:.2f}{stamped}{ocp.holonomic_flag(robot.params)}"
-                       f"{ocp.home_guesses(transcript)}",
+                       f"{ocp.home_guesses(transcript)}{ocp.blind_flags(robot.tgt, look=False)}",
                        timeout=180, distro=distro)
     for ln in (home.stdout or "").splitlines():
         say("  " + ln)
