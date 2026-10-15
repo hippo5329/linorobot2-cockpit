@@ -163,15 +163,28 @@ function buDrawPlot(now) {
   }
 }
 
+// One run of a step at a time: a second click on a step that is running restarted its
+// countdown over the first and sent its command twice. The button stays disabled until the
+// run it started ends.
+function buHold(id, on) {
+  const b = $b(id);
+  if (b) b.disabled = on;
+}
+
 async function buSensorsStill() {
-  if (!(await buTool())) return;
+  if (bu.sensBusy) return;
+  bu.sensBusy = true;
+  buHold("bu-sens-still", true);
+  const release = () => { bu.sensBusy = false; buHold("bu-sens-still", false); };
+  if (!(await buTool())) return release();
   bu.rest = []; bu.moving = []; bu.plot = [];
   $b("bu-sens-verdict").innerHTML = "";
   bu.phase = "rest";
-  await toolSend("sensors 10");
+  if (!(await toolSend("sensors 10"))) { bu.phase = null; return release(); }
   $b("bu-sens-move").disabled = true;
   buCountdown(5, "Hold still", () => {
     bu.phase = null;
+    release();
     $b("bu-sens-move").disabled = false;
     $b("bu-sens-timer").textContent = bu.rest.length ? "Now press ② and turn the robot." : "No readings came: is a sensor fitted?";
   });
@@ -179,10 +192,15 @@ async function buSensorsStill() {
 
 async function buSensorsMove() {
   if (!tool.open) { $b("bu-sens-timer").textContent = "The tool closed: start again with ①."; return; }
+  if (bu.sensBusy) return;
+  bu.sensBusy = true;
+  buHold("bu-sens-still", true);
   bu.phase = "moving";
   $b("bu-sens-move").disabled = true;
   buCountdown(20, "Turn it, tilt it, shake it", async () => {
     bu.phase = null;
+    bu.sensBusy = false;
+    buHold("bu-sens-still", false);
     await toolSend("stop");
     try {
       const v = await buJson("/api/bringup/sensors", { rest: bu.rest, moving: bu.moving });
@@ -199,12 +217,17 @@ async function buSensorsMove() {
 
 // ---------------------------------------------------------------- 2. battery
 async function buBatteryRead() {
-  if (!(await buTool())) return;
+  if (bu.batBusy) return;
+  bu.batBusy = true;
+  buHold("bu-bat-read", true);
+  const release = () => { bu.batBusy = false; buHold("bu-bat-read", false); };
+  if (!(await buTool())) return release();
   bu.batt = []; bu.phase = "battery";
   $b("bu-bat-board").textContent = "reading…";
-  await toolSend("sensors 5");
+  if (!(await toolSend("sensors 5"))) { bu.phase = null; $b("bu-bat-board").textContent = "—"; return release(); }
   setTimeout(async () => {
     bu.phase = null;
+    release();
     await toolSend("stop");
     const v = buMedian(bu.batt);
     bu.batBoard = v;
@@ -304,15 +327,23 @@ function buBuildWheelRows() {
 }
 
 async function buSpin(w) {
-  if (!(await buTool())) return;
+  // One wheel at a time: bu.spin holds one wheel's readings, and a second click sent the
+  // motor command again over the first.
+  if (bu.spinning) return;
+  bu.spinning = true;
+  const spinButtons = (on) => { for (const b of document.querySelectorAll("[data-spin]")) b.disabled = on; };
+  spinButtons(true);
+  const release = () => { bu.spinning = false; spinButtons(false); };
+  if (!(await buTool())) return release();
   const pct = Math.max(10, Math.min(100, parseInt($b("bu-mot-pct").value, 10) || 40));
   const secs = Math.max(2, Math.min(10, parseInt($b("bu-mot-secs").value, 10) || 3));
   bu.spin = { wheel: w, rpms: [], t0: performance.now() / 1000 };
   bu.phase = "spin";
   $b(`bu-mot-enc-${w}`).textContent = "turning…";
-  if (!(await toolSend(`motor ${w} ${pct} ${secs}`))) { bu.phase = null; return; }
+  if (!(await toolSend(`motor ${w} ${pct} ${secs}`))) { bu.phase = null; return release(); }
   setTimeout(async () => {
     bu.phase = null;
+    release();
     await toolSend("stop");
     const rpm = buMedian(bu.spin.rpms) ?? 0;
     bu.mot[w] = { rpm };
@@ -512,6 +543,9 @@ function buOneClickState() {
   const grp = $b("grp-cockpit-real");
   if (!grp || !bu.list) return;
   grp.hidden = !bu.list.real_robot;
+  // The real-robot fields of Run options (goal, room safety) follow the same answer.
+  for (const el of document.querySelectorAll(".cockpit-real-only")) el.hidden = !bu.list.real_robot;
+  if (typeof window !== "undefined" && window.__syncRunOptions) window.__syncRunOptions();
   const st = $b("cockpit-bringup-state");
   if (st) st.textContent = bu.list.gate_ok ? "Bring-up: every bench step has passed."
     : `Bring-up not complete -- the 1-Click will refuse: ${bu.list.missing.join("; ")}`;
@@ -521,8 +555,17 @@ async function buOneClickGate() {
   // runOneClick (app-workflow.js) asks before it starts: null = go, else the reason it stops.
   await buRefresh();
   if (!bu.list || !bu.list.real_robot || bu.list.gate_ok) return null;
-  if ($b("cockpit-skip-bringup")?.checked) return null;
-  return `This real robot's bring-up is not complete (Hardware Tests > Real-robot bring-up): ${bu.list.missing.join("; ")}.`;
+  const missing = bu.list.missing.join("; ");
+  const box = $b("cockpit-skip-bringup");
+  if (box?.checked) {
+    // The override is asked each time, naming what it skips: a tick left from an earlier run
+    // (or another robot) must not move this one unasked.
+    if (window.confirm(`Run WITHOUT a complete bring-up?\n\nNot done: ${missing}.\n\n`
+                       + "The robot moves with these steps unchecked. At your own risk.")) return null;
+    box.checked = false;
+    return `Not started: the bring-up is not complete (${missing}).`;
+  }
+  return `This real robot's bring-up is not complete (Hardware Tests > Real-robot bring-up): ${missing}.`;
 }
 
 function buInit() {

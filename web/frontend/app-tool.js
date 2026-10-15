@@ -15,6 +15,9 @@ const tool = {
   beatTimer: null,
   stateTimer: null,
   running: null,
+  // The robot the session was opened for. STOP, commands and beats name it: resolved by the
+  // ACTIVE robot instead, a header switch made STOP answer 404 with a wheel still turning.
+  robot: null,
   wheels: 4,
   simulatedWheels: false,
   scanThenLeave: false,
@@ -25,9 +28,14 @@ const tool = {
 
 const $t = (id) => document.getElementById(id);
 
-function toolStatus(text) {
+function toolStatus(text, failed = false) {
   const el = $t("tool-status");
-  if (el) el.textContent = text || "";
+  if (el) { el.textContent = text || ""; el.classList.toggle("tool-stop-failed", !!failed); }
+}
+
+// The body of every request about the session: its robot, when the page knows it.
+function toolBody(extra = {}) {
+  return JSON.stringify(tool.robot ? { robot: tool.robot, ...extra } : extra);
 }
 
 function toolTermAppend(line) {
@@ -61,6 +69,8 @@ function toolSetControls() {
   if (st) st.textContent = open ? (tool.running ? `running ${tool.running}` : "in tool") : "closed";
   const stop = $t("btn-tool-stop");
   if (stop) stop.hidden = !(open && tool.running);
+  // At phone width STOP is a bar fixed over the bottom of the page: room is made for it.
+  document.body?.classList.toggle("tool-stop-on", !!(open && tool.running));
   // A 2wd robot has wheels 1 and 2 only (the firmware refuses 3 and 4).
   for (const n of [3, 4]) {
     const w = document.querySelector(`#tool-wheel input[name="tool-wheel"][value="${n}"]`);
@@ -83,7 +93,7 @@ async function toolRefreshState() {
     if (ref) { ref.hidden = !s.refusal; ref.textContent = s.refusal || ""; }
     const op = $t("btn-tool-open");
     if (op && s.refusal) op.disabled = true;
-    if (s.open && !tool.es) toolAttach();
+    if (s.open && !tool.es) { tool.robot = s.robot || tool.robot; toolAttach(); }
   } catch { /* the next refresh says it */ }
 }
 
@@ -158,12 +168,15 @@ function toolI2cTable(j) {
 
 async function toolAttach() {
   const ticket = typeof streamTicket === "function" ? await streamTicket() : "";
-  const es = new EventSource("/api/tool/stream" + (ticket ? `?ticket=${encodeURIComponent(ticket)}` : ""));
+  const q = [];
+  if (ticket) q.push(`ticket=${encodeURIComponent(ticket)}`);
+  if (tool.robot) q.push(`robot=${encodeURIComponent(tool.robot)}`);
+  const es = new EventSource("/api/tool/stream" + (q.length ? `?${q.join("&")}` : ""));
   tool.es = es;
   es.onmessage = (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
-    if (m.watch) { tool.watch = m.watch; tool.open = true; }
+    if (m.watch) { tool.watch = m.watch; tool.open = true; if (m.robot) tool.robot = m.robot; }
     if (m.line !== undefined) {
       if (!toolParse(m.line)) toolTermAppend(m.line);
     }
@@ -180,7 +193,7 @@ async function toolAttach() {
   tool.beatTimer = setInterval(() => {
     if (tool.watch == null) return;
     fetch("/api/tool/beat", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ watch: tool.watch }) }).catch(() => {});
+      body: toolBody({ watch: tool.watch }) }).catch(() => {});
   }, 1000);
   toolSetControls();
 }
@@ -191,6 +204,7 @@ function toolDetached(why) {
   tool.open = false;
   tool.watch = null;
   tool.running = null;
+  tool.robot = null;
   toolStatus(why);
   toolSetControls();
 }
@@ -206,6 +220,7 @@ async function toolOpen() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toolStatus(j.detail || `Could not open the tool (${r.status}).`); if (op) op.disabled = false; return false; }
     toolStatus("In the tool. The robot is out of micro-ROS until Back to robot.");
+    tool.robot = j.robot || (typeof state !== "undefined" ? state.robot_name : null) || null;
     // Open from the moment the backend holds the session -- not from the stream's first
     // message: a step that opens the tool and sends at once (the Bring-up card) found it
     // "closed" and was told "Enter the tool first" (the 2026-10-14 Sim MCU walk).
@@ -226,7 +241,7 @@ const TOOL_DRIVES = new Set(["motor", "motors", "ramp", "acc"]);
 async function toolSend(line) {
   if (!tool.open) { toolStatus("Enter the tool first."); return false; }
   const r = await fetch("/api/tool/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ line }) });
+    body: toolBody({ line }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { toolStatus(j.detail || "Refused."); return false; }
   // Command and response: the board answers every line (ok / fail); the backend waits for
@@ -258,9 +273,21 @@ async function toolSend(line) {
   return true;
 }
 
+// A STOP that did not reach the board must not read "Stop sent.": the wheel may still turn.
+const TOOL_STOP_FAILED = "STOP FAILED -- press Esc / unplug the motors' power";
+
 async function toolStop() {
-  try { await fetch("/api/tool/stop", { method: "POST" }); } catch { /* the board's deadman still holds */ }
-  toolStatus("Stop sent.");
+  let ok = false, why = "";
+  try {
+    const r = await fetch("/api/tool/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: toolBody() });
+    ok = r.ok;
+    if (!ok) why = ((await r.json().catch(() => ({}))).detail) || `HTTP ${r.status}`;
+  } catch (e) { why = e.message; }
+  if (ok) { toolStatus("Stop sent."); return true; }
+  toolStatus(`${TOOL_STOP_FAILED} (${why})`, true);
+  if (typeof showToast === "function") showToast(`⛔ ${TOOL_STOP_FAILED}`, 10000);
+  return false;
 }
 
 async function toolClose() {
@@ -321,11 +348,11 @@ function toolInit() {
     if (!line) { toolStop(); return; }          // an empty line stops, as on the board
     toolSend(line).then((ok) => { if (ok) inp.value = ""; });
   });
-  // Esc stops, anywhere on the Hardware Tests tab.
+  // Esc stops: anywhere on the Hardware Tests tab while the tool is open, and on every other
+  // tab while a command runs (STOP itself shows on every tab then).
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (!$t("tab-hw-tests")?.classList.contains("active")) return;
-    if (tool.open) toolStop();
+    if (e.key !== "Escape" || !tool.open) return;
+    if ($t("tab-hw-tests")?.classList.contains("active") || tool.running) toolStop();
   });
   // The Sensors tab's I2C card: open the tool, scan once, show the table, leave.
   $t("btn-auto-detect-i2c")?.addEventListener("click", async () => {

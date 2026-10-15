@@ -1070,6 +1070,20 @@ async function selectRobot(name, byUser = true) {
     return;
   }
   if (name === state.robot_name) return;
+  // The tool holds a robot's board out of micro-ROS (app-tool.js): switching the header to
+  // another robot left STOP, Back to robot and the bring-up steps aimed at a robot nobody
+  // could see. Leave the tool first.
+  if (typeof tool !== "undefined" && tool.open) {
+    const held = tool.robot || state.robot_name;
+    logLine(`[console] robot not switched: the tool is open for ${held}. Press Back to robot on Hardware Tests first.`);
+    if (typeof showActionBanner === "function") {
+      showActionBanner("Leave the tool first.",
+        `The tool is open for ${held}: press Back to robot on Hardware Tests, then switch robots.`);
+    }
+    const ri = document.getElementById("hdr-robot-name");
+    if (ri) ri.value = state.robot_name;
+    return;
+  }
   if (byUser) userChoseController = true;   // a real change of robot, by the user
   // Autosave (app-hardware.js): the robot being left keeps its last edits, and a NEW name is
   // created from what is on screen.
