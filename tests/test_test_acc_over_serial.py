@@ -23,6 +23,10 @@ RUN = [b"[fw] linorobot2_hardware app=test_acc\r\nIDENT gains kp=0.6\r\nIDENT pl
 class FakeLink:
     def __init__(self, chunks, boom=False):
         self.chunks, self.boom, self.s, self.reopened = list(chunks), boom, None, 0
+        self.written = []
+
+    def write(self, data):
+        self.written.append(data)
 
     def open(self, timeout=15.0):
         self.s = object()
@@ -67,12 +71,15 @@ def test_a_silent_tty_is_reopened():
     assert src.link.reopened == 1
 
 
-def _wire(monkeypatch, src, calls):
+def _wire(monkeypatch, src, calls, holders=(4242,), paused=(4242,), agents=()):
+    import flash_mcu
     monkeypatch.setattr(tar, "SerialSource", lambda port, baud, env: src)
-    monkeypatch.setattr(tar, "pause_holders", lambda port: calls.append("pause") or [4242])
+    monkeypatch.setattr(tar, "pause_holders", lambda port: calls.append("pause") or list(paused))
+    monkeypatch.setattr(flash_mcu, "_holders_of", lambda port: list(holders))
+    monkeypatch.setattr(tar, "agents_on", lambda port: list(agents))
     monkeypatch.setattr(tar, "resume", lambda pids: calls.append(("resume", tuple(pids))))
     monkeypatch.setattr(tar, "write_app", lambda a, app: calls.append(app) or True)
-    src.open = lambda: True
+    src.open = lambda timeout=15.0: True
 
 
 def test_the_serial_run_pauses_the_agent_reads_and_ends_on_base(monkeypatch, tmp_path):
@@ -133,9 +140,8 @@ def test_an_esp32_or_rp2_reader_lets_go_of_the_tty_for_each_env_write(monkeypatc
 
 def test_the_console_is_read_at_the_micro_ros_rate(monkeypatch):
     seen, src = {}, _source(RUN)
+    _wire(monkeypatch, src, [], holders=(), paused=())
     monkeypatch.setattr(tar, "SerialSource", lambda port, baud, env: seen.update(baud=baud) or src)
-    monkeypatch.setattr(tar, "pause_holders", lambda port: [])
-    monkeypatch.setattr(tar, "write_app", lambda a, app: True)
     tar.run_serial(_args(env="unoq", baud=921600, console_baud=4000000))
     assert seen["baud"] == 4000000
 
@@ -170,3 +176,124 @@ def test_micro_ros_is_proved_back_by_data_after_each_env_write():
         assert 'require_message="header.stamp"' in OCP[i - 300:i], msg
     assert "timeout 15 ros2 topic info --no-daemon {topic_name}" in OCP
     assert 'wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=distro, require_message="header.stamp")' in BRINGUP
+
+
+# ---- the cleanup always runs, the tool stops at once, and a run never starts unpaused ----
+
+def test_the_tool_is_stopped_on_its_console_before_app_base(monkeypatch):
+    calls, src = [], _source(RUN)
+    _wire(monkeypatch, src, calls)
+    link = src.link
+    link.write = lambda data: calls.append(("console", data))
+    assert tar.run_serial(_args()) == 0
+    i = calls.index(("console", tar.CONSOLE_STOP))
+    assert calls.index("test_acc") < i < calls.index("base")
+
+
+def test_an_agent_that_could_not_be_paused_refuses_before_anything_is_written(monkeypatch, capsys):
+    calls = []
+    _wire(monkeypatch, _source(RUN), calls, holders=(4242,), paused=())
+    assert tar.run_serial(_args()) == 1
+    assert "test_acc" not in calls and "base" not in calls
+    out = capsys.readouterr().out
+    assert "TEST_ACC_REFUSED: pid 4242 holds /dev/ttyHS1 and could not be paused" in out
+
+
+def test_an_agent_this_user_cannot_see_refuses_too(monkeypatch, capsys):
+    calls = []
+    _wire(monkeypatch, _source(RUN), calls, holders=(), paused=(), agents=(777,))
+    assert tar.run_serial(_args()) == 1
+    assert "test_acc" not in calls
+    assert "micro-ROS agent (pid 777) runs on /dev/ttyHS1" in capsys.readouterr().out
+
+
+def test_no_agent_at_all_runs(monkeypatch):
+    calls = []
+    _wire(monkeypatch, _source(RUN), calls, holders=(), paused=(), agents=())
+    assert tar.run_serial(_args()) == 0 and "test_acc" in calls
+
+
+def test_an_agent_is_counted_only_when_it_names_this_tty(monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    for pid, argv in ((11, ["micro_ros_agent", "serial", "--dev", "/dev/ttyHS1"]),
+                      (12, ["micro_ros_agent", "udp4", "--port", "8888"]),
+                      (13, ["bash", "-c", "cat /dev/ttyHS1"])):
+        (proc / str(pid)).mkdir(parents=True)
+        (proc / str(pid) / "cmdline").write_bytes("\0".join(argv).encode())
+    real_listdir, real_open = os.listdir, open
+
+    def listdir(p):
+        return real_listdir(proc) if p == "/proc" else real_listdir(p)
+
+    def fake_open(p, *a, **k):
+        if isinstance(p, str) and p.startswith("/proc/") and p.endswith("/cmdline"):
+            p = str(proc / p.split("/")[2] / "cmdline")
+        return real_open(p, *a, **k)
+    monkeypatch.setattr(tar.os, "listdir", listdir)
+    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(tar, "_ns_depth", lambda pid: 1)
+    assert tar.agents_on("/dev/ttyHS1") == [11]
+
+
+def _with_handlers(fn):
+    import signal
+    old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        return fn()
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+
+
+def test_sigterm_mid_run_still_stops_writes_base_and_lets_the_agent_go(monkeypatch, capsys):
+    import signal
+    calls = []
+
+    class Killed(FakeLink):
+        def read(self):
+            os.kill(os.getpid(), signal.SIGTERM)       # the 1-Click's timeout, the UI's cancel
+            return b""
+    src = _source([])
+    src.link = Killed([])
+    src.link.open()
+    src.link.write = lambda data: calls.append(("console", data))
+    _wire(monkeypatch, src, calls)
+    argv = ["--params", "c.yaml", "--env", "unoq", "--port", "/dev/ttyHS1", "--baud", "4000000",
+            "--controller", "unoq", "--serial", "--timeout", "30"]
+    assert _with_handlers(lambda: tar.main(argv)) == 1
+    assert calls[:2] == ["pause", "test_acc"]
+    assert ("console", tar.CONSOLE_STOP) in calls
+    assert calls[-2:] == ["base", ("resume", (4242,))]
+    assert "TEST_ACC_FAILED: interrupted" in capsys.readouterr().out
+
+
+def test_a_second_signal_waits_for_the_cleanup(monkeypatch):
+    import signal
+    calls = []
+    _wire(monkeypatch, _source([], boom=True), calls)
+
+    def write_app(a, app):
+        calls.append(app)
+        if app == "base":
+            os.kill(os.getpid(), signal.SIGTERM)      # again, while app=base is being written
+            calls.append("base done")
+        return True
+    monkeypatch.setattr(tar, "write_app", write_app)
+
+    def run():
+        tar.install_signal_handlers()
+        try:
+            tar.run_serial(_args())
+        except KeyboardInterrupt:
+            pass
+    _with_handlers(run)
+    assert calls[-3:] == ["base", "base done", ("resume", (4242,))]
+
+
+def test_resume_lets_each_pid_go_once(monkeypatch):
+    sent = []
+    monkeypatch.setattr(tar.os, "kill", lambda pid, sig: sent.append(pid))
+    pids = [5, 6]
+    tar.resume(pids)
+    tar.resume(pids)
+    assert sent == [5, 6] and pids == []
