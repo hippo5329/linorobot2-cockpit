@@ -93,3 +93,21 @@ def test_a_wheel_spin_runs_once_and_its_buttons_wait_for_it(tmp_path):
     assert r["during"]["sent"] == ["motor 1 40 2"], "the second click sent nothing"
     assert r["during"]["spin1"] is True and r["during"]["spin2"] is True
     assert r["after"]["spin1"] is False and r["after"]["sent"] == ["motor 1 40 2", "stop"]
+
+
+ATTACH = STUBS + r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+eval(src.replace(/document\.addEventListener\("DOMContentLoaded", toolInit\);/, "") + `
+toolAttach = () => { tool.attached = true; };
+toolRefreshState().then(() => console.log(JSON.stringify({ attached: !!tool.attached,
+  status: el("tool-status").textContent })));`);
+"""
+
+
+@needs_node
+def test_a_session_already_open_says_so_when_the_page_attaches(tmp_path):
+    r = run(tmp_path, ATTACH, "app-tool.js",
+            {"status": 200, "body": {"open": True, "robot": "robot1", "wifi": False, "refusal": ""}})
+    assert r["attached"] is True
+    assert "already open" in r["status"] and "Back to robot" in r["status"]
+

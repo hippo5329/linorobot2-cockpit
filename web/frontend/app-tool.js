@@ -93,7 +93,14 @@ async function toolRefreshState() {
     if (ref) { ref.hidden = !s.refusal; ref.textContent = s.refusal || ""; }
     const op = $t("btn-tool-open");
     if (op && s.refusal) op.disabled = true;
-    if (s.open && !tool.es) { tool.robot = s.robot || tool.robot; toolAttach(); }
+    if (s.open && !tool.es) {
+      // A session the backend already holds (an earlier visit, another window): attach, and
+      // say so -- Enter tool is disabled then, and without a word the page looked broken.
+      tool.robot = s.robot || tool.robot;
+      toolAttach();
+      toolStatus(`In the tool on ${tool.robot || "this robot"} -- it was already open (another window ` +
+                 "or an earlier visit). Back to robot ends it.");
+    }
   } catch { /* the next refresh says it */ }
 }
 
