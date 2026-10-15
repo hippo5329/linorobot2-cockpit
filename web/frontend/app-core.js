@@ -193,7 +193,9 @@ async function boardMatchesOrWarn(controller, action) {
   // A real robot with NO board attached is refused too, not run on the Sim MCU in its
   // place: a reference design is a real robot, selectable without its board, but its
   // actions need that board (user, 2026-10-06). A 1-Click pressed on one ran bare_sim.
-  if (!mm && s && s.board_on_bus === false && !s.mcu_detected && activeRobotIsReal()) {
+  // A Wi-Fi robot (micro-ROS over udp4) has no board on this machine's bus at all: it is
+  // reached over the air, and its Bringup must not be refused for that (2026-10-15, the TS100).
+  if (!mm && s && s.board_on_bus === false && !s.mcu_detected && !s.board_on_wifi && activeRobotIsReal()) {
     const want = siliconOf(controller);
     const title = `${action} blocked: no board attached.`;
     const detail = `${state.robot_name} is a real robot: ${action} runs it on its own ${want} board, ` +
@@ -1540,7 +1542,9 @@ async function noBoardSwitch(s) {
   }
   if (!el) return;
   const onSim = state.robot_name === "bare_sim";
-  if (absent && !onSim) {
+  // A real robot on Wi-Fi (udp4) is never on this bus: nothing is missing (the TS100, 2026-10-15).
+  const overTheAir = !!s.board_on_wifi && !isGeneratedRobot(state.robot_name);
+  if (absent && !onSim && !overTheAir) {
     // A board robot with nothing plugged in: say what will happen rather than overriding.
     el.innerHTML = isGeneratedRobot(state.robot_name)
       ? "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +

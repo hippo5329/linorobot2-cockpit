@@ -240,6 +240,10 @@ def get_status(controller: Optional[str] = None):
         # switches to the simulated MCU only when this is false -- the same rule
         # the 1-Click pipeline falls back on (no_board_attached).
         "board_on_bus": bool(mcu_detected or _bus_devices()),
+        # A robot whose micro-ROS link is Wi-Fi (udp4) has no board on this machine's bus by
+        # design: the TS100's GenDrv is reached over the air, so "no board attached" is not a
+        # reason to refuse its Bringup (the bringup health check says whether it answered).
+        "board_on_wifi": _transport_is_wifi(controller.get("transport")),
         "mcu_mismatch": mcu_mismatch,
         "board_id": board_id,
         "host_ip": ports_info.get("host_ip", ""),
@@ -357,6 +361,12 @@ async def api_gitinfo_branch(request: Request):
         yield f"data: {json.dumps({'exit_code': proc.returncode, 'branch': branch})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _transport_is_wifi(transport) -> bool:
+    """mcu_env's own reading of base_controller.transport (udp4 and its spellings)."""
+    import mcu_env
+    return mcu_env.transport_is_wifi(transport)
 
 
 def _bus_devices() -> list:

@@ -240,3 +240,30 @@ def test_the_mode_is_the_robots_not_a_select():
     assert 'id="hdr-run-mode"' in html
     wf = open(os.path.join(ROOT, "web", "frontend", "app-workflow.js")).read()
     assert "const mode = robotRunMode();" in wf
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_wifi_robot_with_no_board_on_the_bus_may_bring_up(tmp_path):
+    """A real robot on micro-ROS over Wi-Fi (udp4) is never on this machine's bus: the TS100's
+    GenDrv answered over the air while the Bringup button refused it "no board attached"
+    (2026-10-15). /api/status says board_on_wifi; the guard lets it through. A USB robot with
+    no board stays refused."""
+    assert guard(tmp_path, dict(NO_BOARD, board_on_wifi=True), "ts100_gendrv", "gendrv", "real")["ok"] is True
+    res = guard(tmp_path, dict(NO_BOARD, board_on_wifi=False), "ts100_gendrv", "gendrv", "real")
+    assert res["ok"] is False and "no board attached" in res["banners"][0], res
+
+
+def test_the_status_says_whether_the_link_is_wifi():
+    src = open(os.path.join(ROOT, "web", "backend", "routes_status.py")).read()
+    assert '"board_on_wifi": _transport_is_wifi(controller.get("transport"))' in src
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import mcu_env
+    assert mcu_env.transport_is_wifi("udp4") and not mcu_env.transport_is_wifi("serial")
+
+
+def test_the_header_does_not_call_a_wifi_robot_boardless():
+    js = open(os.path.join(ROOT, "web", "frontend", "app-core.js")).read()
+    a = js.index("async function noBoardSwitch(")
+    body = js[a:js.index("\n}\n", a)]
+    assert "const overTheAir = !!s.board_on_wifi && !isGeneratedRobot(state.robot_name);" in body
+    assert "if (absent && !onSim && !overTheAir) {" in body
