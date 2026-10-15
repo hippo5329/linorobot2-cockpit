@@ -62,3 +62,39 @@ def test_the_body_marks_home_after_the_lidar_return():
     body = src[src.index("def _test_acc_body"):]
     i = body.index('state["home"] = True')
     assert body.index("return \"test_acc: not back where it started") < i < body.index("changed = drivetrain_report.tune_from_test_acc")
+
+
+def test_the_ekf_is_stopped_before_the_drive_home_and_a_refusal_says_why(monkeypatch, capsys, tmp_path):
+    """The drive home is closed on /odom, which ran off for the whole of test_acc (a TS100,
+    2026-10-15: 258 m, the drive home refused, the EKF never set back). Once the board is
+    back, the EKF goes to the start snapshot's pose BEFORE the drive home; a refused drive
+    home prints its own reason."""
+    ocp = _load()
+    calls = []
+
+    def clearance_step(args, params, cfg, need, save=None, max_travel=None):
+        open(save, "w").write('{"odom": [0.4, -0.1, 0.2]}')
+        return True
+    monkeypatch.setattr(ocp, "clearance_step", clearance_step)
+    monkeypatch.setattr(ocp, "test_acc_room", lambda params, c: 1.0)
+    monkeypatch.setattr(ocp, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(ocp, "run_streamed", lambda *a, **k: (calls.append("test_acc"), types.SimpleNamespace(returncode=0))[1])
+    monkeypatch.setattr(ocp, "wait_for_topic", lambda *a, **k: True)
+    monkeypatch.setattr(ocp, "ekf_set_pose", lambda p, distro: (calls.append(("set", p)), True)[1])
+    monkeypatch.setattr(ocp, "wants_stamped_cmd_vel", lambda *a: False)
+    monkeypatch.setattr(ocp, "holonomic_flag", lambda p: "")
+    monkeypatch.setattr(ocp, "home_guesses", lambda t: "")
+    monkeypatch.setattr(ocp, "blind_flags", lambda c, look=False: "")
+
+    def run_ros(cmd, timeout=None, distro=None):
+        calls.append("home")
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="HOME REFUSED: /odom moved 1.2 m at rest")
+    monkeypatch.setattr(ocp, "run_ros", run_ros)
+    monkeypatch.setitem(sys.modules, "gen_firmware_header", types.SimpleNamespace(nav2_robot_radius=lambda p: 0.2))
+    args = types.SimpleNamespace(distro="jazzy", test_acc_clearance=1.0)
+    state = {}
+    msg, tuned = ocp._test_acc_body(args, {}, {"transport": "serial", "baudrate": 921600}, "p.yaml", "esp32",
+                                    "/dev/ttyUSB0", 921600, "esp32", "r", sim=False, state=state)
+    assert calls == ["test_acc", ("set", (0.4, -0.1, 0.2)), "home"]
+    assert tuned is None and "not back where it started" in msg and "home" not in state
+    assert "HOME REFUSED: /odom moved 1.2 m at rest" in capsys.readouterr().out

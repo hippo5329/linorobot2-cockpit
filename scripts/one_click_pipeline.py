@@ -1754,6 +1754,16 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
                               require_message="header.stamp"):
             return "test_acc: micro-ROS did not come back after app=base", None
         wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
+        # The drive home is closed on /odom, and the EKF has dead-reckoned with no measurements
+        # for the whole of test_acc (2026-10-15, a TS100: 1-3 m/s along a frozen heading, 258 m
+        # by the end; the drive home refused and the EKF was never set back). Stop it first:
+        # the snapshot's pose, at rest. Home places the robot by the LiDAR and needs only the
+        # odometry's increments to be true; the pose is set again once it is there.
+        pose_home = (state or {}).get("pose_home")
+        if pose_home:
+            ok = ekf_set_pose(pose_home, args.distro)
+            print(f"  the EKF stopped for the drive home (set to the start snapshot's pose): "
+                  f"{'done' if ok else 'FAILED (set_pose did not answer)'}")
     radius = gen_firmware_header.nav2_robot_radius(params)
     stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
     print("  Back to where test_acc started, by the LiDAR...")
@@ -1764,6 +1774,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     for ln in (home.stdout or "").splitlines():
         print(ln if ln.startswith("  ") else "  " + ln)
     if home.returncode != 0:
+        for ln in (home.stderr or "").strip().splitlines()[-8:]:
+            print("  | " + ln)
         return "test_acc: not back where it started (the map and the odometry now disagree)", None
     if state is not None:
         state["home"] = True
