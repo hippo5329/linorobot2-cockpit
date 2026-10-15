@@ -1206,9 +1206,12 @@ function initCockpitDashboard() {
     if (gn) gn.textContent = !full ? "(full mission only)" : (explore ? "(used when exploration is off)" : "");
     const tac = $w("lbl-cockpit-test-acc-clearance");
     if (tac) tac.hidden = !(testAccCheck?.checked && !saved);
+    // How far to creep means nothing when creeping is off.
+    const inchMax = $w("cockpit-inch-max");
+    if (inchMax) inchMax.disabled = !ticked("cockpit-inch", true);
   }
   window.__syncRunOptions = syncRunOptions;
-  for (const id of ["cockpit-run-scope", "cockpit-explore", "cockpit-no-nav2", "cockpit-test-acc"]) {
+  for (const id of ["cockpit-run-scope", "cockpit-explore", "cockpit-no-nav2", "cockpit-test-acc", "cockpit-inch"]) {
     $w(id)?.addEventListener("change", syncRunOptions);
   }
   for (const r of document.querySelectorAll('input[name="cockpit-map-source"]')) r.addEventListener("change", syncRunOptions);
