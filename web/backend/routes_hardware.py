@@ -5,6 +5,7 @@ as an import side effect (main.py imports this module). Shared state and
 helpers come from core.py. See core.py for the split's contract.
 """
 import json
+import math
 import os
 import queue
 import re
@@ -13,8 +14,9 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from typing import Optional
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from core import (
     REPO_ROOT,
@@ -632,19 +634,51 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
     }
 
 
+def maps_dir() -> str:
+    return os.path.join(REPO_ROOT, "maps")
+
+
+# A saved map's name: the file stem under maps/, never a path.
+MAP_NAME_RE = r"^[A-Za-z0-9_-]{1,64}$"
+
+
+def saved_map_names():
+    d = maps_dir()
+    if not os.path.isdir(d):
+        return []
+    return sorted(f[:-5] for f in os.listdir(d)
+                  if f.endswith(".yaml") and re.match(MAP_NAME_RE, f[:-5]))
+
+
+
 @app.get("/api/workflow/one-click/stream")
-def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int = 15, no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim", flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto", robot: Optional[str] = None, explore: bool = True, world: Optional[str] = None, world_map: Optional[str] = None, skip_bringup_check: bool = False, test_acc: bool = False, goal_x: Optional[float] = None, goal_y: Optional[float] = None):
-    # `robot` is not optional decoration: without it the pipeline resolves the
-    # config from --controller alone, and where two robots declare the same
-    # base_controller it takes the alphabetically first one. Measured with
-    # rover_pico2 selected in the UI, on a box whose config dir also holds
-    # linorobot2_config.yaml (also `pico2`):
-    #
-    #   Requested: robot config 'linorobot2_config.yaml' -> base_controller 'pico2'
-    #
-    # So the run used another robot's kinematics, pins, EKF, SLAM and Nav2
-    # parameters while the header displayed "Robot: rover_pico2" throughout.
-    # The UI knows the robot; it simply was not sending it.
+def stream_one_click_workflow(
+        controller: Optional[str] = None,
+        # The mapping spin's length, used only when Nav2 is skipped; the pipeline sleeps for
+        # it, so a negative value crashed the run half-way (time.sleep(-1)).
+        explore_sec: int = Query(15, ge=5, le=120),
+        no_nav2: bool = False, distro: Optional[str] = None, mode: Optional[str] = "sim",
+        flash_firmware: bool = False, auto_update: bool = True, firmware: str = "auto",
+        robot: Optional[str] = None, explore: bool = True, world: Optional[str] = None,
+        world_map: Optional[str] = None, skip_bringup_check: bool = False, test_acc: bool = False,
+        goal_x: Optional[float] = Query(None, ge=-50.0, le=50.0),
+        goal_y: Optional[float] = Query(None, ge=-50.0, le=50.0),
+        # The Run options (Operations > Run options): each one a pipeline flag, sent only
+        # when the page has a value, so an empty field keeps the pipeline's own default.
+        topics_only: bool = False, no_drive_test: bool = False,
+        saved_map: Optional[str] = Query(None, pattern=MAP_NAME_RE),
+        map_output: Optional[str] = Query(None, pattern=MAP_NAME_RE),
+        explore_timeout: Optional[int] = Query(None, ge=60, le=3600),
+        explore_min_area: Optional[float] = Query(None, ge=0.0, le=2000.0),
+        explore_beyond_room: bool = False,
+        goal_round_trips: Optional[int] = Query(None, ge=0, le=50),
+        require_goal: bool = False,
+        goal_tolerance: Optional[float] = Query(None, ge=0.05, le=1.0),
+        home_yaw_tolerance_deg: Optional[float] = Query(None, ge=1.0, le=180.0),
+        clearance: Optional[float] = Query(None, ge=0.0, le=2.0),
+        inch: bool = True,
+        inch_max: Optional[float] = Query(None, ge=0.1, le=2.0),
+        test_acc_clearance: Optional[float] = Query(None, ge=0.6, le=3.0)):
     params = load_params()
     selected_controller = controller or get_controller_name(params, "pico2")
     pipeline_script = os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")
@@ -669,10 +703,21 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
         "--mode", m_str,
         "--distro", d_str,
     ]
+    map_path = None
+    if saved_map:
+        # Only a map this cockpit lists: a name, never a path (the pattern forbids slashes).
+        if saved_map not in saved_map_names():
+            raise HTTPException(status_code=400, detail=f"saved_map: no map named '{saved_map}' in maps/")
+        map_path = os.path.join(maps_dir(), saved_map + ".yaml")
+        # On a saved map the robot localises with AMCL from the map's origin: frontier
+        # exploration would map again, and test_acc needs the SLAM map it runs on.
+        explore = False
+        test_acc = False
     if robot:
         cmd.extend(["--robot", robot])
-    if not explore:
-        cmd.append("--no-explore")
+    # Always said: the pipeline's own default turns exploration off when --require-goal is
+    # given, and the page's tick box is what the user sees.
+    cmd.append("--explore" if explore else "--no-explore")
     if world:
         cmd.extend(["--world", world])
     if world_map:
@@ -694,38 +739,80 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
     # The sim world's goal is (3.0, 0.0) behind its wall; a real room has its own.
     for flag, v in (("--goal-x", goal_x), ("--goal-y", goal_y)):
         if v is not None:
-            if not -50.0 <= float(v) <= 50.0:
-                raise HTTPException(status_code=400, detail=f"{flag}: within 50 m")
             cmd.extend([flag, f"{float(v):.3f}"])
+    if topics_only:
+        cmd.append("--topics-only")
+    if no_drive_test:
+        cmd.append("--no-drive-test")
+    if map_path:
+        cmd.extend(["--map", map_path])
+    if map_output:
+        cmd.extend(["--map-output", os.path.join(maps_dir(), map_output)])
+    if explore_timeout is not None:
+        cmd.extend(["--explore-timeout", str(int(explore_timeout))])
+    if explore_min_area is not None:
+        cmd.extend(["--explore-min-area", f"{float(explore_min_area):g}"])
+    if explore_beyond_room:
+        cmd.append("--explore-beyond-room")
+    if goal_round_trips is not None:
+        cmd.extend(["--goal-round-trips", str(int(goal_round_trips))])
+    if require_goal:
+        cmd.append("--require-goal")
+    if goal_tolerance is not None:
+        cmd.extend(["--goal-tolerance", f"{float(goal_tolerance):g}"])
+    if home_yaw_tolerance_deg is not None:
+        # The page asks in degrees; the pipeline takes radians.
+        cmd.extend(["--home-yaw-tolerance", f"{math.radians(float(home_yaw_tolerance_deg)):.4f}"])
+    if clearance is not None:
+        cmd.extend(["--clearance", f"{float(clearance):g}"])
+    if not inch:
+        cmd.append("--no-inch")
+    if inch_max is not None:
+        cmd.extend(["--inch-max", f"{float(inch_max):g}"])
+    if test_acc_clearance is not None:
+        cmd.extend(["--test-acc-clearance", f"{float(test_acc_clearance):g}"])
+
+    # Reserve the run NOW, before the response streams: two requests a moment apart (a
+    # double click, the header's Start and the card's) both found nothing running while
+    # the first one's pipeline was still being started, and two pipelines drove one robot.
+    refusal = one_click_refusal()
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+    with _ONE_CLICK_LOCK:
+        if _one_click_busy():
+            raise HTTPException(status_code=409, detail="A 1-Click run is already in progress: Abort it first.")
+        _ONE_CLICK["reserved_at"] = time.monotonic()
 
     def event_generator():
-        if _one_click_running():
-            yield f"event: output\ndata: {json.dumps({'line': '>>> A 1-Click run is already in progress; Stop it first.'})}\n\n"
-            yield f"event: done\ndata: {json.dumps({'exit_code': 1})}\n\n"
-            return
-        # A bringup started from the Bringup tab is this backend's own child, and
-        # the pipeline cannot see it (robot_stack records only what a 1-Click run
-        # left). Started over one, the run brought up a second stack beside it:
-        # two micro-ROS agents fighting for the serial port, two rosbridges for
-        # 9090, and the run gone within a minute (browser, 2026-10-04). 1-Click
-        # replaces what is running, so it replaces this too -- and says so.
-        if bringup_runner.is_busy():
-            bringup_runner.kill()
-            msg = (">>> Stopped the bringup started from the Bringup tab: 1-Click starts its own, "
-                   "and two would fight over the board and the rosbridge port.")
-            yield f"event: output\ndata: {json.dumps({'line': msg})}\n\n"
-        start_line = (f">>> Starting One-Click Pipeline on robot: {robot or '<resolved from controller>'}, "
-                      f"controller: {selected_controller} "
-                      f"(distro: {d_str}, mode: {m_str}, explore: {'on' if explore else 'off'}"
-                      + (f", world: {world}" if world else "")
-                      + f", auto-update: {'on' if auto_update else 'off'})")
-        yield f"event: output\ndata: {json.dumps({'line': start_line})}\n\n"
-        # Its own process group, so Stop can signal the run and everything it
-        # started in that group -- and nothing else.
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                start_new_session=True)
-        _ONE_CLICK["proc"] = proc
+        proc = None
         try:
+            # A bringup started from the Bringup tab is this backend's own child, and
+            # the pipeline cannot see it (robot_stack records only what a 1-Click run
+            # left). Started over one, the run brought up a second stack beside it:
+            # two micro-ROS agents fighting for the serial port, two rosbridges for
+            # 9090, and the run gone within a minute (browser, 2026-10-04). 1-Click
+            # replaces what is running, so it replaces this too -- and says so.
+            if bringup_runner.is_busy():
+                bringup_runner.kill()
+                msg = (">>> Stopped the bringup started from the Bringup tab: 1-Click starts its own, "
+                       "and two would fight over the board and the rosbridge port.")
+                yield f"event: output\ndata: {json.dumps({'line': msg})}\n\n"
+            start_line = (f">>> Starting One-Click Pipeline on robot: {robot or '<resolved from controller>'}, "
+                          f"controller: {selected_controller} "
+                          f"(distro: {d_str}, mode: {m_str}, explore: {'on' if explore else 'off'}"
+                          + (f", world: {world}" if world else "")
+                          + f", auto-update: {'on' if auto_update else 'off'})")
+            yield f"event: output\ndata: {json.dumps({'line': start_line})}\n\n"
+            # Every option the run was given, as the pipeline receives it.
+            opts_line = ">>> Options: " + " ".join(shlex.quote(x) for x in cmd[3:])
+            yield f"event: output\ndata: {json.dumps({'line': opts_line})}\n\n"
+            # Its own process group, so Stop can signal the run and everything it
+            # started in that group -- and nothing else.
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                    start_new_session=True)
+            with _ONE_CLICK_LOCK:
+                _ONE_CLICK["proc"] = proc
+                _ONE_CLICK["reserved_at"] = None
             for line in iter(proc.stdout.readline, ""):
                 if not line:
                     break
@@ -733,11 +820,13 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
             proc.wait()
             yield f"event: done\ndata: {json.dumps({'exit_code': proc.returncode})}\n\n"
         finally:
+            with _ONE_CLICK_LOCK:
+                _ONE_CLICK["reserved_at"] = None
             # The browser went away mid-run (Stop, a closed tab, a dropped link).
             # Nobody reads the output any more, so the run would block on a full
             # pipe part-way through -- possibly with Nav2 still driving. A robot
             # nobody is watching stops.
-            if proc.poll() is None:
+            if proc is not None and proc.poll() is None:
                 _stop_one_click()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -746,12 +835,42 @@ def stream_one_click_workflow(controller: Optional[str] = None, explore_sec: int
 # The 1-Click run the stream above started, so Stop has something to signal.
 # The page's Stop button used to abort only its own fetch: the badge said
 # "Aborted" while the pipeline went on flashing, bringing up and driving.
-_ONE_CLICK = {"proc": None}
+_ONE_CLICK = {"proc": None, "reserved_at": None}
+_ONE_CLICK_LOCK = threading.Lock()
+# A reservation whose stream never began (the client went away before the first byte) must
+# not hold the slot for ever; a real start replaces it with the process within a second.
+_RESERVE_S = 30.0
 
 
 def _one_click_running() -> bool:
     proc = _ONE_CLICK.get("proc")
     return proc is not None and proc.poll() is None
+
+
+def _one_click_busy() -> bool:
+    """A run is going, or one has been accepted and is starting. Call under _ONE_CLICK_LOCK."""
+    if _one_click_running():
+        return True
+    at = _ONE_CLICK.get("reserved_at")
+    return at is not None and time.monotonic() - at < _RESERVE_S
+
+
+def one_click_busy() -> bool:
+    """For the other routes (the tool): is a 1-Click run going or starting?"""
+    with _ONE_CLICK_LOCK:
+        return _one_click_busy()
+
+
+def one_click_refusal():
+    """Why a 1-Click cannot start now, in words for the page; None when it can. The tool holds
+    the board out of micro-ROS (and may be driving a wheel): a run started over it would flash
+    or bring up a board that is not listening."""
+    import tool_session
+    held = tool_session.REGISTRY.open_robots()
+    if held:
+        return (f"The tool is open ({', '.join(held)}): press Back to robot first "
+                "(the 1-Click needs the robot running).")
+    return None
 
 
 def _stop_one_click(grace_s: float = 20.0) -> dict:

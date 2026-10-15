@@ -186,11 +186,22 @@ def _open_wifi(r: dict):
     return tool_session.ToolSession(r["robot"], link, "wifi", ip=ip, ping_port=ping_port)
 
 
-def _session_or_404():
-    r = _robot()
-    s = tool_session.REGISTRY.get(r["robot"])
+_ROBOT_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _session_or_404(robot: str = ""):
+    """The session the page holds. The page names its robot (the one the tool was opened
+    for): resolving by the ACTIVE robot made STOP answer 404 once the header showed another
+    robot, while the first one's wheel still turned."""
+    if robot:
+        if not _ROBOT_NAME.match(robot):
+            raise HTTPException(status_code=400, detail="robot: a robot's name")
+        name = robot
+    else:
+        name = _robot()["robot"]
+    s = tool_session.REGISTRY.get(name)
     if not s:
-        raise HTTPException(status_code=404, detail="No tool session is open for this robot.")
+        raise HTTPException(status_code=404, detail=f"No tool session is open for {name}.")
     return s
 
 
@@ -225,6 +236,12 @@ async def api_tool_open(request: Request):
     why = _refusal(r)
     if why:
         raise HTTPException(status_code=409, detail=why)
+    # The tool restarts the board out of micro-ROS: under a running 1-Click that is a robot
+    # losing its base mid-mission (and the pipeline then fights the tool for the port).
+    import routes_hardware
+    if routes_hardware.one_click_busy():
+        raise HTTPException(status_code=409, detail="A 1-Click run is in progress: Abort it first "
+                                                    "(the tool takes the board out of micro-ROS).")
     existing = tool_session.REGISTRY.get(r["robot"])
     if existing:
         return {"ok": True, "already": True, **existing.describe()}
@@ -252,8 +269,8 @@ async def _run_blocking(fn, *args):
 
 
 @app.get("/api/tool/stream")
-def api_tool_stream():
-    s = _session_or_404()
+def api_tool_stream(robot: str = ""):
+    s = _session_or_404(robot)
     wid = s.watch()
 
     def gen():
@@ -280,7 +297,7 @@ def api_tool_stream():
 @app.post("/api/tool/beat")
 async def api_tool_beat(request: Request):
     data = await json_body(request)
-    s = _session_or_404()
+    s = _session_or_404(str(data.get("robot") or ""))
     try:
         wid = int(data.get("watch"))
     except (TypeError, ValueError):
@@ -291,13 +308,12 @@ async def api_tool_beat(request: Request):
 @app.post("/api/tool/cmd")
 async def api_tool_cmd(request: Request):
     data = await json_body(request)
-    s = _session_or_404()
+    s = _session_or_404(str(data.get("robot") or ""))
     try:
-        sent = s.send(str(data.get("line") or ""))
+        sent, seq = s.send(str(data.get("line") or ""))
     except tool_session.Refused as e:
         raise HTTPException(status_code=400, detail=str(e))
     # Command and response: the board's own answer, or that none came (ACK_TIMEOUT_S).
-    seq = s.last_seq
     answer = await _run_blocking(s.wait_answer, seq)
     return {"ok": True, "sent": sent, "answers": s.acks_seen,
             "answer": answer or {"seq": seq, "kind": "none", "line": sent, "ok": None,
@@ -305,10 +321,11 @@ async def api_tool_cmd(request: Request):
 
 
 @app.post("/api/tool/stop")
-def api_tool_stop():
-    s = _session_or_404()
+async def api_tool_stop(request: Request):
+    data = await json_body(request)
+    s = _session_or_404(str(data.get("robot") or ""))
     s.stop()
-    return {"ok": True}
+    return {"ok": True, "robot": s.robot}
 
 
 @app.post("/api/tool/close")
