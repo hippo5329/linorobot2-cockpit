@@ -87,7 +87,7 @@ def test_an_arc_needs_its_whole_disc_and_a_spin_its_footprint():
 def test_the_pipeline_runs_real_robots_without_the_simulations_room():
     src = read("scripts", "one_click_pipeline.py")
     assert 'goal_args += " --no-wall"' in src
-    assert '--real --guard {CLEARANCE_REAL_M}' in src
-    assert '" --guard {CLEARANCE_REAL_M} --radius "' in src or "--guard {CLEARANCE_REAL_M} --radius" in src
+    assert "--real --guard {clearance_real(params)}" in src
+    assert '" --guard {clearance_real(params)} --radius "' in src
     nav = read("scripts", "test_nav2_goal.py")
     assert "if NO_WALL:\n            return False" in nav and "global NO_WALL" in nav

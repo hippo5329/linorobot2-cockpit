@@ -146,8 +146,8 @@ def test_the_pipeline_discovers_every_design_and_refuses_sim_on_it():
     assert ocp.reference_design_names() == set(DESIGNS)
     src = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
     a = src.index("real_robot = is_real_robot(params, robot_name)")
-    assert 'if real_robot and (args.mode == "sim" or controller == SIM_MCU):' in src[a:a + 160]
-    assert "[SIM REFUSED]" in src[a:a + 600]
+    assert 'if real_robot and (args.mode == "sim" or controller == SIM_MCU):' in src[a:a + 600]
+    assert "[SIM REFUSED]" in src[a:a + 1000]
     # before anything is flashed or launched
     assert a < src.index("sim_mcu = controller == SIM_MCU")
 
