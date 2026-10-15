@@ -5,7 +5,7 @@ enough, inch it slowly to where there is.
     clearance.py check --need M [--save SNAP.json] [--blind START:WIDTH ... [--look-around]]
     clearance.py inch  --need M --radius R [--max-travel 0.6] [--stamped] [--save SNAP.json]
                        [--blind START:WIDTH ... [--look-around]]
-    clearance.py home  --snap SNAP.json [--stamped] [--tol 0.05] [--tol-deg 3]
+    clearance.py home  --snap SNAP.json [--stamped] [--tol 0.05] [--tol-deg 3] [--blind START:WIDTH ...]
 
 The 1-Click runs this on a real robot before anything drives it (SLAM's mapping, Nav2,
 test_acc). A simulated robot needs none of it: its room is the one the simulation draws.
@@ -42,11 +42,15 @@ home    drive back to where `--save` took its snapshot: every scan matched again
         to back up, whichever is the smaller turn -- drive, turn to the start heading,
         and settle: zero for a second and one more robust match before HOME is called.
         Refuses to move on a weak first fix (fewer than 150 pairs or rms over 0.025 m):
-        from the wrong side of an obstacle a room can match in two places.
+        from the wrong side of an obstacle a room can match in two places. With --blind, the
+        path is judged in the blind bearings against the snapshot moved to where the robot is.
 
 THE ROBOT MOVES in `inch` and `home`. /cmd_vel (TwistStamped with --stamped) at 10 Hz,
 zero on every exit; the firmware's cmd_vel watchdog stops the wheels if this dies.
 Nothing else may be driving the robot: it refuses when /cmd_vel already has a publisher.
+Every closed-loop move stops and fails when its /odom (ODOM_STALE_S) or its guarding scan
+(SCAN_STALE_S) stops coming. The robot's own body is every return within --body of the
+centre (default: --radius less BODY_DAYLIGHT_M).
 """
 import argparse
 import json
@@ -83,6 +87,28 @@ KNOWN_GRID_M = 0.03     # the turning circle is checked on a grid this fine
 UNDER_BODY_M = 0.10     # ground this near the centre was under the robot: free even where blind
 HOLD_GAIN = 1.5          # slide: rad/s of turn per rad off the start heading
 HOLD_MAX_RPS = 0.3
+# Every closed-loop move stops, and fails, when what it closes on or guards with goes stale.
+# /odom (the EKF) comes at 40-50 Hz: 0.3 s without one is a dozen missed messages, not jitter,
+# and at the inching speeds it is 1.5 cm or 6 deg of motion nobody measured. A move that kept
+# closing on the last cached pose drove on for its whole timeout -- the unguarded retrace
+# d / 0.05 + 8 s, a turn 15 s -- with nothing watching.
+ODOM_STALE_S = 0.3
+# The scan (10 Hz on the LiDARs we know) guards: 0.5 s is five missed scans, and at LIN_MPS the
+# robot covers 2.5 cm in it, under a third of STOP_MARGIN_M, so the margin still holds when the
+# last scan is that old. Older, and the guard is looking at a room the robot has left.
+SCAN_STALE_S = 0.5
+# The look-around's turn back: further off than this, the retrace is refused. Within it the
+# retrace is aimed by the error /odom measured, so the line is the outbound one; what is left is
+# the turn's own drift of the centre, and 5 deg is about what turn_by's 3 deg stop plus a coast
+# leaves -- a failed turn (no /odom, a timeout) is far outside it.
+BACK_TOL_DEG = 5.0
+# The robot's own chassis, returns nearer the centre than --body. Its outline lies inside the
+# circle the callers pass as --radius, which is Nav2's robot_radius plus 5 cm of daylight
+# (gen_firmware_header.SIM_RADIUS_MARGIN_M): that daylight is room, not robot, so the default
+# body is the radius less it. A fixed 0.20 m threw away a box 0.15 m from a 0.12 m robot, and
+# read a 0.35 m robot's own posts as obstacles it could never get away from.
+BODY_DAYLIGHT_M = 0.05
+BODY_MIN_M = 0.05        # nearer than this a LiDAR's return is its own window or noise
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
 
 
@@ -169,14 +195,14 @@ def seen_bins(yaw_deg: float, blind) -> "np.ndarray":
     return ~in_blind(w - yaw_deg, blind)
 
 
-def carry(P_old, moved, P_new, blind) -> "np.ndarray":
+def carry(P_old, moved, P_new, blind, body: float = scan_match.BODY_M) -> "np.ndarray":
     """A new look with the old cloud's points kept where it is blind: P_old moved into the
     frame of the robot now (at `moved`, (yaw, x, y), in the old one); only the bearings the
     LiDAR cannot see keep remembered points."""
     if not blind or P_old is None or not len(P_old):
         return P_new
     Q = into_frame(P_old, moved)
-    Q = Q[in_blind(bearings(Q), blind) & (np.hypot(Q[:, 0], Q[:, 1]) >= scan_match.BODY_M)]
+    Q = Q[in_blind(bearings(Q), blind) & (np.hypot(Q[:, 0], Q[:, 1]) >= body)]
     return np.r_[P_new, Q] if len(Q) else P_new
 
 
@@ -285,10 +311,18 @@ def best_step(P, radius: float, step: float = STEP_M, spin_ok: bool = True, unse
 
 # ---- ROS ----
 
+def body_for(radius: float, body: float = None) -> float:
+    """The self-filter: returns nearer the centre than this are the robot itself. --body when
+    given, else the --radius circle less BODY_DAYLIGHT_M (never under BODY_MIN_M)."""
+    if body is not None and body > 0:
+        return float(body)
+    return max(BODY_MIN_M, float(radius) - BODY_DAYLIGHT_M)
+
+
 class Robot:
     """The scans, /odom and /cmd_vel, for a short-lived tool."""
 
-    def __init__(self, stamped: bool = False, scan_topic: str = None):
+    def __init__(self, stamped: bool = False, scan_topic: str = None, body: float = scan_match.BODY_M):
         import rclpy
         from nav_msgs.msg import Odometry
         from rclpy.node import Node
@@ -305,25 +339,51 @@ class Robot:
         self.T = T
         self.pub = None
         self.scan, self.frame, self.odom = None, None, None
+        self.scan_t = self.odom_t = -math.inf
+        self.body = body
         self.topic = scan_match.whole_circle_topic(self.node, override=scan_topic)
 
         def on_scan(m):
-            self.frame = m.header.frame_id
-            self.scan = scan_match.scan_dict(m)
+            self.take_scan(scan_match.scan_dict(m), m.header.frame_id)
 
         def on_odom(m):
             p, q = m.pose.pose.position, m.pose.pose.orientation
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            self.odom = (p.x, p.y, yaw)
+            self.take_odom((p.x, p.y, yaw))
         self.node.create_subscription(LaserScan, self.topic, on_scan, qos_profile_sensor_data)
         self.node.create_subscription(Odometry, "/odom", on_odom, 10)
         self.laser = None
         self.tf_ok = False
 
+    # Arrival times on this host's monotonic clock: a board's or the EKF's header stamp is
+    # another clock, and only "how long since one came" matters here.
+    def take_scan(self, scan: dict, frame: str):
+        self.frame = frame
+        self.scan = scan
+        self.scan_t = time.monotonic()
+
+    def take_odom(self, pose):
+        self.odom = tuple(pose)
+        self.odom_t = time.monotonic()
+
+    def odom_age(self) -> float:
+        return time.monotonic() - self.odom_t
+
+    def scan_age(self) -> float:
+        return time.monotonic() - self.scan_t
+
+    def pump(self, timeout: float = 0.05):
+        """Wait up to `timeout` for a message, then take every one already queued: spin_once
+        takes ONE callback per call, and a 10 Hz loop under 50 Hz /odom read a pose from a
+        queue ten deep -- 0.2 s old, and stamped as if it had just come."""
+        self.rclpy.spin_once(self.node, timeout_sec=timeout)
+        for _ in range(30):
+            self.rclpy.spin_once(self.node, timeout_sec=0.0)
+
     def spin(self, secs: float):
         end = time.time() + secs
         while time.time() < end:
-            self.rclpy.spin_once(self.node, timeout_sec=min(0.05, max(0.0, end - time.time())))
+            self.pump(min(0.05, max(0.0, end - time.time())))
 
     def next_scan(self, timeout: float = 1.0):
         self.scan = None
@@ -344,6 +404,10 @@ class Robot:
                 self.laser = (0.0, 0.0, 0.0)
         return self.laser
 
+    def scan_points(self, scan=None):
+        """A scan's points in base_link, the robot's own body (self.body) left out."""
+        return scan_match.scan_points(self.scan if scan is None else scan, self.mount(), body=self.body)
+
     def points(self, n: int = 5, timeout: float = 15.0):
         """The median cloud of the next n scans, in base_link (empty when none came)."""
         scans, end = [], time.time() + timeout
@@ -353,7 +417,7 @@ class Robot:
                 scans.append(s)
         if not scans:
             return None
-        return scan_match.median_points(scans, self.mount())
+        return scan_match.median_points(scans, self.mount(), body=self.body)
 
     def claim_cmd_vel(self) -> bool:
         """Refuse to drive a robot something else is driving."""
@@ -384,17 +448,31 @@ class Robot:
                 time.sleep(0.02)
 
     def wait_odom(self, timeout: float = 5.0):
+        """The first /odom pose that ARRIVES after this call, or None: a pose cached from
+        before is where the robot was, and a move closed on it closes on nothing."""
+        since = time.monotonic()
         end = time.time() + timeout
-        while self.odom is None and time.time() < end:
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
-        return self.odom
+        while time.time() < end:
+            self.pump(0.05)
+            if self.odom is not None and self.odom_t > since:
+                return self.odom
+        return None
+
+    def stale(self, guarded: bool) -> str:
+        """Why a closed-loop move must stop now, or '': the /odom it closes on, or the scan it
+        guards with, has stopped coming."""
+        if self.odom_age() > ODOM_STALE_S:
+            return f"odometry stopped: the last /odom is {self.odom_age():.1f} s old"
+        if guarded and self.scan_age() > SCAN_STALE_S:
+            return f"scan stopped: the last scan is {self.scan_age():.1f} s old"
+        return ""
 
     def blocked(self, direction: float, radius: float) -> float:
         """The nearest return in the robot's corridor in the direction of travel, when it is
         inside the stop margin of the circle; 0 when the way is open."""
         if self.scan is None:
             return 0.0
-        P = scan_match.scan_points(self.scan, self.mount())
+        P = self.scan_points()
         ahead = P[(np.sign(P[:, 0]) == np.sign(direction)) & (np.abs(P[:, 1]) < radius)]
         if len(ahead) and np.min(np.abs(ahead[:, 0])) < radius + STOP_MARGIN_M:
             return float(np.min(np.abs(ahead[:, 0])))
@@ -409,9 +487,14 @@ class Robot:
             return False
         end = time.time() + timeout
         while time.time() < end:
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            self.pump(0.05)
+            why = self.stale(guarded=bool(guard))
+            if why:
+                self.stop()
+                print(f"  ❌ turn stopped: {why}")
+                return False
             if guard and self.scan is not None:
-                near = nearest(scan_match.scan_points(self.scan, self.mount()))
+                near = nearest(self.scan_points())
                 if near < guard:
                     self.stop()
                     print(f"  ⚠️ turn stopped: a return {near:.2f} m from the centre")
@@ -433,7 +516,12 @@ class Robot:
             return False
         end = time.time() + timeout
         while time.time() < end:
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            self.pump(0.05)
+            why = self.stale(guarded=True)
+            if why:
+                self.stop()
+                print(f"  ❌ step stopped: {why}")
+                return False
             if math.hypot(self.odom[0] - start[0], self.odom[1] - start[1]) >= dist:
                 self.stop()
                 return True
@@ -452,14 +540,20 @@ class Robot:
               guard: bool = True) -> bool:
         """Move `dist` along `heading` (base_link) without turning -- vy for a mecanum base;
         heading 0 is a plain forward step. Closed on /odom, stopped by a return in the corridor
-        unless `guard` is off (a retrace of ground just swept, into a blind sector)."""
+        unless `guard` is off (a retrace of ground just swept, into a blind sector). Either
+        way it stops when /odom does: an unguarded retrace on a frozen pose drove on blind."""
         start = self.wait_odom()
         if start is None:
             print("  ❌ no /odom: cannot close a move")
             return False
         end = time.time() + (timeout or dist / LIN_MPS + 8.0)
         while time.time() < end:
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            self.pump(0.05)
+            why = self.stale(guarded=guard)
+            if why:
+                self.stop()
+                print(f"  ❌ move stopped: {why}")
+                return False
             if math.hypot(self.odom[0] - start[0], self.odom[1] - start[1]) >= dist:
                 self.stop()
                 return True
@@ -470,7 +564,7 @@ class Robot:
             vx = LIN_MPS * math.cos(heading - err)
             vy = LIN_MPS * math.sin(heading - err)
             if guard and self.scan is not None:
-                b = path_blocked(scan_match.scan_points(self.scan, self.mount()), vx, vy, radius)
+                b = path_blocked(self.scan_points(), vx, vy, radius)
                 if b:
                     self.stop()
                     print(f"  ⚠️ stopped: a return {b:.2f} m in the way")
@@ -510,12 +604,15 @@ def spin_match(P, cloud, guess, spread_deg: float = 10.0):
     return scan_match.icp(P, cloud, guess[0] + math.radians(k), (guess[1], guess[2]))
 
 
-def look_around(r: "Robot", P0, blind, radius: float, scans: int):
+def look_around(r: "Robot", P0, blind, radius: float, scans: int, status: dict = None):
     """A blind LiDAR's whole circle: turn in place in LOOK_STEP_DEG steps until every bearing
     of the start frame has been seen, merge each look into the start frame (matched against
     the cloud so far, /odom as the guess), and turn back. None when it may not or could not
     turn: something inside the visible part of the circle the turn sweeps, no /odom, or a
-    return that came inside it while turning."""
+    return that came inside it while turning. `status` gets "back": whether the robot is
+    facing its start heading again (within BACK_TOL_DEG, by a fresh /odom), and "back_deg"."""
+    status = {} if status is None else status
+    status["back"], status["back_deg"] = True, 0.0
     guard = radius + SPIN_MARGIN_M
     if nearest(P0) < guard:
         print(f"  LOOK-AROUND REFUSED: a return {nearest(P0):.2f} m from the centre, inside the "
@@ -525,6 +622,7 @@ def look_around(r: "Robot", P0, blind, radius: float, scans: int):
     if odom0 is None:
         print("  LOOK-AROUND REFUSED: no /odom to close the turns")
         return None
+    status["back"] = False          # from here on, until a fresh /odom says it is
     seen = seen_bins(0.0, blind)
     cloud, turned, ok = P0, 0.0, True
     print(f"  looking around: {360 - int(seen.sum())} deg unseen, turning in "
@@ -552,13 +650,21 @@ def look_around(r: "Robot", P0, blind, radius: float, scans: int):
                   + f"; {360 - int(seen.sum())} deg still unseen", flush=True)
     finally:
         # back over ground the turn has just swept, so unguarded: a return that stopped the
-        # turn would otherwise keep the robot facing away from its start
+        # turn would otherwise keep the robot facing away from its start. Whether it got there
+        # is judged on a fresh /odom, never on the turn's say-so: the caller's retrace runs
+        # along the start frame's line in the frame the robot faces NOW.
         now = r.wait_odom(1.0)
         if now is not None:
             back = -scan_match.wrap(now[2] - odom0[2])
             if abs(back) > math.radians(2.0):
                 r.turn_by(back, timeout=30.0)
         r.stop()
+        now = r.wait_odom(1.0)
+        if now is None:
+            status["back"], status["back_deg"] = False, math.nan
+        else:
+            off = math.degrees(scan_match.wrap(now[2] - odom0[2]))
+            status["back"], status["back_deg"] = abs(off) <= BACK_TOL_DEG, off
     if not ok:
         return None
     return cloud
@@ -637,12 +743,12 @@ def first_look(a, r: Robot):
             return None, blind, None, 1
         r.spin(0.5)
     odom0 = r.wait_odom(5.0)
-    P360, why, rc = None, "", 0
+    P360, why, rc, back = None, "", 0, {"back": True, "back_deg": 0.0}
     P = r.points(a.scans) if d > 0 else P
     if P is None:
         why, rc = f"CLEARANCE FAIL: no scan on {r.topic}", 2
     else:
-        P360 = look_around(r, P, blind, a.radius, a.scans)
+        P360 = look_around(r, P, blind, a.radius, a.scans, status=back)
         if P360 is None:
             why, rc = ("CLEARANCE_REFUSED: the LiDAR's blind sector could not be looked at -- "
                        "move the robot by hand"), 1
@@ -653,9 +759,21 @@ def first_look(a, r: Robot):
         # the robot ends where it was put, so a second look (the clearance step, then
         # test_acc's) does not creep it forward again. Two did, 0.70 m, onto boxes 0.51 m
         # ahead, and test_acc found no room; then a scan lost after the move left it out there.
+        if not back["back"]:
+            # The retrace is h + pi in the frame the robot faces now: turned 20 deg off, it
+            # would back 0.35 m along a line nobody swept, unguarded, into the blind sector.
+            # Guarded it is no better -- the guard is blind exactly there. Where it stands is
+            # ground the first look showed free, wide enough to turn on: it stays there.
+            off = ("no fresh /odom to say where it faces" if back["back_deg"] != back["back_deg"]
+                   else f"{abs(back['back_deg']):.0f} deg off its start heading")
+            print(f"CLEARANCE_REFUSED: the turn back did not finish ({off}), so the way back is "
+                  f"not the way it came -- the robot is left where it is, {d:.2f} m toward "
+                  f"{math.degrees(scan_match.wrap(h)):+.0f} deg from where it was put; move it by hand")
+            return None, blind, None, 1
         print(f"  back {d:.2f} m to where it started, over ground just swept (THE ROBOT MOVES)",
               flush=True)
-        if not r.slide(d, h + math.pi, a.radius, guard=False):
+        # aimed by what is left of the turn back: h + pi in the start heading's frame
+        if not r.slide(d, h + math.pi - math.radians(back["back_deg"]), a.radius, guard=False):
             print(why or "CLEARANCE_REFUSED: the move back stopped -- move the robot by hand")
             return None, blind, None, rc or 1
         r.spin(0.5)
@@ -725,9 +843,13 @@ def cmd_inch(a, r: Robot) -> int:
                 print("CLEARANCE FAIL: the scan stopped")
                 return 2
             now = r.wait_odom(1.0)
-            if blind and last is not None and now is not None:
+            if now is None:
+                # the next step closes on it, and the blind bearings' memory moves by it
+                print("CLEARANCE FAIL: odometry stopped (no /odom after the step)")
+                return 2
+            if blind and last is not None:
                 # the blind bearings keep what was seen there, moved by the step
-                P = carry(P, odom_since(last, now), P_new, blind)
+                P = carry(P, odom_since(last, now), P_new, blind, body_of(r))
             else:
                 P = P_new
             last = now
@@ -815,12 +937,32 @@ def odom_turn(r, angle: float) -> bool:
     end = time.time() + abs(angle) / ODOM_TURN_WZ * 3 + 3
     while time.time() < end:
         r.spin(0.02)
+        if r.odom_age() > ODOM_STALE_S:
+            # the LiDAR-closed turn takes over: it does not need /odom
+            print(f"  ⚠️ odom turn stopped: odometry stopped ({r.odom_age():.1f} s since the last /odom)")
+            r.stop()
+            return False
         e = scan_match.wrap(target - r.odom[2])
         if abs(e) < math.radians(ODOM_TURN_DONE_DEG):
             break
         r.send(0.0, math.copysign(ODOM_TURN_WZ, e))
     r.stop()
     return True
+
+
+def body_of(r) -> float:
+    return getattr(r, "body", scan_match.BODY_M)
+
+
+def guard_points(P, home, pose, blind, body: float = scan_match.BODY_M) -> "np.ndarray":
+    """What the drive home judges its path by: the live scan, plus -- in the LiDAR's blind
+    bearings -- the snapshot's points moved to where the robot is now (`pose` in the home
+    frame), as carry() does for a look. A holonomic base slides home without turning, so the
+    way back can lie in its blind sector; the live scan has nothing there, and "nothing" read
+    as "clear". The snapshot is the whole circle the look-around saw at the start."""
+    if not blind:
+        return P
+    return carry(home, pose, P, blind, body)
 
 
 def path_blocked(P, vx: float, vy: float, radius: float) -> float:
@@ -847,6 +989,8 @@ def cmd_home(a, r: Robot) -> int:
         return 2
     laser = r.mount()
     home = snapshot_points(snap, laser)
+    blind = parse_blind(getattr(a, "blind", None))
+    body = body_of(r)
     # Standing still: the median of a few scans, not the first one after the board came back
     # (test_acc's reboot) -- a partial first revolution matches nothing.
     S = r.points(3)
@@ -896,7 +1040,7 @@ def cmd_home(a, r: Robot) -> int:
                     verdict = "LOST (no scans)"
                     break
                 continue
-            P = scan_match.scan_points(r.scan, laser)
+            P = scan_match.scan_points(r.scan, laser, body=body)
             th, x, y, rms, n = scan_match.icp(P, home, pose[0], (pose[1], pose[2]))
             if a.trace:
                 print("  trace %6.2f s  %3d pts  %3d pairs rms %.3f  x %+.3f y %+.3f yaw %+6.1f"
@@ -915,7 +1059,7 @@ def cmd_home(a, r: Robot) -> int:
                     r.spin(1.0)
                     if r.next_scan(1.0) is None:
                         continue
-                    cands = scan_match.locate_candidates(scan_match.scan_points(r.scan, laser), home)
+                    cands = scan_match.locate_candidates(scan_match.scan_points(r.scan, laser, body=body), home)
                     why = first_fix_fault(cands, len(home))
                     k_best, (th, x, y, rms, n) = cands[0]
                     print("  relocate %d: x %+.3f y %+.3f yaw %+.1f deg -- %d pairs, rms %.3f%s"
@@ -937,7 +1081,7 @@ def cmd_home(a, r: Robot) -> int:
                 r.stop()
                 r.spin(1.0)
                 if r.next_scan(1.0) is not None:
-                    P = scan_match.scan_points(r.scan, laser)
+                    P = scan_match.scan_points(r.scan, laser, body=body)
                     th, x, y, rms, n = scan_match.locate(P, home, pose)
                     pose = (scan_match.wrap(th), x, y)
                     print("  settle: x %+.3f y %+.3f yaw %+.1f (%d pairs, rms %.3f)"
@@ -959,7 +1103,7 @@ def cmd_home(a, r: Robot) -> int:
                     r.spin(0.5)
                     continue
                 wz = max(0.2, min(0.6, abs(err))) * (1 if err > 0 else -1)
-            near = path_blocked(P, vx, vy, a.radius)
+            near = path_blocked(guard_points(P, home, pose, blind, body), vx, vy, a.radius)
             if near:
                 verdict = "BLOCKED (%.2f m along the way home)" % near
                 break
@@ -984,12 +1128,15 @@ def main(argv=None) -> int:
         p.add_argument("--radius", type=float, default=0.20, help="the robot's circle, m (Nav2's robot_radius)")
         p.add_argument("--stamped", action="store_true", help="publish geometry_msgs/TwistStamped")
         p.add_argument("--scan-topic", default=None, help="default: /scan_raw when there is one, else /scan")
+        p.add_argument("--body", type=float, default=None,
+                       help="returns nearer the centre than this are the robot itself, m "
+                            f"(default: --radius less {BODY_DAYLIGHT_M:.2f}, the callers' daylight)")
+        p.add_argument("--blind", action="append", default=[], metavar="START:WIDTH",
+                       help="a bearing sector the LiDAR cannot see (deg, base_link, counter-"
+                            "clockwise; the robot's lidar.mask sectors); repeat for more")
         if name in ("check", "inch"):
             p.add_argument("--need", type=float, required=True, help="nothing nearer than this, m")
             p.add_argument("--save", default="", help="keep the clear scan as the start snapshot")
-            p.add_argument("--blind", action="append", default=[], metavar="START:WIDTH",
-                           help="a bearing sector the LiDAR cannot see (deg, base_link, counter-"
-                                "clockwise; the robot's lidar.mask sectors); repeat for more")
             p.add_argument("--look-around", action="store_true",
                            help="with --blind: move onto ground already seen free, then turn in "
                                 "place until every bearing has been seen, and back (THE ROBOT MOVES)")
@@ -1012,7 +1159,11 @@ def main(argv=None) -> int:
                            help="another first-fix start: the robot's pose in the snapshot's frame "
                                 "(deg, m, m) as something else counted it -- test_acc's HOME line")
     a = ap.parse_args(argv)
-    r = Robot(stamped=a.stamped, scan_topic=a.scan_topic)
+    try:
+        parse_blind(a.blind)
+    except ValueError as e:
+        ap.error(str(e))
+    r = Robot(stamped=a.stamped, scan_topic=a.scan_topic, body=body_for(a.radius, a.body))
     try:
         return {"check": cmd_check, "inch": cmd_inch, "home": cmd_home}[a.cmd](a, r)
     finally:

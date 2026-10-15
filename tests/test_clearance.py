@@ -375,6 +375,9 @@ class _TurningRobot:
     def send(self, vx, wz, vy=0.0):
         self.cmds.append(wz)
 
+    def odom_age(self):
+        return 0.0
+
     def stop(self):
         self.cmds += [0.0] * 6
         for _ in range(6):
@@ -394,7 +397,7 @@ def test_no_odom_falls_back_to_the_lidar_closed_turn():
 
 def _home_run(monkeypatch, tmp_path, scans, home):
     import argparse
-    monkeypatch.setattr(clearance.scan_match, "scan_points", lambda s, laser: s)
+    monkeypatch.setattr(clearance.scan_match, "scan_points", lambda s, laser, **kw: s)
     monkeypatch.setattr(clearance, "snapshot_points", lambda snap, laser: home)
     snap = tmp_path / "snap.json"
     snap.write_text("{}")
@@ -705,3 +708,245 @@ def test_home_guesses_read_test_acc_s_last_home_line(tmp_path):
     for src in ("one_click_pipeline.py", "robot_bringup.py"):
         text = open(os.path.join(os.path.dirname(__file__), "..", "scripts", src)).read()
         assert "home_guesses(transcript)" in text, src
+
+
+# ---- every closed-loop move stops when its /odom or its guarding scan does ----
+# The retrace after a look-around is unguarded and ran for d / 0.05 + 8 s on whatever /odom
+# pose was cached last; a turn for 15 s. These run the real Robot loops against a fake ROS.
+
+class _V:
+    x = y = z = 0.0
+
+
+class _Twist:
+    def __init__(self):
+        self.linear, self.angular = _V(), _V()
+
+
+class _World:
+    """A robot that moves as commanded; /odom at 50 Hz and a scan at 10 Hz, each until its
+    stop time (time.monotonic())."""
+
+    def __init__(self, odom_for=math.inf, scan_for=math.inf, ranges=None):
+        now = __import__("time").monotonic()
+        self.odom_stop, self.scan_stop = now + odom_for, now + scan_for
+        self.pose, self.cmd, self.cmds = [0.0, 0.0, 0.0], (0.0, 0.0, 0.0), []
+        self.t = self.t_odom = self.t_scan = now
+        self.ranges = ranges if ranges is not None else [2.0] * 360
+        self.r = None
+
+    def publish(self, m):
+        self.cmd = (m.linear.x, m.linear.y, m.angular.z)
+        self.cmds.append(self.cmd)
+
+    def scan(self):
+        return {"stamp": 0.0, "angle_min": -math.pi, "angle_increment": 2 * math.pi / len(self.ranges),
+                "range_min": 0.05, "range_max": 12.0, "ranges": list(self.ranges)}
+
+    def spin_once(self, node, timeout_sec=0.0):
+        import time as _t
+        if timeout_sec:
+            _t.sleep(min(timeout_sec, 0.005))
+        now = _t.monotonic()
+        dt, self.t = now - self.t, now
+        vx, vy, wz = self.cmd
+        x, y, yaw = self.pose
+        self.pose = [x + (vx * math.cos(yaw) - vy * math.sin(yaw)) * dt,
+                     y + (vx * math.sin(yaw) + vy * math.cos(yaw)) * dt, yaw + wz * dt]
+        if now < self.odom_stop and now - self.t_odom >= 0.02:
+            self.t_odom = now
+            self.r.take_odom(tuple(self.pose))
+        if now < self.scan_stop and now - self.t_scan >= 0.1:
+            self.t_scan = now
+            self.r.take_scan(self.scan(), "laser")
+
+
+def _ros_robot(world, body=0.15):
+    r = clearance.Robot.__new__(clearance.Robot)
+    r.rclpy, r.node, r.stamped, r.T, r.pub = world, None, False, _Twist, world
+    r.scan = r.frame = r.odom = None
+    r.scan_t = r.odom_t = -math.inf
+    r.body, r.topic, r.laser, r.tf_ok = body, "/scan", (0.0, 0.0, 0.0), True
+    world.r = r
+    return r
+
+
+def test_an_unguarded_retrace_stops_when_odom_stops(capsys):
+    import time as _t
+    w = _World(odom_for=0.4)
+    r = _ros_robot(w)
+    t0 = _t.monotonic()
+    assert r.slide(0.35, math.pi, 0.30, guard=False) is False      # 7 s of travel asked
+    assert _t.monotonic() - t0 < 2.0
+    assert w.cmds[-1] == (0.0, 0.0, 0.0)
+    assert "odometry stopped" in capsys.readouterr().out
+
+
+def test_a_turn_stops_when_odom_stops(capsys):
+    import time as _t
+    w = _World(odom_for=0.4)
+    r = _ros_robot(w)
+    t0 = _t.monotonic()
+    assert r.turn_by(math.radians(170)) is False
+    assert _t.monotonic() - t0 < 2.0 and w.cmds[-1] == (0.0, 0.0, 0.0)
+    assert "odometry stopped" in capsys.readouterr().out
+
+
+def test_a_guarded_step_stops_when_the_scan_stops(capsys):
+    w = _World(scan_for=0.3)
+    r = _ros_robot(w)
+    r.spin(0.2)                                       # a scan and /odom before the step
+    assert r.drive(0.20, 1.0, 0.20) is False          # 4 s of travel asked
+    assert "scan stopped" in capsys.readouterr().out
+    assert w.cmds[-1] == (0.0, 0.0, 0.0) and w.pose[0] < 0.08
+
+
+def test_a_step_with_both_alive_completes():
+    w = _World()
+    r = _ros_robot(w)
+    r.spin(0.2)
+    assert r.drive(0.03, 1.0, 0.20) is True
+    assert w.pose[0] >= 0.03
+
+
+def test_wait_odom_wants_a_pose_newer_than_the_call():
+    w = _World(odom_for=0.2)
+    r = _ros_robot(w)
+    r.spin(0.1)
+    assert r.odom is not None                         # one is cached...
+    __import__("time").sleep(0.25)
+    assert r.wait_odom(0.3) is None                   # ...but none came since
+
+
+# ---- the look-around's turn back is checked before the retrace ----
+
+class _StuckLookRobot(_LookRobot):
+    """The turn back (the long one) stops `short` deg before its end, and says it failed when
+    that is more than turn_by's own 3 deg."""
+
+    def __init__(self, world, short=20.0):
+        super().__init__(world)
+        self.short = short
+
+    def turn_by(self, angle, timeout=15.0, guard=0.0):
+        if timeout >= 30.0:
+            self.yaw = scan_match.wrap(self.yaw + angle - math.copysign(math.radians(self.short), angle))
+            return self.short < 3.0
+        return super().turn_by(angle, timeout, guard)
+
+
+def test_a_failed_turn_back_leaves_the_robot_at_the_open_spot(capsys):
+    world = np.vstack([_room(L_ROOM), wall(0.88, -0.3, 0.88, 0.3)])
+    r = _StuckLookRobot(world)
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    P, _, _, rc = clearance.first_look(a, r)
+    assert P is None and rc == 1
+    assert len(r.slides) == 1                         # out to the open spot, never back
+    out = capsys.readouterr().out
+    assert "the turn back did not finish (20 deg off" in out and "left where it is" in out
+
+
+def test_a_turn_back_a_little_short_is_retraced_along_the_outbound_line():
+    world = np.vstack([_room(L_ROOM), wall(0.88, -0.3, 0.88, 0.3)])
+    r = _StuckLookRobot(world, short=4.0)
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    P, _, _, rc = clearance.first_look(a, r)
+    assert rc == 0 and len(r.slides) == 2
+    assert math.hypot(r.x, r.y) < 1e-9                # back on the spot it was put on
+
+
+def test_a_turn_back_that_lands_is_retraced():
+    world = np.vstack([_room(L_ROOM), wall(0.88, -0.3, 0.88, 0.3)])
+    r = _LookRobot(world)
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    status = {}
+    P0 = r.points()
+    assert clearance.look_around(r, P0, BLIND, 0.30, 5, status=status) is not None
+    assert status["back"] and abs(status["back_deg"]) < clearance.BACK_TOL_DEG
+    r2 = _LookRobot(world)
+    assert clearance.first_look(a, r2)[3] == 0 and len(r2.slides) == 2
+
+
+# ---- home judges its blind bearings by the snapshot ----
+
+def test_home_with_blind_judges_the_blind_side_by_the_snapshot():
+    # home 0.6 m behind the robot, in its blind rear; the snapshot has a post 0.3 m along the
+    # way that the live scan cannot see
+    home = np.vstack([_room(L_ROOM), [[0.30, 0.0]]])
+    pose = (0.0, 0.55, 0.0)
+    live = clearance.into_frame(home, pose)
+    live = live[~clearance.in_blind(clearance.bearings(live), BLIND)]
+    assert clearance.path_blocked(live, -0.1, 0.0, 0.20) == 0.0
+    G = clearance.guard_points(live, home, pose, BLIND)
+    assert clearance.path_blocked(G, -0.1, 0.0, 0.20) == pytest.approx(0.25, abs=1e-6)
+    assert clearance.guard_points(live, home, pose, []) is live
+
+
+def test_a_holonomic_drive_home_stops_for_what_only_the_snapshot_saw(monkeypatch, tmp_path, capsys):
+    home = np.vstack([_room(WALLS), wall(0.30, -0.02, 0.30, 0.02, step=0.01)])
+    pose = (0.0, 0.55, 0.0)
+    S = clearance.into_frame(home, pose)
+    S = S[~clearance.in_blind(clearance.bearings(S), BLIND)]
+    monkeypatch.setattr(clearance.scan_match, "scan_points", lambda s, laser, **kw: s)
+    monkeypatch.setattr(clearance, "snapshot_points", lambda snap, laser: home)
+    snap = tmp_path / "snap.json"
+    snap.write_text("{}")
+    a = argparse.Namespace(snap=str(snap), timeout=1.5, tol=0.05, tol_deg=3.0, radius=0.20,
+                           holonomic=True, trace=False, blind=["129:97"],
+                           guess=["0:0.55:0"])          # test_acc's count: the fix is unambiguous
+    assert clearance.cmd_home(a, _StillRobot([S])) == 1
+    assert "BLOCKED (0.25 m along the way home)" in capsys.readouterr().out
+    a.blind = []
+    clearance.cmd_home(a, _StillRobot([S]))
+    assert "BLOCKED" not in capsys.readouterr().out
+
+
+def test_home_takes_blind_like_check_and_inch(monkeypatch):
+    made = []
+
+    def robot(**kw):                     # stands in for the ROS one: record, then stop main()
+        made.append(kw)
+        raise SystemExit(7)
+    monkeypatch.setattr(clearance, "Robot", robot)
+    for verb in ("check", "inch", "home"):
+        extra = ["--snap", "s.json"] if verb == "home" else ["--need", "1.0"]
+        with pytest.raises(SystemExit) as e:
+            clearance.main([verb, "--blind", "129:97", "--radius", "0.31"] + extra)
+        assert e.value.code == 7, verb   # parsed: --blind is known to every verb
+        assert made[-1]["body"] == pytest.approx(0.26)
+
+
+# ---- the robot's own body follows its size ----
+
+def test_the_body_follows_the_radius_the_callers_pass():
+    assert clearance.body_for(0.31) == pytest.approx(0.26)        # Nav2's 0.26 + 0.05 daylight
+    assert clearance.body_for(0.17) == pytest.approx(0.12)
+    assert clearance.body_for(0.40, body=0.22) == 0.22
+    assert clearance.body_for(0.06) == clearance.BODY_MIN_M
+
+
+def test_a_small_robot_sees_a_box_its_old_fixed_body_threw_away(capsys):
+    ranges = [2.0] * 360
+    ranges[180] = 0.15                                 # straight ahead (angle_min -pi)
+    w = _World(ranges=ranges)
+    r = _ros_robot(w, body=clearance.body_for(0.17))   # a 0.12 m robot
+    P = r.points(3)
+    assert clearance.nearest(P) == pytest.approx(0.15, abs=1e-6)
+    assert not clearance.report(P, 0.5)
+    assert len(scan_match.median_points([w.scan()] * 3)) == 359      # the fixed 0.20 m lost it
+
+
+def test_a_large_robot_s_own_posts_are_not_obstacles(capsys):
+    ranges = [1.5] * 360
+    for b in (45, 135, 225, 315):
+        ranges[b] = 0.30                               # the frame's corner posts
+    w = _World(ranges=ranges)
+    r = _ros_robot(w, body=clearance.body_for(0.40))   # a 0.35 m robot
+    P = r.points(3)
+    assert clearance.nearest(P) == pytest.approx(1.5, abs=1e-6)
+    assert clearance.report(P, 1.0)
+    old = scan_match.median_points([w.scan()] * 3)
+    assert clearance.nearest(old) == pytest.approx(0.30, abs=1e-6)  # read as boxes before
