@@ -45,3 +45,28 @@ def test_test_acc_asks_a_fast_robot_for_more_than_a_metre():
     assert fast > 1.8
     # the floor given (the command line's --test-acc-clearance) still holds
     assert ocp.test_acc_room(_params(radius=0.15, rpm=60.0, wheel_d=0.06), 1.4) == 1.4
+
+
+def test_a_measured_slow_step_lowers_the_acceleration_limit_and_never_raises_it():
+    import copy
+    import yaml as _y
+    import drivetrain_report as dr
+    base = _y.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", "unoq_config.yaml")))
+    acc = "nav2.velocity_smoother.ros__parameters.max_accel"
+    model = dr.derived_limits(copy.deepcopy(base)).get(acc)
+    slow = copy.deepcopy(base)
+    slow["kinematics"]["step_response"] = {"max_vel": 0.5, "t_to_90": 1.5}    # 0.3 m/s2: a heavy robot
+    got = dr.derived_limits(slow).get(acc)
+    assert got and model and got[0] < model[0] and got[0] <= 0.3
+    quick = copy.deepcopy(base)
+    quick["kinematics"]["step_response"] = {"max_vel": 0.7, "t_to_90": 0.05}  # 12.6 m/s2
+    assert dr.derived_limits(quick).get(acc)[0] <= model[0] + 1e-9
+
+
+def test_a_mecanum_strafes_slower_than_it_drives():
+    import drivetrain_report as dr
+    import yaml as _y
+    p = _y.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", "unoq_config.yaml")))
+    assert p["kinematics"]["base_type"] == "mecanum"
+    v, vy, _ = dr.derived_limits(p)["nav2.velocity_smoother.ros__parameters.max_velocity"]
+    assert 0 < vy < v and abs(vy - round(v * dr.MECANUM_STRAFE_FRAC, 2)) <= 0.011

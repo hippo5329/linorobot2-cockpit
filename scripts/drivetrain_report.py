@@ -1051,7 +1051,13 @@ def suggest_nav2_limits(d, p=None, measured=None):
             v *= shrink
             w *= shrink
 
-    a = p["lin_acc_held"] * ACCEL_FRAC
+    # The model's acceleration is a robot of simulation.robot_mass (3.5 kg unless set); a
+    # measured step (test_acc: 0.9 x max_vel in t_to_90) holds a heavier robot to what it
+    # really did. The smaller of the two: the measurement never raises the model's.
+    lin_acc = p["lin_acc_held"]
+    if measured.get("acc_measured"):
+        lin_acc = min(lin_acc, float(measured["acc_measured"]))
+    a = lin_acc * ACCEL_FRAC
     ang_a = min(w / ANG_ACCEL_SECONDS, p["ang_acc_held"] * ACCEL_FRAC)
 
     def r2(x):
@@ -1062,8 +1068,9 @@ def suggest_nav2_limits(d, p=None, measured=None):
     v, w, a, ang_a = r2(v), r2(w), r2(a), r2(ang_a)
     # A mecanum is the only base that can command y at all; for the others the
     # smoother's y limits must stay 0 or it will pass through a velocity the
-    # kinematics cannot produce.
-    vy = r2(v) if d["base"] == "mecanum" else 0.0
+    # kinematics cannot produce. Its rollers strafe at 70-85 % of its forward speed, so
+    # sideways it gets MECANUM_STRAFE_FRAC of v, not v.
+    vy = r2(v * MECANUM_STRAFE_FRAC) if d["base"] == "mecanum" else 0.0
 
     return {
         "nav2.velocity_smoother.ros__parameters.max_velocity": [v, vy, w],
@@ -1150,7 +1157,9 @@ def derived_limits(params):
     if isinstance(step, dict) and step.get("max_vel"):
         try:
             measured = dict(measured, max_vel=float(step["max_vel"]))
-        except (TypeError, ValueError):
+            if step.get("t_to_90"):
+                measured["acc_measured"] = 0.9 * float(step["max_vel"]) / float(step["t_to_90"])
+        except (TypeError, ValueError, ZeroDivisionError):
             pass
     ratio = suggest_max_rpm_ratio(d, measured)
     if ratio is not None:
@@ -1247,6 +1256,7 @@ def tune_from_test_acc(params, transcript):
 # measure the drivetrain (the 1-Click's --test-acc): the map is built slowly, on
 # limits the robot certainly meets, and the measured ones replace them afterwards.
 CONSERVATIVE_FRAC = 0.5
+MECANUM_STRAFE_FRAC = 0.8   # sideways vs forward on mecanum rollers (70-85 % measured)
 CONSERVATIVE_KEYS = (
     "nav2.velocity_smoother.ros__parameters.max_velocity",
     "nav2.velocity_smoother.ros__parameters.min_velocity",
