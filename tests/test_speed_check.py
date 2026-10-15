@@ -235,3 +235,68 @@ def test_it_runs_under_the_stacks_ros_environment():
     assert cmd.startswith(one_click_pipeline.get_ros_env("jazzy"))
     assert "SPEED_CHECK_IN_ROS_ENV=1 exec python3 " in cmd
     assert "'/config/my robot.yaml' --strafe" in cmd
+
+
+# ---- the room it needs, and each step's guard ----
+
+def test_the_room_is_the_robots_circle_plus_the_steps_reach():
+    # the steps reach 0.4 m from the start: a 0.6 m check from the centre left a 0.31 m robot
+    # a few cm from a box
+    assert sc.room_need(0.31) == pytest.approx(0.76)
+    assert sc.room_need(0.31, 1.0) == 1.0                 # --need may ask for more, never less
+    assert sc.room_need(0.31, 0.6) == pytest.approx(0.76)
+    assert max(abs(v) for k, v in sc.steps(True) if k != "ang") * sc.RUN_S < sc.REACH_M
+
+
+def test_the_radius_comes_from_the_robots_nav2_config():
+    p = {"nav2": {"local_costmap": {"local_costmap": {"ros__parameters": {"robot_radius": 0.30}}}}}
+    assert sc.robot_radius(p) == pytest.approx(0.35)
+    assert sc.robot_radius(p, 0.25) == 0.25
+
+
+def test_a_step_stops_for_a_box_in_its_corridor():
+    box = np.array([[0.30, 0.05]])                       # 0.30 m ahead
+    assert "0.30 m in the way" in sc.step_fault(box, 0.2, 0.0, 0.0, 0.31, 0.1)
+    assert sc.step_fault(box, -0.2, 0.0, 0.0, 0.31, 0.1) == ""     # backing away from it
+    assert "in the way" in sc.step_fault(np.array([[0.05, 0.33]]), 0.0, 0.1, 0.0, 0.31, 0.1)
+
+
+def test_a_spin_stops_for_something_inside_its_circle():
+    assert "spin sweeps" in sc.step_fault(np.array([[0.0, 0.32]]), 0.0, 0.0, 0.5, 0.31, 0.1)
+    assert sc.step_fault(np.array([[0.0, 0.40]]), 0.0, 0.0, 0.5, 0.31, 0.1) == ""
+
+
+def test_a_step_stops_when_the_scan_does():
+    assert "scan stopped" in sc.step_fault(np.zeros((0, 2)), 0.2, 0.0, 0.0, 0.31, 0.8)
+    assert sc.step_fault(np.zeros((0, 2)), 0.2, 0.0, 0.0, 0.31, 0.2) == ""
+
+
+# ---- a negative ratio is a fault, never a scale ----
+
+def test_a_negative_linear_ratio_names_wiring_not_a_wheel_diameter():
+    lines = sc.advice({"lin": -0.98, "ang": 1.0}, {"kinematics": {"wheel_diameter": 0.1}})
+    lin = [s for s in lines if s.startswith("LINEAR")][0]
+    assert "NEGATIVE" in lin and "180 deg" in lin and "upside down" in lin and "->" not in lin
+    ang = [s for s in lines if s.startswith("ANGULAR")][0]
+    assert "nothing to change" in ang                  # judged against 1.0, not against -0.98
+    assert any("LINEAR" in f and "negative" in f for f in sc.faults({"lin": -0.98}))
+
+
+def test_a_negative_angular_ratio_never_advises_a_negative_scale():
+    p = {"kinematics": {"base_type": "2wd", "angular_scale": 1.0}}
+    ang = [s for s in sc.advice({"lin": 1.0, "ang": -1.02}, p) if s.startswith("ANGULAR")][0]
+    assert "NEGATIVE" in ang and "angular_scale 1.000 ->" not in ang and "swapped" in ang
+    assert sc.faults({"ang": -1.02})
+
+
+def test_the_gyro_is_judged_at_ten_percent():
+    assert sc.faults({"gyro": 1.08}) == []
+    assert "outside 10%" in sc.faults({"gyro": 1.12})[0]
+    neg = sc.faults({"gyro": -1.0})[0]
+    assert "negative" in neg and "geometry.imu" in neg and "reversed" in neg
+    assert "FAIL" in [s for s in sc.advice({"gyro": 0.85}, {}) if s.startswith("GYRO")][0]
+    assert "FAIL" not in [s for s in sc.advice({"gyro": 1.08}, {}) if s.startswith("GYRO")][0]
+
+
+def test_healthy_ratios_have_no_faults():
+    assert sc.faults({"lin": 0.97, "ang": 1.1, "lat": 0.8, "gyro": 1.02}) == []

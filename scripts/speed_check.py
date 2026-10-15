@@ -3,7 +3,7 @@
 (odom/unfiltered) and what the room says (the LiDAR's own track of the robot).
 
     speed_check.py --params ROBOT_config.yaml [--strafe | --no-strafe] [--json OUT.json]
-                   [--need 0.6] [--stamped | --unstamped]
+                   [--radius R] [--need M] [--stamped | --unstamped]
 
 The wheels count what they turned, not what the floor gave back. A tyre a millimetre
 smaller than the config says, a track that skids sideways in a turn, a mecanum roller that
@@ -19,14 +19,19 @@ is followed by its mirror image, so the robot ends about where it began, and it 
 more than ~0.4 m from there. /cmd_vel is set to zero on every exit, and the firmware's
 cmd_vel timeout stops the wheels if this program dies.
 
-It refuses to move when anything is nearer than --need (0.6 m) all round, or when something
-else already publishes /cmd_vel (a teleop, Nav2). Run it with the robot brought up on its
+It refuses to move when anything is nearer than the robot's circle (--radius, default Nav2's
+robot_radius plus its margin) plus REACH_M all round (--need may ask for more), or when
+something else already publishes /cmd_vel (a teleop, Nav2). While it moves, every step stops
+the run when a return comes into the corridor ahead (clearance.path_blocked), into the circle
+a spin sweeps, or when the scan stops. Run it with the robot brought up on its
 own -- no SLAM, no Nav2 -- in the cockpit's container; it runs itself under the stack's own
 ROS environment (one_click_pipeline.get_ros_env).
 
 What it prints: a row per step (commanded, odom, LiDAR, gyro, LiDAR/odom, battery), then
 one verdict per motion -- LINEAR, ANGULAR, STRAFE -- with the config change it implies.
-A ratio within 3 % of 1.0 is fine: that is about what the LiDAR can resolve in 2 s.
+A ratio within 3 % of 1.0 is fine: that is about what the LiDAR can resolve in 2 s. A
+NEGATIVE ratio is a wiring or mounting fault, never a scale. The gyro's yaw rate against the
+LiDAR's is judged too (GYRO_TOLERANCE). Faults go in the JSON's "faults" and exit 1.
 """
 import argparse
 import json
@@ -45,6 +50,15 @@ ANGULAR = [("ang", 0.5), ("ang", -0.5), ("ang", 1.0), ("ang", -1.0)]
 STRAFE = [("lat", 0.10), ("lat", -0.10), ("lat", 0.20), ("lat", -0.20)]
 RUN_S, PAUSE_S, SETTLE_S = 2.0, 1.0, 0.6
 TOLERANCE = 0.03
+# The gyro and the room measure the same turn with no slip in between: 10 % apart is an IMU
+# fault (its model, its scale, its mounting), not something to tune around.
+GYRO_TOLERANCE = 0.10
+# How far a step goes from the start: 0.20 m/s for RUN_S, then its mirror, so 0.4 m, plus a
+# coast and a margin. The room it needs is the robot's circle plus this: a 0.6 m check from
+# the centre let a 0.31 m robot drive its front to within a few cm of a box.
+REACH_M = 0.45
+SCAN_STALE_S = 0.5      # a step's guard needs a scan this fresh (10 Hz: five missed)
+SPIN_MARGIN_M = 0.02    # a spin needs this beyond the robot's circle (clearance.SPIN_MARGIN_M)
 UNITS = {"lin": "m/s", "ang": "rad/s", "lat": "m/s"}
 
 
@@ -119,6 +133,50 @@ def fine(r: float, tol: float = TOLERANCE) -> bool:
     return abs(r - 1.0) <= tol
 
 
+def room_need(radius: float, need: float = 0.0) -> float:
+    """The clear room all round before anything moves: the circle plus REACH_M, or more."""
+    return max(float(need or 0.0), float(radius) + REACH_M)
+
+
+def step_fault(P, vx: float, vy: float, wz: float, radius: float, scan_age: float) -> str:
+    """Why a step must stop now, or '': a return in the corridor ahead (translating), inside
+    the circle a spin sweeps (turning), or a scan too old to say."""
+    import clearance
+    if scan_age > SCAN_STALE_S:
+        return f"the scan stopped ({scan_age:.1f} s since the last one)"
+    near = clearance.path_blocked(P, vx, vy, radius)
+    if near:
+        return f"a return {near:.2f} m in the way"
+    if wz and clearance.nearest(P) < radius + SPIN_MARGIN_M:
+        return f"a return {clearance.nearest(P):.2f} m from the centre, inside the circle a spin sweeps"
+    return ""
+
+
+WIRING = ("a wiring or mounting fault, not a scale: the LiDAR's yaw 180 deg off (geometry.laser), "
+          "the LiDAR upside down (a mirrored scan), or the motors or encoders swapped or reversed")
+
+
+def faults(rat: dict) -> list:
+    """The ratios no config value corrects: a negative one, and a gyro more than
+    GYRO_TOLERANCE off the room. Empty when there are none."""
+    out = []
+    names = {"lin": "LINEAR", "ang": "ANGULAR", "lat": "STRAFE"}
+    for k, name in names.items():
+        r = rat.get(k)
+        if r is not None and r < 0:
+            out.append(f"{name} LiDAR/odom {r:.3f} is negative: {WIRING}")
+    r_g = rat.get("gyro")
+    if r_g is not None:
+        if r_g < 0:
+            out.append(f"GYRO gyro/LiDAR {r_g:.3f} is negative: the IMU reads turns backwards -- "
+                       f"mounted reversed (upside down) or geometry.imu's roll/yaw wrong")
+        elif not fine(r_g, GYRO_TOLERANCE):
+            out.append(f"GYRO gyro/LiDAR {r_g:.3f}: the IMU's turn rate is {abs(1 - r_g):.0%} "
+                       f"{'high' if r_g > 1 else 'low'}, outside {GYRO_TOLERANCE:.0%} -- the IMU's "
+                       f"model or scale, or its mounting")
+    return out
+
+
 def advice(rat: dict, params: dict, tol: float = TOLERANCE) -> list:
     """The verdict lines: what each ratio means and the config change it implies.
 
@@ -129,7 +187,10 @@ def advice(rat: dict, params: dict, tol: float = TOLERANCE) -> list:
     bt = base_type(params)
     lines = []
     r_lin = rat.get("lin")
-    if r_lin is not None:
+    if r_lin is not None and r_lin < 0:
+        lines.append(f"LINEAR  LiDAR/odom {r_lin:.3f}: NEGATIVE -- the room saw the robot go the other "
+                     f"way: {WIRING}. No wheel_diameter fixes it")
+    elif r_lin is not None:
         if fine(r_lin, tol):
             lines.append(f"LINEAR  LiDAR/odom {r_lin:.3f}: fine (within {tol:.0%}) -- nothing to change")
         else:
@@ -139,9 +200,12 @@ def advice(rat: dict, params: dict, tol: float = TOLERANCE) -> list:
                    else f"kinematics.wheel_diameter x {r_lin:.3f}")
             lines.append(f"LINEAR  LiDAR/odom {r_lin:.3f}: the wheels {what} the floor by "
                          f"{abs(1 - r_lin):.1%} -- set {new}")
-    base = r_lin if r_lin is not None else 1.0
+    base = r_lin if r_lin is not None and r_lin > 0 else 1.0
     r_ang = rat.get("ang")
-    if r_ang is not None:
+    if r_ang is not None and r_ang < 0:
+        lines.append(f"ANGULAR LiDAR/odom {r_ang:.3f}: NEGATIVE -- the room saw the robot turn the other "
+                     f"way: {WIRING}. No angular_scale fixes it")
+    elif r_ang is not None:
         left = r_ang / base
         if fine(left, tol):
             lines.append(f"ANGULAR LiDAR/odom {r_ang:.3f} ({left:.3f} once wheel_diameter is right): "
@@ -158,7 +222,10 @@ def advice(rat: dict, params: dict, tol: float = TOLERANCE) -> list:
                          f"turns {left:.0%} of what the wheels say -- set kinematics.angular_scale "
                          f"{sc:.3f} -> {sc / left:.3f}")
     r_lat = rat.get("lat")
-    if r_lat is not None:
+    if r_lat is not None and r_lat < 0:
+        lines.append(f"STRAFE  LiDAR/odom {r_lat:.3f}: NEGATIVE -- the room saw the robot slide the other "
+                     f"way: {WIRING} (on a mecanum base, also the wheels' X pattern mirrored)")
+    elif r_lat is not None:
         left = r_lat / base
         if fine(left, tol):
             lines.append(f"STRAFE  LiDAR/odom {r_lat:.3f} ({left:.3f} once wheel_diameter is right): "
@@ -169,12 +236,30 @@ def advice(rat: dict, params: dict, tol: float = TOLERANCE) -> list:
                          f"config key for it (sideways odometry comes from wheel_diameter alone). Check the "
                          f"rollers turn freely and the wheels sit in the right X pattern")
     r_g = rat.get("gyro")
-    if r_g is not None and not fine(r_g, tol):
+    if r_g is not None and r_g < 0:
+        lines.append(f"GYRO    gyro/LiDAR {r_g:.3f}: NEGATIVE -- FAIL: the IMU reads turns backwards; it is "
+                     f"mounted reversed (upside down) or geometry.imu's roll/yaw is wrong")
+    elif r_g is not None and not fine(r_g, tol):
+        verdict = "FAIL" if not fine(r_g, GYRO_TOLERANCE) else f"within {GYRO_TOLERANCE:.0%}"
         lines.append(f"GYRO    gyro/LiDAR {r_g:.3f}: the IMU's turn rate is {abs(1 - r_g):.1%} "
-                     f"{'high' if r_g > 1 else 'low'} -- the IMU, not the wheels; check its mounting and model")
+                     f"{'high' if r_g > 1 else 'low'} ({verdict}) -- the IMU, not the wheels; check its "
+                     f"mounting and model")
     if not lines:
         lines.append("no verdict: no step had enough samples")
     return lines
+
+
+class StepStopped(Exception):
+    """A step's guard stopped the robot (step_fault)."""
+
+
+def robot_radius(params: dict, given: float = None) -> float:
+    """The robot's circle: --radius, else what the 1-Click's clearance step passes (Nav2's
+    robot_radius plus its margin, gen_firmware_header.nav2_robot_radius)."""
+    if given:
+        return float(given)
+    import gen_firmware_header
+    return gen_firmware_header.nav2_robot_radius(params or {})
 
 
 # ---- ROS ----
@@ -223,10 +308,14 @@ def run(a, params: dict) -> int:
     node = Node("speed_check")
     st = lambda h: h.stamp.sec + h.stamp.nanosec * 1e-9   # noqa: E731
     scans, odom, gyro, batt, frame = [], [], [], [], [None]
+    last_scan = [-math.inf]          # arrival, this host's monotonic clock
     scan_topic = a.scan_topic or _whole_circle(node, pre)
+    radius = robot_radius(params, a.radius)
+    body = clearance.body_for(radius)
 
     def on_scan(m):
         frame[0] = m.header.frame_id
+        last_scan[0] = time.monotonic()
         scans.append(scan_match.scan_dict(m))
     node.create_subscription(LaserScan, scan_topic, on_scan, qos_profile_sensor_data)
     node.create_subscription(Odometry, f"{pre}/odom/unfiltered",
@@ -257,6 +346,12 @@ def run(a, params: dict) -> int:
     def hold(vx, wz, vy, secs):
         end = time.time() + secs
         while time.time() < end:
+            if vx or vy or wz:
+                P = scan_match.scan_points(scans[-1], laser, body=body) if scans else np.zeros((0, 2))
+                why = step_fault(P, vx, vy, wz, radius, time.monotonic() - last_scan[0])
+                if why:
+                    send(0.0, 0.0)
+                    raise StepStopped(why)
             send(vx, wz, vy)
             spin(0.1)
 
@@ -272,16 +367,17 @@ def run(a, params: dict) -> int:
         if laser is None:
             print(f"  ⚠️ no TF base_link -> {frame[0]}; using the scan frame as base_link")
             laser = (0.0, 0.0, 0.0)
-        # The room first: nothing nearer than --need, all round.
+        # The room first: the robot's circle plus the steps' reach, all round.
+        need = room_need(radius, a.need)
         still = scans[-5:]
-        P = scan_match.median_points(still, laser)
+        P = scan_match.median_points(still, laser, body=body)
         near = clearance.nearest(P)
         q = clearance.quadrants(P)
         fmt = lambda v: "none" if v == math.inf else f"{v:.2f} m"   # noqa: E731
         print("  room (+-45 deg): " + ", ".join(f"{k} {fmt(v)}" for k, v in q.items())
-              + f"; nearest {fmt(near)} (need {a.need:.2f} m)")
-        if near < a.need:
-            print(f"SPEED_CHECK REFUSED: something is {near:.2f} m away, nearer than {a.need:.2f} m -- "
+              + f"; nearest {fmt(near)} (need {need:.2f} m: radius {radius:.2f} + {REACH_M:.2f})")
+        if near < need:
+            print(f"SPEED_CHECK REFUSED: something is {near:.2f} m away, nearer than {need:.2f} m -- "
                   f"give the robot room. Nothing moved.")
             return 2
         cmd_topic = f"{pre}/cmd_vel"
@@ -304,6 +400,12 @@ def run(a, params: dict) -> int:
             tb = time.time()
             hold(0, 0, 0, PAUSE_S)
             windows.append((kind, v, ta, tb))
+    except StepStopped as e:
+        print(f"SPEED_CHECK STOPPED: {e} -- the robot was stopped mid-step; no verdict")
+        if a.json:
+            with open(a.json, "w") as fh:
+                json.dump({"stopped": str(e), "ratios": {}, "faults": [f"stopped: {e}"]}, fh)
+        return 1
     finally:
         if pub is not None:
             for _ in range(10):
@@ -334,13 +436,17 @@ def run(a, params: dict) -> int:
     rat = ratios(rows)
     for line in advice(rat, params):
         print(line)
+    bad = faults(rat)
+    for f in bad:
+        print(f"SPEED_CHECK FAULT: {f}")
     if a.json:
         with open(a.json, "w") as fh:
-            json.dump({"rows": rows, "ratios": rat, "end": end, "windows": windows, "batt": batt}, fh)
+            json.dump({"rows": rows, "ratios": rat, "faults": bad, "end": end, "windows": windows,
+                       "batt": batt}, fh)
     print("SPEED_CHECK_DONE")
     node.destroy_node()
     rclpy.shutdown()
-    return 0
+    return 1 if bad else 0
 
 
 def ros_env_command(argv: list, distro: str) -> str:
@@ -363,7 +469,10 @@ def main(argv=None) -> int:
     sx.add_argument("--strafe", dest="strafe", action="store_true", default=None,
                     help="sideways steps too (default: on for a mecanum base)")
     sx.add_argument("--no-strafe", dest="strafe", action="store_false")
-    ap.add_argument("--need", type=float, default=0.6, help="refuse to move with anything nearer, m (0.6)")
+    ap.add_argument("--need", type=float, default=0.0,
+                    help=f"refuse to move with anything nearer, m (at least --radius + {REACH_M:.2f})")
+    ap.add_argument("--radius", type=float, default=0.0,
+                    help="the robot's circle, m (default: Nav2's robot_radius plus its margin, from --params)")
     tx = ap.add_mutually_exclusive_group()
     tx.add_argument("--stamped", dest="stamped", action="store_true", default=None,
                     help="publish TwistStamped (default: what the board subscribes to)")
