@@ -26,7 +26,18 @@ def test_a_healthy_scan_passes():
 
 def test_the_tracked_robots_scan_rate_is_refused():
     why = mg.scan_fault(_stamps(6.9, 5), 100.0, 10.0, started=90.0)
-    assert "6.9 Hz" in why and "8.5 Hz" in why, why
+    assert "6.9 Hz" in why and "8.0 Hz" in why, why
+
+
+def test_a_busy_robot_computer_s_short_dip_is_not_a_starved_lidar():
+    # MC200's UNO Q while Nav2 came up: a few seconds near 8.4 Hz inside a 10 Hz stream
+    dip = [t for t in _stamps(10.0, 5) if t < 97.0] + _stamps(8.4, 3)[1:]
+    assert mg.scan_fault(dip, 100.0, 10.0, started=90.0) == ""
+    assert mg.scan_fault(_stamps(7.5, 5), 100.0, 10.0, started=90.0) != ""
+
+
+def test_the_ready_check_waits_out_a_whole_rate_window():
+    assert mg.READY_WINDOW_S >= mg.SCAN_WINDOW_S
 
 
 def test_a_stopped_scan_is_refused_whatever_its_rate_was():

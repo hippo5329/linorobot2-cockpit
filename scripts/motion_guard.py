@@ -47,10 +47,13 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-SCAN_RATE_SHARE = 0.85     # of the model's rate
-SCAN_WINDOW_S = 3.0
+# The floor is for a LiDAR starved of power (the tracked robot's 6.9 Hz), not a robot computer
+# busy for a moment: MC200's UNO Q fell to 8.4 Hz over 3 s while Nav2 came up (9.0 over 5 s;
+# the LD19's own packets only 3 % down), and 85 % over 3 s stopped every goal it was given.
+SCAN_RATE_SHARE = 0.80     # of the model's rate
+SCAN_WINDOW_S = 5.0
 SCAN_STALE_S = 1.0
-READY_WINDOW_S = 4.0
+READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
 
