@@ -18,3 +18,13 @@ def test_the_entrypoint_adds_each_gpiochip_group_before_dropping_privileges():
     body = src[loop:src.index("done", loop)]
     assert 'stat -c %g "$dev"' in body and 'usermod -aG "$g" "$APP_USER"' in body
     assert re.search(r'case "\$g" in ""\|0\) continue', body), "root-owned chips are skipped"
+
+
+def test_the_entrypoint_hands_the_config_subdirs_back_to_the_app_user():
+    """A root run left /config/generated 0:0 and the UI's Bringup (the app user) could not write
+    the robot's URDF there (2026-10-15)."""
+    src = open(os.path.join(ROOT, "docker", "entrypoint.sh")).read()
+    block = src[src.index('CFG="${COCKPIT_CONFIG_DIR:-/config}"'):]
+    block = block[:block.index("# (An empty config dir")]
+    assert "for sub in generated state live; do" in block
+    assert 'chown -R "$HOST_UID:$HOST_GID" "$CFG/$sub"' in block

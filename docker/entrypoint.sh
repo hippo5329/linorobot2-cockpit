@@ -219,6 +219,15 @@ if [ "$(id -u)" = "0" ] && [ "$DROP_PRIVS" = "yes" ]; then
         if [ -d "$CFG/.git" ]; then
             chown -R "$HOST_UID:$HOST_GID" "$CFG/.git" 2>/dev/null || true
         fi
+        # And the directories the stack writes into: a root run (a bench script's `docker
+        # exec`, an older image) left generated/ 0:0, and the web UI's Bringup -- run as the
+        # app user -- died "Permission denied: '/config/generated/<robot>.urdf.tmp'" before it
+        # started anything (an Arduino UNO Q, 2026-10-15). Small trees: -R is cheap.
+        for sub in generated state live; do
+            if [ -d "$CFG/$sub" ]; then
+                chown -R "$HOST_UID:$HOST_GID" "$CFG/$sub" 2>/dev/null || true
+            fi
+        done
     fi
 fi
 # (An empty config dir is seeded from config/reference by the supervisor itself.)
