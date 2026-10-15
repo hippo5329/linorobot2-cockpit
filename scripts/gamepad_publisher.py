@@ -47,6 +47,9 @@ from gen_firmware_header import distro_stamps_cmd_vel  # noqa: E402
 import stall_check  # noqa: E402
 
 
+READY_LINE = "GAMEPAD_READY"
+
+
 def resolve_cmd_vel_type(choice: str, distro: str = None) -> bool:
     """True when /cmd_vel should carry TwistStamped.
 
@@ -196,6 +199,11 @@ def main():
                             stamped=resolve_cmd_vel_type(args.cmd_vel_type),
                             odom_topic=args.odom_topic, status_file=args.status_file)
     threading.Thread(target=read_stdin, args=(node,), daemon=True).start()
+    # The cockpit waits for this line before it tells the page "publishing": on a slow robot
+    # computer the shell, the ROS setup and rclpy take seconds, and commands sent before the
+    # node existed queued in the pipe -- the robot then got only the last one (the release,
+    # zeros) and never moved (an Arduino UNO Q, 2026-10-15).
+    print(READY_LINE, flush=True)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

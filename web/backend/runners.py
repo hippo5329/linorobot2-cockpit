@@ -208,6 +208,10 @@ class ProcessRunner:
             return True
 
 
+GAMEPAD_READY_LINE = "GAMEPAD_READY"   # scripts/gamepad_publisher.py READY_LINE
+GAMEPAD_READY_TIMEOUT_S = 40.0        # a slow robot computer starts Python and rclpy in ~5-15 s
+
+
 class GamepadRunner:
     """Virtual gamepad cmd_vel publisher."""
 
@@ -252,16 +256,39 @@ class GamepadRunner:
                 self.process = subprocess.Popen(
                     full_cmd,
                     stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     text=True,
                     env=env,
                     preexec_fn=os.setsid,
                 )
                 self.topic = topic
-                return True
             except Exception:
                 return False
+            proc, ready = self.process, threading.Event()
+
+            def pump(out):
+                # READY_LINE, then keep draining so the publisher never blocks on a full pipe
+                for line in out:
+                    if line.strip() == GAMEPAD_READY_LINE:
+                        ready.set()
+            threading.Thread(target=pump, args=(proc.stdout,), daemon=True).start()
+        # "started" only once the node exists (outside the lock: send() and kill() still run).
+        # Before, the page said "publishing" while a slow robot computer was still starting
+        # Python and rclpy, its commands queued in the pipe, and the robot got only the last
+        # one -- the release, zeros (an Arduino UNO Q, 2026-10-15).
+        deadline = time.time() + GAMEPAD_READY_TIMEOUT_S
+        while not ready.wait(0.2):
+            if proc.poll() is not None or time.time() > deadline:
+                with self.lock:
+                    if self.process is proc:
+                        self.process = None
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+                return False
+        return True
 
     def send(self, linear_x: float, linear_y: float, angular_z: float) -> bool:
         with self.lock:

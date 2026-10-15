@@ -28,7 +28,7 @@ def test_start_answers_the_field_the_page_reads():
     assert "!r.started" in js
     route = _start_route()
     assert re.search(r'"started":\s*started', route), "the page reads r.started"
-    assert 'data.get("topic")' in route and "gamepad_runner.start(topic)" in route
+    assert 'data.get("topic")' in route and "run_in_threadpool(gamepad_runner.start, topic)" in route
 
 
 def test_every_gamepad_call_the_page_makes_has_a_route_for_its_method():

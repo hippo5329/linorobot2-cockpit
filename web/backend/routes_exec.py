@@ -10,6 +10,7 @@ import re
 import threading
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from core import (
     REPO_ROOT,
     RUNNERS,
@@ -286,7 +287,8 @@ async def api_gamepad_start(request: Request):
     topic = str(data.get("topic") or "/cmd_vel").strip()
     if not _ROS_TOPIC.match(topic):
         raise HTTPException(status_code=400, detail=f"not a ROS topic name: {topic!r}")
-    started = gamepad_runner.start(topic)
+    # start() waits for the publisher's node (seconds on a slow robot computer): off the loop
+    started = await run_in_threadpool(gamepad_runner.start, topic)
     return {"status": "ok", "started": started, "running": started, "topic": topic}
 
 
@@ -297,7 +299,7 @@ async def api_gamepad_cmd(request: Request):
     ly = float(data.get("linear_y", 0.0))
     az = float(data.get("angular_z", 0.0))
     if not gamepad_runner.is_running():
-        gamepad_runner.start()
+        await run_in_threadpool(gamepad_runner.start)
     sent = gamepad_runner.send(lx, ly, az)
     return {"sent": sent, "running": gamepad_runner.is_running()}
 
