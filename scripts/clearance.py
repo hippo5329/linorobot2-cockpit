@@ -445,9 +445,11 @@ class Robot:
         print("  ❌ the step timed out")
         return False
 
-    def slide(self, dist: float, heading: float, radius: float, timeout: float = None) -> bool:
+    def slide(self, dist: float, heading: float, radius: float, timeout: float = None,
+              guard: bool = True) -> bool:
         """Move `dist` along `heading` (base_link) without turning -- vy for a mecanum base;
-        heading 0 is a plain forward step. Closed on /odom, stopped by a return in the corridor."""
+        heading 0 is a plain forward step. Closed on /odom, stopped by a return in the corridor
+        unless `guard` is off (a retrace of ground just swept, into a blind sector)."""
         start = self.wait_odom()
         if start is None:
             print("  ❌ no /odom: cannot close a move")
@@ -459,7 +461,7 @@ class Robot:
             if math.hypot(self.odom[0] - start[0], self.odom[1] - start[1]) >= dist:
                 self.stop()
                 return True
-            if self.scan is not None:
+            if guard and self.scan is not None:
                 b = path_blocked(scan_match.scan_points(self.scan, self.mount()), vx, vy, radius)
                 if b:
                     self.stop()
@@ -637,6 +639,21 @@ def first_look(a, r: Robot):
               "move the robot by hand")
         return None, blind, None, 1
     print(f"  the whole circle: {len(P360)} points")
+    if d > 0:
+        # Back the way it came, which the move itself swept: the robot ends where it was put,
+        # so a second look (the clearance step, then test_acc's) does not creep it forward
+        # again -- two did, 0.70 m, onto boxes 0.51 m ahead, and test_acc found no room.
+        print(f"  back {d:.2f} m to where it started, over ground just swept (THE ROBOT MOVES)",
+              flush=True)
+        if not r.slide(d, h + math.pi, a.radius, guard=False):
+            print("CLEARANCE_REFUSED: the move back stopped -- move the robot by hand")
+            return None, blind, None, 1
+        r.spin(0.5)
+        odom1 = r.wait_odom(5.0)
+        if odom0 is None or odom1 is None:
+            print("CLEARANCE FAIL: no /odom to carry the look back to the start")
+            return None, blind, None, 2
+        P360, odom0 = into_frame(P360, odom_since(odom0, odom1)), odom1
     return P360, (), odom0, 0
 
 

@@ -4,6 +4,7 @@ Geometry only -- no ROS: the step a cramped robot inches, the quadrants it repor
 matcher that finds the start again, and how test_acc's syslog is read. Plus where step
 4.8 sits in the pipeline: after the topic gate, before SLAM, real robots only.
 """
+import argparse
 import math
 import os
 import re
@@ -471,12 +472,29 @@ class _LookRobot:
     """Turns in place instantly; each look sees the room from its heading, minus the blind
     sector and the chassis -- and, from `intruder_after` turns on, a box just behind."""
 
+    topic, laser = "/scan", (0.0, 0.0, 0.0)
+
     def __init__(self, world, blind=BLIND, odom_err_deg=0.0, intruder_after=None):
         self.world, self.blind, self.yaw, self.turns = world, blind, 0.0, []
         self.err, self.intruder_after = math.radians(odom_err_deg), intruder_after
+        self.x = self.y = 0.0
+        self.slides = []
 
     def wait_odom(self, timeout=5.0):
-        return (0.0, 0.0, scan_match.wrap(self.yaw * (1.0 + self.err)))
+        return (self.x, self.y, scan_match.wrap(self.yaw * (1.0 + self.err)))
+
+    def mount(self):
+        return self.laser
+
+    def claim_cmd_vel(self):
+        return True
+
+    def slide(self, dist, heading, radius, timeout=None, guard=True):
+        h = self.yaw + heading
+        self.x += dist * math.cos(h)
+        self.y += dist * math.sin(h)
+        self.slides.append((round(dist, 3), round(math.degrees(scan_match.wrap(heading))), guard))
+        return True
 
     def turn_by(self, angle, timeout=15.0, guard=0.0):
         if guard and self.intruder_after is not None and len(self.turns) >= self.intruder_after:
@@ -492,7 +510,7 @@ class _LookRobot:
         pass
 
     def points(self, n=5, timeout=15.0):
-        P = clearance.into_frame(self.world, (self.yaw, 0.0, 0.0))
+        P = clearance.into_frame(self.world, (self.yaw, self.x, self.y))
         keep = ~clearance.in_blind(clearance.bearings(P), self.blind)
         return P[keep & (np.hypot(P[:, 0], P[:, 1]) >= scan_match.BODY_M)]
 
@@ -605,3 +623,27 @@ def test_the_callers_pass_holonomic_to_the_look_around():
     assert "blind_flags(controller_cfg, look=moves)}{holonomic_flag(params)}" in src
     src = open(os.path.join(REPO, "scripts", "robot_bringup.py")).read()
     assert "holonomic_flag(robot.params)" in src.split("clearance.py')} check --need", 1)[1][:300]
+
+
+def test_the_look_ends_where_the_robot_was_put_and_a_second_does_not_creep():
+    # MC200, 2026-10-15: each look moved it 0.35 m forward and left it there; the clearance
+    # step and test_acc's own look walked it onto boxes 0.51 m ahead, and test_acc found no
+    # room. The move to open ground is retraced over the ground it swept, unguarded (it backs
+    # into the blind sector), and the merged circle comes back into the start frame.
+    world = np.vstack([_room(L_ROOM), wall(0.88, -0.3, 0.88, 0.3), wall(-0.6, -0.3, -0.6, 0.3)])
+    r = _LookRobot(world)
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    for _ in range(2):
+        P, unseen, odom0, rc = clearance.first_look(a, r)
+        assert rc == 0 and unseen == () and P is not None
+        assert math.hypot(r.x, r.y) < 1e-9 and abs(math.degrees(r.yaw)) < 1.0
+        ahead = P[(np.abs(P[:, 1]) < 0.25) & (P[:, 0] > 0)]
+        behind = P[(np.abs(P[:, 1]) < 0.25) & (P[:, 0] < 0)]
+        assert abs(ahead[:, 0].min() - 0.88) < 0.03     # the boxes, from where it stands
+        assert abs(behind[:, 0].max() + 0.60) < 0.03    # the box the first look could not see
+        assert np.allclose(odom0[:2], (0.0, 0.0))
+    out, back = r.slides[0], r.slides[1]
+    assert out[2] and not back[2] and back[0] == out[0]
+    assert abs(scan_match.wrap(math.radians(back[1] - out[1] - 180))) < 1e-6
+
