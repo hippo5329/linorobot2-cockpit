@@ -3,7 +3,7 @@
 # Waveshare General Driver Board ESP32 (I2C sensors auto-detected)
 robot:
   name: gendrv
-  description: Linorobot2 Differential Drive Autonomy Platform
+  description: Waveshare General Driver (ESP32), 2WD differential drive
 base_controller:
   name: gendrv
   description: Waveshare General Driver Board ESP32 (Serial micro-ROS

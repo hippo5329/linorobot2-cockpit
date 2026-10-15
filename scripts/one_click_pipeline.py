@@ -1669,7 +1669,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
         print(f"  room for test_acc: {need:.2f} m all round (its full-power phase at this "
               f"robot's top speed, plus its radius), not {args.test_acc_clearance:.2f} m")
     if not clearance_step(args, params, controller_cfg, need, save=snap, max_travel=1.5):
-        return f"test_acc: no room of {need:.2f} m found", None
+        return (f"test_acc: no room of {need:.2f} m found -- carry the robot to open floor with "
+                f"{need:.2f} m clear all round and start again, or run without test_acc"), None
     if state is not None:
         try:
             odom = json.load(open(snap)).get("odom")
@@ -2801,7 +2802,8 @@ def main():
                   + (" (inching to clear space if needed)" if (args.inch and not args.topics_only) else "") + "...")
             if not clearance_step(args, params, controller_cfg, args.clearance):
                 failures.append(f"clearance: the room is short of {args.clearance:.2f} m")
-                print(f"❌ The room is short of {args.clearance:.2f} m. Nothing else moves the robot.")
+                print(f"❌ The room is short of {args.clearance:.2f} m. Nothing else moves the robot: "
+                      f"carry it to a spot with {args.clearance:.2f} m clear all round and start again.")
                 return 1
 
         # Step 5: SLAM. A robot with no scan source has nothing to map, and
@@ -2900,6 +2902,8 @@ def main():
                 if why_not:
                     mg["ok"] = False
                     print(f"  ❌ NOTHING MOVES: {why_not}")
+                    print("     A LiDAR short of rate or stopped: check its power and cable (the "
+                          "LiDAR step of the bring-up). A low battery: charge it. Then start again.")
                     failures.append(f"Motion guard: {why_not}")
 
             def guard_stop():
