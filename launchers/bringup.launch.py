@@ -54,6 +54,14 @@ def default_params_path():
 
 DEFAULT_PARAMS = default_params_path()
 
+# How often the LD driver looks for a finished revolution (its `pub_rate`, default 10).
+# The look does not wait, and a new revolution overwrites one not yet collected, so a
+# 10 Hz look at a 10 Hz LiDAR loses a scan whenever arrival jitter puts two revolutions
+# between looks: a real robot's Wi-Fi LD19 published 6.6-8.8 Hz for minutes at a time with
+# every packet received (2026-10-15), each gap exactly 0.2 s. 50 Hz collects every
+# revolution within 20 ms (the driver's own topic mode already looks at 50 Hz).
+LD_POLL_HZ = 50.0
+
 
 def resolve_params_path(context):
     """Pick the robot config this launch is actually for.
@@ -689,6 +697,7 @@ def launch_setup(context, *args, **kwargs):
                     "server_port": int(lidar_udp_port),
                     "laser_scan_dir": True,
                     "bins": lidar_bins,
+                    "pub_rate": LD_POLL_HZ,
                     "enable_angle_crop_func": False,
                 }],
             )
@@ -768,6 +777,7 @@ def launch_setup(context, *args, **kwargs):
                         "port_baudrate": int(lidar_baud),
                         "laser_scan_dir": True,
                         "bins": lidar_bins,
+                        "pub_rate": LD_POLL_HZ,
                         "enable_angle_crop_func": False,
                     }],
                 )
