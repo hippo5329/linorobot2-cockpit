@@ -951,6 +951,18 @@ def motion_guard_tripped(trip_file: str) -> str:
     return ""
 
 
+def stop_all_bg(procs: list, kept: set = frozenset(), stop=None):
+    """Stop a run's background steps in the reverse of their start order: what was started on
+    top of another goes first. The motion guard starts after the bringup whose LiDAR it watches;
+    stopped in start order, the bringup went first and the guard, still watching, latched
+    "/scan stopped: the last one is 2.0 s old" after a run that had passed (2026-10-15).
+    `kept` holds the id()s of processes to leave running (--keep-running)."""
+    stop = stop or stop_bg
+    for p in reversed(procs):
+        if id(p) not in kept:
+            stop(p)
+
+
 def stop_bg(proc, first=signal.SIGINT, step_s: float = 3.0):
     """Stop a background step: its process GROUP, by the pid we started, SIGINT
     first because `ros2 launch` tears its nodes down on SIGINT and is merely
@@ -3265,10 +3277,7 @@ def main():
             print("   Re-run with --shutdown-when-done to tear it down here instead.")
         else:
             print("\nCleaning up background ROS 2 launch processes...")
-        for p in bg_processes:
-            if id(p) in kept:
-                continue
-            stop_bg(p)
+        stop_all_bg(bg_processes, kept)
         for f in open_log_files:
             try:
                 f.close()

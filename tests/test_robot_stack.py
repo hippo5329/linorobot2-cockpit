@@ -104,7 +104,7 @@ def test_the_pipeline_keeps_the_stack_by_default():
     assert '"--shutdown-when-done"' in src
     assert 'dest="keep_running"' in src and 'default=True' in src
     # and the teardown is actually skipped for the stack
-    assert "if id(p) in kept:" in src
+    assert "stop_all_bg(bg_processes, kept)" in src and "if id(p) not in kept:" in src
 
 
 def test_the_ui_pipeline_does_not_ask_for_shutdown():
