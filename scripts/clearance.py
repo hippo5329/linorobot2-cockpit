@@ -25,7 +25,9 @@ check   N scans (the whole circle: scan_raw when a lidar.mask makes /scan a narr
         return in each quadrant (front, left, back, right; +-45 deg about 0 = ahead,
         counter-clockwise) and exits 0 when nothing is nearer than --need, 1 when
         something is. --save keeps the points as the start snapshot for `home`.
-inch    check, and while something is nearer than --need: pick the 5 cm step that most
+inch    check; when something is nearer than --need, first one move straight to the open floor
+        the look shows within --max-travel (room_spot: the most room, its whole circle seen free,
+        a clear straight path), then while something is still nearer: pick the 5 cm step that most
         increases the nearest distance -- forward or backward along a heading every
         15 deg, turned to first, with the path swept by the robot's circle (--radius)
         kept clear -- take it at 0.05 m/s, and look again. A turn in place sweeps that
@@ -269,6 +271,70 @@ def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
                     best = (score, h, d)
                 break
     return None if best is None else (best[1], best[2])
+
+
+ROOM_GRID_M = 0.10      # room_spot: candidate centres on a grid this fine
+ROOM_MARGIN_M = 0.05    # room_spot: the room asked for, plus this
+PATH_MARGIN_M = 0.10    # room_spot: the straight path keeps the robot's circle this far off returns
+
+
+def seen_ranges(P, blind, origin=(0.0, 0.0)) -> "np.ndarray":
+    """Per whole degree about the laser: how far the ground is known free -- up to the nearest
+    return in that degree or either neighbour, less KNOWN_MARGIN_M; KNOWN_NO_RETURN_M where no
+    beam came back; 0 where the LiDAR is blind. (free_ranges() caps every degree at
+    KNOWN_NO_RETURN_M, returns or not: right for the look-around's 0.2 m turning circle, but a
+    1 m room could then never count as seen.)"""
+    Q = np.asarray(P, float).reshape(-1, 2) - np.asarray(origin, float)
+    rng = np.full(360, np.inf)
+    if len(Q):
+        b = np.floor(bearings(Q)).astype(int) % 360
+        np.minimum.at(rng, b, np.hypot(Q[:, 0], Q[:, 1]))
+    rng = np.minimum(rng, np.minimum(np.roll(rng, 1), np.roll(rng, -1)))
+    rng = np.where(np.isinf(rng), KNOWN_NO_RETURN_M + KNOWN_MARGIN_M, rng) - KNOWN_MARGIN_M
+    rng[in_blind(np.arange(360) + 0.5, blind)] = 0.0
+    return np.maximum(rng, 0.0)
+
+
+def room_spot(P, need: float, radius: float, max_travel: float, blind=(), origin=(0.0, 0.0),
+              spin_ok: bool = True):
+    """(heading, distance, clearance) of the spot within max_travel with the most room, or
+    None: nothing nearer than need (+ ROOM_MARGIN_M) all round, that whole circle on ground the
+    look showed free (an unseen bearing is not a clear one), and a straight path there that
+    keeps the robot's circle PATH_MARGIN_M off every return, on seen ground too. The score is
+    the room less a quarter of the distance, so a nearer spot wins a near tie. Without
+    `spin_ok` only straight ahead or behind (no turn in place).
+
+    The 5 cm steps (best_step) climb the nearest distance greedily and stall in a corner: a
+    tracked robot 1 m from boxes gave up "no room of 1.00 m" with 1.3 m of open floor 1-2 m
+    away (2026-10-15, done by hand that day); this goes there in one move."""
+    if not len(P):
+        return None
+    ranges = seen_ranges(P, blind, origin)
+    cands = []
+    g = np.arange(-max_travel, max_travel + 1e-9, ROOM_GRID_M)
+    for x in g:                                  # the cheap tests first, on every candidate
+        for y in g:
+            d = math.hypot(x, y)
+            if d < ROOM_GRID_M or d > max_travel:
+                continue
+            c = np.array([x, y])
+            room = nearest(P - c)
+            if room < need + ROOM_MARGIN_M:
+                continue
+            h = math.atan2(y, x)
+            if not spin_ok and abs(turn_for(h)[0]) > 1e-6:
+                continue
+            if segment_clearance(P, c) < radius + PATH_MARGIN_M:
+                continue
+            cands.append((room - 0.25 * d, h, d, room, c))
+    cands.sort(key=lambda t: -t[0])
+    for score, h, d, room, c in cands:           # the seen-ground tests in score order
+        if not known_free(disk(c, need), ranges, origin).all():
+            continue
+        n = max(2, int(d / 0.10))
+        if all(known_free(disk(c * k / n, radius), ranges, origin).all() for k in range(1, n + 1)):
+            return h, d, room
+    return None
 
 
 def turn_for(heading: float) -> tuple:
@@ -838,6 +904,39 @@ def cmd_inch(a, r: Robot) -> int:
     travel, k = 0.0, 0
     last = odom0 or r.wait_odom(2.0)
     try:
+        # First the open floor in one move, when the look shows some within reach; the 5 cm
+        # steps below are the fallback (and finish the job if that move falls short).
+        here = nearest(P)
+        spot = room_spot(P, a.need, a.radius, a.max_travel, blind, r.laser[:2] if r.laser else (0.0, 0.0),
+                         spin_ok=here >= a.radius + SPIN_MARGIN_M)
+        if spot is not None:
+            h, d, room = spot
+            turn, direction = turn_for(h)
+            print(f"  open floor: {room:.2f} m clear all round, {d:.2f} m away at {math.degrees(h):+.0f} deg "
+                  f"-> turn {math.degrees(turn):+.0f} deg, {'forward' if direction > 0 else 'back'} "
+                  f"{d:.2f} m (THE ROBOT MOVES)", flush=True)
+            if abs(turn) > 1e-6 and not r.turn_by(turn):
+                return 1
+            r.drive(d, direction, a.radius, timeout=d / LIN_MPS + 10.0)
+            moved = r.wait_odom(1.0)
+            travel += (math.hypot(moved[0] - last[0], moved[1] - last[1])
+                       if (moved is not None and last is not None) else d)
+            r.spin(0.5)
+            P_new = r.points(a.scans)
+            if P_new is None:
+                print("CLEARANCE FAIL: the scan stopped")
+                return 2
+            if blind and last is not None and moved is not None:
+                P = carry(P, odom_since(last, moved), P_new, blind, body_of(r))
+            else:
+                P = P_new
+            last = moved or last
+            if report(P, a.need, unseen):
+                if a.save and not save(a.save, P, r):
+                    print("CLEARANCE_REFUSED: no start snapshot, so no way home")
+                    return 1
+                print(f"CLEARANCE_OK after a move to open floor, {travel:.2f} m")
+                return 0
         while travel + STEP_M <= a.max_travel + 1e-9:
             here = nearest(P)
             step = best_step(P, a.radius, spin_ok=here >= a.radius + SPIN_MARGIN_M, unseen=unseen)

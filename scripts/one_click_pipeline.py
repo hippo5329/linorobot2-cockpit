@@ -1646,6 +1646,9 @@ TEST_ACC_COAST_S = 0.1      # what the robot rolls on after the motors stop
 TEST_ACC_MARGIN_M = 0.05
 
 
+TEST_ACC_TRAVEL_M = 2.5   # how far test_acc's room check may move the robot to find its room
+
+
 def test_acc_room(params: dict, floor: float) -> float:
     """The room test_acc needs all round, m: its full-power phase carries the robot's edge
     v_max * (phase + coast) past where it stood, plus the robot's own radius and a margin --
@@ -1709,7 +1712,7 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     """--test-acc, between the initial map and the goals: (failure, tuned_params_path).
 
     Nav2 is already stopped. In order: room for full-power runs (test_acc_clearance all
-    round, inching up to 1.5 m to find it) and that scan kept; test_acc over Wi-Fi or, on a
+    round, moving up to TEST_ACC_TRAVEL_M to find it) and that scan kept; test_acc over Wi-Fi or, on a
     serial robot, on its tty (test_acc_run.py, which always ends with the stop and app=base); back to the kept
     scan by the LiDAR (clearance.py home), which is where test_acc_phase() then sets
     the EKF back to its pose before test_acc (state["home"] says it got there); the plant identified and the PID
@@ -1730,7 +1733,9 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     if need > args.test_acc_clearance:
         print(f"  room for test_acc: {need:.2f} m all round (its full-power phase at this "
               f"robot's top speed, plus its radius), not {args.test_acc_clearance:.2f} m")
-    if not clearance_step(args, params, controller_cfg, need, save=snap, max_travel=1.5):
+    # 2.5 m of travel: clearance.py inch first moves straight to the open floor it sees (one
+    # planned move), and a cluttered corner's nearest 1 m room was 1.3-2.7 m away (2026-10-15).
+    if not clearance_step(args, params, controller_cfg, need, save=snap, max_travel=TEST_ACC_TRAVEL_M):
         return (f"test_acc: no room of {need:.2f} m found -- carry the robot to open floor with "
                 f"{need:.2f} m clear all round and start again, or run without test_acc"), None
     if state is not None:
