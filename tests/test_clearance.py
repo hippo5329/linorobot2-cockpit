@@ -551,3 +551,57 @@ def test_the_callers_pass_the_mask_as_blind_and_look_only_when_the_run_moves():
     assert "blind_flags(controller_cfg, look=moves)" in src
     src = open(os.path.join(REPO, "scripts", "robot_bringup.py")).read()
     assert "blind_flags(robot.tgt)" in src.split("clearance.py')} check --need", 1)[1][:200]
+
+
+# ---- before the turn: onto ground already seen free ----
+
+LASER = (0.095, 0.0)
+
+
+def _seen(world, blind=BLIND):
+    P = world - np.array(LASER)
+    keep = ~clearance.in_blind(clearance.bearings(P), blind)
+    P = world[keep]
+    return P[np.hypot(P[:, 0], P[:, 1]) >= scan_match.BODY_M]
+
+
+def test_a_blind_robot_moves_forward_until_its_turning_circle_is_on_seen_ground():
+    P = _seen(_room(L_ROOM))
+    h, d = clearance.open_spot(P, BLIND, 0.33, False, 0.8, LASER)
+    assert h == 0.0 and 0.30 <= d <= 0.45                # just past its own circle, no further
+    ranges = clearance.free_ranges(P, BLIND, LASER)
+    assert clearance.known_free(clearance.disk((d, 0.0), 0.33), ranges, LASER).all()
+    assert not clearance.known_free(clearance.disk((0.0, 0.0), 0.33), ranges, LASER).all()
+
+
+def test_no_open_ground_ahead_is_refused_for_a_base_that_must_turn():
+    world = np.vstack([_room(L_ROOM), wall(0.65, -1.0, 0.65, 1.0)])     # a wall 0.65 m ahead
+    assert clearance.open_spot(_seen(world), BLIND, 0.33, False, 0.8, LASER) is None
+
+
+def test_a_mecanum_base_slides_aslant_where_a_turning_base_is_refused():
+    # a wall ahead and to the right: straight on is too short, 15 deg left is not; a plain
+    # sideways slide would sweep the edge of the blind sector, so it is never chosen
+    P = _seen(np.vstack([_room(L_ROOM), wall(0.65, -1.0, 0.65, -0.2)]))
+    assert clearance.open_spot(P, BLIND, 0.33, False, 0.8, LASER) is None
+    h, d = clearance.open_spot(P, BLIND, 0.33, True, 0.8, LASER)
+    assert 0.0 < math.degrees(h) <= 45.0 and d <= 0.5
+    P = _seen(np.vstack([_room(L_ROOM), wall(0.65, -1.0, 0.65, 0.2)]))
+    assert clearance.open_spot(P, BLIND, 0.33, True, 0.8, LASER) is None
+
+
+def test_a_dark_bearing_is_known_free_only_a_metre_out():
+    P = _seen(_room([((3.0, -3.0), (3.0, 3.0))]))        # only a far wall ahead
+    r = clearance.free_ranges(P, BLIND, LASER)
+    assert r[90] == pytest.approx(clearance.KNOWN_NO_RETURN_M) and r[180] == 0.0
+
+
+def test_a_whole_circle_lidar_turns_where_it_stands():
+    assert clearance.open_spot(_seen(_room(L_ROOM), []), [], 0.33, False, 0.8, LASER) == (0.0, 0.0)
+
+
+def test_the_callers_pass_holonomic_to_the_look_around():
+    src = open(os.path.join(REPO, "scripts", "one_click_pipeline.py")).read()
+    assert "blind_flags(controller_cfg, look=moves)}{holonomic_flag(params)}" in src
+    src = open(os.path.join(REPO, "scripts", "robot_bringup.py")).read()
+    assert "holonomic_flag(robot.params)" in src.split("clearance.py')} check --need", 1)[1][:300]

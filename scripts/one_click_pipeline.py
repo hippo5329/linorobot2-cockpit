@@ -1463,7 +1463,7 @@ def clearance_step(args, params: dict, controller_cfg: dict, need: float, save: 
     moves = not args.topics_only
     verb = "inch" if (moves and args.inch) else "check"
     cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} {verb} --need {need:.2f} "
-           f"--radius {radius:.2f}{stamped}{blind_flags(controller_cfg, look=moves)}"
+           f"--radius {radius:.2f}{stamped}{blind_flags(controller_cfg, look=moves)}{holonomic_flag(params)}"
            + (f" --max-travel {max_travel if max_travel is not None else args.inch_max:.2f}"
               if verb == "inch" else "")
            + (f" --save {save}" if save else ""))

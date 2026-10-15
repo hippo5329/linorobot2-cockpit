@@ -14,10 +14,13 @@ check   N scans (the whole circle: scan_raw when a lidar.mask makes /scan a narr
         view), the median return per beam, the chassis left out. A LiDAR that cannot see
         all round (--blind: the robot's own mast or deck in the way, its lidar.mask
         sectors) leaves those bearings unseen, and an unseen bearing is not a clear one:
-        with --look-around the robot turns in place in 30 deg steps until every bearing
-        has been seen, merges the scans by the match (/odom as the guess), and turns
-        back to its start heading -- before the turn, the part of its circle it can see
-        must be clear, and a return inside it stops the turn. Without --look-around the
+        with --look-around the robot first moves (forward; a --holonomic base in any seen
+        direction, without turning) to the nearest spot where the whole circle a turn
+        sweeps lies on ground the first look showed free, then turns in place in 30 deg
+        steps until every bearing has been seen, merges the scans by the match (/odom as
+        the guess), and turns back to that spot's heading, which is the start from then
+        on. No such spot within --look-travel: refused, nothing moved. A return inside
+        the circle stops the turn. Without --look-around the
         unseen bearings are reported, not judged. Prints the nearest
         return in each quadrant (front, left, back, right; +-45 deg about 0 = ahead,
         counter-clockwise) and exits 0 when nothing is nearer than --need, 1 when
@@ -73,6 +76,10 @@ LOOK_STEP_DEG = 30.0    # one turn of the look-around
 LOOK_MIN_PAIRS = 40     # a look-around step's match against the cloud so far; else /odom alone
 LOOK_MAX_RMS = 0.05
 THIN_M = 0.02           # merged clouds keep one point per cell this size
+KNOWN_NO_RETURN_M = 1.0 # a beam with no return is taken as free only this far (a dark surface)
+KNOWN_MARGIN_M = 0.05   # known-free ground stops this short of the return that bounds it
+KNOWN_GRID_M = 0.03     # the turning circle is checked on a grid this fine
+UNDER_BODY_M = 0.10     # ground this near the centre was under the robot: free even where blind
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
 
 
@@ -168,6 +175,71 @@ def carry(P_old, moved, P_new, blind) -> "np.ndarray":
     Q = into_frame(P_old, moved)
     Q = Q[in_blind(bearings(Q), blind) & (np.hypot(Q[:, 0], Q[:, 1]) >= scan_match.BODY_M)]
     return np.r_[P_new, Q] if len(Q) else P_new
+
+
+def free_ranges(P, blind, origin=(0.0, 0.0)) -> "np.ndarray":
+    """Per whole degree about the laser (`origin`, base_link): how far the ground is known to be
+    free -- the nearest return in that degree or either neighbour, less KNOWN_MARGIN_M;
+    KNOWN_NO_RETURN_M where there is none; 0 where the LiDAR is blind."""
+    Q = np.asarray(P, float).reshape(-1, 2) - np.asarray(origin, float)
+    rng = np.full(360, KNOWN_NO_RETURN_M + KNOWN_MARGIN_M)
+    if len(Q):
+        b = np.floor(bearings(Q)).astype(int) % 360
+        np.minimum.at(rng, b, np.hypot(Q[:, 0], Q[:, 1]))
+    rng = np.minimum(rng, np.minimum(np.roll(rng, 1), np.roll(rng, -1))) - KNOWN_MARGIN_M
+    rng[in_blind(np.arange(360) + 0.5, blind)] = 0.0
+    return np.maximum(rng, 0.0)
+
+
+def disk(center, radius: float) -> "np.ndarray":
+    """Grid points over a circle (and its edge), base_link."""
+    g = np.arange(-radius, radius + 1e-9, KNOWN_GRID_M)
+    X, Y = np.meshgrid(g, g)
+    D = np.c_[X.ravel(), Y.ravel()]
+    D = D[np.hypot(D[:, 0], D[:, 1]) <= radius]
+    t = np.linspace(0.0, 2 * math.pi, 72, endpoint=False)
+    return np.r_[D, radius * np.c_[np.cos(t), np.sin(t)]] + np.asarray(center, float)
+
+
+def known_free(Q, ranges, origin=(0.0, 0.0)) -> "np.ndarray":
+    """True for each point (base_link) on ground the look showed free; the ground under the
+    robot (within UNDER_BODY_M of the centre) counts as free. Not BODY_M: that is where the
+    scan's chassis returns end, and a 0.20 m allowance let a 0.25 m move pass with the
+    turning circle still reaching into the blind sector."""
+    D = np.asarray(Q, float) - np.asarray(origin, float)
+    b = np.floor(bearings(D)).astype(int) % 360
+    return (np.hypot(D[:, 0], D[:, 1]) <= ranges[b]) | (np.hypot(Q[:, 0], Q[:, 1]) < UNDER_BODY_M)
+
+
+def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
+              origin=(0.0, 0.0), step: float = STEP_M):
+    """(heading, distance): the nearest place where the whole circle a turn in place sweeps
+    lies on ground already seen free, reached by a straight move that sweeps only seen ground
+    -- forward only for a base that would have to turn to go anywhere else; None when there
+    is none within max_travel. A blind sector behind the LiDAR means the robot's own spot is
+    never wholly known, so the distance is never 0 while something is blind."""
+    ranges = free_ranges(P, blind, origin)
+    here = np.zeros(2)
+    if not blind:
+        return 0.0, 0.0
+    heads = range(0, 360, HEADINGS_DEG) if holonomic else (0,)
+    best = None
+    for deg in heads:
+        h = math.radians(deg)
+        u = np.array([math.cos(h), math.sin(h)])
+        for k in range(1, int(max_travel / step + 1e-9) + 1):
+            c = k * step * u
+            D = disk(c, circle)
+            fresh = D[np.hypot(D[:, 0] - here[0], D[:, 1] - here[1]) > circle]   # swept on the way
+            if not known_free(fresh, ranges, origin).all():
+                break                                   # the way there leaves the known ground
+            if known_free(D, ranges, origin).all():
+                d = k * step
+                score = (d, abs(scan_match.wrap(h)))
+                if best is None or score < best[0]:
+                    best = (score, h, d)
+                break
+    return None if best is None else (best[1], best[2])
 
 
 def turn_for(heading: float) -> tuple:
@@ -373,6 +445,32 @@ class Robot:
         print("  ❌ the step timed out")
         return False
 
+    def slide(self, dist: float, heading: float, radius: float, timeout: float = None) -> bool:
+        """Move `dist` along `heading` (base_link) without turning -- vy for a mecanum base;
+        heading 0 is a plain forward step. Closed on /odom, stopped by a return in the corridor."""
+        start = self.wait_odom()
+        if start is None:
+            print("  ❌ no /odom: cannot close a move")
+            return False
+        vx, vy = LIN_MPS * math.cos(heading), LIN_MPS * math.sin(heading)
+        end = time.time() + (timeout or dist / LIN_MPS + 8.0)
+        while time.time() < end:
+            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            if math.hypot(self.odom[0] - start[0], self.odom[1] - start[1]) >= dist:
+                self.stop()
+                return True
+            if self.scan is not None:
+                b = path_blocked(scan_match.scan_points(self.scan, self.mount()), vx, vy, radius)
+                if b:
+                    self.stop()
+                    print(f"  ⚠️ stopped: a return {b:.2f} m in the way")
+                    return False
+            self.send(vx, 0.0, vy)
+            time.sleep(0.05)
+        self.stop()
+        print("  ❌ the move timed out")
+        return False
+
     def close(self):
         self.stop()
         self.node.destroy_node()
@@ -509,9 +607,30 @@ def first_look(a, r: Robot):
     r.mount()
     if not (blind and a.look_around):
         return P, blind, None, 0
-    odom0 = r.wait_odom(5.0)
     if not r.claim_cmd_vel():
         return None, blind, None, 1
+    # Turning sweeps the robot's whole circle, and behind the LiDAR that is ground nobody has
+    # seen. So first move to where the circle lies on ground the look showed free, by a move
+    # that sweeps only seen ground: the turn then sweeps nothing unknown.
+    spot = open_spot(P, blind, a.radius + SPIN_MARGIN_M, a.holonomic, a.look_travel, r.laser[:2])
+    if spot is None:
+        print(f"CLEARANCE_REFUSED: no ground already seen free within {a.look_travel:.2f} m holds the "
+              f"{a.radius + SPIN_MARGIN_M:.2f} m circle a turn sweeps -- move the robot by hand "
+              f"(nothing moved)")
+        return None, blind, None, 1
+    h, d = spot
+    if d > 0:
+        print(f"  first {d:.2f} m toward {math.degrees(scan_match.wrap(h)):+.0f} deg, onto ground "
+              f"already seen free (THE ROBOT MOVES)", flush=True)
+        if not r.slide(d, h, a.radius):
+            print("CLEARANCE_REFUSED: the move to open ground stopped -- move the robot by hand")
+            return None, blind, None, 1
+        r.spin(0.5)
+        P = r.points(a.scans)
+        if P is None:
+            print(f"CLEARANCE FAIL: no scan on {r.topic}")
+            return None, blind, None, 2
+    odom0 = r.wait_odom(5.0)
     P360 = look_around(r, P, blind, a.radius, a.scans)
     if P360 is None:
         print("CLEARANCE_REFUSED: the LiDAR's blind sector could not be looked at -- "
@@ -824,8 +943,12 @@ def main(argv=None) -> int:
                            help="a bearing sector the LiDAR cannot see (deg, base_link, counter-"
                                 "clockwise; the robot's lidar.mask sectors); repeat for more")
             p.add_argument("--look-around", action="store_true",
-                           help="with --blind: turn in place until every bearing has been seen, "
-                                "then back (THE ROBOT TURNS)")
+                           help="with --blind: move onto ground already seen free, then turn in "
+                                "place until every bearing has been seen, and back (THE ROBOT MOVES)")
+            p.add_argument("--look-travel", type=float, default=0.80,
+                           help="the farthest the look-around moves to find open ground, m")
+            p.add_argument("--holonomic", action="store_true",
+                           help="a mecanum base: the look-around may slide sideways to open ground")
         if name == "inch":
             p.add_argument("--max-travel", type=float, default=0.60, help="give up after this much inching, m")
         if name == "home":

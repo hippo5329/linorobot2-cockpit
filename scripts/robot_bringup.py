@@ -659,7 +659,8 @@ def cmd_acc(robot: Robot, a) -> int:
     say(f"the room: {a.clear:.1f} m all round (THE ROBOT DRIVES AT FULL POWER next)")
     # a LiDAR with a masked sector turns in place first, to see behind its own mast
     chk = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} check --need {a.clear:.2f} --save {snap} "
-                      f"--radius {radius:.2f}{stamped}{ocp.blind_flags(robot.tgt)}",
+                      f"--radius {radius:.2f}{stamped}{ocp.blind_flags(robot.tgt)}"
+                      f"{ocp.holonomic_flag(robot.params)}",
                       timeout=180, distro=distro)
     for ln in (chk.stdout or "").splitlines():
         say("  " + ln)
