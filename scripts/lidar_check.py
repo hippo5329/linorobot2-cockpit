@@ -22,7 +22,8 @@ container; it runs itself under the stack's ROS environment, as speed_check.py d
 It reads the whole circle (scan_raw when a lidar.mask makes /scan a narrower view) and
 prints:
 
-  rate       scans per second, against what the model should give (LD19/LD06/STL-27L: 10 Hz)
+  rate       scans per second, against what the model should give (LD19/LD06/STL-27L: 10 Hz):
+             RATE_FLOOR_SHARE of it over the worst RATE_WINDOW_S, the motion guard's own floor
   beams      per scan, and the share of them that are valid returns (finite, in range)
   coverage   the share of 10-degree sectors with at least one valid return -- a LiDAR
              half-covered by the chassis or a cable, or a driver at the wrong baud
@@ -48,6 +49,14 @@ sys.path.insert(0, HERE)
 # Scans per second a model gives at its default speed; others are judged at >= 3 Hz.
 MODEL_HZ = {"LD19": 10.0, "LD06": 10.0, "STL27L": 10.0, "STL-27L": 10.0, "LD20": 10.0,
             "RPLIDAR_A1": 5.5, "RPLIDAR_A2": 10.0, "RPLIDAR_C1": 10.0, "YDLIDAR_X4": 7.0}
+# ONE rate floor for bring-up and for the run (motion_guard.py imports these): a share of the
+# model's rate over a window of RATE_WINDOW_S. Bring-up passed a LiDAR at 60 % of its rate and
+# the guard tripped at 80 %, so a 7 Hz LD19 passed here and then stopped every run. 80 % is
+# for a LiDAR starved of power (a tracked robot's 6.9 Hz), not a robot computer busy for a
+# moment: a UNO Q fell to 8.4 Hz over 3 s while Nav2 came up, 9.0 over 5 s.
+RATE_FLOOR_SHARE = 0.80
+RATE_WINDOW_S = 5.0
+UNKNOWN_MODEL_HZ = 3.0  # an unknown model's floor here (the guard uses what it measured)
 MIN_VALID = 0.30        # share of beams with a return: a room gives far more
 MIN_COVERAGE = 0.75     # share of 10-deg sectors seen: the chassis may hide a quarter
 
@@ -56,6 +65,31 @@ def expected_hz(params: dict) -> float:
     lidar = ((params or {}).get("base_controller") or {}).get("lidar") or {}
     model = str((lidar.get("model") if isinstance(lidar, dict) else lidar) or "").strip().upper()
     return MODEL_HZ.get(model, 0.0)
+
+
+def forwarded(params: dict) -> bool:
+    """True when the board forwards the LiDAR over the network (lidar.comm_mode udp)."""
+    lidar = ((params or {}).get("base_controller") or {}).get("lidar") or {}
+    return isinstance(lidar, dict) and str(lidar.get("comm_mode", "")).strip().lower() == "udp"
+
+
+def window_rate(stamps: list, now: float, window: float = RATE_WINDOW_S) -> float:
+    """Scans per second over the last `window` seconds of arrival times before `now`."""
+    recent = [t for t in stamps if 0.0 <= now - t <= window]
+    if len(recent) < 2:
+        return 0.0
+    return (len(recent) - 1) / max(recent[-1] - recent[0], 1e-6)
+
+
+def worst_window_rate(stamps: list, window: float = RATE_WINDOW_S) -> float:
+    """The lowest window_rate over every full window of a reading (the whole reading's rate
+    when it is shorter than one window): what the motion guard would have seen at worst."""
+    stamps = sorted(stamps)
+    if len(stamps) < 2:
+        return 0.0
+    if stamps[-1] - stamps[0] < window:
+        return window_rate(stamps, stamps[-1], stamps[-1] - stamps[0])
+    return min(window_rate(stamps, t, window) for t in stamps if t - stamps[0] >= window)
 
 
 def analyse(scans: list, seconds: float, want_hz: float = 0.0) -> dict:
@@ -80,17 +114,19 @@ def analyse(scans: list, seconds: float, want_hz: float = 0.0) -> dict:
             a = math.degrees(s["angle_min"] + i * s["angle_increment"]) % 360.0
             sectors.add(int(a // 10) % 36)
         valid.append(n / max(1, len(s["ranges"])))
+    worst = worst_window_rate(stamps)
     out.update({
-        "hz": round(hz, 2), "want_hz": want_hz, "beams": int(statistics.median(beams)),
+        "hz": round(hz, 2), "worst_hz": round(worst, 2), "want_hz": want_hz, "beams": int(statistics.median(beams)),
         "valid": round(statistics.median(valid), 3), "coverage": round(len(sectors) / 36.0, 3),
         "nearest": round(min(ranges), 3) if ranges else None,
         "median": round(statistics.median(ranges), 3) if ranges else None,
         "farthest": round(max(ranges), 3) if ranges else None,
     })
-    floor_hz = 0.6 * want_hz if want_hz else 3.0
-    if hz < floor_hz:
-        reasons.append(f"rate {hz:.1f} Hz, under {floor_hz:.1f} Hz"
-                       + (f" (the model gives {want_hz:.0f})" if want_hz else ""))
+    floor_hz = RATE_FLOOR_SHARE * want_hz if want_hz else UNKNOWN_MODEL_HZ
+    if worst < floor_hz:
+        reasons.append(f"rate {worst:.1f} Hz over the worst {RATE_WINDOW_S:.0f} s, under {floor_hz:.1f} Hz"
+                       + (f" ({RATE_FLOOR_SHARE:.0%} of the model's {want_hz:.0f}; the motion guard "
+                          f"would stop every run)" if want_hz else ""))
     if out["valid"] < MIN_VALID:
         reasons.append(f"only {out['valid'] * 100:.0f} % of beams are valid returns (wrong baud, "
                        f"a dirty window, or nothing in range)")
@@ -162,7 +198,8 @@ def run(a, params: dict) -> int:
               f"powered (it needs the battery, not USB)?")
         print("LIDAR_CHECK_JSON " + json.dumps(res))
         return 2
-    print(f"  rate      {res['hz']:.1f} Hz" + (f" (the model: {res['want_hz']:.0f})" if res["want_hz"] else ""))
+    print(f"  rate      {res['hz']:.1f} Hz, {res['worst_hz']:.1f} over the worst {RATE_WINDOW_S:.0f} s"
+          + (f" (the model: {res['want_hz']:.0f})" if res["want_hz"] else ""))
     print(f"  beams     {res['beams']} per scan, {res['valid'] * 100:.0f} % valid")
     print(f"  coverage  {res['coverage'] * 100:.0f} % of the circle")
     print(f"  ranges    nearest {res['nearest']} m, median {res['median']} m, farthest {res['farthest']} m")

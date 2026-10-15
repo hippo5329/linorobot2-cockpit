@@ -19,11 +19,17 @@
 The 1-Click runs this beside a real robot's exploration and goal legs. It watches:
 
   scan      /scan must keep coming at the LiDAR model's own rate (lidar_check.MODEL_HZ),
-            at least SCAN_RATE_SHARE of it over the last SCAN_WINDOW_S, and never be older
-            than SCAN_STALE_S. A tracked robot at 8 % charge gave 6.9 Hz scans of 456 beams
-            from the start, then none at all while exploring; the robot was at a wall by then.
-  battery   /battery's percentage (a 0..1 fraction; NaN = not measured) at least
-            --battery-min-start before anything moves and --battery-min after.
+            at least SCAN_RATE_SHARE of it over the last SCAN_WINDOW_S (the same floor
+            bring-up's lidar_check judges by), and never be older than scan_stale_s(). A
+            model with no known rate is held to the rate it gave while the guard got ready.
+            A tracked robot at 8 % charge gave 6.9 Hz scans of 456 beams from the start, then
+            none at all while exploring; the robot was at a wall by then.
+  battery   /battery, as a 0..1 fraction: its percentage, or -- when that is NaN (some boards
+            always, and the firmware's own curve below min_v) -- its voltage between the
+            config's battery min_v and max_v. The median over BATTERY_WINDOW_S (a motor's
+            sag is not the pack) at least --battery-min-start before anything moves and
+            --battery-min after. Neither a percentage nor min_v/max_v: not judged, and the
+            guard says so.
   room      with --room-bound: the outline of the room as the LiDAR saw it at the start
             (the convex hull of the returns, in the map frame). A Nav2 plan ending outside
             it, less --room-margin, is a goal through a gap the robot cannot pass -- that
@@ -32,9 +38,9 @@ The 1-Click runs this beside a real robot's exploration and goal legs. It watche
 
 Before motion: the scan and battery are judged for READY_WINDOW_S; a fault then writes the
 trip file and nothing is told it may move. During: a fault writes the trip file and cancels
-every navigate_to_pose goal, again every CANCEL_EVERY_S while it lasts (the explorer sends a
-new goal at once; it blacklists a frontier only when the robot has made no progress for its
-progress_timeout). An out-of-room plan cancels that goal and is reported, not a trip: the
+every navigate_to_pose goal, at once again whenever the action's status shows a goal accepted
+or running (the explorer sends a new goal at once; it blacklists a frontier only when the
+robot has made no progress for its progress_timeout), and every CANCEL_EVERY_S as a backstop. An out-of-room plan cancels that goal and is reported, not a trip: the
 explorer then gives that frontier up.
 
 The trip file holds one line, "MOTION_GUARD_TRIPPED: <why>"; the ready file "MOTION_GUARD_READY".
@@ -46,41 +52,116 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lidar_check  # noqa: E402  (no ROS: the floor bring-up judges by)
 
-# The floor is for a LiDAR starved of power (the tracked robot's 6.9 Hz), not a robot computer
-# busy for a moment: MC200's UNO Q fell to 8.4 Hz over 3 s while Nav2 came up (9.0 over 5 s;
-# the LD19's own packets only 3 % down), and 85 % over 3 s stopped every goal it was given.
-SCAN_RATE_SHARE = 0.80     # of the model's rate
-SCAN_WINDOW_S = 5.0
+# One floor, shared with bring-up's lidar_check (its comment says why 80 % over 5 s).
+SCAN_RATE_SHARE = lidar_check.RATE_FLOOR_SHARE     # of the model's rate
+SCAN_WINDOW_S = lidar_check.RATE_WINDOW_S
 SCAN_STALE_S = 1.0
+# A LiDAR forwarded by the board over Wi-Fi (lidar.comm_mode udp) arrives in bursts: the
+# GenDrv's link has measured gaps of 0.5-2 s with the rate over 5 s still whole. One such gap is
+# the link, not a dead LiDAR; a link that gaps often fails the rate floor anyway.
+SCAN_STALE_FORWARDED_S = 2.0
 READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
+BATTERY_WINDOW_S = 3.0     # the battery is judged on the median of this long, not the last sample
+# action_msgs/GoalStatus: a goal the action server has taken and may be driving
+GOAL_ACCEPTED, GOAL_EXECUTING = 1, 2
 
 
 # ---- the judgements, kept free of ROS so they can be tested -----------------------------
 def scan_rate(stamps: list, now: float, window: float = SCAN_WINDOW_S) -> float:
     """Scans per second over the last `window` seconds of arrival times."""
-    recent = [t for t in stamps if now - t <= window]
-    if len(recent) < 2:
-        return 0.0
-    return (len(recent) - 1) / max(recent[-1] - recent[0], 1e-6)
+    return lidar_check.window_rate(stamps, now, window)
 
 
-def scan_fault(stamps: list, now: float, want_hz: float, started: float) -> str:
-    """Why the scan is not good enough to move on, or ''."""
+def scan_stale_s(hz: float, forwarded: bool = False) -> float:
+    """How old the last scan may be: three of the LiDAR's own periods (a 5 Hz LiDAR's normal
+    0.2 s gap plus jitter tripped nothing at 1 s, but a 2 Hz one would), never under 1 s --
+    or SCAN_STALE_FORWARDED_S for a LiDAR the board forwards over Wi-Fi."""
+    floor = SCAN_STALE_FORWARDED_S if forwarded else SCAN_STALE_S
+    return max(floor, 3.0 / hz) if hz > 0 else floor
+
+
+def scan_fault(stamps: list, now: float, want_hz: float, started: float, stale_s: float = None,
+               model_hz: float = None) -> str:
+    """Why the scan is not good enough to move on, or ''. `want_hz`: the rate the floor is a
+    share of -- the model's, or the one measured while getting ready for a model with none
+    (`model_hz` 0 says which, for the message)."""
+    stale_s = SCAN_STALE_S if stale_s is None else stale_s
     if not stamps:
-        return "no /scan at all" if now - started > SCAN_STALE_S else ""
+        return "no /scan at all" if now - started > stale_s else ""
     age = now - stamps[-1]
-    if age > SCAN_STALE_S:
+    if age > stale_s:
         return f"/scan stopped: the last one is {age:.1f} s old"
     if want_hz and now - started >= SCAN_WINDOW_S:
         hz = scan_rate(stamps, now)
         floor = SCAN_RATE_SHARE * want_hz
         if hz < floor:
+            whose = ("model's" if model_hz is None or model_hz else "measured at the start,")
             return (f"/scan at {hz:.1f} Hz, under {floor:.1f} Hz ({SCAN_RATE_SHARE:.0%} of the "
-                    f"model's {want_hz:.0f} Hz): the LiDAR is short of power or its link of room")
+                    f"{whose} {want_hz:.0f} Hz): the LiDAR is short of power or its link of room")
     return ""
+
+
+def judged_rate(model_hz: float, stamps: list, now: float) -> float:
+    """The rate the floor is a share of: the model's, or -- for a model lidar_check.MODEL_HZ
+    does not know, which left no floor at all -- the rate the LiDAR gave while the guard got
+    ready (READY_WINDOW_S, a whole SCAN_WINDOW_S)."""
+    return model_hz if model_hz else scan_rate(stamps, now)
+
+
+def battery_fraction(percentage, voltage, vmin: float = 0.0, vmax: float = 0.0):
+    """The pack as a 0..1 fraction, or None when it cannot be told: the percentage when it is
+    a number, else the voltage on the firmware's own curve (battery.cpp sigmoidal) between the
+    config's min_v and max_v -- which returns NaN itself below min_v, so the percentage is
+    missing exactly when the pack is lowest. Clamped to 0..1."""
+    if percentage is not None and math.isfinite(percentage):
+        return min(1.0, max(0.0, float(percentage)))
+    if voltage is None or not math.isfinite(voltage) or voltage <= 0 or not vmax > vmin > 0:
+        return None
+    x = (float(voltage) - vmin) / (vmax - vmin)
+    if x <= 0:
+        return 0.0
+    pct = 105.0 - 105.0 / (1.0 + (1.724 * x) ** 5.5)
+    return min(1.0, max(0.0, pct / 100.0))
+
+
+def battery_limits(params: dict):
+    """(min_v, max_v) from base_controller.pins.battery, or (0, 0) when the config has none."""
+    bat = (((params or {}).get("base_controller") or {}).get("pins") or {}).get("battery")
+    if not isinstance(bat, dict):
+        return 0.0, 0.0
+    try:
+        vmin, vmax = float(bat.get("min_v") or 0.0), float(bat.get("max_v") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    return (vmin, vmax) if vmax > vmin > 0 else (0.0, 0.0)
+
+
+class Battery:
+    """The pack's samples as they arrive; judged on their median over BATTERY_WINDOW_S: a
+    robot accelerating sags its pack for a moment, and the latest sample alone stopped it."""
+
+    def __init__(self, vmin: float = 0.0, vmax: float = 0.0, window: float = BATTERY_WINDOW_S):
+        self.vmin, self.vmax, self.window = vmin, vmax, window
+        self.samples = []          # (arrival, fraction or None)
+
+    def add(self, now: float, percentage, voltage):
+        self.samples.append((now, battery_fraction(percentage, voltage, self.vmin, self.vmax)))
+        self.samples = [s for s in self.samples if now - s[0] <= 2 * self.window]
+
+    def fraction(self, now: float):
+        vals = sorted(f for t, f in self.samples if now - t <= self.window and f is not None)
+        if not vals:
+            return None
+        n = len(vals)
+        return vals[n // 2] if n % 2 else 0.5 * (vals[n // 2 - 1] + vals[n // 2])
+
+    def judgeable(self) -> bool:
+        """Whether the config lets a NaN percentage be judged at all (by the voltage)."""
+        return self.vmax > self.vmin > 0
 
 
 def battery_fault(fraction, minimum: float) -> str:
@@ -89,6 +170,12 @@ def battery_fault(fraction, minimum: float) -> str:
     if fraction < minimum:
         return f"battery at {fraction * 100:.0f} %, under {minimum * 100:.0f} %"
     return ""
+
+
+def goal_running(status_codes) -> bool:
+    """True when the navigate_to_pose status lists a goal accepted or executing: after a trip,
+    one more goal to cancel at once."""
+    return any(c in (GOAL_ACCEPTED, GOAL_EXECUTING) for c in status_codes)
 
 
 def hull(points: list) -> list:
@@ -136,7 +223,6 @@ def plan_outside(poly: list, end: tuple, margin: float) -> str:
 
 
 def want_hz(params: dict) -> float:
-    import lidar_check
     return lidar_check.expected_hz(params)
 
 
@@ -156,16 +242,20 @@ def main(argv=None) -> int:
     import yaml
     import rclpy
     import rclpy.time
+    from action_msgs.msg import GoalStatusArray
     from action_msgs.srv import CancelGoal
     from nav_msgs.msg import Path
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
     from sensor_msgs.msg import BatteryState, LaserScan
     import tf2_ros
 
     with open(a.params) as fh:
         params = yaml.safe_load(fh) or {}
-    hz = want_hz(params)
+    model_hz = want_hz(params)
+    hz = model_hz
+    stale_s = scan_stale_s(model_hz, lidar_check.forwarded(params))
+    battery = Battery(*battery_limits(params))
     prefix = f"{a.ns}/" if a.ns else ""
     map_frame, base_frame = f"{prefix}map", f"{prefix}base_link"
 
@@ -173,7 +263,7 @@ def main(argv=None) -> int:
     node = Node("motion_guard", namespace=a.ns or None)
     tf_buf = tf2_ros.Buffer()
     tf2_ros.TransformListener(tf_buf, node)
-    st = {"stamps": [], "battery": None, "outline_pts": [], "outline": [], "scans_in": 0}
+    st = {"stamps": [], "outline_pts": [], "outline": [], "scans_in": 0, "tripped": ""}
 
     def on_scan(m):
         st["stamps"].append(time.time())
@@ -196,13 +286,21 @@ def main(argv=None) -> int:
                 st["outline"] = hull(st["outline_pts"])
 
     def on_battery(m):
-        st["battery"] = m.percentage
+        battery.add(time.time(), m.percentage, m.voltage)
 
     canceller = node.create_client(CancelGoal, "navigate_to_pose/_action/cancel_goal")
 
     def cancel_all():
         if canceller.service_is_ready():
             canceller.call_async(CancelGoal.Request())   # zero goal id, zero stamp: every goal
+
+    def on_status(m):
+        # After a trip, a goal the explorer sends is cancelled the moment Nav2 accepts it, not
+        # up to CANCEL_EVERY_S later: the status topic changes with every goal's state, so this
+        # is one callback behind the acceptance, where faster polling would only call the
+        # cancel service more often and still lag. The robot moved in bursts between cancels.
+        if st["tripped"] and goal_running(g.status for g in m.status_list):
+            cancel_all()
 
     def on_plan(m):
         if not (a.room_bound and st["outline"] and m.poses):
@@ -216,6 +314,10 @@ def main(argv=None) -> int:
     node.create_subscription(LaserScan, "scan", on_scan, qos_profile_sensor_data)
     node.create_subscription(BatteryState, "battery", on_battery, 10)
     node.create_subscription(Path, "plan", on_plan, 10)
+    # an action's status is published reliable and transient-local (rcl_action's default)
+    node.create_subscription(GoalStatusArray, "navigate_to_pose/_action/status", on_status,
+                             QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
+                                        durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
     def trip(why: str):
         with open(a.trip_file, "w") as fh:
@@ -223,13 +325,32 @@ def main(argv=None) -> int:
         print(f"MOTION_GUARD_TRIPPED: {why}", flush=True)
 
     started = time.time()
-    print(f"MOTION_GUARD watching: /scan >= {SCAN_RATE_SHARE * hz:.1f} Hz (model {hz:.0f}), "
-          f"battery >= {a.battery_min_start:.0%} to start / {a.battery_min:.0%} after"
+    scan_says = (f"/scan >= {SCAN_RATE_SHARE * hz:.1f} Hz (model {hz:.0f})" if hz else
+                 f"/scan >= {SCAN_RATE_SHARE:.0%} of the rate it gives while getting ready "
+                 f"(no rate known for this model)")
+    bat_says = (f"battery >= {a.battery_min_start:.0%} to start / {a.battery_min:.0%} after "
+                f"(median over {BATTERY_WINDOW_S:.0f} s"
+                + (f"; by voltage {battery.vmin:g}-{battery.vmax:g} V when the percentage is NaN)"
+                   if battery.judgeable() else "; percentage only: no battery min_v/max_v in the config)"))
+    print(f"MOTION_GUARD watching: {scan_says}, scan never older than {stale_s:.1f} s, {bat_says}"
           + (f", room outline (margin {a.room_margin:.2f} m)" if a.room_bound else ""), flush=True)
     while time.time() - started < READY_WINDOW_S:
         rclpy.spin_once(node, timeout_sec=0.1)
-    why = (scan_fault(st["stamps"], time.time(), hz, started)
-           or battery_fault(st["battery"], a.battery_min_start))
+    now = time.time()
+    if not hz:
+        hz = judged_rate(model_hz, st["stamps"], now)
+        print(f"MOTION_GUARD the LiDAR gives {hz:.1f} Hz while getting ready: the floor is "
+              f"{SCAN_RATE_SHARE * hz:.1f} Hz", flush=True)
+        stale_s = scan_stale_s(hz, lidar_check.forwarded(params))
+    frac = battery.fraction(now)
+    if frac is None:
+        print("MOTION_GUARD battery: NOT JUDGED -- " + (
+            "no /battery reading came" if not battery.samples else
+            "its percentage is NaN and the config has no battery min_v/max_v to read the voltage by")
+            + "; nothing stops the robot on a low pack", flush=True)
+    why = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+           or ("" if hz else "no /scan rate to judge by")
+           or battery_fault(frac, a.battery_min_start))
     if why:
         trip(why)
         node.destroy_node()
@@ -245,8 +366,8 @@ def main(argv=None) -> int:
             rclpy.spin_once(node, timeout_sec=0.05)
             now = time.time()
             if not tripped:
-                tripped = (scan_fault(st["stamps"], now, hz, started)
-                           or battery_fault(st["battery"], a.battery_min))
+                tripped = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+                           or battery_fault(battery.fraction(now), a.battery_min))
                 if not tripped and a.room_bound and st["outline"]:
                     try:
                         tf = tf_buf.lookup_transform(map_frame, base_frame, rclpy.time.Time())
@@ -257,7 +378,9 @@ def main(argv=None) -> int:
                     except Exception:
                         pass
                 if tripped:
+                    st["tripped"] = tripped
                     trip(tripped)
+                    last_cancel = 0.0           # cancel now, not at the next tick
             if tripped and now - last_cancel >= CANCEL_EVERY_S:
                 cancel_all()
                 last_cancel = now
