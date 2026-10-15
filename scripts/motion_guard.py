@@ -20,7 +20,8 @@ The 1-Click runs this beside a real robot's exploration and goal legs. It watche
 
   scan      /scan must keep coming at the LiDAR model's own rate (lidar_check.MODEL_HZ),
             at least SCAN_RATE_SHARE of it over the last SCAN_WINDOW_S (the same floor
-            bring-up's lidar_check judges by), and never be older than scan_stale_s(). A
+            bring-up's lidar_check judges by; SCAN_RATE_SHARE_FORWARDED for one the board
+            forwards over Wi-Fi, which loses scans while the robot drives), and never be older than scan_stale_s(). A
             model with no known rate is held to the rate it gave while the guard got ready.
             A tracked robot at 8 % charge gave 6.9 Hz scans of 456 beams from the start, then
             none at all while exploring; the robot was at a wall by then.
@@ -62,6 +63,12 @@ SCAN_STALE_S = 1.0
 # GenDrv's link has measured gaps of 0.5-2 s with the rate over 5 s still whole. One such gap is
 # the link, not a dead LiDAR; a link that gaps often fails the rate floor anyway.
 SCAN_STALE_FORWARDED_S = 2.0
+# And loses scans while the robot drives: a TS100's forwarded LD19 gave 10.00 Hz at rest
+# (worst 5 s window 10.00, no gap over 0.1 s, 2026-10-15) and 7.9-8.0 Hz over 5 s on Nav2 legs,
+# which tripped the 80 % floor on two runs in a row. The floor is for a LiDAR short of power
+# (6.9 Hz, then nothing, on a pack at 8 %); a forwarded one is held to 70 %, and a link
+# that dies is the stale limit's to catch. Bring-up judges at rest and keeps 80 %.
+SCAN_RATE_SHARE_FORWARDED = 0.70
 READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
@@ -84,8 +91,13 @@ def scan_stale_s(hz: float, forwarded: bool = False) -> float:
     return max(floor, 3.0 / hz) if hz > 0 else floor
 
 
+def rate_share(forwarded: bool = False) -> float:
+    """The share of the LiDAR's rate the guard holds it to: less for one forwarded over Wi-Fi."""
+    return SCAN_RATE_SHARE_FORWARDED if forwarded else SCAN_RATE_SHARE
+
+
 def scan_fault(stamps: list, now: float, want_hz: float, started: float, stale_s: float = None,
-               model_hz: float = None) -> str:
+               model_hz: float = None, share: float = None) -> str:
     """Why the scan is not good enough to move on, or ''. `want_hz`: the rate the floor is a
     share of -- the model's, or the one measured while getting ready for a model with none
     (`model_hz` 0 says which, for the message)."""
@@ -97,10 +109,11 @@ def scan_fault(stamps: list, now: float, want_hz: float, started: float, stale_s
         return f"/scan stopped: the last one is {age:.1f} s old"
     if want_hz and now - started >= SCAN_WINDOW_S:
         hz = scan_rate(stamps, now)
-        floor = SCAN_RATE_SHARE * want_hz
+        share = SCAN_RATE_SHARE if share is None else share
+        floor = share * want_hz
         if hz < floor:
             whose = ("model's" if model_hz is None or model_hz else "measured at the start,")
-            return (f"/scan at {hz:.1f} Hz, under {floor:.1f} Hz ({SCAN_RATE_SHARE:.0%} of the "
+            return (f"/scan at {hz:.1f} Hz, under {floor:.1f} Hz ({share:.0%} of the "
                     f"{whose} {want_hz:.0f} Hz): the LiDAR is short of power or its link of room")
     return ""
 
@@ -255,6 +268,7 @@ def main(argv=None) -> int:
     model_hz = want_hz(params)
     hz = model_hz
     stale_s = scan_stale_s(model_hz, lidar_check.forwarded(params))
+    share = rate_share(lidar_check.forwarded(params))
     battery = Battery(*battery_limits(params))
     prefix = f"{a.ns}/" if a.ns else ""
     map_frame, base_frame = f"{prefix}map", f"{prefix}base_link"
@@ -327,8 +341,8 @@ def main(argv=None) -> int:
         print(f"MOTION_GUARD_TRIPPED: {why}", flush=True)
 
     started = time.time()
-    scan_says = (f"/scan >= {SCAN_RATE_SHARE * hz:.1f} Hz (model {hz:.0f})" if hz else
-                 f"/scan >= {SCAN_RATE_SHARE:.0%} of the rate it gives while getting ready "
+    scan_says = (f"/scan >= {share * hz:.1f} Hz (model {hz:.0f}{', forwarded over Wi-Fi' if share != SCAN_RATE_SHARE else ''})" if hz else
+                 f"/scan >= {share:.0%} of the rate it gives while getting ready "
                  f"(no rate known for this model)")
     bat_says = (f"battery >= {a.battery_min_start:.0%} to start / {a.battery_min:.0%} after "
                 f"(median over {BATTERY_WINDOW_S:.0f} s"
@@ -342,7 +356,7 @@ def main(argv=None) -> int:
     if not hz:
         hz = judged_rate(model_hz, st["stamps"], now)
         print(f"MOTION_GUARD the LiDAR gives {hz:.1f} Hz while getting ready: the floor is "
-              f"{SCAN_RATE_SHARE * hz:.1f} Hz", flush=True)
+              f"{share * hz:.1f} Hz", flush=True)
         stale_s = scan_stale_s(hz, lidar_check.forwarded(params))
     frac = battery.fraction(now)
     if frac is None:
@@ -350,7 +364,7 @@ def main(argv=None) -> int:
             "no /battery reading came" if not battery.samples else
             "its percentage is NaN and the config has no battery min_v/max_v to read the voltage by")
             + "; nothing stops the robot on a low pack", flush=True)
-    why = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+    why = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz, share)
            or ("" if hz else "no /scan rate to judge by")
            or battery_fault(frac, a.battery_min_start))
     if why:
@@ -368,7 +382,7 @@ def main(argv=None) -> int:
             rclpy.spin_once(node, timeout_sec=0.05)
             now = time.time()
             if not tripped:
-                tripped = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+                tripped = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz, share)
                            or battery_fault(battery.fraction(now), a.battery_min))
                 if not tripped and a.room_bound and st["outline"]:
                     try:

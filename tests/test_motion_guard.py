@@ -165,6 +165,20 @@ def test_a_forwarded_lidar_rides_out_one_wifi_gap():
     assert not lidar_check.forwarded({"base_controller": {"lidar": {"comm_mode": "serial"}}})
 
 
+
+def test_a_forwarded_lidar_is_held_to_70_percent_while_driving():
+    """A TS100's Wi-Fi-forwarded LD19: 10.00 Hz at rest, 7.9-8.0 Hz over 5 s on Nav2 legs,
+    which tripped the 80 % floor twice. Forwarded: 70 %; still under it a starved LiDAR (6.9)."""
+    share = mg.rate_share(forwarded=True)
+    assert share == 0.70 and mg.rate_share() == mg.SCAN_RATE_SHARE == 0.80
+    assert mg.scan_fault(_stamps(7.9, 5), 100.0, 10.0, started=90.0) != ""
+    assert mg.scan_fault(_stamps(7.9, 5), 100.0, 10.0, started=90.0, share=share) == ""
+    why = mg.scan_fault(_stamps(6.9, 5), 100.0, 10.0, started=90.0, share=share)
+    assert "6.9 Hz" in why and "7.0 Hz" in why and "70%" in why, why
+    # bring-up's floor, judged at rest, is not moved by it
+    assert lidar_check.RATE_FLOOR_SHARE == 0.80
+
+
 # ---- the battery: by its voltage when the percentage is NaN, judged on a median ----
 
 def test_a_nan_percentage_is_read_from_the_voltage():
