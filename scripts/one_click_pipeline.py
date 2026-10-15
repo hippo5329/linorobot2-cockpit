@@ -1571,6 +1571,29 @@ def slam_pause_toggle(distro: str) -> bool:
     return r.returncode == 0 and "response" in (r.stdout or "")
 
 
+def self_return_step(args, params_path: str) -> str:
+    """Nav2 is up: does its collision monitor see the robot itself? '' when not; else why the
+    Nav2 step is refused (self_returns.py: the arcs, the ranges and the mask sector to add).
+
+    Returns inside the footprint -- a LiDAR seeing its own mount just past lidar.mask.sectors --
+    are a collision in progress to the monitor, which then holds every command at zero: on a
+    mecanum robot Nav2 came up active, cmd_vel_smoothed carried 0.03 m/s, /cmd_vel stayed 0.00
+    for 180 s a leg, and the clearance step had passed (it drops returns that near as the
+    robot's body). Nothing moves here. No scan read is not a refusal: the goals say the rest."""
+    res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'self_returns.py')} "
+                  f"--params {params_path}", timeout=60, distro=args.distro)
+    for ln in (res.stdout or "").splitlines():
+        print(ln if ln.startswith("  ") else "  " + ln)
+    if res.returncode == 1:
+        why = next((ln for ln in (res.stdout or "").splitlines()
+                    if ln.startswith("SELF_RETURNS REFUSED: ")), "")
+        return why[len("SELF_RETURNS REFUSED: "):] or "LiDAR returns inside the robot's footprint"
+    if res.returncode not in (0, 2):
+        print(f"  ⚠️ the self-return check did not run (exit {res.returncode})"
+              + (f": {res.stderr.strip()[-300:]}" if res.stderr and res.stderr.strip() else ""))
+    return ""
+
+
 def blind_flags(controller_cfg: dict, look: bool = True) -> str:
     """clearance.py's --blind for each lidar.mask sector (its margin included): the robot's own
     mast or deck is there, so the LiDAR sees nothing beyond it. With `look` (a run that moves
@@ -2978,13 +3001,22 @@ def main():
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             nav2_ok, nav2_detail, nav2_log = start_nav2(nav2_cmd(nav2_cfg), args.distro,
                                                         bg_processes, stack_processes)
+            # Before any goal, exploration or test_acc: returns inside the robot on the scan the
+            # collision monitor reads hold every command at zero, with Nav2 "active".
+            nav2_held = ""
+            if nav2_ok:
+                print("  Checking the collision monitor's scan for returns inside the robot...")
+                nav2_held = self_return_step(args, nav2_cfg)
+                if nav2_held:
+                    failures.append(f"Nav2: held by its collision monitor ({nav2_held})")
+                    nav2_ok, nav2_detail = False, f"held by its collision monitor: {nav2_held}"
             if is_real and nav2_ok:
                 guard_start()
             if do_test_acc and nav2_ok and not args.explore:
                 # the goals run on the measured limits: the initial map is what SLAM has
                 # now (and what the start-up exploration added); measure, then go
                 nav2_ok, nav2_detail, nav2_log = measure_and_restart((nav2_ok, nav2_detail, nav2_log))
-            if not nav2_ok:
+            if not nav2_ok and not nav2_held:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
             motion_ok = mg["ok"]
@@ -3015,6 +3047,8 @@ def main():
                         nav2_ok, nav2_detail, nav2_log = measure_and_restart((nav2_ok, nav2_detail, nav2_log))
                 elif nav2_ok:
                     print("  ❌ EXPLORE NOT STARTED: the motion guard refused (above).")
+                elif nav2_held:
+                    print(f"  ❌ EXPLORE NOT STARTED: Nav2 is {nav2_detail} (above).")
                 else:
                     print(f"  ❌ EXPLORE NOT STARTED: Nav2 never activated ({nav2_detail}).")
                     failures.append("Explore: Nav2 never activated")
@@ -3051,6 +3085,11 @@ def main():
                     test_res = subprocess.CompletedProcess(
                         args=[], returncode=3, stderr="",
                         stdout="❌ NAV2 GOAL NOT SENT: the motion guard refused (above).")
+                elif nav2_held:
+                    test_res = subprocess.CompletedProcess(
+                        args=[], returncode=3, stderr="",
+                        stdout=f"❌ NAV2 GOAL NOT SENT: Nav2 is {nav2_detail} (above); the robot "
+                               f"could not move.")
                 else:
                     # A goal sent to a stack that never activated is rejected on
                     # arrival ("Action server is inactive") and the transcript then

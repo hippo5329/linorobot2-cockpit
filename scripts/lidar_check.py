@@ -31,6 +31,9 @@ prints:
   ranges     nearest, median and farthest valid return
   room       the nearest return in each quadrant (front, left, back, right), the same
              numbers clearance.py and speed_check.py judge by
+  self       returns inside the robot's footprint that lidar.mask does not cover (the robot
+             itself, past its mask): named with the sector to add, and a FAIL when they reach
+             Nav2's collision monitor's min_points -- it would hold the robot still
 
 and LIDAR_CHECK PASS or LIDAR_CHECK FAIL (with the reasons), then one LIDAR_CHECK_JSON line.
 Exit 0 on PASS, 1 on FAIL, 2 when no scan arrived.
@@ -138,6 +141,53 @@ def analyse(scans: list, seconds: float, want_hz: float = 0.0) -> dict:
     return out
 
 
+def self_return_check(scans: list, params: dict, laser=(0.0, 0.0, 0.0)) -> dict:
+    """Returns inside the robot's footprint that the config's lidar.mask does not cover (no ROS).
+
+    The bring-up reads the whole circle (scan_raw), so the mask is applied here the way the
+    scan filter applies it (each sector widened by margin_deg, the boxes); what is left is what
+    Nav2's collision monitor will see on /scan. {'arcs': [...] (every persistent arc, see
+    self_returns.self_return_arcs), 'lines': [what to print], 'fail': reason or ''}: it fails
+    when they reach the monitor's min_points -- a robot that cannot drive under Nav2 does not
+    pass its LiDAR bring-up. A LiDAR with a nearest return of 0.03 m and a median of 1.86 m
+    passed here while its own mount, past the mask, held Nav2 still."""
+    import self_returns
+    bc = (params or {}).get("base_controller") or {}
+    cs = self_returns.collision_settings(params or {})
+    try:
+        masked = self_returns.widened_mask(bc)
+        boxes = lidar_mask_boxes(bc)
+    except ValueError:
+        masked, boxes = [], []
+    arcs = self_returns.self_return_arcs(scans, cs["radius"], 1, laser, masked, boxes)
+    out = {"arcs": arcs, "lines": [], "fail": ""}
+    if not arcs:
+        return out
+    total = sum(a["count"] for a in arcs)
+    holds = bool(cs["topic"]) and total >= cs["min_points"]
+    out["lines"].append(
+        f"  {'❌' if holds else '⚠️'} self      {total} returns inside the {cs['radius']:.2f} m footprint, "
+        f"not masked: {self_returns.arcs_text(arcs)} -- add lidar.mask.sectors "
+        f"{self_returns.sectors_text(arcs)} ({self_returns.PAD_DEG:.0f} deg past the returns) or move "
+        f"what the LiDAR sees" + (f"; Nav2's collision monitor holds the robot still at "
+                                  f"{cs['min_points']} or more" if holds else ""))
+    have = self_returns.config_sectors(bc)
+    if have:
+        out["lines"].append(f"            with the config's {have}: lidar.mask.sectors: "
+                            f"{self_returns.merged_sectors(have, [self_returns.suggest(a) for a in arcs])}")
+    if holds:
+        out["fail"] = (f"{total} returns inside the robot's footprint at "
+                       + ", ".join(f"{a['start']}-{a['end']} deg" for a in arcs)
+                       + f", outside lidar.mask.sectors -- Nav2's collision monitor would hold the "
+                         f"robot still; add lidar.mask.sectors {self_returns.sectors_text(arcs)}")
+    return out
+
+
+def lidar_mask_boxes(controller: dict) -> list:
+    import lidar_mask
+    return lidar_mask.mask_config(controller)["boxes"]
+
+
 def ros_env_command(argv: list) -> str:
     import shlex
     import one_click_pipeline
@@ -191,6 +241,11 @@ def run(a, params: dict) -> int:
         P = scan_match.median_points(scans[-10:], laser)
         q = clearance.quadrants(P)
         res["room"] = {k: (None if v == math.inf else round(v, 3)) for k, v in q.items()}
+        selfr = self_return_check(scans[-10:], params, laser)
+        res["self_returns"] = selfr["arcs"]
+        if selfr["fail"]:
+            res["pass"] = False
+            res["reasons"] = list(res.get("reasons") or []) + [selfr["fail"]]
     node.destroy_node()
     rclpy.shutdown()
     if not scans:
@@ -206,6 +261,8 @@ def run(a, params: dict) -> int:
     if "room" in res:
         print("  room      " + ", ".join(f"{k} {'none' if v is None else f'{v:.2f} m'}"
                                        for k, v in res["room"].items()))
+    for ln in (selfr["lines"] if scans else []):
+        print(ln)
     if res["pass"]:
         print("LIDAR_CHECK PASS")
     else:

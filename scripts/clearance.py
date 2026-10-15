@@ -417,6 +417,7 @@ class Robot:
                 scans.append(s)
         if not scans:
             return None
+        self.last_scans = scans
         return scan_match.median_points(scans, self.mount(), body=self.body)
 
     def claim_cmd_vel(self) -> bool:
@@ -711,6 +712,23 @@ def snapshot_points(snap: dict, laser) -> "np.ndarray":
     return np.c_[laser[0] + c * q[:, 0] - s_ * q[:, 1], laser[1] + s_ * q[:, 0] + c * q[:, 1]]
 
 
+def warn_self_returns(r, blind) -> list:
+    """One line when the body self-filter dropped returns that Nav2's collision monitor will
+    NOT drop: inside the body, outside the blind (lidar.mask) sectors. This step passes them as
+    the robot itself; the monitor counts them as a collision and holds every command at zero
+    (a mecanum robot's mount, 0.03 m at 226-243 deg past a [130, 225] mask: "nearest 1.04 m"
+    here, and Nav2 never moved it). The 1-Click refuses the Nav2 step on them
+    (self_returns.py); this names them early."""
+    import self_returns
+    scans = getattr(r, "last_scans", None) or []
+    arcs = self_returns.self_return_arcs(scans, body_of(r), 1, getattr(r, "laser", None) or (0.0, 0.0, 0.0), blind)
+    if arcs:
+        print(f"  ⚠️ left out as the robot's body, but not masked: {self_returns.arcs_text(arcs)} -- "
+              f"Nav2's collision monitor sees them; add lidar.mask.sectors "
+              f"{self_returns.sectors_text(arcs)}")
+    return arcs
+
+
 def first_look(a, r: Robot):
     """(P, unseen, odom0, rc): the first look, the whole circle when the LiDAR is blind
     somewhere and --look-around lets the robot turn to see it; P None (and the exit code)
@@ -721,6 +739,7 @@ def first_look(a, r: Robot):
         print(f"CLEARANCE FAIL: no scan on {r.topic}")
         return None, blind, None, 2
     r.mount()
+    warn_self_returns(r, blind)
     if not (blind and a.look_around):
         return P, blind, None, 0
     if not r.claim_cmd_vel():
