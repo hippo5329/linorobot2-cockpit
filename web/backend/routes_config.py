@@ -26,6 +26,7 @@ from core import (
     get_controller,
     get_controller_name,
     get_robots_list,
+    shipped_designs,
     json_body,
     load_params,
     pin_catalog,
@@ -549,6 +550,7 @@ def get_robots():
     return {
         "status": "ok",
         "robots": get_robots_list(params),
+        "designs": shipped_designs(),
         "active": robot_name,
         # The shipped reference designs: real robots, never run in Sim mode or on the Sim
         # MCU (one_click_pipeline refuses; the UI disables the Sim choice for them).

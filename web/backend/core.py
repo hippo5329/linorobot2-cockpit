@@ -1127,6 +1127,33 @@ def _read_robot_file(fpath: str):
             one_click_pipeline.is_bare_config(yd))
 
 
+def shipped_designs() -> List[Dict[str, Any]]:
+    """The reference designs this release ships (config/reference), for the design picker:
+    name, description, MCU. Not the config dir's copies: the dir is seeded with them only
+    while it holds no robot, so a dir that began with the user's own robot offered no design
+    at all, and a seeded copy never learns of a newer release's design. Applying one reads
+    config/reference anyway."""
+    out = []
+    for design in sorted(one_click_pipeline.reference_design_names()):
+        path = os.path.join(REPO_ROOT, "config", "reference", f"{design}_config.yaml")
+        try:
+            stamp = os.stat(path).st_mtime_ns
+        except OSError:
+            continue
+        hit = _DESIGN_CACHE.get(path)
+        if hit is None or hit[0] != stamp:   # /api/status asks every few seconds: parse once
+            info = _read_robot_file(path)
+            hit = _DESIGN_CACHE[path] = (stamp, None if info is None else {
+                "name": design, "description": info[1] or f"Design {design}",
+                "mcu": info[3], "controller": info[2], "kind": "design"})
+        if hit[1] is not None:
+            out.append(dict(hit[1]))
+    return out
+
+
+_DESIGN_CACHE: Dict[str, Any] = {}
+
+
 def _robot_candidates(config_dir: str):
     """Every file in the config dir that is a robot, in name order.
 

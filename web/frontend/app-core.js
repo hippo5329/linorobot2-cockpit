@@ -645,6 +645,7 @@ async function refreshStatus() {
     // Robot name + branch header (don't clobber a field the user is editing)
     if (s.robot_name) state.robot_name = s.robot_name;
     if (Array.isArray(s.robots)) state.robots = s.robots;
+    if (Array.isArray(s.designs)) state.designs = s.designs;
     if (typeof s.git_branch === "string") state.git_branch = s.git_branch;
     const robotInput = document.getElementById("hdr-robot-name");
     if (robotInput && document.activeElement !== robotInput) {
@@ -920,6 +921,7 @@ async function loadRobotList() {
     const r = await fetch("/api/robots").then((x) => x.json());
     if (epoch !== robotEpoch) return;
     state.robots = r.robots || [];
+    if (Array.isArray(r.designs)) state.designs = r.designs;
     state.robot_name = r.active || state.robot_name;
     state.reference = r.reference || state.reference || [];
     syncSimForDesign();

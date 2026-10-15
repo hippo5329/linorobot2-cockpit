@@ -34,7 +34,10 @@ function normalizeMcuFamily(mcu) {
 function updateReferenceDesigns(mcuHint) {
   const select = document.getElementById("preset-select");
   if (!select) return;
-  const designs = (state.robots || []).filter((r) => r.kind === "design");
+  // The release's own designs (the backend's `designs`), with any copy in the config dir.
+  const shipped = state.designs || [];
+  const copies = (state.robots || []).filter((r) => r.kind === "design" && !shipped.some((d) => d.name === r.name));
+  const designs = [...shipped, ...copies];
   const family = normalizeMcuFamily(siliconOf(mcuHint));
   const groups = {};
   for (const d of designs) (groups[normalizeMcuFamily(siliconOf(d.mcu))] ||= []).push(d);

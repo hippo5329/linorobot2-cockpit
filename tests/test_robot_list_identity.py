@@ -134,3 +134,14 @@ def test_a_collision_does_not_light_up_the_wrong_robot_as_active(listing, monkey
     by_file = {e["filename"]: e for e in core.get_robots_list()}
     assert by_file["b_config.yaml"]["active"] is True
     assert by_file["a_config.yaml"]["active"] is False
+
+
+def test_every_shipped_design_is_offered_whatever_the_config_dir_holds(listing):
+    # a dir that began with the user's own robot was never seeded with the designs
+    core, d = listing
+    write(d, "my_rover_config.yaml", "my_rover")
+    names = {x["name"] for x in core.shipped_designs()}
+    assert names == set(core.one_click_pipeline.reference_design_names())
+    assert all(x["kind"] == "design" and x["mcu"] and x["description"] for x in core.shipped_designs())
+    # the robot list stays the files: one robot here
+    assert [e["name"] for e in core.get_robots_list()] == ["my_rover"]
