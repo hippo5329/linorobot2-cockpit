@@ -2126,6 +2126,10 @@ def main():
                         help="Skip the drive suite")
     # A real robot's room is checked before anything drives it (step 4.8, clearance.py).
     # A simulated robot is not: its room is the one the simulation draws.
+    parser.add_argument("--real-checks", action="store_true",
+                        help="a simulated run goes through the real robot's safety steps too: the "
+                             "room check (and its inching), the motion guard round Nav2 and test_acc. "
+                             "For the simulation gate; a real robot always has them.")
     parser.add_argument("--clearance", type=float, default=None,
                         help="Nothing nearer than this (m) before SLAM, Nav2 or test_acc moves the robot; "
                              "0 skips the check (default: 0.40, or the robot's radius + 0.15 when bigger, on a real robot with a LiDAR, off in "
@@ -2359,6 +2363,14 @@ def main():
         wheels_real = bringup_checklist.parts(params, params_path)["wheels_real"]
     is_real = not sim_mcu and ((args.mode == "real")
                                or (args.mode == "auto" and (controller == "gendrv" or designed or wheels_real)))
+    # The real-robot safety steps -- the room check and its inching, the motion guard round
+    # Nav2 and test_acc, the guard's verdicts -- on a simulated run too (--real-checks), so the
+    # simulation gate runs them: before, they ran only on a real robot, and their faults (a
+    # false guard trip at teardown, inching that stalled in a corner) reached one first.
+    real_checks = is_real or bool(getattr(args, "real_checks", False))
+    if real_checks and not is_real:
+        print("  [real-checks] a simulated run with the real robot's safety steps: room check, "
+              "motion guard, test_acc's room")
     if is_real:
         if args.world or args.world_map:
             print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "
@@ -2900,7 +2912,7 @@ def main():
         # is -- slowly, each step closed on /odom and stopped by the LiDAR. A run that
         # commands no motion (--topics-only) only reports.
         if args.clearance is None:
-            args.clearance = clearance_real(params) if is_real else 0.0
+            args.clearance = clearance_real(params) if real_checks else 0.0
         if scan_from == "lidar" and has_lidar and args.clearance > 0:
             print(f"\n[4.8/6] [CLEARANCE] Nothing within {args.clearance:.2f} m of the robot before it moves"
                   + (" (inching to clear space if needed)" if (args.inch and not args.topics_only) else "") + "...")
@@ -3024,7 +3036,7 @@ def main():
                 LiDAR or a flat pack are the last thing to do then. The guard is stopped while
                 the board runs test_acc (its scan stops with the reboot, which would latch a
                 trip) and started afresh once Nav2 is back."""
-                if is_real:
+                if real_checks:
                     tripped = motion_guard_tripped(mg["trip"])
                     if tripped or not mg["ok"]:
                         why = tripped or "the motion guard did not let the robot move"
@@ -3047,7 +3059,7 @@ def main():
                 print(f"\n[6.3/6] [NAV2] Restarting Nav2 on {'the measured' if tuned else 'the configured'} limits...")
                 restarted = start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes,
                                        tag="nav2_measured")
-                if is_real and restarted[0]:
+                if real_checks and restarted[0]:
                     guard_start()
                 return restarted
 
@@ -3063,7 +3075,7 @@ def main():
                 if nav2_held:
                     failures.append(f"Nav2: held by its collision monitor ({nav2_held})")
                     nav2_ok, nav2_detail = False, f"held by its collision monitor: {nav2_held}"
-            if is_real and nav2_ok:
+            if real_checks and nav2_ok:
                 guard_start()
             if do_test_acc and nav2_ok and not args.explore:
                 # the goals run on the measured limits: the initial map is what SLAM has

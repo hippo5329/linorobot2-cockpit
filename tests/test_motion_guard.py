@@ -97,7 +97,7 @@ def test_the_robot_outside_the_outline_reads_negative():
 
 def test_the_pipeline_starts_the_guard_for_a_real_robot_before_any_motion():
     # as soon as Nav2 is up -- before test_acc, before exploration or the goals
-    first = PIPELINE.index("if is_real and nav2_ok:\n                guard_start()")
+    first = PIPELINE.index("if real_checks and nav2_ok:\n                guard_start()")
     assert first < PIPELINE.index("nav2_ok, nav2_detail, nav2_log = measure_and_restart(")
     assert first < PIPELINE.index('explore = launch_bg(f"ros2 launch linorobot2_cockpit explore.launch.py')
     assert "if nav2_ok and motion_ok:\n                    explore = launch_bg" in PIPELINE
