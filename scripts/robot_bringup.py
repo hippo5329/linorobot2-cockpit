@@ -35,7 +35,7 @@ only after you say yes (or with --yes), and then the board's env block is writte
 no reflash) so it runs the new values; the step is re-run to prove it. Nothing moves on
 the floor before `lidar` has passed; `speed` and `acc` check the room themselves.
 
-THE WHEELS TURN in motors, rpm and battery's load test: lift the robot first.
+THE WHEELS TURN in motors and rpm: lift the robot first.
 THE ROBOT DRIVES in speed and acc: on the floor, with room all round.
 """
 import argparse
@@ -390,6 +390,23 @@ def cmd_battery(robot: Robot, a) -> int:
         if ok and abs(diff) > 0.2:
             say("  (a monitor behind an input diode reads ~0.6 V under the pack: state "
                 "pins.battery min_v/max_v as the board reads them)")
+    # The charge the robot and its motion guard see comes from min_v..max_v: a 3S pack on a
+    # 2S range reads 100 % until it dies, and with no range nobody can judge it at all.
+    bat_cfg = (robot.tgt.get("pins") or {}).get("battery")
+    bat_cfg = bat_cfg if isinstance(bat_cfg, dict) else {}
+    lo, hi = bat_cfg.get("min_v"), bat_cfg.get("max_v")
+    if lo is None or hi is None:
+        say("  no pins.battery min_v/max_v: the charge (and the motion guard's battery check) "
+            "cannot be judged -- set them to the pack's empty and full voltages")
+        summary += "; no min_v/max_v"
+    else:
+        lo, hi = float(lo), float(hi)
+        if not lo < rep <= hi + 0.15:
+            ok = False
+            why = ("above max_v: the range is for fewer cells than this pack"
+                   if rep > hi + 0.15 else "at or under min_v: charge the pack, or min_v is too high")
+            say(f"  the board reads {rep:.2f} V, the config's range is {lo:g}-{hi:g} V: {why}")
+            summary += f"; {rep:.2f} V outside min_v..max_v {lo:g}-{hi:g} ({why})"
     say(f"BATTERY {'PASS' if ok else 'FAIL'}: {summary}")
     bc.mark(robot.name, robot.params, "battery", "pass" if ok else "fail", summary,
             values={"reported": rep, "measured": meas}, by=a.by)
@@ -515,8 +532,12 @@ def cmd_rpm(robot: Robot, a) -> int:
     # Only a counts_per_rev correction needs a second run to confirm; max_rpm is the
     # measurement itself, written as read (a tracked robot: the step failed on a max_rpm write
     # alone and named a counts_per_rev change it had not made).
-    ok = off <= 0.02
-    summary = "; ".join(notes) + (f"; counts_per_rev {cpr} agrees" if ok else
+    # Every wheel asked about must have answered: a wheel that did not turn (or whose
+    # encoder said nothing) is only a note above, and the others agreeing passed the step.
+    dead = len(rows) - len(cprs)
+    ok = off <= 0.02 and dead == 0
+    summary = "; ".join(notes) + (f"; {dead} wheel(s) not measured" if dead else "") + \
+        (f"; counts_per_rev {cpr} agrees" if off <= 0.02 else
                                   f"; counts_per_rev {cpr} -> {new_cpr}" +
                                   (", confirm with a second run" if wrote else ", not written"))
     if wrote and "kinematics.max_rpm" in changes:
@@ -640,7 +661,7 @@ def _floor_held(robot: Robot) -> str:
 
 
 def cmd_acc(robot: Robot, a) -> int:
-    """test_acc on the floor: the room checked (1.0 m all round), the run, the robot driven
+    """test_acc on the floor: the room checked (1.0 m all round, more for a fast robot), the run, the robot driven
     back to where it started by the LiDAR and the EKF set back -- the 1-Click's --test-acc
     step on its own, with the robot brought up and nothing else running."""
     import gen_firmware_header
@@ -708,16 +729,22 @@ def cmd_acc(robot: Robot, a) -> int:
             "--from-test-acc", transcript]
     if a.write:
         argv.append("--write")
-    subprocess.run(argv)
-    summary = f"transcript {os.path.basename(transcript)}" + ("; gains written" if a.write else "")
+    report = subprocess.run(argv)
+    summary = f"transcript {os.path.basename(transcript)}"
+    derived = report.returncode == 0
     if a.write:
-        robot.reload()
-        env_write(robot, a.port)
+        if derived:
+            robot.reload()
+            written = env_write(robot, a.port)
+            summary += "; gains written" if written else "; gains in the config, but NOT in the board's env"
+        else:
+            written = False
+            summary += f"; drivetrain_report failed (exit {report.returncode}): nothing written"
     else:
         say(f"to keep the derived gains: robot_bringup.py acc --write, or drivetrain_report.py "
             f"--params {robot.path} --from-test-acc {transcript} --write")
-    ok = home.returncode == 0
-    say(f"ACC {'PASS' if ok else 'FAIL'}: {summary}" + ("" if ok else "; NOT back home by the LiDAR"))
+    ok = home.returncode == 0 and derived and (written if a.write else True)
+    say(f"ACC {'PASS' if ok else 'FAIL'}: {summary}" + ("" if home.returncode == 0 else "; NOT back home by the LiDAR"))
     bc.mark(robot.name, robot.params, "acc", "pass" if ok else "fail", summary,
             values={"transcript": transcript}, by=a.by)
     return 0 if ok else 1

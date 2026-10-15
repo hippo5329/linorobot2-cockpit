@@ -70,3 +70,14 @@ def test_the_ekf_goes_to_the_snapshot_pose_not_the_pose_before_inching():
     assert "ekf_set_pose(pose_home, args.distro)" in body
     inner = PIPELINE[PIPELINE.index("def _test_acc_body("):]
     assert inner.index('state["pose_home"]') > inner.index("if not clearance_step(args, params, controller_cfg, need, save=snap")
+
+
+def test_no_mode_lets_the_robot_decide_and_auto_counts_real_wheels():
+    import argparse as _ap
+    src = PIPELINE
+    assert '"--mode", default=None' in src
+    i_real = src.index("real_robot = is_real_robot(params, robot_name)")
+    i_res = src.index('args.mode = "auto" if real_robot else "sim"')
+    i_refuse = src.index('if real_robot and (args.mode == "sim" or controller == SIM_MCU):')
+    assert i_real < i_res < i_refuse
+    assert "designed or wheels_real" in src and '["wheels_real"]' in src

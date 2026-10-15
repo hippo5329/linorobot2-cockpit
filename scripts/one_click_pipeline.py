@@ -1960,7 +1960,9 @@ def main():
                         help="Override the robot's base controller / PlatformIO env (e.g. pico2, gendrv)")
     parser.add_argument("--distro", default=_default_distro, choices=["jazzy", "lyrical", "rolling", "auto"],
                         help="ROS 2 distribution")
-    parser.add_argument("--mode", default="sim", choices=["sim", "auto", "real"], help="Bringup mode (default: sim)")
+    parser.add_argument("--mode", default=None, choices=["sim", "auto", "real"],
+                        help="Bringup mode (default: auto for a real robot -- built from a design or "
+                             "with a pin assigned -- and sim for a bare module or the Sim MCU robot)")
     parser.add_argument("--firmware", default="auto", choices=["auto", "build", "prebuilt"],
                         help="Where the image comes from: a local `pio run` (build), the release image "
                              "for this env (prebuilt), or build-if-PlatformIO-is-here (auto, default)")
@@ -2182,6 +2184,11 @@ def main():
     # the Sim MCU simulates the whole board, so neither runs a design: simulation belongs
     # to the generated robots -- the board's bare robot, or bare_sim.
     real_robot = is_real_robot(params, robot_name)
+    # No --mode: the robot decides, as in the Web UI. A real robot run with no flag was refused
+    # [SIM REFUSED], and the message never named the flag.
+    if args.mode is None:
+        args.mode = "auto" if real_robot else "sim"
+        print(f"  mode: {args.mode} (from the robot; --mode sets it)")
     if real_robot and (args.mode == "sim" or controller == SIM_MCU):
         origin = (params.get("robot") or {}).get("reference")
         raise SystemExit(
@@ -2190,7 +2197,7 @@ def main():
             f"-- a real robot, which "
             f"simulates nothing -- and this run asked for "
             f"{'the Sim MCU' if controller == SIM_MCU else 'Sim mode'}.\n"
-            f"   Run it in Real mode on its own board, or simulate with a generated robot: "
+            f"   Run it in Real mode on its own board (--mode real, or no --mode), or simulate with a generated robot: "
             f"its board's bare robot (bare_<mcu>) or the Sim MCU robot (bare_sim). Nothing was started.")
     # The simulated MCU: base controller `sim`, or no board on the bus at all.
     # sim_base_node stands in for the board on this computer (same wheel model,
@@ -2243,11 +2250,17 @@ def main():
     sim_mcu_fw = sim_mcu and host_firmware.binary() is not None
     # Auto is Real for a robot built from a reference design (or a design itself), not
     # only the GenDrv: rover-unoq, from the unoq design, ran as SIM and was never asked
-    # for its sensors. A robot that is real only by its pins (a bench board with one real
-    # chip, its base and LiDAR simulated) keeps auto as it was.
+    # for its sensors. A robot real only by its pins is Real too once its WHEELS are real:
+    # it drives, so the room check, the motion guard and the bring-up hold apply (they were
+    # all skipped for it). A bench board with one real chip, its wheels and LiDAR
+    # simulated, keeps auto as it was.
     designed = bool((params.get("robot") or {}).get("reference")) or robot_name in reference_design_names()
+    wheels_real = False
+    if args.mode == "auto" and real_robot and not designed:
+        import bringup_checklist
+        wheels_real = bringup_checklist.parts(params, params_path)["wheels_real"]
     is_real = not sim_mcu and ((args.mode == "real")
-                               or (args.mode == "auto" and (controller == "gendrv" or designed)))
+                               or (args.mode == "auto" and (controller == "gendrv" or designed or wheels_real)))
     if is_real:
         if args.world or args.world_map:
             print("  ⚠️ Real hardware mode active: simulated world and map options (--world / --world-map) "
