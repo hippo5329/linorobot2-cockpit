@@ -907,7 +907,11 @@ def cmd_inch(a, r: Robot) -> int:
         # First the open floor in one move, when the look shows some within reach; the 5 cm
         # steps below are the fallback (and finish the job if that move falls short).
         here = nearest(P)
-        spot = room_spot(P, a.need, a.radius, a.max_travel, blind, r.laser[:2] if r.laser else (0.0, 0.0),
+        # `unseen`, not `blind`: the look-around has already turned the robot to see its blind
+        # sectors (P holds those bearings, carried), and what is left unseen is what it could
+        # not. Passing `blind` ruled out every 1 m room on a LiDAR masked 130-250 deg (the
+        # MC200, 2026-10-15): any circle that size reaches a blind bearing near the robot.
+        spot = room_spot(P, a.need, a.radius, a.max_travel, unseen, r.laser[:2] if r.laser else (0.0, 0.0),
                          spin_ok=here >= a.radius + SPIN_MARGIN_M)
         if spot is not None:
             h, d, room = spot

@@ -66,3 +66,16 @@ def test_inch_tries_the_open_floor_before_the_steps():
     assert body.index("room_spot(") < body.index("best_step(")
     pipe = open(os.path.join(ROOT, "scripts", "one_click_pipeline.py")).read()
     assert "max_travel=TEST_ACC_TRAVEL_M" in pipe
+
+
+def test_a_masked_lidar_that_looked_around_still_finds_its_room():
+    """The MC200's LiDAR is masked 130-250 deg; its look-around turns to see those bearings, so
+    room_spot gets what is still unseen (nothing), not the mask: given the mask, no 1 m room
+    near the robot ever counted as seen and test_acc refused "no room of 1.06 m" (2026-10-15)."""
+    P = room()
+    mask = clearance.parse_blind(["130:120"])
+    assert clearance.room_spot(P, 1.06, 0.20, 2.5, ()) is not None
+    src = open(os.path.join(ROOT, "scripts", "clearance.py")).read()
+    body = src[src.index("def cmd_inch("):]
+    assert "spot = room_spot(P, a.need, a.radius, a.max_travel, unseen," in body
+    assert mask  # the mask parses; with it as `unseen` the spot may be refused, which is right without a look-around
