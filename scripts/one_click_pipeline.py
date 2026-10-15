@@ -108,15 +108,24 @@ class ProgressLog:
 
 
 class _Tee:
-    """stdout as it was, with every line also offered to the progress log."""
-    def __init__(self, stream, progress):
-        self._s, self._p = stream, progress
+    """stdout as it was, with every line also offered to the progress log (when given) and
+    written whole to the run's output log (when given)."""
+    def __init__(self, stream, progress=None, out=None):
+        self._s, self._p, self._o = stream, progress, out
 
     def write(self, text):
-        try:
-            self._p.feed(text)
-        except Exception:
-            pass
+        if self._p is not None:
+            try:
+                self._p.feed(text)
+            except Exception:
+                pass
+        if self._o is not None:
+            try:
+                self._o.write(text)
+                if "\n" in text:
+                    self._o.flush()
+            except Exception:
+                pass
         return self._s.write(text)
 
     def flush(self):
@@ -134,7 +143,15 @@ def start_progress_log():
     global PROGRESS
     if PROGRESS is None:
         PROGRESS = ProgressLog(run_log_path("progress"))
-        sys.stdout = _Tee(sys.stdout, PROGRESS)
+        # The whole output too (logs/<run>/oneclick.log): a run started from the web UI
+        # streamed only to the page, and once the page was gone so was every line the
+        # summary kept out -- a UNO Q's test_acc "no room" could not be traced (2026-10-15).
+        try:
+            out = open(run_log_path("oneclick"), "a", encoding="utf-8", errors="replace")
+        except OSError:
+            out = None
+        sys.stdout = _Tee(sys.stdout, PROGRESS, out)
+        sys.stderr = _Tee(sys.stderr, None, out)
     return PROGRESS
 
 
