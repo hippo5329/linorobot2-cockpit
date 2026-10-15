@@ -80,6 +80,8 @@ KNOWN_NO_RETURN_M = 1.0 # a beam with no return is taken as free only this far (
 KNOWN_MARGIN_M = 0.05   # known-free ground stops this short of the return that bounds it
 KNOWN_GRID_M = 0.03     # the turning circle is checked on a grid this fine
 UNDER_BODY_M = 0.10     # ground this near the centre was under the robot: free even where blind
+HOLD_GAIN = 1.5          # slide: rad/s of turn per rad off the start heading
+HOLD_MAX_RPS = 0.3
 QUADRANTS = (("front", 0.0), ("left", 90.0), ("back", 180.0), ("right", 270.0))
 
 
@@ -454,20 +456,25 @@ class Robot:
         if start is None:
             print("  ❌ no /odom: cannot close a move")
             return False
-        vx, vy = LIN_MPS * math.cos(heading), LIN_MPS * math.sin(heading)
         end = time.time() + (timeout or dist / LIN_MPS + 8.0)
         while time.time() < end:
             self.rclpy.spin_once(self.node, timeout_sec=0.05)
             if math.hypot(self.odom[0] - start[0], self.odom[1] - start[1]) >= dist:
                 self.stop()
                 return True
+            # hold the heading, and the line in the start frame: a mecanum slide with no
+            # correction turned MC200 -9.8 deg over 0.70 m (2026-10-15)
+            err = scan_match.wrap(self.odom[2] - start[2])
+            wz = max(-HOLD_MAX_RPS, min(HOLD_MAX_RPS, -HOLD_GAIN * err))
+            vx = LIN_MPS * math.cos(heading - err)
+            vy = LIN_MPS * math.sin(heading - err)
             if guard and self.scan is not None:
                 b = path_blocked(scan_match.scan_points(self.scan, self.mount()), vx, vy, radius)
                 if b:
                     self.stop()
                     print(f"  ⚠️ stopped: a return {b:.2f} m in the way")
                     return False
-            self.send(vx, 0.0, vy)
+            self.send(vx, wz, vy)
             time.sleep(0.05)
         self.stop()
         print("  ❌ the move timed out")
