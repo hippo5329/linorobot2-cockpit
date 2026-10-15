@@ -647,3 +647,23 @@ def test_the_look_ends_where_the_robot_was_put_and_a_second_does_not_creep():
     assert out[2] and not back[2] and back[0] == out[0]
     assert abs(scan_match.wrap(math.radians(back[1] - out[1] - 180))) < 1e-6
 
+
+def test_a_look_that_fails_after_the_move_still_comes_back(capsys):
+    # MC200, 2026-10-15: test_acc's look moved 0.35 m, then /scan_raw stopped; the robot was
+    # left out there. The way back needs no scan: it retraces ground it has just swept.
+    world = np.vstack([_room(L_ROOM), wall(0.88, -0.3, 0.88, 0.3)])
+    r = _LookRobot(world)
+    seen = r.points
+    calls = []
+
+    def points(n=5, timeout=15.0):
+        calls.append(n)
+        return seen() if len(calls) == 1 else None
+    r.points = points
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    P, _, _, rc = clearance.first_look(a, r)
+    assert P is None and rc == 2 and "no scan" in capsys.readouterr().out
+    assert len(r.slides) == 2 and not r.slides[1][2]
+    assert math.hypot(r.x, r.y) < 1e-9 and r.turns == []
+

@@ -635,32 +635,37 @@ def first_look(a, r: Robot):
             print("CLEARANCE_REFUSED: the move to open ground stopped -- move the robot by hand")
             return None, blind, None, 1
         r.spin(0.5)
-        P = r.points(a.scans)
-        if P is None:
-            print(f"CLEARANCE FAIL: no scan on {r.topic}")
-            return None, blind, None, 2
     odom0 = r.wait_odom(5.0)
-    P360 = look_around(r, P, blind, a.radius, a.scans)
-    if P360 is None:
-        print("CLEARANCE_REFUSED: the LiDAR's blind sector could not be looked at -- "
-              "move the robot by hand")
-        return None, blind, None, 1
-    print(f"  the whole circle: {len(P360)} points")
+    P360, why, rc = None, "", 0
+    P = r.points(a.scans) if d > 0 else P
+    if P is None:
+        why, rc = f"CLEARANCE FAIL: no scan on {r.topic}", 2
+    else:
+        P360 = look_around(r, P, blind, a.radius, a.scans)
+        if P360 is None:
+            why, rc = ("CLEARANCE_REFUSED: the LiDAR's blind sector could not be looked at -- "
+                       "move the robot by hand"), 1
+        else:
+            print(f"  the whole circle: {len(P360)} points")
     if d > 0:
-        # Back the way it came, which the move itself swept: the robot ends where it was put,
-        # so a second look (the clearance step, then test_acc's) does not creep it forward
-        # again -- two did, 0.70 m, onto boxes 0.51 m ahead, and test_acc found no room.
+        # Back the way it came, which the move itself swept -- whether the look worked or not:
+        # the robot ends where it was put, so a second look (the clearance step, then
+        # test_acc's) does not creep it forward again. Two did, 0.70 m, onto boxes 0.51 m
+        # ahead, and test_acc found no room; then a scan lost after the move left it out there.
         print(f"  back {d:.2f} m to where it started, over ground just swept (THE ROBOT MOVES)",
               flush=True)
         if not r.slide(d, h + math.pi, a.radius, guard=False):
-            print("CLEARANCE_REFUSED: the move back stopped -- move the robot by hand")
-            return None, blind, None, 1
+            print(why or "CLEARANCE_REFUSED: the move back stopped -- move the robot by hand")
+            return None, blind, None, rc or 1
         r.spin(0.5)
         odom1 = r.wait_odom(5.0)
-        if odom0 is None or odom1 is None:
-            print("CLEARANCE FAIL: no /odom to carry the look back to the start")
-            return None, blind, None, 2
-        P360, odom0 = into_frame(P360, odom_since(odom0, odom1)), odom1
+        if P360 is not None and (odom0 is None or odom1 is None):
+            why, rc, P360 = "CLEARANCE FAIL: no /odom to carry the look back to the start", 2, None
+        if P360 is not None:
+            P360, odom0 = into_frame(P360, odom_since(odom0, odom1)), odom1
+    if P360 is None:
+        print(why)
+        return None, blind, None, rc
     return P360, (), odom0, 0
 
 
