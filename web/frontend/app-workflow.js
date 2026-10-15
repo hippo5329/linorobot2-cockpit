@@ -1371,7 +1371,8 @@ function initCockpitDashboard() {
         + "The robot will move by itself within a few minutes"
         + (scope === "topics_only" ? " -- no: 'Topics only' commands nothing" : "")
         + ". The room check may inch and turn it."
-        + (acc ? `\n\ntest_acc is ticked: it runs at FULL POWER and needs ${optIn.testAccClearance || "1.0"} m clear all round.` : "")
+        + (acc ? `\n\ntest_acc is ticked: it runs at FULL POWER and needs at least ${optIn.testAccClearance || "1.0"} m `
+               + "clear all round (more for a fast robot: the run works it out)." : "")
         + "\n\nStay clear of the robot. Abort (here or in the header) stops it.";
       if (!window.confirm(msg)) return;
     }
