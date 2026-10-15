@@ -317,6 +317,8 @@ async def api_save_hardware_config(request: Request):
     # The first pin assigned makes a bare module a real robot, and a real robot simulates
     # nothing: its simulated devices go off in the saved config, not only in Real mode.
     sim_turned_off = one_click_pipeline.simulate_nothing_if_real(params)
+    # ... and the last pin unassigned makes it a bare module again, which simulates its devices.
+    sim_turned_on = one_click_pipeline.simulate_everything_if_bare(params)
 
     save_params(params)
     findings = [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)]
@@ -336,6 +338,9 @@ async def api_save_hardware_config(request: Request):
     if sim_turned_off:
         message += (" A pin is assigned, so this is a real robot: simulation turned off ("
                     + ", ".join(k[len("use_sim_"):] for k in sim_turned_off) + ").")
+    if sim_turned_on:
+        message += (" No pin is assigned any more, so this is a bare module again: simulation "
+                    "turned on (" + ", ".join(k[len("use_sim_"):] for k in sim_turned_on) + ").")
     if nav2_changes:
         message += (f" Nav2 limits re-derived from the motors "
                     f"({len(nav2_changes)} value(s) changed).")
@@ -353,6 +358,7 @@ async def api_save_hardware_config(request: Request):
         "header_stderr": res.stderr,
         "pin_findings": findings,
         "sim_turned_off": sim_turned_off,
+        "sim_turned_on": sim_turned_on,
         **description,
     }
 

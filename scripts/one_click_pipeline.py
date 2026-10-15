@@ -375,6 +375,33 @@ def simulate_nothing_if_real(params: dict, robot_name: str = None) -> list:
     return turned
 
 
+def simulate_everything_if_bare(params: dict, robot_name: str = None) -> list:
+    """The way back: a robot that is a bare module again (its last pin unassigned) simulates
+    what its board's bare module simulates. Returns the flags it turned on, in order.
+
+    Only from the state a real robot leaves (every use_sim_* off): a bare module with some
+    devices deliberately off keeps them off. Without this, unassigning the last pin left a
+    "bare module" that simulated nothing -- no scan source, so its 1-Click skipped SLAM and
+    then failed saving a map it never made."""
+    if is_real_robot(params, robot_name):
+        return []
+    ctrl = params.get("base_controller") or {}
+    sensors = ctrl.get("sensors")
+    if not isinstance(sensors, dict):
+        return []
+    flags = [k for k in sensors if k.startswith("use_sim_")]
+    if not flags or any(sensors[k] for k in flags):
+        return []
+    mcu = str(ctrl.get("mcu") or ctrl.get("name") or "").lower()
+    if mcu not in gen_bare_config.KNOWN:
+        return []
+    bare = (gen_bare_config.bare_config(mcu).get("base_controller") or {}).get("sensors") or {}
+    turned = [k for k, v in bare.items() if k.startswith("use_sim_") and v]
+    for k in turned:
+        sensors[k] = True
+    return turned
+
+
 def is_generated_robot(robot_name: str) -> bool:
     """A bare module or the Sim MCU robot (`bare_*`), generated rather than designed.
 
@@ -2809,6 +2836,7 @@ def main():
 
         # Step 5: SLAM. A robot with no scan source has nothing to map, and
         # --topics-only has nothing to map it for.
+        slam_ran = False
         if args.topics_only:
             print("\n[5/6] [SLAM] Skipped per --topics-only: this run verifies the topics.")
         elif has_lidar and args.map:
@@ -2819,6 +2847,7 @@ def main():
                 print(f"  ❌ {args.map} does not exist.")
         elif has_lidar:
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
+            slam_ran = True
             failures += start_slam(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
                                    args.distro, bg_processes, stack_processes)
         else:
@@ -3141,6 +3170,10 @@ def main():
 
         if args.map:
             print(f"\n[MAP] Navigated on the saved map {args.map}; there is no new map to save.")
+        elif not slam_ran:
+            # A robot with no scan source skipped SLAM: there is no map, and asking the
+            # saver for one failed a run that did everything it could.
+            print("\n[MAP] Skipped: no SLAM ran (no scan source), so there is no map to save.")
         else:
             print(f"\n[MAP] Saving the map to '{args.map_output}'...")
             # save_map_timeout=15: /map is transient-local and the saver has to get

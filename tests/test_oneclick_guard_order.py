@@ -81,3 +81,30 @@ def test_no_mode_lets_the_robot_decide_and_auto_counts_real_wheels():
     i_refuse = src.index('if real_robot and (args.mode == "sim" or controller == SIM_MCU):')
     assert i_real < i_res < i_refuse
     assert "designed or wheels_real" in src and '["wheels_real"]' in src
+
+
+def test_a_bare_module_again_simulates_its_devices_and_only_from_all_off():
+    import copy
+    import gen_bare_config
+    bare = gen_bare_config.bare_config("esp32")
+    bare["robot"]["name"] = "walker"
+    sens = bare["base_controller"]["sensors"]
+    expected = [k for k, v in sens.items() if k.startswith("use_sim_") and v]
+    assert expected
+    off = copy.deepcopy(bare)
+    for k in off["base_controller"]["sensors"]:
+        if k.startswith("use_sim_"):
+            off["base_controller"]["sensors"][k] = False
+    assert ocp.simulate_everything_if_bare(off) == expected
+    assert all(off["base_controller"]["sensors"][k] for k in expected)
+    # one device deliberately off on a bare module stays off
+    some = copy.deepcopy(bare)
+    some["base_controller"]["sensors"][expected[0]] = False
+    assert ocp.simulate_everything_if_bare(some) == []
+    assert some["base_controller"]["sensors"][expected[0]] is False
+
+
+def test_no_map_is_saved_when_no_slam_ran():
+    i = PIPELINE.index("elif not slam_ran:")
+    assert PIPELINE.index("slam_ran = True") < i
+    assert i < PIPELINE.index('print(f"\\n[MAP] Saving the map to')

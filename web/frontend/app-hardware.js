@@ -1446,6 +1446,18 @@ async function saveCurrentHardwareConfig(opts = {}) {
         logLine(`🔧 A pin is assigned, so ${state.robot_name} is a real robot: simulation turned off ` +
                 `(${simOff.map((k) => k.replace(/^use_sim_/, "")).join(", ")}).`);
       }
+      // ... and the last pin unassigned made it a bare module again: its devices simulated.
+      const simOn = result.sim_turned_on || [];
+      simOn.forEach((key) => {
+        const box = document.getElementById(`chk-sim-${key.replace(/^use_sim_/, "")}`);
+        if (box) box.checked = true;
+      });
+      if (simOn.length) {
+        logLine(`🧪 No pin is assigned any more, so ${state.robot_name} is a bare module again: ` +
+                `simulation turned on (${simOn.map((k) => k.replace(/^use_sim_/, "")).join(", ")}).`);
+      }
+      // Real or not may have just changed: the Operations tab's real-robot options follow it.
+      if ((simOff.length || simOn.length) && typeof buRefresh === "function") buRefresh();
       (result.pin_findings || []).forEach((f) => logLine(`[pins] ${f.level}: ${f.message}`));
       renderPinFindings(result.pin_findings, result.header_ok !== false);
       renderGeometryWarnings(result.geometry_warnings);
