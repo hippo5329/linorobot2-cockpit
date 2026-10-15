@@ -256,6 +256,31 @@ def test_an_answer_nobody_waits_for_is_ignored():
     assert s.describe()["last_answer"] is None
 
 
+
+def test_an_internal_stop_answer_is_not_a_waiting_commands():
+    """The session's own stop (the last page went away) is answered `ok: stop`; that answer
+    was handed to the oldest line waiting -- a user's motor command -- as its own."""
+    s, link, clock, _ = make()
+    sent, seq = s.send("motor 1 30 3")
+    assert sent == "motor 1 30 3"
+    s.stop()                                                     # internal: nothing waits for it
+    s.feed(_ack("stop", msg="idle, motors off"))
+    assert s.wait_answer(seq, timeout=0.05) is None, "the motor's answer has not come yet"
+    s.feed(_ack("motor 1 30 3"))
+    assert s.wait_answer(seq, timeout=0.05)["line"] == "motor 1 30 3"
+
+
+def test_send_returns_its_own_seq():
+    """The route waits on the seq send() returns, not last_seq read afterwards (another
+    request's send may have moved it)."""
+    s, link, clock, _ = make()
+    _, a = s.send("status")
+    _, b = s.send("sensors 10")
+    assert b == a + 1 and s.last_seq == b
+    _, c = s.send("s")                                           # goes out as `stop`, answered `stop`
+    s.feed(_ack("stop", msg="motors off"))
+    assert s.wait_answer(c, timeout=0.05)["ok"] is True
+
 def test_lino_tool_reads_the_answer_to_its_own_line():
     import lino_tool
     import tool_answer

@@ -167,6 +167,7 @@ class ToolSession:
         self._stopped_unwatched = False
         # Command and response: every line sent waits for the board's answer (ok / fail).
         self._seq = 0
+        self.last_seq = 0
         self._pending: List[dict] = []
         self._answers: Dict[int, dict] = {}
         self._answered = threading.Condition(self._lock)
@@ -222,10 +223,12 @@ class ToolSession:
 
     def _on_ack(self, a: dict) -> None:
         """The board's answer to a line: matched to the oldest line sent with that text (the
-        shell answers in order), else to the oldest one waiting. Lock held (feed)."""
+        shell answers in order). An answer that matches no line waiting is nobody's: the
+        session's own `stop` (a page went away) or `base`. It used to fall back to the oldest
+        line waiting, so the answer to an internal stop was handed to a user's motor command
+        as its own. Lock held (feed)."""
         self.acks_seen = True
-        p = next((x for x in self._pending if x["line"] == a.get("line")), None) \
-            or (self._pending[0] if self._pending else None)
+        p = next((x for x in self._pending if x["line"] == a.get("line")), None)
         ans = {"kind": a["kind"], "line": a["line"], "ok": a["ok"], "msg": a["msg"]}
         if p is None:
             return                          # an internal stop or leave: nobody waits
@@ -330,24 +333,30 @@ class ToolSession:
             self.stop()
 
     # -- commands ---------------------------------------------------------------
-    def send(self, line: str) -> str:
+    def send(self, line: str):
+        """Send one validated line: (the line as sent, its seq for wait_answer). The seq is
+        returned rather than read back from last_seq afterwards, which another request's
+        send() may already have moved on."""
         clean = validate(line)
         word = clean.split()[0]
+        # `s` goes out as `stop` (stop() below), so the board answers `stop`.
+        waits_for = "stop" if word in ("stop", "s") else clean
         with self._lock:
             self._seq += 1
-            self.last_seq = self._seq
-            self._pending.append({"seq": self._seq, "line": clean, "at": self._clock()})
+            seq = self._seq
+            self.last_seq = seq
+            self._pending.append({"seq": seq, "line": waits_for, "at": self._clock()})
             del self._pending[:-32]
             if len(self._answers) > 64:
                 for k in sorted(self._answers)[:-32]:
                     self._answers.pop(k, None)
         if word in ("stop", "s"):
             self.stop()
-            return clean
+            return clean, seq
         self._write(clean.encode() + b"\r\n")
         if word in RUNNING:
             self.running = word
-        return clean
+        return clean, seq
 
     def stop(self) -> None:
         """`stop` on the shell, and on Wi-Fi the ping port's lino-stop as well: it needs no
@@ -421,6 +430,11 @@ class Registry:
             self._threads[session.robot] = t
             t.start()
         return session
+
+    def open_robots(self) -> List[str]:
+        """The robots with a session open: the 1-Click refuses while any is."""
+        with self._lock:
+            return sorted(r for r, s in self._sessions.items() if not s.closed)
 
     def remove(self, robot: str) -> None:
         with self._lock:
