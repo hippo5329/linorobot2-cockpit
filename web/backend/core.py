@@ -1103,14 +1103,36 @@ def pio_present() -> bool:
 
 
 
-def _read_robot_file(fpath: str):
-    """(declared_name, description, controller, mcu, reference) from a config, or None.
+# /api/status lists every robot on each poll. Parsing every config with the pure-Python loader
+# cost an Arduino UNO Q 0.44 s a file -- 15 files, 22 s a status call, and a Bringup or 1-Click
+# press that waited on it looked dead (2026-10-15). The C loader when libyaml is there, and a
+# parse only when the file changed.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_ROBOT_FILE_CACHE: Dict[str, Any] = {}
 
-    `reference` is the design the robot was built from (robot.reference), None for a robot
+
+def _read_robot_file(fpath: str):
+    """(declared_name, description, controller, mcu, reference, bare) from a config, or None;
+    cached on the file's mtime and size."""
+    try:
+        st = os.stat(fpath)
+    except OSError:
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _ROBOT_FILE_CACHE.get(fpath)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    info = _parse_robot_file(fpath)
+    _ROBOT_FILE_CACHE[fpath] = (stamp, info)
+    return info
+
+
+def _parse_robot_file(fpath: str):
+    """`reference` is the design the robot was built from (robot.reference), None for a robot
     that is a bare module -- which decides whether it is real (docs: robots-sim-vs-reference)."""
     try:
         with open(fpath, "r") as f:
-            yd = yaml.safe_load(f) or {}
+            yd = yaml.load(f, Loader=_YAML_LOADER) or {}
     except Exception:
         return None
     if not isinstance(yd, dict):

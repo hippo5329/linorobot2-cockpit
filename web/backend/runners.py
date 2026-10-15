@@ -598,6 +598,9 @@ print(json.dumps({t: s for t, s in stamps.items()}))
 """
 
 
+LIST_TIMEOUT_S = 25.0   # the ros2 CLI's start-up on a slow robot computer (check_bringup_health)
+
+
 def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str, Any]:
     """Queries the active ROS 2 graph on this machine.
 
@@ -625,7 +628,11 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str
 
     check_cmd = ["bash", "-lc", f"{ros_setup_shell()} && ros2 topic list"]
     try:
-        listed = subprocess.run(check_cmd, capture_output=True, text=True, timeout=timeout + 2)
+        # The listing is the ros2 CLI starting up, not the measurement: on an Arduino UNO Q a
+        # login shell, the setup files and `ros2 topic list` take 5-14 s, so `timeout + 2`
+        # (6 s) reported "Could not query ROS 2 graph" on a healthy robot (2026-10-15).
+        listed = subprocess.run(check_cmd, capture_output=True, text=True,
+                                timeout=max(timeout + 2, LIST_TIMEOUT_S))
         present = {t.strip() for t in listed.stdout.splitlines() if t.strip()}
         res["ros_available"] = listed.returncode == 0 and bool(present)
     except Exception as e:
