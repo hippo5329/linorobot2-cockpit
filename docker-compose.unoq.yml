@@ -22,6 +22,9 @@ services:
     volumes:
       - /opt/openocd:/opt/openocd:ro
       - /lib/aarch64-linux-gnu:/host-lib:ro
+      # The board's device tree says it is a UNO Q ("arduino,imola"), but Docker masks
+      # /sys/firmware: without this the cockpit saw no board and refused its own 1-Click.
+      - /sys/firmware/devicetree/base/compatible:/host-dt/compatible:ro
     # Compose APPENDS this list to the base file's (ttyACM, ttyUSB, raw USB), and an older
     # compose (2.26, the UNO Q's) rejects a rule given twice -- so only the two new classes.
     device_cgroup_rules:

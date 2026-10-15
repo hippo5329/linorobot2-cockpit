@@ -146,3 +146,27 @@ def test_the_unoq_baud_survives_a_load_and_a_save():
     hw = open(os.path.join(ROOT, "web", "frontend", "app-hardware.js")).read()
     a = hw.index('const elBaud = document.getElementById("cfg-baudrate");')
     assert "elBaud.add(new Option(" in hw[a:a + 800]    # any rate the list lacks is added, not dropped
+
+
+def test_the_unoq_is_found_through_the_host_device_tree_mount(tmp_path, monkeypatch):
+    """Docker masks /sys/firmware: inside the robot container /proc/device-tree is a dangling
+    link, and the UNO Q's cockpit refused its own 1-Click "no board attached" (2026-10-15). The
+    compose file mounts the host's `compatible` at HOST_DT_ROOT; with no root given, both are read."""
+    import mcu_identity
+    host = tmp_path / "host-dt"
+    host.mkdir()
+    (host / "compatible").write_bytes(b"arduino,imola\0qcom,qcm2290\0")
+    monkeypatch.setattr(mcu_identity, "HOST_DT_ROOT", str(host))
+    real_open = open
+
+    def masked(path, *a, **k):
+        if str(path).startswith("/proc/device-tree"):
+            raise FileNotFoundError(path)
+        return real_open(path, *a, **k)
+    monkeypatch.setattr("builtins.open", masked)
+    assert mcu_identity.onboard_controller()[0] == "unoq"
+
+
+def test_the_unoq_compose_mounts_the_device_tree():
+    src = open(os.path.join(ROOT, "docker-compose.unoq.yml")).read()
+    assert "/sys/firmware/devicetree/base/compatible:/host-dt/compatible:ro" in src

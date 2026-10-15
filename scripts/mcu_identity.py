@@ -357,7 +357,13 @@ def _pio_envs() -> set:
         return set()
 
 
-def onboard_controller(dt_root: str = "/proc/device-tree") -> tuple:
+# Docker masks /sys/firmware, so inside the robot container /proc/device-tree leads nowhere and
+# a UNO Q read as boardless ("no board attached" on its own 1-Click, 2026-10-15): the UNO Q
+# compose file mounts the host's device-tree `compatible` here, read-only.
+HOST_DT_ROOT = "/host-dt"
+
+
+def onboard_controller(dt_root: str = None) -> tuple:
     """(family, chip, port) of a base controller built into THIS computer, or (None, ...).
 
     The Arduino UNO Q's STM32U585 is on the board, wired to the QRB2210's UART
@@ -365,10 +371,16 @@ def onboard_controller(dt_root: str = "/proc/device-tree") -> tuple:
     reads an empty bus as "no board" switched a UNO Q to the Sim MCU. The board says what
     it is in its device tree (compatible "arduino,imola").
     """
-    try:
-        with open(os.path.join(dt_root, "compatible"), "rb") as fh:
-            compatible = fh.read().split(b"\0")
-    except OSError:
+    roots = [dt_root] if dt_root else ["/proc/device-tree", HOST_DT_ROOT]
+    compatible = None
+    for root in roots:
+        try:
+            with open(os.path.join(root, "compatible"), "rb") as fh:
+                compatible = fh.read().split(b"\0")
+            break
+        except OSError:
+            continue
+    if compatible is None:
         return None, None, None
     if b"arduino,imola" in compatible:
         return "unoq", FAMILY_LABEL["unoq"], "/dev/ttyHS1"

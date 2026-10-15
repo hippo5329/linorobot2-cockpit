@@ -1083,8 +1083,11 @@ function initHeaderPicker({ inputId, caretId, menuId, loadItems, onPick, emptyTe
 // choosing pico2_mecanum with nothing plugged in was undone by the next poll.
 async function selectRobot(name, byUser = true) {
   name = (name || "").trim();
-  if (!name || !/^[a-z0-9_]+$/.test(name)) {
-    logLine(`[console] invalid robot name: "${name}" (use lowercase, digits, _)`);
+  // A hyphen is a legal robot name (mc200-unoq: the firmware's node name maps it to "_" since
+  // rc-20261009.5, and /api/robot/select accepts it); refusing it here left such a robot
+  // unselectable from the header (2026-10-15).
+  if (!name || !/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+    logLine(`[console] invalid robot name: "${name}" (use lowercase, digits, _ or -)`);
     const ri = document.getElementById("hdr-robot-name");
     if (ri) ri.value = state.robot_name;
     return;

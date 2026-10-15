@@ -1776,7 +1776,7 @@ function askForRobotName() {
     : `${state.robot_name} is a reference design`;
   showActionBanner("Name your robot first.",
     `${what}, so your changes are not saved to it. Type a name for your robot in the Robot field ` +
-    `(lowercase, digits, _) and press Enter: it is created from what you see now, and every change ` +
+    `(lowercase, digits, _ or -) and press Enter: it is created from what you see now, and every change ` +
     `after that is saved to it.`);
   setSavedIndicator("✎ Name your robot", false, "unnamed");
   const ri = document.getElementById("hdr-robot-name");
