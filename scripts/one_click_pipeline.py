@@ -1326,7 +1326,12 @@ def wait_for_topic(topic_name: str, timeout_sec: int = 30, require_publisher: bo
                 if res.returncode == 0 and res.stdout.strip():
                     return True
             elif require_publisher:
-                res = run_ros(f"ros2 topic info {topic_name} 2>/dev/null", timeout=5, distro=distro)
+                # 15 s and no daemon, as the echo: the UNO Q's CLI takes 3.5-5.1 s to start idle,
+                # so a 5 s bound under SLAM and Nav2 timed out on every try and a board that was
+                # back read "did not come back" for 120 s (2026-10-15); the daemon's cached graph
+                # answers for a node that has gone.
+                res = run_ros(f"timeout 15 ros2 topic info --no-daemon {topic_name} 2>/dev/null",
+                              timeout=20, distro=distro)
                 if res.returncode == 0:
                     for line in res.stdout.splitlines():
                         if "Publisher count:" in line:
@@ -1589,8 +1594,10 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
                            + (["--serial", "--console-baud", str(int(controller_cfg.get("baudrate", 921600)))]
                               if on_serial else ["--ip", found["ip"]]),
                            timeout=900, log_tag="test_acc", prefix="  ")
-        # app=base reboots the board: a new micro-ROS session, then the scan again
-        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=args.distro):
+        # app=base reboots the board: a new micro-ROS session, then the scan again. Data, not a
+        # listing: only a message proves the board opened a session with the agent again.
+        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=args.distro,
+                              require_message="header.stamp"):
             return "test_acc: micro-ROS did not come back after app=base", None
         wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
     radius = gen_firmware_header.nav2_robot_radius(params)
@@ -1632,7 +1639,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
         print("  the new gains to the board (env block, app=base)...")
         if not write_env_only(pio_env, serial_port, flash_baud, tuned_path, controller, timeout=300):
             return "test_acc: the tuned env block was not written", None
-        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=args.distro):
+        if not wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=args.distro,
+                              require_message="header.stamp"):
             return "test_acc: micro-ROS did not come back after the tuned env", None
         wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
     return "", tuned_path

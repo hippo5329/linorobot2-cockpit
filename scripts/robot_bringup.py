@@ -685,7 +685,7 @@ def cmd_acc(robot: Robot, a) -> int:
             "--transcript", transcript] + (["--serial", "--console-baud", str(baud)] if on_serial
                                            else ["--ip", found["ip"]])
     res = subprocess.run(argv)
-    ocp.wait_for_topic("/odom/unfiltered", timeout_sec=120, require_publisher=True, distro=distro)
+    ocp.wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=distro, require_message="header.stamp")
     ocp.wait_for_topic("/scan", timeout_sec=90, distro=distro, require_message="header.frame_id")
     say("back to where test_acc started, by the LiDAR...")
     home = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} home --snap {snap} "

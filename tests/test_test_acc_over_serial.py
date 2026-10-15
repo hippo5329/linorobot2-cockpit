@@ -159,3 +159,14 @@ def test_the_one_click_measures_a_serial_robot_too():
 def test_the_web_ui_measures_by_default():
     html = open(os.path.join(REPO_ROOT, "web", "frontend", "index.html")).read()
     assert '<input type="checkbox" id="cockpit-test-acc" checked>' in html
+
+
+def test_micro_ros_is_proved_back_by_data_after_each_env_write():
+    # a 5 s `ros2 topic info` timed out on every try on a slow robot computer under SLAM and
+    # Nav2, and a board that was back read "did not come back" for 120 s
+    import re as _re
+    for msg in ("after app=base", "after the tuned env"):
+        i = OCP.index(f'"test_acc: micro-ROS did not come back {msg}"')
+        assert 'require_message="header.stamp"' in OCP[i - 300:i], msg
+    assert "timeout 15 ros2 topic info --no-daemon {topic_name}" in OCP
+    assert 'wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=distro, require_message="header.stamp")' in BRINGUP
