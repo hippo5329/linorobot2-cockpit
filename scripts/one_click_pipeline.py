@@ -879,6 +879,35 @@ def start_motion_guard(params_path: str, ns: str, room_bound: bool, distro: str)
     return proc, trip, "the guard never said the robot may move (logs/motion_guard.log)"
 
 
+def watch_exploration(args, trip_file: str, poll_s: float = 0.5) -> subprocess.CompletedProcess:
+    """explore_watch.py, stopped as soon as the motion guard trips: (its output, its exit).
+    Read only after it returned, a trip let explore_lite send goal after goal for up to the
+    whole exploration time, the guard cancelling each within half a second -- the robot
+    moving in bursts on a stopped or starved scan."""
+    cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
+           f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}")
+    proc = launch_bg(cmd, log_tag="explore_watch", distro=args.distro)
+    deadline = time.time() + args.explore_timeout + 60
+    rc = None
+    while time.time() < deadline:
+        rc = proc.poll()
+        if rc is not None:
+            break
+        if motion_guard_tripped(trip_file):
+            stop_bg(proc)
+            rc = 3
+            break
+        time.sleep(poll_s)
+    else:
+        stop_bg(proc)
+        rc = 124
+    try:
+        out = open(run_log_path("explore_watch"), encoding="utf-8", errors="replace").read()
+    except OSError:
+        out = ""
+    return subprocess.CompletedProcess(cmd, rc, out, "")
+
+
 def motion_guard_tripped(trip_file: str) -> str:
     """The guard's reason, when it stopped the motion, else ''."""
     if trip_file and os.path.exists(trip_file):
@@ -1554,7 +1583,10 @@ def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, p
     came back, odom sat ~300 m from the truth, SLAM had followed it, and Nav2's next
     goal aborted INCOHERENT. So: SLAM takes no new measurements while test_acc runs,
     and once the robot is back where it started (by the LiDAR, not the odometry) the
-    EKF is set to the pose /odom had then. The Sim MCU never stops publishing."""
+    EKF is set to the pose /odom had then -- the pose of the start snapshot, taken after any
+    inching, not the pose before it: set back to the earlier one, a robot that had inched
+    0.6 m for room came home 0.6 m from where /odom then said it was, and SLAM's narrow
+    search window could not take that back. The Sim MCU never stops publishing."""
     if sim:
         return _test_acc_body(args, params, controller_cfg, params_path, pio_env, serial_port,
                               flash_baud, controller, robot_name, sim=True)
@@ -1567,10 +1599,11 @@ def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, p
         return _test_acc_body(args, params, controller_cfg, params_path, pio_env, serial_port,
                               flash_baud, controller, robot_name, sim=False, state=state)
     finally:
-        if pose0 and state.get("home"):
-            ok = ekf_set_pose(pose0, args.distro)
+        pose_home = state.get("pose_home") or pose0
+        if pose_home and state.get("home"):
+            ok = ekf_set_pose(pose_home, args.distro)
             print(f"  the EKF set back to the pose before test_acc: {'done' if ok else 'FAILED (set_pose did not answer)'}")
-        elif pose0:
+        elif pose_home:
             print("  the EKF left as it is: the robot is not known to be back where test_acc started")
         if paused:
             print(f"  SLAM resumed: {'done' if slam_pause_toggle(args.distro) else 'FAILED (call it again by hand)'}")
@@ -1601,6 +1634,12 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     snap = os.path.join(tempfile.gettempdir(), f"lino_testacc_start_{os.getpid()}.json")
     if not clearance_step(args, params, controller_cfg, args.test_acc_clearance, save=snap, max_travel=1.5):
         return f"test_acc: no room of {args.test_acc_clearance:.2f} m found", None
+    if state is not None:
+        try:
+            odom = json.load(open(snap)).get("odom")
+            state["pose_home"] = tuple(odom[:3]) if odom else None
+        except (OSError, ValueError, TypeError):
+            pass
     transcript = os.path.join(LOG_DIR, f"test_acc_{time.strftime('%Y%m%d-%H%M%S')}.txt")
     if sim:
         # The firmware refuses test_acc on simulated wheels (test_acc.cpp: a table
@@ -2797,8 +2836,43 @@ def main():
                         f"distro:={args.distro} config_file:={cfg}"
                         + (f" map:={os.path.abspath(args.map)}" if args.map else ""))
 
-            def measure_and_restart():
-                """Nav2 down, test_acc, Nav2 up again on the measured limits."""
+            # A real robot moves only while its LiDAR and battery hold up, and only inside the
+            # room it saw at the start (motion_guard.py): a tracked robot at 8 % charge explored
+            # on 6.9 Hz scans toward a frontier beyond a wall, reached the wall, and lost its
+            # LiDAR there. The guard starts as soon as Nav2 is up, before test_acc too.
+            mg = {"proc": None, "trip": "", "ok": True}
+
+            def guard_start():
+                mg["proc"], mg["trip"], why_not = start_motion_guard(
+                    params_path, cockpit_paths.robot_namespace(params),
+                    not args.explore_beyond_room, args.distro)
+                bg_processes.append(mg["proc"])
+                if why_not:
+                    mg["ok"] = False
+                    print(f"  ❌ NOTHING MOVES: {why_not}")
+                    failures.append(f"Motion guard: {why_not}")
+
+            def guard_stop():
+                if mg["proc"] is not None:
+                    stop_bg(mg["proc"])
+                    bg_processes[:] = [q for q in bg_processes if q is not mg["proc"]]
+                    mg["proc"] = None
+
+            def measure_and_restart(nav2_state):
+                """Nav2 down, test_acc, Nav2 up again on the measured limits -- unless the motion
+                guard has tripped or never let the robot move: full-power runs on a starved
+                LiDAR or a flat pack are the last thing to do then. The guard is stopped while
+                the board runs test_acc (its scan stops with the reboot, which would latch a
+                trip) and started afresh once Nav2 is back."""
+                if is_real:
+                    tripped = motion_guard_tripped(mg["trip"])
+                    if tripped or not mg["ok"]:
+                        why = tripped or "the motion guard did not let the robot move"
+                        print(f"  ❌ TEST_ACC NOT RUN: {why}")
+                        failures.append(f"test_acc: not run ({why})")
+                        mg["ok"] = False
+                        return nav2_state
+                    guard_stop()
                 for tag, proc in [(t, q) for t, q in stack_processes if t == "nav2"]:
                     _stop_group_and_wait(proc)
                     stack_processes[:] = [(t, q) for t, q in stack_processes if q is not proc]
@@ -2811,33 +2885,25 @@ def main():
                     print(f"  ❌ {failed}")
                 cfg = tuned or params_path
                 print(f"\n[6.3/6] [NAV2] Restarting Nav2 on {'the measured' if tuned else 'the configured'} limits...")
-                return start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes,
-                                  tag="nav2_measured")
+                restarted = start_nav2(nav2_cmd(cfg), args.distro, bg_processes, stack_processes,
+                                       tag="nav2_measured")
+                if is_real and restarted[0]:
+                    guard_start()
+                return restarted
 
             print(f"\n[6/6] [NAV2] Launching Nav2 (distro={args.distro})...")
             nav2_ok, nav2_detail, nav2_log = start_nav2(nav2_cmd(nav2_cfg), args.distro,
                                                         bg_processes, stack_processes)
+            if is_real and nav2_ok:
+                guard_start()
             if do_test_acc and nav2_ok and not args.explore:
                 # the goals run on the measured limits: the initial map is what SLAM has
                 # now (and what the start-up exploration added); measure, then go
-                nav2_ok, nav2_detail, nav2_log = measure_and_restart()
+                nav2_ok, nav2_detail, nav2_log = measure_and_restart((nav2_ok, nav2_detail, nav2_log))
             if not nav2_ok:
                 print(f"  ❌ Nav2 did not activate: {nav2_detail}\n     See logs/{os.path.basename(nav2_log)}.")
                 failures.append(f"Nav2: did not activate ({nav2_detail})")
-            # A real robot moves only while its LiDAR and battery hold up, and only inside the
-            # room it saw at the start (motion_guard.py): a tracked robot at 8 % charge explored
-            # on 6.9 Hz scans toward a frontier beyond a wall, reached the wall, and lost its
-            # LiDAR there.
-            guard, guard_trip, motion_ok = None, "", True
-            if is_real and nav2_ok:
-                guard, guard_trip, why_not = start_motion_guard(
-                    params_path, cockpit_paths.robot_namespace(params),
-                    not args.explore_beyond_room, args.distro)
-                bg_processes.append(guard)
-                if why_not:
-                    motion_ok = False
-                    print(f"  ❌ NOTHING MOVES: {why_not}")
-                    failures.append(f"Motion guard: {why_not}")
+            motion_ok = mg["ok"]
             if args.explore:
                 # Frontier exploration instead of the fixed goal: explore_lite
                 # drives Nav2 to the edge of the known map until none is left and
@@ -2848,12 +2914,10 @@ def main():
                                         f"config_file:={params_path}", log_tag="explore_lite",
                                         distro=args.distro)
                     bg_processes.append(explore)
-                    ex_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
-                                     f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}",
-                                     timeout=args.explore_timeout + 60, distro=args.distro)
+                    ex_res = watch_exploration(args, mg["trip"])
                     stop_bg(explore)
                     print(ex_res.stdout)
-                    tripped = motion_guard_tripped(guard_trip)
+                    tripped = motion_guard_tripped(mg["trip"])
                     if tripped:
                         print(f"  ❌ MOTION GUARD STOPPED THE EXPLORATION: {tripped}")
                         failures.append(f"Motion guard: {tripped}")
@@ -2861,10 +2925,10 @@ def main():
                     if ex_res.returncode != 0:
                         print(_nav2_complaints(nav2_log))
                         failures.append(f"Explore: exit {ex_res.returncode}")
-                    if do_test_acc:
+                    if do_test_acc and motion_ok:
                         # the explored map is the initial map: measure on it, and leave
                         # Nav2 running on what was measured
-                        nav2_ok, nav2_detail, nav2_log = measure_and_restart()
+                        nav2_ok, nav2_detail, nav2_log = measure_and_restart((nav2_ok, nav2_detail, nav2_log))
                 elif nav2_ok:
                     print("  ❌ EXPLORE NOT STARTED: the motion guard refused (above).")
                 else:
@@ -2894,7 +2958,7 @@ def main():
                     test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
                                        + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
                                        distro=args.distro)
-                    tripped = motion_guard_tripped(guard_trip)
+                    tripped = motion_guard_tripped(mg["trip"])
                     if tripped:
                         test_res.stdout += f"\n  ❌ MOTION GUARD STOPPED THE GOALS: {tripped}"
                         failures.append(f"Motion guard: {tripped}")

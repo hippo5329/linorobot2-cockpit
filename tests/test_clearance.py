@@ -132,12 +132,12 @@ def test_test_acc_runs_after_the_initial_map_and_before_the_goals():
     src = _pipeline()
     i_cons = src.index("drivetrain_report.conservative_params(cons)")
     i_start = src.index("nav2_ok, nav2_detail, nav2_log = start_nav2(nav2_cmd(nav2_cfg)")
-    i_measure = src.index("nav2_ok, nav2_detail, nav2_log = measure_and_restart()")
+    i_measure = src.index("nav2_ok, nav2_detail, nav2_log = measure_and_restart(")
     i_goal = src.index("'test_nav2_goal.py'")
     assert i_cons < i_start < i_measure < i_goal
     # with exploration, the explored map is the initial map: measured after it
-    i_explore = src.index("explore_watch.py")
-    assert src.index("measure_and_restart()", i_explore) > i_explore
+    i_explore = src.index("ex_res = watch_exploration(")
+    assert src.index("measure_and_restart(", i_explore) > i_explore
 
 
 TRANSCRIPT = """IDENT gains kp=0.6000 ki=0.8000 kd=0.5000 pwm_max=1023 rate_hz=50
