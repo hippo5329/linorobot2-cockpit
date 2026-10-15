@@ -256,3 +256,32 @@ def test_options_the_gate_just_revealed_are_reviewed_before_a_start(tmp_path):
              checked={"cockpit-test-acc": True})
     assert r["fetched"] == [] and r["confirms"] == []
     assert "review its options" in r["msg"] and r["badge"] != "Running..."
+
+
+CTRL = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const grab = (name) => src.match(new RegExp(`function ${name}\\([^]*?\\n}\\n`))[0];
+eval(src.match(/const BOARD_SILICON = [^;]*;/)[0] + "\nlet loadedControllerName = null;\n"
+     + grab("learnBoardSilicon") + grab("siliconOf") + grab("controllerOption") + grab("controllerForRun") + `
+const sel = { options: ["pico2", "esp32", "esp32s3", "sim"].map((value) => ({ value })) };
+learnBoardSilicon("makerspet_mini", "esp32");
+const out = {
+  gendrv: controllerOption(sel, "gendrv"), pico2: controllerOption(sel, "pico2"),
+  maker: controllerOption(sel, "makerspet_mini"), unknown: controllerOption(sel, "stm32x"),
+};
+loadedControllerName = "gendrv";
+out.run = controllerForRun("esp32");
+console.log(JSON.stringify(out));`);
+"""
+
+
+@needs_node
+def test_a_design_controller_selects_its_silicon_and_runs_as_itself(tmp_path):
+    # a reloaded page with a GenDrv robot active kept the hardcoded pico2, and Start sent it
+    h = tmp_path / "c.js"
+    h.write_text(CTRL)
+    out = subprocess.run([NODE, str(h), os.path.join(FRONT, "app-core.js"), "{}"],
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    r = json.loads(out.stdout.strip().splitlines()[-1])
+    assert r == {"gendrv": "esp32", "pico2": "pico2", "maker": "esp32", "unknown": None, "run": "gendrv"}

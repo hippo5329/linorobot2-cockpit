@@ -18,6 +18,16 @@ function siliconOf(name) {
   const n = String(name || "").toLowerCase();
   return BOARD_SILICON[n] || n;
 }
+// The option of a controller select that stands for `name`: its own entry, else its
+// silicon's (a design's controller, gendrv, is an esp32 board); null when neither is listed.
+function controllerOption(sel, name) {
+  if (!sel || !name) return null;
+  const opts = [...sel.options].map((o) => o.value);
+  if (opts.includes(name)) return name;
+  const sil = typeof siliconOf === "function" ? siliconOf(name) : null;
+  return sil && opts.includes(sil) ? sil : null;
+}
+
 function controllerForRun(selected) {
   return loadedControllerName && siliconOf(loadedControllerName) === selected ? loadedControllerName : selected;
 }
@@ -624,11 +634,17 @@ async function refreshStatus() {
     if (!state._ctrlSelSynced) {
       const bcName = s.config && s.config.base_controller && s.config.base_controller.name;
       const tsel = document.getElementById("cockpit-target-select");
-      if (tsel && bcName && [...tsel.options].some((o) => o.value === bcName)) {
+      // A controller with no entry of its own (a design's: gendrv) is shown by its silicon
+      // (esp32), and controllerForRun sends the robot's own name back. Matching the name
+      // alone left a reloaded page on the hardcoded pico2, and Start 1-Click sent that.
+      if (bcName) learnBoardSilicon(bcName, s.config.base_controller.mcu);
+      const want = controllerOption(tsel, bcName);
+      if (tsel && want) {
         state._ctrlSelSynced = true;
-        if (tsel.value !== bcName) {
-          tsel.value = bcName;
-          if (window.__syncControllerSelects) window.__syncControllerSelects(bcName, "cockpit-target-select");
+        if (!loadedControllerName) loadedControllerName = bcName;
+        if (tsel.value !== want) {
+          tsel.value = want;
+          if (window.__syncControllerSelects) window.__syncControllerSelects(want, "cockpit-target-select");
           logLine(`[console] base controller -> ${bcName} (synced to the active robot)`);
         }
       }
@@ -1141,15 +1157,16 @@ async function selectRobot(name, byUser = true) {
     const bcName = bcBoard ? siliconOf(bcBoard) : bcBoard;
     if (bcBoard) loadedControllerName = bcBoard;
     const tsel = document.getElementById("cockpit-target-select");
+    const want = controllerOption(tsel, bcName);
     if (tsel && bcName) {
-      if ([...tsel.options].some((o) => o.value === bcName)) {
-        if (tsel.value !== bcName) {
-          tsel.value = bcName;
+      if (want) {
+        if (tsel.value !== want) {
+          tsel.value = want;
           syntheticControllerChange = true;
           try { tsel.dispatchEvent(new Event("change")); } finally { syntheticControllerChange = false; }
           logLine(`[console] base controller -> ${bcBoard}`);
         }
-        if (window.__syncControllerSelects) window.__syncControllerSelects(bcName, "cockpit-target-select");
+        if (window.__syncControllerSelects) window.__syncControllerSelects(want, "cockpit-target-select");
       } else {
         logLine(`[console] warning: no '${bcName}' entry in the base-controller list; 1-Click will use '${tsel.value}'`);
       }
