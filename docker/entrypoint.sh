@@ -134,6 +134,19 @@ if [ "$(id -u)" = "0" ] && [ "$DROP_PRIVS" = "yes" ]; then
         usermod -aG "$SERIAL_GID" "$APP_USER" 2>/dev/null || true
     fi
 
+    # GPIO chips (the UNO Q's SWD lines to its STM32, /dev/gpiochip*) belong to a host group
+    # (gpiod, 1001 on the UNO Q) that is not dialout: the backend runs as the app user, so a
+    # 1-Click started from the web UI could not open them and every SWD env write failed
+    # ("OpenOCD did not reach the STM32 over SWD"), while a root `docker exec` worked
+    # (2026-10-15). Join the group of each chip the container was given; root-owned skipped.
+    for dev in /dev/gpiochip*; do
+        [ -e "$dev" ] || continue
+        g="$(stat -c %g "$dev" 2>/dev/null || true)"
+        case "$g" in ""|0) continue ;; esac
+        getent group "$g" >/dev/null 2>&1 || groupadd -g "$g" "hostgpio$g" 2>/dev/null || true
+        usermod -aG "$g" "$APP_USER" 2>/dev/null || true
+    done
+
     # Writable paths only. Never a blanket chown of /ws: that would rewrite
     # every source file's ownership on a bind-mounted checkout.
     # Only reached in rootful mode; under rootless the volumes are already
