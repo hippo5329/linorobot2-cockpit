@@ -2805,6 +2805,13 @@ def main():
 
         print("  [CHECK TOPICS] Verifying ROS 2 topic payloads and publish rates...")
         verify_flag = "" if has_lidar else " --no-scan"
+        if has_lidar:
+            # The LiDAR model's own rate, held to the share the motion guard holds a run to:
+            # a flat 5 Hz let an LD driver dropping one scan in four pass every gate.
+            import lidar_check
+            want_hz = lidar_check.expected_hz(params)
+            if want_hz:
+                verify_flag += f" --scan-min-hz {lidar_check.RATE_FLOOR_SHARE * want_hz:.1f}"
         if not has_imu:
             verify_flag += " --no-imu"
         elif imu_auto:

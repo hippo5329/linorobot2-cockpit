@@ -194,6 +194,7 @@ RANGE_CHECKS = {
 
 class TopicVerifier(Node):
     def __init__(self, check_scan: bool = True, min_samples: int = 10, timeout: float = 6.0,
+                 scan_min_hz: float = 5.0,
                  required_aux: Optional[List[str]] = None, check_imu: bool = True):
         super().__init__("linorobot2_topic_verifier")
         self.min_samples = min_samples
@@ -235,7 +236,7 @@ class TopicVerifier(Node):
         if self.check_scan:
             self.timestamps["/scan"] = []
             self.samples["/scan"] = None
-            self.thresholds["/scan"] = 5.0
+            self.thresholds["/scan"] = scan_min_hz
 
         # Create subscribers with dual QoS to ensure discovery regardless of publisher profile
         self.create_subscription(Odometry, "/odom", self._odom_cb, reliable_qos)
@@ -369,6 +370,10 @@ def format_scan(msg: LaserScan) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Verify ROS 2 topic echo payload and publish rates (Hz)")
     parser.add_argument("--no-scan", action="store_true", help="Skip /scan topic check")
+    parser.add_argument("--scan-min-hz", type=float, default=5.0,
+                        help="the /scan rate floor; the 1-Click passes 80 %% of the LiDAR model's own "
+                             "rate (lidar_check), the floor the motion guard stops a run on -- a flat "
+                             "5 Hz let an LD driver dropping a scan in four pass every gate (2026-10-15)")
     parser.add_argument("--no-imu", action="store_true",
                         help="Skip /imu/data: the robot has no IMU (imu: NONE)")
     parser.add_argument("--imu-auto", action="store_true",
@@ -399,7 +404,7 @@ def main():
     rclpy.init()
     verifier = TopicVerifier(check_scan=not args.no_scan, min_samples=args.samples,
                              timeout=args.timeout, required_aux=required_aux,
-                             check_imu=not args.no_imu)
+                             check_imu=not args.no_imu, scan_min_hz=args.scan_min_hz)
     known = set(verifier.optional_samples) | {"/imu/data"}
     unknown = [t for t in required_aux if t not in known]
     if unknown:

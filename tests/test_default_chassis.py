@@ -321,7 +321,9 @@ def test_every_run_writes_its_own_log_directory():
     overwrote a serial leg's nav2.log and the failure it held was gone."""
     pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
     assert 'RUN_ID = time.strftime' in pipe and "LOG_DIR = os.path.join(LOG_ROOT, RUN_ID)" in pipe
-    assert pipe.count('open(run_log_path(') == 2, "both launchers write through run_log_path"
+    # both launchers, and the run's whole output (oneclick.log), write through run_log_path
+    assert pipe.count('open(run_log_path(') == 3, "the launchers and oneclick.log write through run_log_path"
+    assert 'open(run_log_path("oneclick")' in pipe
     assert 'os.symlink(target, link)' in pipe, "logs/latest and logs/<tag>.log still resolve"
 
 
