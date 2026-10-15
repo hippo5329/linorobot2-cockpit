@@ -337,6 +337,9 @@ class _StillRobot:
         self.scan = self.scans.pop(0) if len(self.scans) > 1 else self.scans[0]
         return self.scan
 
+    def points(self, n=5, timeout=15.0):             # standing still: the scan just read
+        return self.scan
+
     def mount(self):
         return (0.0, 0.0, 0.0)
 
@@ -667,3 +670,38 @@ def test_a_look_that_fails_after_the_move_still_comes_back(capsys):
     assert len(r.slides) == 2 and not r.slides[1][2]
     assert math.hypot(r.x, r.y) < 1e-9 and r.turns == []
 
+
+
+def test_test_acc_s_count_of_its_move_gives_the_first_fix_another_start():
+    # MC200, 2026-10-15: test_acc turned it 45-60 deg; from home's spot every 30 deg the fix
+    # was weak or had a rival, and its odometry had restarted with the board. test_acc's own
+    # HOME line, even 20 deg off, starts the match where it settles alone.
+    world = np.vstack([_room(L_ROOM), wall(1.23, -0.3, 1.23, 0.3)])
+    r = _LookRobot(world)
+    a = argparse.Namespace(blind=["129:97"], scans=5, look_around=True, radius=0.30,
+                           holonomic=True, look_travel=0.8)
+    home, _, _, _ = clearance.first_look(a, r)
+    r.yaw, r.x, r.y = math.radians(58.2), 0.33, -0.157
+    S = r.points()
+    alone = scan_match.locate_candidates(S, home)
+    assert "ambiguous" in clearance.first_fix_fault(alone, len(home))
+    both = sorted(alone + scan_match.locate_candidates(S, home, guess=(math.radians(38.2), 0.33, -0.157)),
+                  key=lambda c: -c[0])
+    assert clearance.first_fix_fault(both, len(home)) == ""
+    th, x, y = both[0][1][:3]
+    assert abs(math.degrees(th) - 58.2) < 5 and math.hypot(x - 0.33, y + 0.157) < 0.05
+
+
+def test_home_guesses_read_test_acc_s_last_home_line(tmp_path):
+    import one_click_pipeline as ocp
+    f = tmp_path / "t.txt"
+    f.write_text("HOME ident x=0.079 y=-0.004 yaw_imu=16.5 yaw_wheels=0.9 net_m=0,0,0,0\n"
+                 "noise\nHOME runs x=0.198 y=-0.284 yaw_imu=45.5 yaw_wheels=23.3 net_m=0,0,0,0\n")
+    assert ocp.home_guesses(str(f)) == " --guess 45.5:0.198:-0.284 --guess 23.3:0.198:-0.284"
+    f.write_text("HOME runs x=0.1 y=0.2 yaw_imu=5.0 yaw_wheels=5.0 net_m=0,0,0,0\n")
+    assert ocp.home_guesses(str(f)) == " --guess 5.0:0.1:0.2"
+    f.write_text("MAX VEL 0.7\n")
+    assert ocp.home_guesses(str(f)) == "" and ocp.home_guesses(str(tmp_path / "none")) == ""
+    for src in ("one_click_pipeline.py", "robot_bringup.py"):
+        text = open(os.path.join(os.path.dirname(__file__), "..", "scripts", src)).read()
+        assert "home_guesses(transcript)" in text, src

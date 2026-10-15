@@ -67,6 +67,7 @@ HEADINGS_DEG = 15      # candidate step headings
 STOP_MARGIN_M = 0.08   # stop when a return is this close to the robot's circle ahead
 SPIN_MARGIN_M = 0.02   # a turn in place needs this beyond the circle
 HOME_MIN_PAIRS = 150    # pairs a first fix needs -- or HOME_MIN_FRAC of a smaller snapshot,
+SEED_MAX_M = 3.0        # home: an odometry seed farther than this is a restarted count, not a move
 HOME_MIN_FRAC = 0.40    # never under HOME_FLOOR_PAIRS: a LiDAR with a masked sector (a UNO Q
 HOME_FLOOR_PAIRS = 100  # robot's ~290 points) moved 0.5 m sees 46 % of its snapshot at best
 HOME_RIVAL_FRAC = 0.80  # another pose with this share of the best's inliers: ambiguous
@@ -846,17 +847,35 @@ def cmd_home(a, r: Robot) -> int:
         return 2
     laser = r.mount()
     home = snapshot_points(snap, laser)
-    S = scan_match.scan_points(r.scan, laser)
+    # Standing still: the median of a few scans, not the first one after the board came back
+    # (test_acc's reboot) -- a partial first revolution matches nothing.
+    S = r.points(3)
+    if S is None or not len(S):
+        print(f"HOME ABORT: no scan on {r.topic}")
+        return 2
     cands = scan_match.locate_candidates(S, home)
     # The odometry's account of the move seeds more starts: from home's spot alone, every 30
     # degrees, a robot 0.32 m off and turned 15 deg fell into a wrong fit (2026-10-15). Only
     # more candidates under the same gate: odometry that drifted (the EKF while test_acc ran)
     # fits worse and loses.
     now = r.wait_odom(2.0) if snap.get("odom") else None
+    seeds = []
     if now:
         seed = odom_since(snap["odom"], now)
         print("  odometry since the snapshot: x %+.3f y %+.3f yaw %+.1f deg"
               % (seed[1], seed[2], math.degrees(seed[0])))
+        # A board that rebooted (test_acc's app=base) restarts its odometry: the difference
+        # is then metres of nothing (x -7.9 y +9.0 on MC200), not a move.
+        if math.hypot(seed[1], seed[2]) <= SEED_MAX_M:
+            seeds.append(seed)
+        else:
+            print("  (not a move: the odometry restarted)")
+    # Something else's count of the move -- test_acc's dead reckoning, by its gyro and by its
+    # wheels: after a 45 deg turn none of the starts from home's spot found it (25 pairs).
+    for g in getattr(a, "guess", None) or []:
+        yaw, x, y = (float(v) for v in g.split(":"))
+        seeds.append((math.radians(yaw), x, y))
+    for seed in seeds:
         cands = sorted(cands + scan_match.locate_candidates(S, home, guess=seed), key=lambda c: -c[0])
     k_best, (th, x, y, rms, n) = cands[0]
     pose = (scan_match.wrap(th), x, y)
@@ -989,6 +1008,9 @@ def main(argv=None) -> int:
                            help="a mecanum base: slide home with the heading held, turn last")
             p.add_argument("--trace", action="store_true",
                            help="one line per scan: the match (pairs, rms), the pose and the command")
+            p.add_argument("--guess", action="append", default=[], metavar="YAW:X:Y",
+                           help="another first-fix start: the robot's pose in the snapshot's frame "
+                                "(deg, m, m) as something else counted it -- test_acc's HOME line")
     a = ap.parse_args(argv)
     r = Robot(stamped=a.stamped, scan_topic=a.scan_topic)
     try:

@@ -1525,6 +1525,22 @@ def holonomic_flag(params: dict) -> str:
     return " --holonomic" if base == "mecanum" else ""
 
 
+def home_guesses(transcript: str) -> str:
+    """clearance.py home's --guess for test_acc's own count of where it ended: the last HOME
+    line of its transcript, once with the gyro's yaw and once with the wheels' (they disagree
+    by 20-30 deg on a mecanum base, either way); '' without one. Only more first-fix starts:
+    the fix's gate still judges them against the snapshot."""
+    try:
+        text = open(transcript, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return ""
+    found = re.findall(r"HOME \w+ x=(-?[\d.]+) y=(-?[\d.]+) yaw_imu=(-?[\d.]+) yaw_wheels=(-?[\d.]+)", text)
+    if not found:
+        return ""
+    x, y, yi, yw = found[-1]
+    return "".join(f" --guess {yaw}:{x}:{y}" for yaw in dict.fromkeys((yi, yw)))
+
+
 def test_acc_phase(args, params: dict, controller_cfg: dict, params_path: str, pio_env: str,
                    serial_port: str, flash_baud: int, controller: str, robot_name: str,
                    sim: bool = False) -> tuple:
@@ -1616,7 +1632,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     stamped = " --stamped" if wants_stamped_cmd_vel(args.distro, controller_cfg, params) else ""
     print("  Back to where test_acc started, by the LiDAR...")
     home = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'clearance.py')} home --snap {snap} "
-                   f"--radius {radius:.2f}{stamped}{holonomic_flag(params)}", timeout=180, distro=args.distro)
+                   f"--radius {radius:.2f}{stamped}{holonomic_flag(params)}{home_guesses(transcript)}",
+                   timeout=180, distro=args.distro)
     for ln in (home.stdout or "").splitlines():
         print(ln if ln.startswith("  ") else "  " + ln)
     if home.returncode != 0:

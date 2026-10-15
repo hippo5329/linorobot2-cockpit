@@ -692,7 +692,8 @@ def cmd_acc(robot: Robot, a) -> int:
     ocp.wait_for_topic("/scan", timeout_sec=90, distro=distro, require_message="header.frame_id")
     say("back to where test_acc started, by the LiDAR...")
     home = ocp.run_ros(f"python3 {os.path.join(HERE, 'clearance.py')} home --snap {snap} "
-                       f"--radius {radius:.2f}{stamped}{ocp.holonomic_flag(robot.params)}",
+                       f"--radius {radius:.2f}{stamped}{ocp.holonomic_flag(robot.params)}"
+                       f"{ocp.home_guesses(transcript)}",
                        timeout=180, distro=distro)
     for ln in (home.stdout or "").splitlines():
         say("  " + ln)
