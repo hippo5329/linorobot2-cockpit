@@ -946,12 +946,27 @@ def run_streamed(full_cmd: list, timeout: int, log_tag: str = None,
 def run_ros(cmd_str: str, timeout: int = 60, distro: str = "lyrical") -> subprocess.CompletedProcess:
     """A short ROS 2 command, under the run's environment, output captured."""
     full_cmd = ["bash", "-c", f"{get_ros_env(distro)} && {cmd_str}"]
+    # Its own process group, and the whole group goes on a timeout: subprocess.run's timeout
+    # kills only bash, and the ros2 under it lived on (MC200 2026-10-16: a `topic echo --once`
+    # of /map, 200 MB, still running ten minutes later while Nav2 failed to start in what
+    # memory was left).
+    proc = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
     try:
-        return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout.decode() if isinstance(e.stdout, bytes) else e.stdout) or ""
-        err = (e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr) or ""
-        return subprocess.CompletedProcess(full_cmd, 124, out, err or f"Command timed out after {timeout}s")
+        out, err = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(full_cmd, proc.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        for sig, wait in ((signal.SIGINT, 3), (signal.SIGKILL, 3)):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                break
+            try:
+                out, err = proc.communicate(timeout=wait)
+                break
+            except subprocess.TimeoutExpired:
+                out, err = "", ""
+        return subprocess.CompletedProcess(full_cmd, 124, out or "", err or f"Command timed out after {timeout}s")
 
 
 open_log_files = []
