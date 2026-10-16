@@ -654,6 +654,12 @@ def sensor_topics(controller_cfg: dict) -> list:
             continue
         if isinstance(chip, str) and chip.strip().lower() in NOT_FITTED:
             continue
+        # AUTO names no chip: the board probes its bus at boot and advertises only what
+        # answered, so nothing found is a robot without one, never a dead sensor. Its topic
+        # is still sampled when advertised. The IMU's AUTO has its own path (--imu-auto).
+        # Required, it failed a real XRP (LSM6DSOX only) on the template's mag/current/env AUTO.
+        if key != "imu" and isinstance(chip, str) and chip.strip().lower() == "auto":
+            continue
         if sensors.get(f"use_sim_{key}"):
             continue
         topics.extend(tops)

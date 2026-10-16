@@ -342,6 +342,23 @@ def test_none_is_not_a_chip_name():
     assert m.sensor_topics({"sensors": {"current": "INA219", "use_sim_current": True}}) == []
 
 
+def test_auto_is_not_a_fitted_chip():
+    """AUTO: the board advertises what its probe found, so a real robot with nothing on the
+    bus has no /imu/mag, /battery or /pressure to demand. Required, a real XRP (an LSM6DSOX
+    and nothing else) failed its topic gate on the template's mag/current/env AUTO."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ocp_sensor_topics_auto", os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.sensor_topics({"sensors": {"imu": "LSM6DSOX", "mag": "AUTO", "current": "AUTO",
+                                        "env": "auto"}}) == ["/imu/data"]
+    # a named chip stays required
+    assert "/imu/mag" in m.sensor_topics({"sensors": {"mag": "QMC5883L"}})
+    # the IMU's AUTO keeps its own path (--imu-auto asks the graph)
+    assert m.sensor_topics({"sensors": {"imu": "AUTO"}}) == ["/imu/data"]
+
+
 def test_the_gate_never_asks_for_tighter_than_nav2_promises():
     """Nav2 stops when ITS goal checker is satisfied. A leg ended 0.340 m from
     home inside a 0.35 m checker, was failed by a 0.30 m gate, and the next leg
