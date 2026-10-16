@@ -55,8 +55,12 @@ async def api_exec(request: Request):
             daemon=True,
         )
         th.start()
+        # Until the streaming thread ends, not while the process runs: the process
+        # exits before the thread queues `done`, and a check in between closed the
+        # stream without it -- the page then waited for ever (2026-10-16, the LiDAR
+        # bring-up step on a UNO Q robot hung after AGENT_FOUND).
         try:
-            while runner.is_busy() or not q.empty():
+            while th.is_alive() or not q.empty():
                 try:
                     ev_type, payload = q.get(timeout=1.0)
                     yield f"event: {ev_type}\ndata: {json.dumps(payload)}\n\n"
@@ -103,7 +107,7 @@ async def api_agent_exec(request: Request):
         )
         th.start()
         try:
-            while agent_runner.is_busy() or not q.empty():
+            while th.is_alive() or not q.empty():
                 try:
                     ev_type, payload = q.get(timeout=1.0)
                     yield f"event: {ev_type}\ndata: {json.dumps(payload)}\n\n"
@@ -168,7 +172,7 @@ async def api_bringup_exec(request: Request):
         )
         th.start()
         try:
-            while bringup_runner.is_busy() or not q.empty():
+            while th.is_alive() or not q.empty():
                 try:
                     ev_type, payload = q.get(timeout=1.0)
                     yield f"event: {ev_type}\ndata: {json.dumps(payload)}\n\n"
