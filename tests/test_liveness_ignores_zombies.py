@@ -53,9 +53,9 @@ def test_the_probe_keeps_a_live_process_and_drops_a_zombie(tmp_path):
 def test_both_probes_use_the_filter():
     src = open(os.path.join(ROOT, "web", "backend", "core.py")).read()
     a = src.index("def _refresh_liveness")
-    body = src[a:src.index("agent = bringup = False", a)]
+    body = src[a:src.index("agent = bringup = slam = nav2 = False", a)]
     assert "pgrep" not in body.split("probe = (", 1)[1]
-    assert body.count("{live} | grep -E") == 2
+    assert body.count("{live} | grep -E") == 4
 
 
 def test_compose_runs_an_init():

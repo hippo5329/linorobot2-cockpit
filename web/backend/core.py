@@ -977,7 +977,15 @@ def get_serial_ports_dict(params: Optional[Dict[str, Any]] = None) -> Dict[str, 
 # and reused in between -- the probe shells out and must not run per request.
 _LIVENESS_TTL_SEC = 6.0
 _liveness_lock = threading.Lock()
-_liveness_cache: Dict[str, Any] = {"ts": 0.0, "agent": False, "bringup": False, "where": "host", "detail": ""}
+_liveness_cache: Dict[str, Any] = {"ts": 0.0, "agent": False, "bringup": False,
+                                   "slam": False, "nav2": False, "where": "host", "detail": ""}
+
+
+def invalidate_liveness() -> None:
+    """Forget the cached probe, so the next status after a Stop is measured, not remembered."""
+    with _liveness_lock:
+        if not _liveness_cache.get("refreshing"):
+            _liveness_cache["ts"] = 0.0
 
 
 def get_exec_shell_cmd(cmd_str: str) -> List[str]:
@@ -1031,10 +1039,16 @@ def _refresh_liveness() -> Dict[str, Any]:
         "  | grep -Ei 'micro[-_]ros[-_]agent' 2>/dev/null; "
         "echo '---BRINGUP---'; "
         f"{live} | grep -E '[b]ringup\\.launch\\.py|[e]kf_node|[r]obot_state_publisher' 2>/dev/null; "
+        # SLAM and Nav2 for the SLAM & Nav page: a stack the 1-Click pipeline left
+        # up is not this backend's child, so the page's own runner cannot see it.
+        "echo '---SLAM---'; "
+        f"{live} | grep -E '[s]lam\\.launch\\.py|[s]lam_toolbox_node' 2>/dev/null; "
+        "echo '---NAV2---'; "
+        f"{live} | grep -E '[n]av2\\.launch\\.py|[n]av2_container|[b]t_navigator' 2>/dev/null; "
         "true"
     )
 
-    agent = bringup = False
+    agent = bringup = slam = nav2 = False
     detail = ""
     where = "host"
     try:
@@ -1046,8 +1060,8 @@ def _refresh_liveness() -> Dict[str, Any]:
             if line == "---AGENT---":
                 section = "agent"
                 continue
-            if line == "---BRINGUP---":
-                section = "bringup"
+            if line in ("---BRINGUP---", "---SLAM---", "---NAV2---"):
+                section = line.strip("-").lower()
                 continue
             if not line:
                 continue
@@ -1057,13 +1071,17 @@ def _refresh_liveness() -> Dict[str, Any]:
                     detail = line[:120]
             elif section == "bringup":
                 bringup = True
+            elif section == "slam":
+                slam = True
+            elif section == "nav2":
+                nav2 = True
     except Exception as e:
         detail = f"probe failed: {e}"
 
     with _liveness_lock:
         _liveness_cache.update({
             "ts": time.time(), "agent": agent, "bringup": bringup,
-            "where": where, "detail": detail, "refreshing": False,
+            "slam": slam, "nav2": nav2, "where": where, "detail": detail, "refreshing": False,
         })
         return dict(_liveness_cache)
 
@@ -1542,6 +1560,7 @@ __all__ = [
     "pin_catalog",
     "pio_present",
     "probe_stack_liveness",
+    "invalidate_liveness",
     "regenerate_firmware_headers",
     "regenerate_robot_description",
     "release_agent_port",

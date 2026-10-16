@@ -46,6 +46,7 @@ from core import (
     nav2_stack_status,
     one_click_pipeline,
     probe_stack_liveness,
+    robot_stack,
     sensor_registry,
     suggest_mcu,
     syslog_manager,
@@ -188,6 +189,13 @@ def get_status(controller: Optional[str] = None):
         os.path.abspath(os.path.join(REPO_ROOT, "..", ".."))
 
     liveness = probe_stack_liveness()
+    # What a 1-Click run left running (scripts/robot_stack.py): the SLAM & Nav
+    # page shows it and its Stop buttons reach it. Without this the page said
+    # "Start SLAM" with Stop greyed out over a SLAM the pipeline had left up.
+    try:
+        stack = [{"tag": e.get("tag"), "started": e.get("started")} for e in robot_stack.load()]
+    except Exception:
+        stack = []
     agent_external = liveness["agent"]
     bringup_external = liveness["bringup"]
 
@@ -265,6 +273,7 @@ def get_status(controller: Optional[str] = None):
         "agent_alive_external": agent_external,
         "bringup_alive_external": bringup_external,
         "liveness": liveness,
+        "stack": stack,
         "repo_root": REPO_ROOT,
         "web_dir": os.path.join(REPO_ROOT, "web"),
         "build_version": git.get("build_version", ""),

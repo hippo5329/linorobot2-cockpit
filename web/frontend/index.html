@@ -2073,6 +2073,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <h2>SLAM</h2>
       <button id="btn-slam-start" class="btn btn-primary">Start SLAM</button>
       <button id="btn-slam-stop" class="btn btn-danger" disabled>Stop</button>
+      <span id="slam-stack-state" class="badge-pill badge-idle stack-state" title="SLAM as it is on the robot, including one a 1-Click run left running">Not running</span>
       <div class="row u-mt-12">
         <input type="text" id="map-save-name" placeholder="map name">
         <button id="btn-map-save" class="btn">Save map</button>
@@ -2094,6 +2095,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div class="row u-mt-10">
         <button id="btn-nav-start" class="btn btn-primary">Start Navigation</button>
         <button id="btn-nav-stop" class="btn btn-danger" disabled>Stop Navigation</button>
+        <span id="nav-stack-state" class="badge-pill badge-idle stack-state" title="Nav2 as it is on the robot, including one a 1-Click run left running">Not running</span>
       </div>
     </div>
     <div class="card" id="card-ai-tuning">

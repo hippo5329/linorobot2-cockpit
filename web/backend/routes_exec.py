@@ -22,6 +22,7 @@ from core import (
     check_bringup_health,
     gamepad_runner,
     get_controller,
+    invalidate_liveness,
     json_body,
     load_params,
     main_runner,
@@ -193,6 +194,7 @@ def api_bringup_kill():
         stopped = robot_stack.stop()
     except Exception as exc:
         print(f"[api_bringup_kill] robot_stack notice: {exc}")
+    invalidate_liveness()
     return {"status": "ok", "killed": killed, "stack_stopped": stopped}
 
 
@@ -218,6 +220,7 @@ async def api_stack_stop(request: Request):
         stopped = robot_stack.stop(tag)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    invalidate_liveness()
     return {"status": "ok", "stopped": stopped}
 
 

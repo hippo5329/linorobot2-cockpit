@@ -529,9 +529,52 @@ function killSlot(slot) {
 }
 
 // pairs up a Start/Stop button with a command builder for long-running actions
-function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgent, needsBringup, stackTag }) {
+// What a page should say about one part of the robot's stack (bringup, slam,
+// nav2), from /api/status: `stack` is what a 1-Click run left running
+// (scripts/robot_stack.py), `liveness[tag]` whether its processes are up at all.
+// The pipeline's stack is not this backend's child, so before this the SLAM &
+// Nav page offered "Start SLAM" with Stop greyed out over a SLAM that was running.
+function stackPartState(tag, s) {
+  const rec = ((s && s.stack) || []).find((e) => e && e.tag === tag);
+  const live = Boolean(s && s.liveness && s.liveness[tag]);
+  if (rec) {
+    const since = rec.started ? ` since ${new Date(rec.started * 1000).toLocaleTimeString()}` : "";
+    return { running: true, stoppable: true, level: "ok",
+             text: `Running — left up by a 1-Click run${since}` };
+  }
+  if (live && s.main_busy) {
+    return { running: true, stoppable: true, level: "ok", text: "Running (started from this cockpit)" };
+  }
+  if (live) {
+    return { running: true, stoppable: false, level: "warn",
+             text: "Running, but not started by the cockpit — stop it where it was started" };
+  }
+  return { running: false, stoppable: false, level: "idle", text: "Not running" };
+}
+
+// Start/Stop pairs whose buttons follow the real stack, synced on every status poll.
+const stackWirings = [];
+
+function syncStackButtons(s) {
+  for (const w of stackWirings) {
+    const st = stackPartState(w.stackTag, s);
+    if (w.stateEl) {
+      w.stateEl.textContent = st.text;
+      w.stateEl.className = `badge-pill badge-${st.level} stack-state`;
+    }
+    // A start in flight owns its buttons until it ends: the probe can lag the launch.
+    if (w.ownRun) continue;
+    w.startBtn.disabled = st.running;
+    w.stopBtn.disabled = !st.stoppable;
+  }
+}
+
+function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgent, needsBringup, stackTag, stateEl }) {
+  const wiring = { startBtn, stopBtn, stackTag, stateEl, ownRun: false };
+  if (stackTag && stateEl) stackWirings.push(wiring);
   startBtn.addEventListener("click", async () => {
     startBtn.disabled = true;
+    wiring.ownRun = true;
     try {
       if (needsBringup) {
         await ensureBringupRunning(title);
@@ -544,6 +587,7 @@ function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgen
         slot,
         title,
         onDone: () => {
+          wiring.ownRun = false;
           startBtn.disabled = false;
           stopBtn.disabled = true;
         },
@@ -551,6 +595,7 @@ function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgen
     } catch (err) {
       console.error(`Failed to start ${title}:`, err);
       logLine(`[console] ✖ Failed to start ${title}: ${err.message || err}`);
+      wiring.ownRun = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
     }
@@ -570,6 +615,8 @@ function wireStartStop({ startBtn, stopBtn, slot, title, buildCommand, needsAgen
       } catch (err) {
         console.warn(`stack stop (${stackTag}):`, err);
       }
+      // Show what is running now, not what was running when the poll last ran.
+      if (typeof refreshStatus === "function") refreshStatus();
     }
   });
 }
@@ -667,6 +714,7 @@ async function refreshStatus() {
       }
     }
     applyLaserConfigToPanel();
+    syncStackButtons(s);
     state.mainBusy = s.main_busy;
     state.agentBusy = s.agent_busy_console;
 
