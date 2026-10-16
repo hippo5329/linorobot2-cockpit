@@ -612,9 +612,20 @@ def load_params(path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def save_params(data: Dict[str, Any], path: Optional[str] = None):
+    """Write the robot config, keeping its comments (yaml_keep): a plain dump threw away
+    the user's reasons in it on every save -- the distro switch, the LiDAR page. Only
+    when the change cannot be written in place is the whole file dumped again."""
+    import yaml_keep  # scripts/, on sys.path above
     target_path = path or get_active_params_path()
+    text = None
+    if os.path.isfile(target_path):
+        with open(target_path, "r") as f:
+            text = yaml_keep.edit_in_place(f.read(), data)
     with open(target_path, "w") as f:
-        yaml.dump(data, f, sort_keys=False)
+        if text is not None:
+            f.write(text)
+        else:
+            yaml.dump(data, f, sort_keys=False)
 
 
 def update_robot_name_and_controller(name: str, controller: Optional[str] = None, path: Optional[str] = None):
