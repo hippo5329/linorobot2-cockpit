@@ -580,6 +580,7 @@ async function fetchDrivetrainHUD() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) return;          // a refusal (401: no token yet) is not a model; keep the last numbers
     data = await res.json();
   } catch (err) {
     return;                       // offline or backend restarting; keep the last numbers
