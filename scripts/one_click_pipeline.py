@@ -3178,6 +3178,10 @@ def main():
                                     f"--goal-x 0.0 --goal-y 0.0 --timeout {args.goal_timeout} "
                                     f"--cmd-vel-type {'twist_stamped' if stamped_cmd else 'twist'} "
                                     f"--round-trips 0 --require-goal --goal-tolerance {args.goal_tolerance}"
+                                    # Home is the goal wherever exploration stopped, and a room
+                                    # explored round its start ends near it (MC200 2026-10-16:
+                                    # 0.39 m away, refused as "vacuous"): arriving is what counts.
+                                    " --min-start-gap 0"
                                     + (" --no-wall" if is_real else ""))
                         home_res = run_ros(home_cmd, timeout=args.goal_timeout + 30, distro=args.distro)
                         print(home_res.stdout)

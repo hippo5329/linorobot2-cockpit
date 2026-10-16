@@ -244,6 +244,8 @@ def test_a_fenced_exploration_ends_and_drives_home():
     home = PIPELINE.split("if ex_res.returncode == 4:")[1].split("tripped = motion_guard_tripped")[0]
     assert "--goal-x 0.0 --goal-y 0.0" in home and "--require-goal" in home
     assert "returned_to_origin" in home
+    # a room explored round its start can end near home: that is not a vacuous goal (MC200 run 4)
+    assert "--min-start-gap 0" in home
 
 
 def test_fence_refusals_reads_the_guards_file(tmp_path):
