@@ -53,6 +53,14 @@ services:
     init: true
     network_mode: host
     ipc: host
+    # A sane open-file limit. Some Docker installs hand containers 1073741816 (Debian 13 on the
+    # UNO Q), and LTTng-UST -- which every ROS 2 jazzy process loads through tracetools -- sizes
+    # its fd tracker by it: 128 MB in each process, ~2.3 GB of the UNO Q's 3.6 GB for the stack,
+    # and Nav2 then failed to start (MC200, 2026-10-16; lttng bug 1438). At 65536 it is 1 MB.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 524288
     volumes:
       - ${COCKPIT_CONFIG_DIR:-~/linorobot2-config}:/config
       # Compiled and fetched firmware images survive a container restart.
@@ -175,6 +183,10 @@ services:
     profiles: ["rviz"]
     network_mode: host
     ipc: host
+    ulimits:             # as the cockpit's: LTTng-UST's fd tracker is sized by this limit
+      nofile:
+        soft: 65536
+        hard: 524288
     entrypoint: ["/ws/docker/rviz-entrypoint.sh"]
     environment:
       - DISPLAY=${DISPLAY:-:0}
