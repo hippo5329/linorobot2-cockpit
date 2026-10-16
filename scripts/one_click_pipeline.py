@@ -183,6 +183,18 @@ def battery_start(distro: str, ns: str, bg_processes: list) -> None:
                                 log_tag="battery_sag", distro=distro)
     bg_processes.append(BATTERY["proc"])
     battery_phase("bringup (at rest)")
+    # The rest voltage is read before the first motion, and the next step can be one (the
+    # clearance inch): wait for the logger's first readings, 15 s at most (a board with no
+    # /battery never sends one, and the run goes on without).
+    t_end = time.time() + 15.0
+    while time.time() < t_end and BATTERY["proc"].poll() is None:
+        try:
+            with open(BATTERY["file"], encoding="utf-8") as fh:
+                if sum(1 for _ in fh) >= 3:
+                    break
+        except OSError:
+            break
+        time.sleep(0.5)
 
 
 def battery_report() -> None:

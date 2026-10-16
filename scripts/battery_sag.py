@@ -14,8 +14,8 @@ the board measures that itself and prints
 
 which test_acc_figures() reads out of the transcript.
 
-The rest voltage is the median of the at-rest samples before the first load; the worst is
-the lowest single sample under load. /battery comes at about 1 Hz from most boards, so a
+The rest voltage is the median of the at-rest samples before the first load (failing that,
+of the run's later at-rest stretches); the worst is the lowest single sample under load. /battery comes at about 1 Hz from most boards, so a
 shorter dip than that can be missed: the line says how many samples it is based on.
 """
 import argparse
@@ -83,6 +83,12 @@ def summarize(samples: list, phases: list, test_acc=None):
 
     first_load = next((t0 for t0, lab in phases if not at_rest(lab)), None)
     rest_vals = [v for t, v in samples if at_rest(phase_at(t)) and (first_load is None or t < first_load)]
+    if not rest_vals:
+        # No reading before the first load (the logger's first sample came after it began:
+        # MC200, 2026-10-16, the clearance step 8 s ahead of it): the run's later at-rest
+        # stretches instead. A pack recovering after a load reads a little low, so the sag
+        # this gives is the smaller one -- an under-statement, never an alarm.
+        rest_vals = [v for t, v in samples if at_rest(phase_at(t))]
     rest = _median(rest_vals) if rest_vals else None
     per, worst, where = {}, None, ""
     for t, v in samples:
