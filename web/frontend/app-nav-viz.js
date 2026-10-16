@@ -441,12 +441,20 @@ document.getElementById("btn-lidar-start").addEventListener("click", async () =>
   lidarSource = new EventSource(`/api/lidar_stream?${qs}&ticket=${encodeURIComponent(ticket)}`);
   setLidarViewerStatus(`Connecting to ${topic}...`, "info");
 
+  // Frames drawn per second over the last ~2 s, so a viewer slower than the
+  // LiDAR says so instead of looking merely choppy.
+  const frameTimes = [];
   lidarSource.addEventListener("scan", (ev) => {
     try {
       const scan = JSON.parse(ev.data);
       drawScan(scan);
+      const now = performance.now();
+      frameTimes.push(now);
+      while (frameTimes.length && now - frameTimes[0] > 2000) frameTimes.shift();
+      const fps = frameTimes.length > 1
+        ? ((frameTimes.length - 1) * 1000 / (now - frameTimes[0])).toFixed(1) : "—";
       setLidarViewerStatus(
-        `${scan.frame_id || "laser"} — ${scan.count} points, frame ${scan.seq}`,
+        `${scan.frame_id || "laser"} — ${scan.count} points, frame ${scan.seq}, ${fps} fps`,
         "ok"
       );
     } catch (e) {

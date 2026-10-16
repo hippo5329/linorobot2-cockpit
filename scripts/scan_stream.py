@@ -20,6 +20,34 @@ import json
 import sys
 import time
 
+
+class RateGate:
+    """Pass at most `max_hz` frames a second on average, without dropping a frame
+    that is merely early.
+
+    The viewer ran at ~6.7 fps from a 10 Hz /scan (web UI walkthrough,
+    2026-10-16). The cap was 10 Hz and the gate was `now - last_emit < 1/max_hz`:
+    a LiDAR's revolutions do not arrive exactly 100 ms apart, so every scan that
+    came a few ms early was thrown away, and a third of a 10 Hz stream went with
+    them. Slots are now scheduled from when the last one was DUE, and a frame up
+    to half a period early takes its slot; the average still never exceeds the cap.
+    """
+
+    def __init__(self, max_hz: float):
+        self.period = (1.0 / max_hz) if max_hz and max_hz > 0 else 0.0
+        self.next_due = None
+
+    def admit(self, now: float) -> bool:
+        if not self.period:
+            return True
+        if self.next_due is not None and now < self.next_due - 0.5 * self.period:
+            return False
+        # After a stall, start again from now rather than bursting to catch up.
+        late = self.next_due is None or now - self.next_due >= self.period
+        self.next_due = (now if late else self.next_due) + self.period
+        return True
+
+
 try:
     import rclpy
     from rclpy.node import Node
@@ -45,8 +73,7 @@ class ScanStreamer(Node):
         super().__init__("linorobot2_scan_streamer")
         self.topic = topic
         self.max_points = max_points
-        self.min_period = (1.0 / max_hz) if max_hz > 0 else 0.0
-        self.last_emit = 0.0
+        self.gate = RateGate(max_hz)
         self.count = 0
 
         # SensorDataQoS: /scan is best-effort volatile (AGENTS.md section 7).
@@ -59,10 +86,8 @@ class ScanStreamer(Node):
         self.create_subscription(LaserScan, topic, self.on_scan, sensor_qos)
 
     def on_scan(self, msg: LaserScan):
-        now = time.time()
-        if self.min_period and (now - self.last_emit) < self.min_period:
+        if not self.gate.admit(time.monotonic()):
             return
-        self.last_emit = now
 
         ranges = list(msg.ranges)
         step = max(1, len(ranges) // self.max_points) if self.max_points > 0 else 1
@@ -94,7 +119,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Stream /scan as JSON lines for the Cockpit viewer.")
     ap.add_argument("--topic", default="/scan")
     ap.add_argument("--max-points", type=int, default=360, help="decimate each scan to at most N points")
-    ap.add_argument("--max-hz", type=float, default=10.0, help="cap emitted frames per second (0 = uncapped)")
+    # 20, not 10: a cap AT the LiDAR's own rate is where jitter costs frames. Every
+    # common LiDAR turns 5-15 Hz, so this passes all of them and still bounds a fast one.
+    ap.add_argument("--max-hz", type=float, default=20.0, help="cap emitted frames per second (0 = uncapped)")
     ap.add_argument("--wait-sec", type=float, default=8.0, help="seconds to wait for a publisher before warning")
     args = ap.parse_args()
 
