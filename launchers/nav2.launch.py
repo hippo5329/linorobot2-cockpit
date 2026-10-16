@@ -452,8 +452,13 @@ def launch_setup(context, *args, **kwargs):
                 "use_cost_regulated_linear_velocity_scaling": True,
                 "regulated_linear_scaling_min_radius": 0.9,
                 "regulated_linear_scaling_min_speed": 0.25,
-                "use_fixed_curvature_lookahead": False,
-                "curvature_lookahead_dist": 0.6,
+                # The end-of-path projection (config comment at FollowPath): carried,
+                # never hardcoded, or Lyrical's RPP would chase the goal itself again.
+                "use_fixed_curvature_lookahead": follow_path.pop(
+                    "use_fixed_curvature_lookahead", False),
+                "curvature_lookahead_dist": follow_path.pop("curvature_lookahead_dist", 0.6),
+                "interpolate_curvature_after_goal": follow_path.pop(
+                    "interpolate_curvature_after_goal", False),
                 "use_rotate_to_heading": True,
                 "allow_reversing": False,
                 "rotate_to_heading_min_angle": 0.785,
@@ -472,6 +477,15 @@ def launch_setup(context, *args, **kwargs):
             # 2wd Sim MCU: one leg home in four stalled 20-25 s; with this, none did
             # (0 progress failures, every leg home 33-34 s, as Jazzy).
             follow_path["rotate_to_goal_heading"] = True
+            # Jazzy's RPP rejects a one-pose plan by itself whenever
+            # interpolate_curvature_after_goal is on (its reject_unit_path follows that
+            # flag). Lyrical moved the check to the controller server's path handler,
+            # default off, and nav2_util::getLookAheadPoint then projects past the goal
+            # from the pose BEFORE the only one. Reject it there instead: the BT replans.
+            if follow_path["primary_controller"].get("interpolate_curvature_after_goal"):
+                ph = ctrl_params.setdefault("PathHandler", {})
+                ph.setdefault("plugin", "nav2_controller::FeasiblePathHandler")
+                ph.setdefault("reject_unit_path", True)
         # 3. bt_navigator has to discover the action servers it calls, and on a
         #    loaded box it loses that race at the 1 s default: it gave up on
         #    compute_path_to_pose while planner_server was alive and logging

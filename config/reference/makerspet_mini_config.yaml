@@ -323,7 +323,8 @@ nav2:
       progress_checker:
         # PoseProgressChecker: turning in place is progress too. Simple counted only
         # distance, so a slow tracked turn at the start of every goal aborted 10 s in
-        # with 'Failed to make progress' (TS100 2026-10-16).
+        # with 'Failed to make progress' (a tracked robot, 2026-10-16). It cannot end
+        # an endless turn near the goal; interpolate_curvature_after_goal below does.
         plugin: nav2_controller::PoseProgressChecker
         required_movement_radius: 0.5
         movement_time_allowance: 10.0
@@ -350,6 +351,19 @@ nav2:
         lookahead_dist: 0.6
         min_lookahead_dist: 0.3
         max_lookahead_dist: 0.9
+        # The end of the path. Once the goal is nearer than lookahead_dist, RPP's
+        # carrot IS the goal: 0.18 m off at 45 deg (rotate_to_heading_min_angle) that
+        # asks for a 0.13 m-radius arc at the approach crawl, which a tracked base
+        # turns in place instead; its pivot drift kept the goal outside xy tolerance
+        # and every turn counted as progress, so it spun for minutes (2026-10-16).
+        # These aim the turn and the curvature at a point projected past the goal
+        # along the path's last segment, curvature_lookahead_dist away: the arc never
+        # tightens below half that and the robot drives through the goal. Nav2's own
+        # remedy for end-of-path oscillation. Keep it equal to lookahead_dist, so
+        # mid-path the curvature point is the carrot, as before.
+        use_fixed_curvature_lookahead: true
+        curvature_lookahead_dist: 0.6
+        interpolate_curvature_after_goal: true
   planner_server:
     ros__parameters:
       expected_planner_frequency: 20.0
