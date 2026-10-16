@@ -1279,6 +1279,16 @@ function initCockpitDashboard() {
     setBadge("pill-off", "Not started");
   }
 
+  // A start refused by the page itself (a field out of range, options to review), said where
+  // the user IS: the header's Start works from every tab, and a reason written only beside the
+  // Operations button left a click on it doing nothing visible (walkthrough, 2026-10-16).
+  function refuseStart(why) {
+    notStarted(why);
+    if (typeof showActionBanner === "function") {
+      showActionBanner("1-Click not started", `${why} (11. Operations)`);
+    }
+  }
+
   async function runOneClick() {
     if (!btnOneClick && !btnHdrDeploy) return;
     // Refused without touching the buttons or the badge: they belong to the run going on.
@@ -1313,7 +1323,7 @@ function initCockpitDashboard() {
     if (noNav2 && exploreSec) {
       sec = Number(exploreSec.value);
       if (!Number.isInteger(sec) || sec < 5 || sec > 120) {
-        if (pipelineMsg) pipelineMsg.textContent = "Mapping spin: a whole number of seconds from 5 to 120.";
+        refuseStart("Mapping spin: a whole number of seconds from 5 to 120.");
         return;
       }
     }
@@ -1342,7 +1352,7 @@ function initCockpitDashboard() {
       // The gate's refresh just showed the real-robot options (the robot changed, or the page
       // had not asked yet): they were never seen, so nothing starts on their defaults.
       if (wasHidden && grpReal && !grpReal.hidden) {
-        if (pipelineMsg) pipelineMsg.textContent = "This is a real robot: review its options below (test_acc, Run options), then press Start again.";
+        refuseStart("This is a real robot: review its options on Operations (test_acc, Run options), then press Start again.");
         grpReal.scrollIntoView({ behavior: "smooth", block: "center" });
         return;
       }
@@ -1374,7 +1384,7 @@ function initCockpitDashboard() {
     if (opts.errors.length) {
       const why = opts.errors.join("; ");
       if (optsMsg) optsMsg.textContent = why;
-      if (pipelineMsg) pipelineMsg.textContent = `Run options: ${why}`;
+      refuseStart(`Run options: ${why}`);
       const adv = $w("cockpit-advanced");
       if (adv) adv.open = true;
       return;

@@ -56,7 +56,8 @@ const configReadyOrWarn = async () => true;
 const boardMatchesOrWarn = async () => true;
 const logLine = (x) => logs.push(x);
 const openTerminal = () => {};
-const showActionBanner = () => {};
+const banners = [];
+const showActionBanner = (t, d) => banners.push([t, d]);
 const hideActionBanner = () => {};
 const refreshStatus = () => {};
 // app-bringup.js's gate: its refresh can show the real-robot group for the first time.
@@ -92,7 +93,7 @@ const click = (id) => Promise.all((el(id).listeners.click || []).map((f) => f())
   if (scenario.stream !== "pending") await Promise.all(runs);
   await new Promise((r) => setTimeout(r, 20));
   console.log(JSON.stringify({
-    fetched: fetched.filter((u) => u.startsWith("/api/workflow/one-click/stream")), during, toasts, confirms,
+    fetched: fetched.filter((u) => u.startsWith("/api/workflow/one-click/stream")), during, toasts, confirms, banners,
     badge: el("cockpit-pipeline-badge").textContent, msg: el("cockpit-pipeline-msg").textContent,
     optsMsg: el("cockpit-opts-msg").textContent,
     battery: el("cockpit-battery-sag").textContent, batteryHidden: el("cockpit-battery-sag").hidden,
@@ -257,6 +258,23 @@ def test_options_the_gate_just_revealed_are_reviewed_before_a_start(tmp_path):
              checked={"cockpit-test-acc": True})
     assert r["fetched"] == [] and r["confirms"] == []
     assert "review its options" in r["msg"] and r["badge"] != "Running..."
+
+
+# The header's Start works from every tab. A field out of range stopped it with the reason
+# written only beside the Operations button, so from any other tab the click did nothing
+# visible (walkthrough, 2026-10-16): the reason is a toast and a banner too.
+@needs_node
+@pytest.mark.parametrize("scenario, word", [
+    ({"values": {"cockpit-explore-timeout": "59"}, "checked": {"cockpit-explore": True}}, "Exploration time limit"),
+    ({"values": {"cockpit-explore-sec": "3"}, "checked": {"cockpit-no-nav2": True}}, "Mapping spin"),
+    ({"mode": "real", "reveal": True, "hidden": {"grp-cockpit-real": True}}, "review its options"),
+])
+def test_the_header_start_says_why_it_did_not_start(tmp_path, scenario, word):
+    r = page(tmp_path, button="btn-header-start-pipeline", **scenario)
+    assert r["fetched"] == [], r
+    assert any(word in t for t in r["toasts"]), r["toasts"]
+    assert any(word in (d or "") for _, d in r["banners"]), r["banners"]
+    assert word in r["msg"] and r["badge"] != "Running..."
 
 
 CTRL = r"""
