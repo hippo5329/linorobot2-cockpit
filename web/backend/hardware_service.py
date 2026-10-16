@@ -5,7 +5,8 @@
 # Runs on the robot computer, which owns the serial bus. Detection
 # (`esptool chip_id` / `picotool info`) and flashing (`esptool write_flash` /
 # `picotool load -f`) are native; the binary comes from a local `pio run` or
-# from a prebuilt release image in firmware/prebuilt/<profile>/.
+# from a prebuilt release image in firmware/prebuilt/<profile>/ for the stack's
+# ROS 2 distro. The Arduino UNO Q (STM32U585, SWD) goes through scripts/flash_mcu.py.
 #
 # Browsers never flash. WebSerial in the frontend is reserved for a raw serial
 # debug monitor only.
@@ -75,7 +76,10 @@ ESP_BOOTLOADER_OFFSETS = {
 
 
 def family_for_env(env: str) -> str:
-    """'esp' or 'rp' for a PlatformIO environment name."""
+    """'esp', 'rp' or 'unoq' for a PlatformIO environment name."""
+    # The UNO Q's STM32U585: a Zephyr image written over SWD by scripts/flash_mcu.py.
+    if mcu_identity.env_family(env) == "unoq":
+        return "unoq"
     if RP_ENV_RE.search(env or ""):
         return "rp"
     if ESP_ENV_RE.search(env or ""):
@@ -574,39 +578,107 @@ def esp32_flash_plan(build_dir: str, chip: str = "esp32") -> List[Tuple[str, str
     return plan
 
 
-def prebuilt_dir_for_env(env: str) -> Optional[str]:
-    """firmware/prebuilt/<profile> whose manifest names this PlatformIO env."""
+# A release profile is `<board>-<distro>` (build_prebuilt.py, package_unoq.py). Anything
+# longer -- unoq-jazzy-bno, pico2-jazzy-diag, a `.rel` copy -- is a variant someone built
+# for a purpose of their own, and is never the image a plain Flash picks.
+PREBUILT_DISTROS = ("jazzy", "lyrical")
+_PLAIN_PROFILE_RE = re.compile(r"^[a-z0-9]+-(%s)$" % "|".join(PREBUILT_DISTROS))
+
+
+def distro_of_env(env: str) -> str:
+    """The ROS 2 distro an env's image speaks: `<env>_<distro>`, else jazzy (the bare name)."""
+    for d in PREBUILT_DISTROS:
+        if (env or "").endswith(f"_{d}"):
+            return d
+    return "jazzy"
+
+
+def _read_manifest(profile_dir: str) -> Optional[Dict[str, Any]]:
     import json
+    try:
+        with open(os.path.join(profile_dir, "manifest.json")) as fh:
+            m = json.load(fh)
+        return m if isinstance(m, dict) else None
+    except Exception:
+        return None
+
+
+def prebuilt_dir_for_env(env: str, distro: Optional[str] = None) -> Optional[str]:
+    """firmware/prebuilt/<profile> holding this env's image for this ROS 2 distro.
+
+    The distro decides as much as the board: micro-ROS is fixed at link time, and a jazzy
+    image never holds a session with a lyrical agent. This took the FIRST profile, in
+    alphabetical order, whose manifest named the env -- and the UNO Q's two profiles both
+    say `pio_env: unoq`, so a lyrical robot was flashed unoq-jazzy (walkthrough,
+    2026-10-16); a variant such as unoq-jazzy-bno sorted in front of the release image too.
+
+    The release profile's own name first (fetch_prebuilt.profile_for_env, the name the
+    fetcher writes), then any other plain `<board>-<distro>` profile whose manifest names
+    this env; the manifest's `ros_distro` must be the distro either way.
+    """
     if not os.path.isdir(PREBUILT_ROOT):
         return None
+    distro = distro or distro_of_env(env)
+    target = env
+    try:
+        target = mcu_identity.env_for_distro(env, distro)
+    except ValueError:
+        pass
+    want_envs = {env, target}
+
+    def speaks(m: Optional[Dict[str, Any]], name: str) -> bool:
+        if not m:
+            return False
+        # a manifest from before ros_distro was recorded: its name says it
+        return (m.get("ros_distro") or name.rsplit("-", 1)[-1]) == distro
+
+    try:
+        import fetch_prebuilt
+        canonical = fetch_prebuilt.profile_for_env(target)
+    except Exception:
+        canonical = None
+    if canonical and _PLAIN_PROFILE_RE.match(canonical):
+        d = os.path.join(PREBUILT_ROOT, canonical)
+        if speaks(_read_manifest(d), canonical):
+            return d
     for name in sorted(os.listdir(PREBUILT_ROOT)):
+        if not _PLAIN_PROFILE_RE.match(name) or not name.endswith(f"-{distro}"):
+            continue
         d = os.path.join(PREBUILT_ROOT, name)
-        m = os.path.join(d, "manifest.json")
-        if not os.path.isfile(m):
-            continue
-        try:
-            with open(m) as fh:
-                if json.load(fh).get("pio_env") == env:
-                    return d
-        except Exception:
-            continue
+        m = _read_manifest(d)
+        if m and m.get("pio_env") in want_envs and speaks(m, name):
+            return d
     return None
 
 
-def resolve_artifact(firmware_dir: str, env: str) -> Dict[str, Any]:
+def resolve_artifact(firmware_dir: str, env: str, distro: Optional[str] = None) -> Dict[str, Any]:
     """
     Locate the compiled binary for this env.
 
     A local .pio build wins (someone on this machine compiled for this env);
-    otherwise the prebuilt profile whose manifest names this env is used. The
+    otherwise the prebuilt profile for this env and distro is used. The
     profile directory is flat (firmware.uf2 / *.bin next to manifest.json).
+    The UNO Q's image is built with Zephyr, never here: only its prebuilt profile counts.
     """
     if not os.path.isabs(firmware_dir):
         firmware_dir = os.path.join(REPO_ROOT, firmware_dir)
     local_build = os.path.join(firmware_dir, ".pio", "build", env)
     family = family_for_env(env)
 
-    prebuilt = prebuilt_dir_for_env(env)
+    prebuilt = prebuilt_dir_for_env(env, distro)
+    if family == "unoq":
+        info = {
+            "firmware_dir": firmware_dir, "build_dir": prebuilt, "prebuilt_dir": prebuilt,
+            "local_build_dir": None, "source": "prebuilt", "env": env, "family": family,
+            "distro": distro or distro_of_env(env),
+            "exists": bool(prebuilt),
+            "artifact": os.path.join(prebuilt, "firmware.elf") if prebuilt else None,
+        }
+        if not prebuilt:
+            info["error"] = (
+                f"No UNO Q image for {info['distro']} here. Fetch the release image with "
+                f"`python3 scripts/fetch_prebuilt.py unoq-{info['distro']}`.")
+        return info
     if os.path.isdir(local_build) and os.listdir(local_build):
         build_dir, source = local_build, "local-build"
     elif prebuilt:
@@ -622,6 +694,7 @@ def resolve_artifact(firmware_dir: str, env: str) -> Dict[str, Any]:
         "source": source,
         "env": env,
         "family": family,
+        "distro": distro or distro_of_env(env),
         "exists": os.path.isdir(build_dir) and bool(os.listdir(build_dir)),
     }
     if not info["exists"]:
@@ -704,12 +777,15 @@ def flash(
     resume_agent: bool = True,
     emit: Optional[Callable[[str], None]] = None,
     timeout: int = 300,
+    distro: Optional[str] = None,
+    params_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Flash a binary natively, with micro_ros_agent paused around it.
 
     ESP32  -> esptool write_flash at the standard ESP-IDF offsets
     RP2040 -> picotool load -f (force into BOOTSEL), then reboot into the app
+    UNO Q  -> scripts/flash_mcu.py --prebuilt unoq-<distro> (SWD, with a fresh env block)
     """
     lines: List[str] = []
 
@@ -720,7 +796,13 @@ def flash(
 
     result: Dict[str, Any] = {"status": "error", "ok": False, "env": env, "port": port, "log": lines}
 
-    artifact = resolve_artifact(firmware_dir, env)
+    if family_for_env(env) == "unoq":
+        return _flash_with_flash_mcu(
+            result, log, env=env, port=port or "/dev/ttyHS1", distro=distro,
+            params_path=params_path, agent_runner=agent_runner, mode=mode,
+            udp_port=udp_port, resume_agent=resume_agent, timeout=timeout)
+
+    artifact = resolve_artifact(firmware_dir, env, distro)
     result["artifact"] = artifact
     if artifact.get("error"):
         log(f"[error] {artifact['error']}")
@@ -824,6 +906,75 @@ def flash(
 
     return result
 
+
+
+def _flash_with_flash_mcu(result: Dict[str, Any], log: Callable[[str], None], env: str, port: str,
+                          distro: Optional[str], params_path: Optional[str], agent_runner: Any,
+                          mode: str, udp_port: int, resume_agent: bool, timeout: int) -> Dict[str, Any]:
+    """A board flash_mcu.py writes and this module does not: the UNO Q's STM32U585, over SWD.
+
+    The release image for the stack's distro (fetched, else the copy already here) and a
+    fresh env block built from the robot's config -- every flash writes one -- in a single
+    flash_mcu.py run, its output streamed line by line like esptool's.
+    """
+    distro = distro or distro_of_env(env)
+    try:
+        target = mcu_identity.env_for_distro(env, distro)
+    except ValueError as exc:
+        result["error"] = str(exc)
+        log(f"[error] {result['error']}")
+        return result
+    import fetch_prebuilt
+    profile = fetch_prebuilt.profile_for_env(target)
+    result["profile"] = profile
+    if not params_path or not os.path.isfile(params_path):
+        result["error"] = ("The UNO Q is flashed with its env block, built from the robot's "
+                           "config: no robot config to build it from.")
+        log(f"[error] {result['error']}")
+        return result
+    scripts = os.path.join(REPO_ROOT, "scripts")
+    log("=" * 68)
+    log(f"Flashing {target} (UNO Q, SWD) from the release profile {profile}, env from "
+        f"{os.path.basename(params_path)}")
+    log("=" * 68)
+
+    with _BUS_LOCK:
+        with microros_agent_paused(
+            port, agent_runner=agent_runner, mode=mode, udp_port=udp_port,
+            resume=resume_agent, emit=log,
+        ) as bus:
+            result["agent"] = bus
+            # The release image, current; a profile already here when the network is not.
+            code = _stream_tool([sys.executable, "-u", os.path.join(scripts, "fetch_prebuilt.py"), profile],
+                                log, timeout=timeout)
+            prebuilt = prebuilt_dir_for_env(target, distro)
+            if code != 0:
+                if not prebuilt:
+                    result["error"] = f"No {profile} image: the fetch failed and none is here."
+                    log(f"[error] {result['error']}")
+                    return result
+                log(f"[flash] the fetch failed; using the {os.path.basename(prebuilt)} already here")
+            if not prebuilt:
+                result["error"] = f"No {profile} profile in firmware/prebuilt after the fetch."
+                log(f"[error] {result['error']}")
+                return result
+            result["artifact"] = {"build_dir": prebuilt, "prebuilt_dir": prebuilt, "source": "prebuilt",
+                                  "env": target, "family": "unoq", "distro": distro}
+            cmd = [sys.executable, "-u", os.path.join(scripts, "flash_mcu.py"),
+                   "--prebuilt", os.path.basename(prebuilt), "--port", port,
+                   "--params", params_path, "--firmware-name", "base", "--app", "base",
+                   "--total-timeout", str(timeout)]
+            code = _stream_tool(cmd, log, timeout=timeout + 30)
+
+            result["returncode"] = code
+            result["ok"] = code == 0
+            result["status"] = "ok" if code == 0 else "error"
+            if code == 0:
+                log(f"[flash] OK — {target} flashed successfully")
+            else:
+                result["error"] = f"Flashing failed with exit code {code}"
+                log(f"[error] {result['error']}")
+    return result
 
 
 def _usb_serial_for_tty(port: Optional[str]) -> Optional[str]:

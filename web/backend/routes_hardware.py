@@ -473,11 +473,27 @@ async def api_firmware_detect(request: Request):
     )
 
 
+def _flash_target(name: str, distro: Optional[str] = None):
+    """(env, distro) a flash writes: the board's env for the stack's ROS 2 distro.
+
+    micro-ROS is fixed at link time, so `pico2` (or `unoq`) alone is the jazzy image -- on a
+    lyrical stack the board enumerated and never held a session. The same rule as Flash on
+    Hardware Tests (/api/hardware/test) and the pipeline."""
+    distro = distro if distro in ("jazzy", "lyrical") else mcu_identity.image_distro()
+    env = mcu_identity.pio_env_for(name, "pico2")
+    try:
+        return mcu_identity.env_for_distro(env, distro), distro
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/firmware/artifact")
-def api_firmware_artifact(firmware_dir: str = "firmware", env: Optional[str] = None):
+def api_firmware_artifact(firmware_dir: str = "firmware", env: Optional[str] = None,
+                          distro: Optional[str] = None):
     """Locate the binary for this environment: a local build, else the prebuilt release image."""
     params = load_params()
-    return hw_resolve_artifact(firmware_dir, env or get_controller_name(params, "pico2"))
+    flash_env, d = _flash_target(env or get_controller_name(params, "pico2"), distro)
+    return hw_resolve_artifact(firmware_dir, flash_env, d)
 
 
 @app.post("/api/firmware/flash")
@@ -502,7 +518,9 @@ async def api_firmware_flash(request: Request):
     import mcu_env
     if mcu_env.wifi_keys_missing(get_active_params_path()):
         raise HTTPException(status_code=400, detail=mcu_env.WIFI_KEYS_MISSING)
-    env = mcu_identity.pio_env_for(text_field(data, "env") or get_controller_name(params, "pico2"), "pico2")
+    env, distro = _flash_target(text_field(data, "env") or get_controller_name(params, "pico2"),
+                                text_field(data, "distro"))
+    params_path = get_active_params_path()
     port = text_field(data, "port") or ctrl.get("serial_port", "/dev/ttyUSB0")
     baud = int(data.get("baud") or ctrl.get("upload_baudrate") or 921600)
     chip = data.get("chip") or "auto"
@@ -528,7 +546,7 @@ async def api_firmware_flash(request: Request):
                     firmware_dir=firmware_dir, env=env, port=port, baud=baud,
                     chip=chip, erase=erase, agent_runner=agent_runner, mode=mode,
                     udp_port=udp_port, resume_agent=resume_agent, emit=emit,
-                    timeout=timeout,
+                    timeout=timeout, distro=distro, params_path=params_path,
                 )
             except Exception as exc:
                 done["result"] = {"status": "error", "ok": False,
