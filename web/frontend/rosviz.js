@@ -119,6 +119,25 @@
       .filter((g) => g.status >= 1 && g.status <= 3);
   }
 
+  // What the status topic adds to the Nav2 line, or null. It speaks only for goals
+  // sent elsewhere: our own goal's result is the line's last word, and the status
+  // array that drops the goal a moment later wrote "Nav2 is idle" over "Goal
+  // reached" (2026-10-16, the tracked robot's first goal behind the box).
+  function navStatusLine(nav, live) {
+    const wasLive = nav.liveGoals;
+    nav.liveGoals = live.length;
+    if (nav.goalId) return null;
+    if (live.length && !wasLive) {
+      nav.watching = true;
+      return `Nav2 is ${GOAL_STATUS[live[0].status]} a goal sent elsewhere`;
+    }
+    if (!live.length && wasLive && nav.watching) {
+      nav.watching = false;
+      return "Nav2 is idle";
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------ rosbridge IO
   class RosBridge {
     constructor() {
@@ -744,7 +763,7 @@
 
     // goalId: the op id of the goal this page sent and is still waiting on.
     // liveGoals: what /navigate_to_pose/_action/status says is live, from any client.
-    const nav = { goalId: null, liveGoals: 0 };
+    const nav = { goalId: null, liveGoals: 0, watching: false };
 
     function updateCancel() {
       if (cancelBtn) cancelBtn.disabled = !(nav.goalId || nav.liveGoals > 0);
@@ -837,15 +856,9 @@
       // Every goal Nav2 holds, whoever sent it: a goal from a shell or another
       // browser still shows here, and still enables Cancel.
       bridge.subscribe(`${NAV_ACTION}/_action/status`, "action_msgs/msg/GoalStatusArray", (msg) => {
-        const live = activeGoals(msg);
-        const wasLive = nav.liveGoals;
-        nav.liveGoals = live.length;
+        const line = navStatusLine(nav, activeGoals(msg));
         updateCancel();
-        if (!nav.goalId && live.length && !wasLive) {
-          setNav("info", `Nav2 is ${GOAL_STATUS[live[0].status]} a goal sent elsewhere`);
-        } else if (!nav.goalId && !live.length && wasLive) {
-          setNav("info", "Nav2 is idle");
-        }
+        if (line) setNav("info", line);
       }, 250);
 
       bridge.advertise("/initialpose");
@@ -880,6 +893,7 @@
           },
         });
         nav.goalId = id;
+        nav.watching = false;
         updateCancel();
         if (id) setNav("info", `Goal sent: ${where} — waiting for Nav2…`);
         else setNav("err", "Not connected — goal not sent");

@@ -38,7 +38,7 @@ def _block(js, start_marker):
 def _helpers(js):
     consts = js[js.index("  const GOAL_STATUS = {"):js.index("  function secondsOf(")]
     return consts + "\n".join(_function(js, n) for n in (
-        "secondsOf", "describeNavFeedback", "describeNavResult", "activeGoals"))
+        "secondsOf", "describeNavFeedback", "describeNavResult", "activeGoals", "navStatusLine"))
 
 
 def _node(src):
@@ -190,3 +190,37 @@ def test_the_bridge_runs_actions_off_its_socket_thread():
     launch = (FRONTEND.parents[1] / "launchers" / "bringup.launch.py").read_text()
     assert '"send_action_goals_in_new_thread": True' in launch
     assert '"call_services_in_new_thread": True' in launch
+
+
+# ------------------------------------------------------- the line's last word
+SEQ = """(() => {
+  const nav = { goalId: null, liveGoals: 0, watching: false };
+  const lines = [];
+  const status = (n) => { const l = navStatusLine(nav, Array(n).fill({ status: 2 })); if (l) lines.push(l); };
+  %s
+  return lines;
+})()"""
+
+
+def test_our_result_is_not_overwritten_by_the_status_that_follows():
+    """The tracked robot's first goal behind the box: "Goal reached" became "Nav2 is idle"."""
+    steps = ("nav.goalId = 'g1'; status(1); status(1);"
+             " nav.goalId = null; lines.push('Goal reached');"
+             " status(0); status(0);")
+    assert _eval(SEQ % steps) == ["Goal reached"]
+
+
+def test_a_goal_from_elsewhere_is_announced_and_its_end_too():
+    assert _eval(SEQ % "status(1); status(1); status(0); status(0);") == [
+        "Nav2 is executing a goal sent elsewhere", "Nav2 is idle"]
+
+
+def test_our_goal_after_watching_one_ends_on_our_result():
+    steps = ("status(1); nav.goalId = 'g2'; nav.watching = false; status(1);"
+             " nav.goalId = null; lines.push('Goal reached'); status(0);")
+    assert _eval(SEQ % steps) == ["Nav2 is executing a goal sent elsewhere", "Goal reached"]
+
+
+def test_sending_a_goal_ends_the_watch():
+    js = _rosviz()
+    assert re.search(r"nav\.goalId = id;\n\s+nav\.watching = false;", js)
