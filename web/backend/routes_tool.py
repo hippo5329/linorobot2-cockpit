@@ -253,7 +253,11 @@ async def api_tool_open(request: Request):
     try:
         if r["sim"]:
             session = await _run_blocking(_open_sim, r)
-        elif r["wifi"] and not data.get("port"):
+        # A Wi-Fi robot goes over the air unless the page names a port that is really there
+        # (a robot plugged in by USB on purpose). The page sends the flash card's port
+        # selector whatever the link: /dev/ttyUSB0, absent on the TS100, refused its tool
+        # with "is the board plugged in" (2026-10-16).
+        elif r["wifi"] and not (data.get("port") and os.path.exists(str(data.get("port")))):
             session = await _run_blocking(_open_wifi, r)
         else:
             port = _serial_port(r, str(data.get("port") or ""))

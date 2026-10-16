@@ -130,3 +130,13 @@ def test_hardware_test_flashes_base_only(name):
                                                                  "mcu_env": "esp32"})
     assert res.status_code == 400
     assert "is not an application" in res.json()["detail"]
+
+
+def test_a_wifi_robot_opens_over_the_air_when_the_page_names_an_absent_port(robot):
+    # the page sends the flash card's port selector whatever the link; on the TS100 (no cable)
+    # /dev/ttyUSB0 was refused with "is the board plugged in" (2026-10-16)
+    r, grams, links = robot
+    c = TestClient(core.app)
+    res = c.post("/api/tool/open", json={"port": "/dev/ttyUSB-not-plugged-in"})
+    assert res.status_code == 200, res.text
+    assert len(links) == 1                     # the Wi-Fi opener ran
