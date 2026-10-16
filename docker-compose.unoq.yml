@@ -27,6 +27,17 @@ services:
       - /sys/firmware/devicetree/base/compatible:/host-dt/compatible:ro
     # Compose APPENDS this list to the base file's (ttyACM, ttyUSB, raw USB), and an older
     # compose (2.26, the UNO Q's) rejects a rule given twice -- so only the two new classes.
+    # The micro-ROS agent runs SCHED_FIFO on a CPU of its own (scripts/agent_rt.py, put in front
+    # of it by bringup.launch.py when these are set): under SLAM + Nav2 an agent at normal
+    # priority could not drain the 2 Mbaud UART in time and the STM32 dropped the session.
+    # SYS_NICE and an rtprio limit are what SCHED_FIFO needs inside a container.
+    cap_add:
+      - SYS_NICE
+    ulimits:
+      rtprio: 95
+    environment:
+      - LINO_AGENT_RT_PRIO=50
+      - LINO_AGENT_CPU=3
     device_cgroup_rules:
       - 'c 239:* rwm'   # /dev/ttyHS1, the MCU's micro-ROS link
       - 'c 254:* rwm'   # /dev/gpiochip*, the MCU's SWD lines (OpenOCD linuxgpiod)

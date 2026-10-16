@@ -63,6 +63,17 @@ DEFAULT_PARAMS = default_params_path()
 LD_POLL_HZ = 50.0
 
 
+def agent_rt_prefix() -> list:
+    """scripts/agent_rt.py in front of the micro-ROS agent when the environment asks for real-time
+    settings (LINO_AGENT_RT_PRIO, LINO_AGENT_CPU; docker-compose.unoq.yml sets them): SCHED_FIFO,
+    a CPU of its own, and the serial port's low-latency flag. A starved agent could not drain
+    the UART under SLAM + Nav2 and the UNO Q dropped its session (2026-10-15). Empty otherwise."""
+    if not (os.environ.get("LINO_AGENT_RT_PRIO") or os.environ.get("LINO_AGENT_CPU")):
+        return []
+    script = os.path.join(REPO_ROOT, "scripts", "agent_rt.py")
+    return [sys.executable, script] if os.path.isfile(script) else []
+
+
 def resolve_params_path(context):
     """Pick the robot config this launch is actually for.
 
@@ -576,7 +587,7 @@ def launch_setup(context, *args, **kwargs):
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration("micro_ros"), "'.lower() in ('true','1','yes') and ",
                 "True" if not no_board else "False"])),
-            cmd=["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
+            cmd=agent_rt_prefix() + ["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
             # Respawn, for two reasons. An agent that dies mid-run -- a yanked
