@@ -155,3 +155,93 @@ def test_every_step_that_opens_the_tool_names_itself_and_ends():
     closed = set(re.findall(r'buToolDone\("(\w+)"\)', src))
     assert opened == {"sensors", "battery", "motors", "rpm", "turns"}
     assert opened <= closed, opened - closed
+
+
+# "Check the LiDAR" failed "no scan on /scan" with bringup stopped, and the 1-Click stayed held
+# on it; a robot whose scan comes through its board cannot pass it without the stack
+# (walkthrough, 2026-10-16). Nothing moves in that step: it starts bringup and stops it after.
+# The steps that drive say what to start instead.
+BU_RUN = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const scen = JSON.parse(process.argv[3]);
+const els = {};
+function el(id) {
+  if (!els[id]) els[id] = { id, value: "", disabled: false, hidden: false, textContent: "", dataset: {},
+    kids: [], checked: false,
+    append(...xs) { for (const x of xs) { this.kids.push(x); this.textContent += typeof x === "string" ? x : x.textContent; } },
+    addEventListener(t, f) { this.on = f; } };
+  return els[id];
+}
+const document = { getElementById: el, addEventListener() {}, querySelector() { return null; },
+  querySelectorAll() { return []; }, createElement() { return el("made" + Math.random()); } };
+const events = [];
+const tool = { open: !!scen.toolOpen, jsonHooks: [] };
+let alive = !!scen.alive;
+async function refreshStatus() {}
+function isBringupAlive() { return alive; }
+function isAgentAlive() { return false; }
+async function ensureBringupRunning(what) { events.push("ensure"); if (!scen.autoOff) alive = true; }
+async function killSlot(slot) { events.push("kill:" + slot); if (slot === "bringup") alive = false; }
+const controllerForRun = (v) => v || "pico2";
+async function configReadyOrWarn() { return true; }
+async function boardMatchesOrWarn() { return true; }
+function runCommand(spec, opts) {
+  events.push("run:" + spec.handle);
+  return new Promise((r) => setTimeout(() => { opts.onDone(scen.code ?? 0); r(); }, 10));
+}
+async function fetch(url, opts) {
+  events.push(url.split("?")[0]);
+  if (url.startsWith("/api/bringup/health")) return { ok: true, status: 200, json: async () => ({ ready: true }) };
+  if (url === "/api/bringup/run") return { ok: true, status: 200, json: async () => ({ handle: "h1" }) };
+  if (url === "/api/bringup/checklist") return { ok: false, status: 503, json: async () => ({}) };
+  return { ok: true, status: 200, json: async () => ({}) };
+}
+eval(src.replace(/document\.addEventListener\("DOMContentLoaded", buInit\);/, "") + `
+buRun(scen.stage || "lidar", "msg").then(() => setTimeout(() => console.log(JSON.stringify({
+  events, alive, msg: el("msg").textContent, button: el("msg").kids.some((k) => typeof k !== "string") })), 100));`);
+"""
+
+
+def bu_run(tmp_path, **scen):
+    h = tmp_path / "bu_run.js"
+    h.write_text(BU_RUN)
+    out = subprocess.run([NODE, str(h), os.path.join(FRONT, "app-bringup.js"), json.dumps(scen)],
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@needs_node
+def test_the_lidar_check_starts_bringup_and_stops_it_after(tmp_path):
+    r = bu_run(tmp_path)
+    ev = r["events"]
+    assert ev.index("ensure") < ev.index("/api/bringup/run") < ev.index("run:h1") < ev.index("kill:bringup"), ev
+    assert r["alive"] is False and "Passed." in r["msg"] and "stopped again" in r["msg"]
+
+
+@needs_node
+def test_the_lidar_check_leaves_a_running_bringup_running(tmp_path):
+    r = bu_run(tmp_path, alive=True, code=1)
+    assert "ensure" not in r["events"] and not any(e.startswith("kill:") for e in r["events"])
+    assert "run:h1" in r["events"] and r["alive"] is True
+
+
+@needs_node
+def test_the_lidar_check_says_what_to_do_when_bringup_cannot_start(tmp_path):
+    r = bu_run(tmp_path, autoOff=True)          # Settings: auto-bringup off
+    assert "/api/bringup/run" not in r["events"]
+    assert "Bringup is not running" in r["msg"] and "Start bringup" in r["msg"] and r["button"] is True
+
+
+@needs_node
+@pytest.mark.parametrize("stage", ["speed", "acc"])
+def test_a_driving_step_never_starts_bringup_by_itself(tmp_path, stage):
+    r = bu_run(tmp_path, stage=stage)
+    assert "ensure" not in r["events"] and "/api/bringup/run" not in r["events"]
+    assert "Bringup is not running" in r["msg"] and r["button"] is True
+
+
+@needs_node
+def test_no_robot_step_runs_over_an_open_tool(tmp_path):
+    r = bu_run(tmp_path, toolOpen=True)
+    assert r["events"] == [] and "Back to robot" in r["msg"]

@@ -1447,8 +1447,8 @@
       <!-- 5. lidar -->
       <details class="bu-step" id="bu-step-lidar" data-stage="lidar">
         <summary><span class="bu-pill" data-for="lidar">—</span> 5. LiDAR scans all round at its rate</summary>
-        <p class="hint">Start the robot first (<a href="#" data-goto-tab="bringup">8. Bringup</a>: Start bringup) -- the LiDAR needs
-          the battery, not USB. Nothing moves. The check reads the scan for 10 s: its rate, how much of the circle
+        <p class="hint">The check starts bringup itself when it is not running (<a href="#" data-goto-tab="bringup">8. Bringup</a>),
+          and stops it again afterwards. The LiDAR needs the battery, not USB. Nothing moves. The check reads the scan for 10 s: its rate, how much of the circle
           has returns, the ranges, and the nearest return in each quadrant. Watch the scan itself on
           <a href="#" data-goto-tab="lidar">7. LiDAR / Scan</a>.</p>
         <div class="tool-row">

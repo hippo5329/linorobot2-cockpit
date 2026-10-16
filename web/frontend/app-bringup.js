@@ -585,16 +585,123 @@ async function buTurnDone() {
 }
 
 // ---------------------------------------------------------------- 5-7. the robot computer's steps
+// These read the running robot (lidar_check, speed_check, test_acc on robot_bringup.py). With
+// bringup stopped the LiDAR step failed "no scan on /scan" and held the 1-Click, and a robot
+// whose scan comes through its board (lidar.comm_mode topic) cannot pass it without the stack
+// (walkthrough, 2026-10-16). Nothing moves in that step, so it starts bringup itself and stops
+// it again after; the steps that drive say what to start instead.
+function buNeedsBringup(msg, what) {
+  msg.textContent = "";
+  msg.append(`Bringup is not running: ${what} needs the robot started. `);
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "btn btn-secondary btn-sm";
+  go.textContent = "Open 8. Bringup";
+  go.addEventListener("click", () => document.querySelector('.tab-btn[data-tab="bringup"]')?.click());
+  msg.append(go, " then Start bringup, and run this step again.");
+}
+
+async function buBringupReady(timeoutMs = 30000) {
+  // the launch is up; wait (bounded) for the robot to publish before reading it
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    try {
+      const h = await fetch("/api/bringup/health?timeout=4").then((r) => r.json());
+      if (h && h.ready) return true;
+    } catch { /* keep asking */ }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
+}
+
+// Bringup for one step: {started, agent} when it runs (started = this step launched it, and
+// stops it after), null when it could not be started (the reason is already in msg).
+async function buWithBringup(msg, what) {
+  if (typeof refreshStatus === "function") await refreshStatus();
+  if (typeof isBringupAlive !== "function" || isBringupAlive()) return { started: false, agent: false };
+  const ctl = typeof controllerForRun === "function" ? controllerForRun($b("cfg-mcu")?.value || "") : "";
+  if (typeof configReadyOrWarn === "function" && !(await configReadyOrWarn("Bringup"))) {
+    msg.textContent = "Not started: save the config first (see the banner).";
+    return null;
+  }
+  if (typeof boardMatchesOrWarn === "function" && !(await boardMatchesOrWarn(ctl, "Bringup"))) {
+    msg.textContent = "Not started: the robot's board is not ready (see the banner).";
+    return null;
+  }
+  const agentBefore = typeof isAgentAlive === "function" && isAgentAlive();
+  msg.textContent = `Starting bringup for ${what} (it is stopped again afterwards)…`;
+  try {
+    await ensureBringupRunning(what);
+  } catch (e) {
+    buNeedsBringup(msg, what);
+    return null;
+  }
+  if (typeof refreshStatus === "function") await refreshStatus();
+  const agent = !agentBefore && typeof isAgentAlive === "function" && isAgentAlive();
+  if (!isBringupAlive()) {
+    // auto-bringup is off (Settings), or the launch did not come up
+    if (agent) await killSlot("agent");
+    buNeedsBringup(msg, what);
+    return null;
+  }
+  msg.textContent = "Bringup started: waiting for the robot to publish…";
+  await buBringupReady();
+  return { started: true, agent };
+}
+
+async function buBringupRelease(held) {
+  if (!held || !held.started || held.released) return;
+  held.released = true;
+  try {
+    await killSlot("bringup");
+    if (held.agent) await killSlot("agent");
+  } catch (e) {
+    console.warn("stopping the bringup this step started:", e);
+  }
+  if (typeof refreshStatus === "function") refreshStatus();
+}
+
 async function buRun(stage, msgId, extra = {}) {
   const msg = $b(msgId);
+  if (bu.runBusy) return;
+  // The tool holds the board out of micro-ROS: no stack can read it.
+  if (tool.open) { msg.textContent = "The tool is open: press Back to robot first (this step needs the robot running)."; return; }
+  bu.runBusy = true;
+  let held = null, running = false;
   try {
+    if (stage === "lidar") {
+      held = await buWithBringup(msg, "the LiDAR check");
+      if (!held) return;
+    } else {
+      if (typeof refreshStatus === "function") await refreshStatus();
+      if (typeof isBringupAlive === "function" && !isBringupAlive()) {
+        buNeedsBringup(msg, stage === "speed" ? "the speed check" : "test_acc");
+        return;
+      }
+    }
     const j = await buJson("/api/bringup/run", { stage, ...extra });
     msg.textContent = "Running: see the console.";
+    const h = held;
+    held = null;                    // from here the run's own end releases it
+    running = true;
+    const ended = async () => { await buBringupRelease(h); bu.runBusy = false; };
     runCommand({ handle: j.handle }, {
       slot: "main", title: `Bring-up: ${stage}`,
-      onDone: (code) => { msg.textContent = code === 0 ? "Passed." : (code === 2 ? "Refused: nothing moved (see the console)." : `Not passed (exit ${code}): see the console.`); buRefresh(); },
-    });
-  } catch (e) { msg.textContent = e.message; }
+      onDone: async (code) => {
+        msg.textContent = code === 0 ? "Passed." : (code === 2 ? "Refused: nothing moved (see the console)." : `Not passed (exit ${code}): see the console.`);
+        if (h && h.started) msg.textContent += " Bringup stopped again.";
+        await ended();
+        buRefresh();
+      },
+    }).catch(async (e) => { msg.textContent = `The run's stream broke: ${e.message}`; await ended(); });
+  } catch (e) {
+    msg.textContent = e.message;
+  } finally {
+    if (!running) {
+      await buBringupRelease(held);
+      bu.runBusy = false;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- the 1-Click card
