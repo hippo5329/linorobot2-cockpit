@@ -224,12 +224,19 @@ function applyLaserConfigToPanel() {
   // reads it to decide which row to show. An imported firmware header sets it:
   // USE_LIDAR_UDP means the scan arrives as datagrams, not on a cable.
   const modeSel = document.getElementById("laser-driver-mode");
-  if (modeSel && c.laser_transport &&
-      [...modeSel.options].some((o) => o.value === c.laser_transport)) {
-    modeSel.value = c.laser_transport;
+  // The robot's own LiDAR transport when nothing else chose one: base_controller.lidar
+  // comm_mode udp is the board forwarding the UART over Wi-Fi, which bringup reads with the
+  // driver's own UDP server. The TS100 opened on "Direct serial" to /dev/ldlidar (2026-10-16).
+  const lidar = (c.base_controller || {}).lidar || {};
+  const transport = c.laser_transport || (String(lidar.comm_mode || "").toLowerCase() === "udp" ? "udp_server" : "");
+  if (modeSel && transport && [...modeSel.options].some((o) => o.value === transport)) {
+    modeSel.value = transport;
   }
+  const udpPort = c.laser_udp_port || lidar.udp_port;
   const udpField = document.getElementById("laser-driver-udp-port");
-  if (udpField && c.laser_udp_port) udpField.value = c.laser_udp_port;
+  if (udpField && udpPort) udpField.value = udpPort;
+  const serverPort = document.getElementById("laser-driver-server-port");
+  if (serverPort && udpPort && transport === "udp_server") serverPort.value = udpPort;
   updateLaserDriverFieldsVisibility();
 }
 
@@ -330,7 +337,7 @@ function buildLaserDriverCommand() {
     baud: document.getElementById("laser-driver-baud").value.trim() || meta.baud,
     mode: document.getElementById("laser-driver-mode")?.value || "serial",
     udp_port: document.getElementById("laser-driver-udp-port")?.value.trim() || "8889",
-    bridge_path: document.getElementById("laser-driver-bridge-path")?.value.trim() || "/dev/lidar_udp_bridge",
+    bridge_path: document.getElementById("laser-driver-bridge-path")?.value.trim() || "/tmp/lidar_udp_bridge",
     server_ip: document.getElementById("laser-driver-server-ip")?.value.trim() || "0.0.0.0",
     server_port: document.getElementById("laser-driver-server-port")?.value.trim() || "8889",
   };

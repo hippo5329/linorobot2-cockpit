@@ -195,3 +195,23 @@ def test_teleop_refuses_when_its_packages_are_missing():
     assert "ros2 pkg prefix $p" in cmd and "exit 1" in cmd
     assert cmd.index("ros2 pkg prefix") < cmd.index("ros2 run joy_linux"), "check before launching"
     assert "joy_linux teleop_twist_joy" in cmd
+
+
+def test_the_standalone_ld_driver_polls_like_bringup_and_bridges_where_it_may():
+    # TS100 2026-10-16: 6.3 Hz from a 10 Hz LD19 at the driver's pub_rate 10, and socat's
+    # link in /dev refused to the app user ("Permission denied"), so no /scan at all
+    import actions
+    a = {"distro": "lyrical", "is_ld": True, "code": "ld19", "product": "LDLiDAR_LD19", "bins": 456,
+         "baud": "230400", "udp_port": "8889"}
+    for mode in ("serial", "udp_bridge", "udp_server"):
+        assert "-p pub_rate:=50.0" in actions._laser_driver({**a, "mode": mode, "port": "/dev/ttyUSB0"})
+    bridge = actions._laser_driver({**a, "mode": "udp_bridge"})
+    assert "link=/tmp/lidar_udp_bridge" in bridge and "/dev/lidar_udp_bridge" not in bridge
+
+
+def test_the_lidar_page_follows_the_robots_udp_lidar():
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "web", "frontend", "app-nav-viz.js")).read()
+    body = src[src.index("function applyLaserConfigToPanel()"):src.index("function updateLaserDriverFieldsVisibility()")]
+    assert '(c.base_controller || {}).lidar' in body and '"udp_server"' in body

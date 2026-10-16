@@ -436,6 +436,9 @@ def _ld_node_params(a: Dict, overrides: Dict) -> str:
         "enable_angle_crop_func": "false",
         "angle_crop_min": "135.0",
         "angle_crop_max": "225.0",
+        # bringup's LD_POLL_HZ: a 10 Hz look at a 10 Hz LiDAR loses revolutions (6.3 Hz on the
+        # TS100's Wi-Fi LD19 from this page, 2026-10-16); 50 Hz collects every one.
+        "pub_rate": "50.0",
     }
     base.update(overrides)
     return " ".join(f"-p {k}:={shlex.quote(str(v))}" for k, v in base.items())
@@ -463,7 +466,9 @@ def _laser_driver(a: Dict) -> str:
 
     if mode == "udp_bridge":
         udp_port = _int(a.get("udp_port"), "udp_port", 1, 65535, 8889)
-        bridge = _device(a.get("bridge_path"), "bridge_path", "/dev/lidar_udp_bridge")
+        # The cockpit runs commands as its app user, who cannot make a link in /dev: socat's
+        # PTY,link=/dev/... died "Permission denied" and the driver had no device (2026-10-16).
+        bridge = _path(a.get("bridge_path") or "/tmp/lidar_udp_bridge", "bridge_path")
         params = _ld_node_params(a, {"comm_mode": "serial", "port_name": bridge, "port_baudrate": str(baud)})
         # Reclaim the pty by INSPECTED PID (bracketed pgrep), never `pkill -f`
         # -- AGENTS.md Rule 1. The original client code broke that rule.
