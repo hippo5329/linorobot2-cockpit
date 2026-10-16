@@ -128,14 +128,17 @@ class SerialLink:
                 time.sleep(0.1)       # an RP2's port is re-enumerating after the reboot
         return False
 
-    def reboot(self) -> bool:
+    def reboot(self, release: bool = True) -> bool:
         """Restart the board so its tool window opens. An ESP32: EN, pulsed on this
         handle. An RP2: the 1200-baud touch into BOOTSEL, then `picotool reboot` into the
         application, both aimed at THIS port's board. A USB reset is no reboot there:
         measured 2026-10-12 on a running Pico 2, the port re-enumerated and no banner
-        followed, and the firmware has no picotool reset interface for a running board."""
+        followed, and the firmware has no picotool reset interface for a running board.
+        release=False: the caller has paused the port's micro-ROS agent itself (test_acc_run.py
+        SIGSTOPs it and lets it go after) -- a SIGINT to a stopped agent kills it on SIGCONT."""
         import flash_mcu
-        release_port(self.port)                           # its micro-ROS agent lets go
+        if release:
+            release_port(self.port)                       # its micro-ROS agent lets go
         if self.env.startswith("esp32"):
             if not self.open():
                 return False
@@ -319,7 +322,8 @@ class SimUnavailable(RuntimeError):
 
 class SimLink:
     """The Sim MCU, started for the tool: the host firmware booting straight into the tool
-    (app=tool), its console -- stdin and stdout -- as the session's link. The firmware is the
+    (LINO_NEXT_BOOT=tool, the flag a board's restart into the tool keeps in RAM), its console
+    -- stdin and stdout -- as the session's link. The firmware is the
     same code a board runs, so the panel can be learned and walked with no board: the tool
     refuses what the Sim MCU simulates (its wheels, its sensors) in its own words.
 
@@ -337,7 +341,9 @@ class SimLink:
         if not binary:
             raise SimUnavailable("This cockpit has no Sim MCU build to run the tool on.")
         e = host_firmware.env(params_path)
-        e.update({"app": "tool", "tool_wait": "0", "term_port": "0"})
+        # No escape window (nothing types into it: the restart flag below enters the tool) and
+        # no TCP terminal (the console is this pipe).
+        e.update({"tool_wait": "0", "term_port": "0"})
         if os.environ.get("COCKPIT_TOOL_SIM_WHEELS_REAL") == "1":
             e["sim_wheel"] = "0"
         # The Sim MCU's walkthrough mode (user, 2026-10-14: "allow sim mcu walk mode, we need to
@@ -354,8 +360,9 @@ class SimLink:
         path = os.path.join(self._dir, "env.bin")
         with open(path, "wb") as fh:
             fh.write(mcu_env.encode(e))
-        penv = dict(os.environ, LINO_ENV_BIN=path)
-        penv.pop("LINO_NEXT_BOOT", None)
+        # The tool is entered the one way the firmware has: its restart flag (tools.cpp
+        # nextBootGet, read from the environment on the host build) -- the env boots base only.
+        penv = dict(os.environ, LINO_ENV_BIN=path, LINO_NEXT_BOOT="tool")
         # Exactly as bringup.launch.py starts it: the client workspace sourced for this
         # process only (the binary links librclc and rmw_microxrcedds from there -- run bare
         # it died, "librclc.so: cannot open shared object file"), and RMW_IMPLEMENTATION

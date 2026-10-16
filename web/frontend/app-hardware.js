@@ -31,9 +31,9 @@ function renderPinFindings(findings, savedOk) {
   box.hidden = false;
 }
 
-// i2c_detect is on for a real robot by default, and off when its config assigns no I2C
-// pins -- neither SDA/SCL nor a named bus (pins.i2c.bus, the UNO Q's Qwiic). The host and
-// the firmware refuse it then too (mcu_env.tool_refusal). A bare module has none: apply
+// The tool's i2c scan is on for a real robot by default, and off when its config assigns no
+// I2C pins -- neither SDA/SCL nor a named bus (pins.i2c.bus, the UNO Q's Qwiic). The
+// firmware's `i2c` command refuses it then too (tools.cpp). A bare module has none: apply
 // the robot's reference design first.
 function applyI2cAvailability(i2c) {
   const btn = document.getElementById("btn-tool-i2c");
@@ -1614,10 +1614,8 @@ async function refreshHwSerialPorts() {
 }
 
 async function executeHardwareAction(action, customFirmware = null) {
-  // This selects which APPLICATION the one image boots. It is the `app` key of
-  // the env partition, not a directory and not a separate build (test_sensors,
-  // base) -- not a controller and not a nav goal.
-  // The image is the robot firmware; the tests are the tool's commands (app-tool.js).
+  // The one image boots base, the robot firmware; the tests are the tool's commands,
+  // opened by its boot escape (app-tool.js). The backend refuses any other name.
   const firmwareName = customFirmware || "base";
   const port = document.getElementById("cfg-serial-port")?.value.trim() || document.getElementById("hw-flash-port")?.value.trim() || "/dev/ttyACM0";
   const mcuEnv = document.getElementById("hw-flash-env")?.value || document.getElementById("cfg-mcu")?.value || "pico2";
@@ -1709,15 +1707,6 @@ async function executeHardwareAction(action, customFirmware = null) {
           hideActionBanner();
           logLine(`✅ [Hardware Test] ${firmwareName} completed successfully.`);
           showToast(`✅ ${firmwareName} flashed successfully!`, 4000);
-          // A diagnostic application exists to be READ. Flashing one and then
-          // showing nothing is what made these tools look broken: they print
-          // to serial, and until now nothing opened the port afterwards. The
-          // base controller is the exception -- its serial belongs to
-          // micro-ROS, and the agent needs it.
-          if (action === "upload" && firmwareName !== "base") {
-            logLine(`📡 [Hardware Test] streaming ${firmwareName} output — press Stop when done.`);
-            executeHardwareAction("monitor", firmwareName);
-          }
         } else {
           logLine(`❌ [Hardware Test] ${firmwareName} finished with exit code ${exitCode}. Check terminal above for troubleshooting & recovery steps.`);
           showToast(`❌ Flashing ${firmwareName} failed. Check terminal for recovery steps!`, 7000);

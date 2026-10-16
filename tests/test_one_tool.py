@@ -1,7 +1,9 @@
 """One firmware mode with a tool behind a boot window (user, 2026-10-12: "merge tools into one,
 use terminal command to drive i2c, sensors, motors, acc"; "only one mode, base boot wait for
 tool escape for 3 or 5 seconds then proceed to micro-ros"; "in wifi mode, host can use a reset
-command port with ota like logic").
+command port with ota like logic"; 2026-10-16: "keep only base with tool escape, remove all
+tools mode including test_sensors, test_motors, test_acc, adc_calibrate. we will use tool
+escape to do all these tasks").
 
 Behaviour is proven on the Sim MCU (the firmware built for the host, stdin as its console):
 escape in the window, every command, a stop mid-run, `base` back, no escape -> micro-ROS.
@@ -49,13 +51,15 @@ def test_a_set_value_shadows_the_stored_one_and_base_pays_nothing():
     assert "calloc(ENV_OVERRIDES, sizeof(EnvOverride))" in env
 
 
-def test_every_former_tool_name_still_boots_its_command():
+def test_every_former_tool_is_a_command_and_no_env_boots_one():
     src = _read("src", "tools", "tools.cpp")
-    for app, run in (("test_sensors", "sensors"), ("test_motors", "motors"), ("test_acc", "acc"),
-                     ("i2c_detect", "i2c 5"), ("adc_calibrate", "adc")):
-        assert re.search(r'\{"%s",\s*"%s"\}' % (app, re.escape(run)), src), app
     for cmd in ("i2c", "sensors", "motor", "motors", "acc", "set", "get", "status", "base"):
         assert f'!strcmp(cmd, "{cmd}")' in src, cmd
+    # the env's back doors into the tool are gone: no name table, no refusal by name, no
+    # boot command
+    for gone in ("LEGACY", "legacyRefusal", "tool_run", "boot_run", '"test_sensors"',
+                 '"test_motors"', '"test_acc"', '"i2c_detect"', '"adc_calibrate"'):
+        assert gone not in src, gone
 
 
 def test_rp2_micro_ros_keeps_the_bare_usb_port():
@@ -96,38 +100,54 @@ def _toolselect():
     return src[src.index("AppMode toolSelect(void)"):src.index("const char *toolName(")]
 
 
-def test_a_refused_former_name_boots_base_as_it_did():
-    """Before the merge a refused tool fell back to the robot firmware; an env written
-    without the host's check must not leave a robot out of micro-ROS."""
+def test_tool_select_returns_base_for_any_app_value():
+    """Only the restart flag (toolRestart(true): lino-tool, the tool's own restart; the Sim
+    MCU's LINO_NEXT_BOOT=tool) opens the tool at boot. The env's `app` is said once when it
+    names anything but base, and base boots."""
     sel = _toolselect()
-    refusal = sel[sel.index("const char *why = legacyRefusal(want);"):]
-    assert refusal.index("return APP_BASE;") < refusal.index("envSetRealOnly(!toolWalk());")
-    src = _read("src", "tools", "tools.cpp")
-    fn = src[src.index("static const char *legacyRefusal"):src.index("AppMode toolSelect(void)")]
-    for app, key in (("test_sensors", '"imu"'), ("test_motors", '"sim_wheel"'), ("test_acc", '"sim_wheel"'),
-                     ("adc_calibrate", '"sim_battery"'), ("i2c_detect", "toolI2cUnassigned()")):
-        assert app in fn and key in fn, app
-    assert "#if !ADC_LUT_SUPPORTED" in fn
+    assert sel.count("return APP_TOOL;") == 1
+    tool = sel[:sel.index("return APP_TOOL;")]
+    assert "if (next == NEXT_BOOT_TOOL) {" in tool and 'envGet("app"' not in tool
+    after = sel[sel.index("return APP_TOOL;"):]
+    assert 'envGet("app", "base")' in after
+    assert "is not an application: this firmware boots base; open the " in after
+    assert "tool with the escape (type tool at boot)" in after
+    assert after.rstrip().endswith("return APP_BASE;\n}") or after.strip().endswith("return APP_BASE;\n}")
 
 
-def test_test_motors_with_one_wheel_in_the_env_runs_that_wheel():
-    sel = _toolselect()
-    assert 'envInt("tm_only", 0)' in sel and 'boot_run = "motor";' in sel
+def test_motor_alone_runs_the_wheel_the_env_names():
     src = _read("src", "tools", "tools.cpp")
-    motor = src[src.index("} else if (!strcmp(cmd, \"motor\")) {"):src.index("} else if (!strcmp(cmd, \"motors\")) {")]
+    motor = src[src.index("} else if (!strcmp(cmd, \"motor\")) {"):src.index("} else if (!strcmp(cmd, \"ramp\")) {")]
     assert '`motor` alone runs the env' in motor and 'envInt("tm_only", 0)' in motor
 
 
 def test_base_leaves_the_tool_for_one_boot():
-    """`base` in a tool the env boots (app=tool, a former name) would come straight back."""
-    sel = _toolselect()
-    assert sel.index("if (next == NEXT_BOOT_BASE)") < sel.index('envGet("app"') or \
-        sel.index("if (next == NEXT_BOOT_BASE)") < sel.index("if (!want")
+    """`base` restarts the board into base: the restart flag is set to base, and the next
+    boot after that is the env's (base) again."""
     src = _read("src", "tools", "tools.cpp")
-    restart = src[src.index("void toolRestart(bool tool)"):src.index("static const char *legacyRefusal")]
+    restart = src[src.index("void toolRestart(bool tool)"):src.index("AppMode toolSelect(void)")]
     assert "nextBootSet(tool ? NEXT_BOOT_TOOL : NEXT_BOOT_BASE);" in restart
     assert "sys_reboot(SYS_REBOOT_COLD);" in restart        # the UNO Q restarts too
     assert "watchdog_hw->scratch[0]" in src                 # survives an RP2 reboot
+    sel = _toolselect()
+    assert sel.index("nextBootSet(0);") < sel.index("if (next == NEXT_BOOT_TOOL)")
+
+
+def test_status_says_what_runs_not_an_app():
+    src = _read("src", "tools", "tools.cpp")
+    fn = src[src.index("static void status(void)"):src.index("// Numbers and keys are typed")]
+    assert "app=" not in fn
+    assert '"[tool] running: %s\\n"' in fn and '"[tool] idle"' in fn
+
+
+def test_the_tool_banner_still_says_it_is_in_the_tool():
+    # lino_tool.py, tool_session.py and routes_tool.py wait for these
+    src = _read("src", "tools", "tools.cpp")
+    setup = src[src.index("void toolSetup(void)"):]
+    assert 'Serial.printf("[app] %s\\n", app_name);' in setup
+    assert "[tool] ready -- 'help' lists the commands" in setup
+    esc = src[src.index("bool toolEscape(void)"):src.index("void toolSetup(void)")]
+    assert 'app_name = "tool";' in esc
 
 
 def test_set_takes_the_test_settings_only():
@@ -176,3 +196,35 @@ def test_lino_tool_never_leaves_a_wheel_turning():
     main = text[text.index("def main()"):]
     fin = main[main.index("finally:"):]
     assert 'link.write(b"stop\\r\\n")' in fin
+
+
+def test_the_sim_mcus_tool_is_entered_by_its_restart_flag_not_the_env(monkeypatch):
+    """lino_tool.SimLink: the env boots base only, so the Sim MCU enters its tool the way a
+    board's restart into the tool does (LINO_NEXT_BOOT=tool, tools.cpp nextBootGet)."""
+    import subprocess
+    import host_firmware
+    import lino_tool
+    import mcu_env
+    seen = {}
+
+    class P:
+        def __init__(self, argv, **kw):
+            seen.update(kw)
+            r, w = os.pipe()
+            os.close(w)
+            self.stdout = os.fdopen(r, "rb")
+            self.stdin = None
+
+        def poll(self):
+            return 0
+    monkeypatch.setattr(host_firmware, "binary", lambda: "/nonexistent/lino_host_fw")
+    monkeypatch.setattr(host_firmware, "shell_command", lambda b: "true")
+    monkeypatch.setattr(subprocess, "Popen", P)
+    cfg = os.path.join(REPO_ROOT, "config", "reference", "gendrv_config.yaml")
+    link = lino_tool.SimLink(cfg)
+    link.closed = True
+    assert seen["env"]["LINO_NEXT_BOOT"] == "tool"
+    with open(seen["env"]["LINO_ENV_BIN"], "rb") as fh:
+        env = mcu_env.decode(fh.read())
+    assert env.get("app", "base") == "base"
+    assert env["tool_wait"] == "0" and env["term_port"] == "0"

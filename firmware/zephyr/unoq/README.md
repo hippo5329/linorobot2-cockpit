@@ -26,7 +26,9 @@ Flashing (from the board's own Linux; the SWD pins are not on any header): stop
 Same contract as the Arduino firmware: node `linorobot_base_node`, `odom/unfiltered` at
 50 Hz (best effort, `odom` -> `base_footprint`), `cmd_vel` (`Twist`, or `TwistStamped` with
 `stamped_cmd_vel=1`) with the 200 ms dead-man, and the env block `scripts/mcu_env.py` writes,
-read from the last flash page (0x081FE000). Keys read: `app` (`base` | `test_sensors`),
+read from the last flash page (0x081FE000). Keys read: `app` (`base` | `test_sensors`, this
+experiment's own sensor test; the shipped UNO Q image is `firmware/src`, which boots base
+whatever `app` says and opens its tool through the boot escape -- type `tool` at boot),
 `base` (2wd only), `max_rpm`, `rpm_ratio`, `wheel_d`, `lr_dist`, `angular_scale`, `motor_v`,
 `power_v`, `kp`/`ki`/`kd`, `pwm_freq`, `pwm_bits`, `m1_cpr`/`m2_cpr`, `m1_inv`/`m2_inv`,
 `m1_enc_inv`/`m2_enc_inv`, `sim_wheel`, `best_effort`, `baud` (default 4000000),

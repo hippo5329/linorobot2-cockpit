@@ -65,7 +65,14 @@ def _wifi_robot(params_path: str) -> bool:
 @app.post("/api/hardware/test")
 async def api_hardware_test(request: Request):
     data = await json_body(request)
-    firmware = data.get("firmware") or data.get("target") or "test_sensors"
+    # The image boots base only (user, 2026-10-16): the tests are the tool's commands, opened
+    # by the boot escape (routes_tool.py), never an env write that boots a test.
+    firmware = str(data.get("firmware") or data.get("target") or "base")
+    if firmware != "base":
+        raise HTTPException(status_code=400, detail=(
+            f"'{firmware}' is not an application: the firmware boots base, and the tests are the "
+            "tool's commands -- open the tool on Hardware Tests (it restarts the board and "
+            "catches its boot escape)."))
     port = data.get("port", "/dev/ttyACM0")
     baud = int(data.get("baud", 921600))
     action = data.get("action", "upload")
@@ -90,9 +97,8 @@ async def api_hardware_test(request: Request):
         except Exception as e:
             print(f"[api_hardware_test] release_agent_port notice: {e}")
 
-    # One image now carries every application, so there is no per-tool directory
-    # to point at: `firmware` is always the project, and which application boots
-    # is the `app` key in the env partition.
+    # One image carries base and the tool, so there is no per-tool directory to point
+    # at: `firmware` is always the project.
     firmware_dir = "firmware"
     require_header(regenerate_firmware_headers(mcu_env))
     params_path = get_active_params_path()
@@ -116,49 +122,32 @@ async def api_hardware_test(request: Request):
         # Build and flash stay separate: pio only compiles, esptool/picotool
         # writes. With PlatformIO on this machine the image is built first;
         # without it the release image for this env is fetched and flashed.
-        # One image carries base AND every diagnostic tool (firmware tools.h,
-        # the "swiss knife"): the `app` env key selects which boots, so flashing
-        # `adc_calibrate` writes the same base image and sets app=adc_calibrate.
-        # No per-tool binary, and no toolchain needed on the robot.
+        # One image carries base and the tool (firmware tools.h): the tests are the
+        # tool's commands, so there is no per-tool binary, and no toolchain needed on the
+        # robot.
         flash_script = os.path.join(REPO_ROOT, "scripts", "flash_mcu.py")
-        if firmware != "base":
-            # Switching to a diagnostic tool is the swiss knife's whole point: the
-            # installed image already carries every tool, so this is a 4 KB env
-            # write (app=<tool>) and a reboot -- no download, no reflash. Flash
-            # the base firmware once; then switch blades freely. If the board
-            # runs an image too old to have the tool, it boots base with a
-            # message rather than the tool (firmware tools.cpp), so this is safe.
-            cmd = (
-                f"python3 {flash_script} --env {mcu_env} --env-only "
-                f"--port {port} "
-                f"--params {shlex.quote(params_path)} "
-                f"--app {firmware} "
-                f"--baud {baud}"
-            )
+        # The image must speak this stack's distro: micro-ROS is fixed at link time,
+        # and `pico2` alone is the jazzy image -- on a lyrical stack the board
+        # enumerated and never held a session. The pipeline always resolved this;
+        # this button did not.
+        try:
+            flash_env = mcu_identity.env_for_distro(mcu_env, mcu_identity.image_distro())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if mcu_identity.env_family(flash_env) == "unoq" or not pio_present():
+            # The UNO Q's image is Zephyr-built: never PlatformIO, always the release's.
+            image = f"--prebuilt {fetch_prebuilt.profile_for_env(flash_env)}"
+            fetch = f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {flash_env} && "
         else:
-            # The image must speak this stack's distro: micro-ROS is fixed at link time,
-            # and `pico2` alone is the jazzy image -- on a lyrical stack the board
-            # enumerated and never held a session. The pipeline always resolved this;
-            # this button did not.
-            try:
-                flash_env = mcu_identity.env_for_distro(mcu_env, mcu_identity.image_distro())
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            if mcu_identity.env_family(flash_env) == "unoq" or not pio_present():
-                # The UNO Q's image is Zephyr-built: never PlatformIO, always the release's.
-                image = f"--prebuilt {fetch_prebuilt.profile_for_env(flash_env)}"
-                fetch = f"python3 {os.path.join(REPO_ROOT, 'scripts', 'fetch_prebuilt.py')} {flash_env} && "
-            else:
-                image = f"--firmware-dir {firmware_dir} --env {flash_env} --build"
-                fetch = ""
-            cmd = (
-                f"{fetch}python3 {flash_script} {image} "
-                f"--port {port} "
-                f"--params {shlex.quote(params_path)} "
-                f"--firmware-name {firmware} "
-                f"--app {firmware} "
-                f"--baud {baud}"
-            )
+            image = f"--firmware-dir {firmware_dir} --env {flash_env} --build"
+            fetch = ""
+        cmd = (
+            f"{fetch}python3 {flash_script} {image} "
+            f"--port {port} "
+            f"--params {shlex.quote(params_path)} "
+            "--firmware-name base --app base "
+            f"--baud {baud}"
+        )
     elif action == "monitor" and not os.path.exists(port) and _wifi_robot(params_path):
         # A Wi-Fi robot off the USB cable: its console is syslog. The firmware tees a
         # tool's every line there, so this streams the board's syslog -- found by the

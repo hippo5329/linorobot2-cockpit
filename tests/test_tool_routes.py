@@ -109,7 +109,7 @@ def test_the_stream_is_a_protected_ticketed_path():
 
 
 def test_leaving_the_sim_mcus_tool_writes_no_board_env(monkeypatch):
-    """SimLink boots the host firmware with app=tool in a temp env: Back to robot must not
+    """SimLink starts the host firmware straight into its tool from a temp env: Back to robot must not
     hand the page an env write for a board that does not exist (the 2026-10-14 Sim MCU walk)."""
     r = {"robot": "bare_sim", "sim": True, "wifi": False, "pio_env": "host", "tgt": {}, "env": {},
          "params_path": "/nonexistent/bare_sim_config.yaml"}
@@ -119,3 +119,14 @@ def test_leaving_the_sim_mcus_tool_writes_no_board_env(monkeypatch):
     tool_session.REGISTRY.add(s, start_threads=False)
     res = TestClient(core.app).post("/api/tool/close").json()
     assert res["needs_env_base"] is False and "handle" not in res
+
+
+@pytest.mark.parametrize("name", ["test_sensors", "test_motors", "test_acc", "adc_calibrate", "tool"])
+def test_hardware_test_flashes_base_only(name):
+    """Only base boots (user, 2026-10-16): the tests are the tool's commands, opened by its
+    boot escape. /api/hardware/test refuses another application before anything runs."""
+    import routes_hardware  # noqa: F401  (registers the route)
+    res = TestClient(core.app).post("/api/hardware/test", json={"firmware": name, "action": "upload",
+                                                                 "mcu_env": "esp32"})
+    assert res.status_code == 400
+    assert "is not an application" in res.json()["detail"]

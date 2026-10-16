@@ -1,19 +1,30 @@
-# Firmware: one image, several applications
+# Firmware: one image, the robot and its tool
 
 Design notes and hard-won rules for `firmware/`.
 
-**There is exactly one firmware project: `firmware/`.** The diagnostics are not separate builds any
-more — they are applications inside that image, selected at boot by the `app` key of the env
-partition (`base`, `test_sensors`, `test_motors`, `test_acc`, `i2c_detect`,
-`adc_calibrate`). Switching between them rewrites 4 KB of flash; it does not rebuild and, on ESP32,
-does not reflash the application at all. Do **not** recreate a per-tool PlatformIO project.
+**There is exactly one firmware project: `firmware/`, and it boots one application: `base`, the
+robot firmware.** The diagnostics are not separate builds — they are the commands of the **tool**, a
+command shell inside the same image (`i2c`, `sensors`, `motor`, `motors`, `enc`, `ramp`, `acc`,
+`adc`, `set`/`get`, `status`, `base`). The tool is reached through base's **escape** only: at boot,
+before micro-ROS, base waits `tool_wait` ms (3000 by default) for the word `tool` and Enter on the
+console or on a Wi-Fi robot's TCP terminal, or for the authenticated "lino-tool" datagram on the ping
+port (which restarts a running board into the tool). `scripts/lino_tool.py` and the web UI's Hardware
+Tests tab do exactly that. The env's `app` key selects nothing: any value but `base` prints one line
+and base boots —
+
+```text
+[app] 'test_acc' is not an application: this firmware boots base; open the tool with the escape (type tool at boot)
+```
+
+— so no env write can keep a robot out of micro-ROS at its next boot. `base` in the tool restarts
+the board into the robot firmware. Do **not** recreate a per-tool PlatformIO project.
 
 Two rules make this free for the robot firmware, and both are load-bearing:
-- **Each application is its own translation unit in its own namespace**, exposing nothing but a
-  setup/loop pair wired into `firmware/src/tools/tools.cpp`. Several tools and `base` independently
+- **Each tool command is its own translation unit in its own namespace**, exposing nothing but its
+  entry points, wired into `firmware/src/tools/tools.cpp`. Several tools and `base` independently
   defined `imu_msg`, `battery_msg`, `setLed` and motor objects at file scope; linked together those
   are duplicate symbols.
-- **No application owns hardware.** `Motor`/`Encoder` come from `hw_factory`, built in `setup()`.
+- **No tool command owns hardware.** `Motor`/`Encoder` come from `hw_factory`, built in `setup()`.
   Constructed at file scope they would run at boot in *every* mode, touching motor pins before
   `initBoard()` in a robot whose user asked for a sensor scan. It also means a tool drives the
   wiring the env describes rather than whatever the header was generated for.
@@ -56,7 +67,8 @@ gets the node back 2–3 s later, past `boot_serial_wait`, so every flash logged
 `banner_confirmed: false` — the flasher had verified the bytes it wrote, not what the board runs. So
 `setup()` holds the transport for `banner_hold` ms (env, default 4000, 0 disables), printing the banner
 every 500 ms, and only then calls `initUrosTransport()`: once XRCE frames own the port, text would be
-noise in the agent's stream. It runs before the watchdog is armed and only for `app=base`.
+noise in the agent's stream. It runs before the watchdog is armed, and only when base goes on to
+micro-ROS.
 
 ### The last field names the BOARD, and the key says what it identified
 
@@ -167,21 +179,20 @@ nothing to protect and cannot do anything until it is written, so requiring a fl
 friction — the run would stop, print an instruction, and the user would re-run it to reach the only
 outcome that was ever available.
 
-Editing a robot config or switching application is therefore a 4 KB write, which is the whole point
-of *One Image, Several Applications* — and re-flashing an image that is already on the board is not something a pipeline decides.
+Editing a robot config is therefore a 4 KB write, which is the whole point of the one image — and re-flashing an image that is already on the board is not something a pipeline decides.
 The stamp lives in `~/.cache`, **not** under `firmware/`: every box gets a fresh workspace per run, so
 a stamp inside the tree would be destroyed by the re-seed that precedes the run that needs to read it.
 On RP2 an `--env-only` write still needs BOOTSEL — every write to RP2 flash does — so it is cheap in
 time and in risk to the image, but not in the touch; on ESP32 it costs nothing at all.
 
-**The env digest compares blobs, so `app` has to be written even when it is `base`.** The verdict
+**The env digest compares blobs, so `app=base` is always written.** The verdict
 `env_stale` is `sha256(encoded env)` against the digest in the stamp, and an env built without an
 `app` key does not encode to the same 4 KB as one built with `app=base`. `flash_mcu.py` only set the
 key when `--app` was passed and `mcu_probe.py --app` defaulted to `None`, so the two agreed only
 because the pipeline always passes `--app base`: run either by hand and the board reported
 `env_stale` forever, one pointless 4 KB write per run (bench, 2026-09-18, immediately after a green
 prebuilt run). Both now default to `base` — the default application, and the one the comment in
-`resolve_env_bin()` already claimed was always written. Same family of bug, same fix: the stamp's
+`resolve_env_bin()` already claimed was always written (`--app` takes `base` only). Same family of bug, same fix: the stamp's
 fallback digest hashed `config/secrets.yaml` **inside the repo**, a file that does not exist in a
 clean tree, instead of `cockpit_paths.secrets_path()`. Every path to the user's config goes through
 `cockpit_paths`, with no exceptions for a fallback branch.
@@ -247,7 +258,7 @@ on an ESP32** (~5 us, 0.025% of a 20 ms cycle), and on the RP2040 — the only t
 
 ### `base` reads the I2C bus before it believes the config
 The scan and the WHO_AM_I table live in **`firmware/common/lib/i2c_probe`**, not inside the
-`i2c_detect` tool, because both need them. On a real robot (`app=base`, wheels not simulated — override
+tool's `i2c` command, because both need them. On a real robot (base, wheels not simulated — override
 with the `i2c_scan` env key) `setup()` probes the bus, prints every address that answered, and hands
 the detected driver names to the sensor factories.
 
@@ -255,7 +266,7 @@ Detection wins over the configured name, and that is deliberate: the YAML is a c
 hardware and the bus is the hardware. Trusting a wrong claim produces the worst failure this firmware
 has — `imu->init()` returns false, `setup()` enters the fatal `flashLED(3)` loop, the board never
 reaches micro-ROS, and the Cockpit sees a board that will not connect and nothing saying why — while
-the `i2c_detect` application, two flash pages away in the same image, could have read the right
+the tool's `i2c` scan, in the same image, could have read the right
 answer in 30 ms. Every override is printed and syslogged, so a config that disagrees with the bus is
 visible rather than silently routed around. A chip this image has no driver for (a BNO055, say) gets
 an empty `driver` field rather than a plausible substitute, and the configured name is kept.
@@ -405,7 +416,8 @@ SDA 40 / SCL 39 with INT on GPIO 41, dual-input drivers on all four channels as 
 6/7, 47/48, 11/12 and 1/2, battery ADC on GPIO 3 for a 2S pack, LED on 45 -- a strapping pin, which
 the inspector warns about and nothing else. The board's own 2WD firmware inverts channel 1; the
 config inverts nothing (every `invert: false`) -- a motor's direction is measured on its chassis with
-`test_motors` and set there, because the firmware inverts a motor only when its own flag says so.
+the tool's `motor` command and set there, because the firmware inverts a motor only when its own flag
+says so.
 
 ### A diagnostic must read the env, not the macro it was compiled with
 `initBoard()` opens the bus with `envInt("i2c_sda", SDA_PIN)` — the env partition first, the header
@@ -422,20 +434,11 @@ Scanning I2C bus (SDA:0, SCL:1, from the env)...
 The general rule: **when a tool's output disagrees with its own behaviour, suspect the macro/env
 split before the wiring.** The code that acts and the code that reports must read the same source.
 
-### `adc_calibrate` exists only where there is a DAC, and the fallback is nearly silent
-It is compiled in only where `ADC_LUT_SUPPORTED` is 1 — the classic ESP32 and the ESP32-S2, the only
-parts with a hardware DAC to sweep into an ADC pin. Everywhere else the name is not in `TOOLS[]` at
-all, `toolSelect()` falls back to `APP_BASE`, and the entire explanation is one line printed at boot:
-
-```text
-[app] 'adc_calibrate' is not an application this image carries - starting the robot firmware instead.
-```
-
-Nobody is attached to the port during a 4 KB env write, so what an operator actually saw was a
-successful write and a board reporting `app=base`. `flash_mcu.py` now warns at the point of choice,
-from the same list of parts as the firmware's guard. Either way the rule is the same one the whole
-env mechanism rests on: **`Board reports: … app=<name>` is the only proof the switch took** — a
-successful write is not.
+### `adc` exists only where there is a DAC
+The tool's battery ADC calibration is compiled in only where `ADC_LUT_SUPPORTED` is 1 — the classic
+ESP32 and the ESP32-S2, the only parts with a hardware DAC to sweep into an ADC pin. Everywhere else
+the tool has no `adc` command (`help` does not list it, and typing it is an unknown command), and the
+web UI does not offer it (`app-adc.js` `mcuHasDac`, the same list of parts as the firmware's guard).
 
 ### PlatformIO Inheritance Rules
 Every env MUST inherit from `firmware/common/platformio_base.ini` via `extra_configs` + `extends`.

@@ -1777,7 +1777,8 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
 
     Nav2 is already stopped. In order: room for full-power runs (test_acc_clearance all
     round, moving up to TEST_ACC_TRAVEL_M to find it) and that scan kept; test_acc over Wi-Fi or, on a
-    serial robot, on its tty (test_acc_run.py, which always ends with the stop and app=base); back to the kept
+    serial robot, on its tty (test_acc_run.py: the tool by its boot escape, `acc`, and always the stop and
+    `base`); back to the kept
     scan by the LiDAR (clearance.py home), which is where test_acc_phase() then sets
     the EKF back to its pose before test_acc (state["home"] says it got there); the plant identified and the PID
     gains and Nav2 limits derived from it (drivetrain_report.tune_from_test_acc) into
@@ -1834,11 +1835,11 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
             BATTERY["test_acc"] = battery_sag.test_acc_figures(open(transcript, encoding="utf-8").read())
         except OSError:
             pass
-        # app=base reboots the board: a new micro-ROS session, then the scan again. Data, not a
+        # `base` restarts the board: a new micro-ROS session, then the scan again. Data, not a
         # listing: only a message proves the board opened a session with the agent again.
         if not wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=args.distro,
                               require_message="header.stamp"):
-            return "test_acc: micro-ROS did not come back after app=base", None
+            return "test_acc: micro-ROS did not come back after base", None
         wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
         # The drive home is closed on /odom, and the EKF has dead-reckoned with no measurements
         # for the whole of test_acc (2026-10-15, a tracked robot: 1-3 m/s along a frozen heading, 258 m
@@ -3040,8 +3041,8 @@ def main():
             # measured on it and Nav2 restarted on what was measured (test_acc_phase).
             import mcu_env
             # A serial robot too (2026-10-15, user: "serial is more popular than wifi"): its
-            # results come on the micro-ROS tty while the agent there is paused (test_acc_run.py
-            # --serial), where a Wi-Fi robot sends them by syslog.
+            # tool is entered on the micro-ROS tty while the agent there is paused (test_acc_run.py
+            # --serial), where a Wi-Fi robot's is its TCP terminal.
             do_test_acc = args.test_acc and not args.map and (sim_mcu or is_real)
             if args.test_acc and not do_test_acc:
                 print("  ⚠️ --test-acc needs the Sim MCU or a real robot, mapping with SLAM "

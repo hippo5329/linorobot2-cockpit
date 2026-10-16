@@ -43,13 +43,13 @@ one of them a particular robot is here:
                 diag_tx  diag_baud   (a second UART that prints the loop's
                                       counters once a second; a bench tool,
                                       set with --set, never from the config)
-                tm_pct   (test_motors' drive as a percent of full PWM, 25 when
-                          absent: a first run turns the wheels slowly; set with
+                tm_pct   (the tool's motors/motor drive as a percent of full PWM, 25
+                          when absent: a first run turns the wheels slowly; set with
                           --set tm_pct=100 for full power, never from the config)
-                tm_only  tm_secs  (test_motors: only motor N, forward, until the env
-                          changes or tm_secs pass, 120 when absent; a person
+                tm_only  tm_secs  (the tool's `motor` alone: only motor N, forward,
+                          until stopped or tm_secs pass, 120 when absent; a person
                           names the wheel that turns. Bench keys, --set only)
-                ta_ms    (test_acc: each run phase in ms, 300-1000, 1000 when
+                ta_ms    (the tool's acc: each run phase in ms, 300-1000, 1000 when
                           absent; the closed-loop step scales with it. A faster
                           robot covers less floor. --set only)
 
@@ -1394,90 +1394,14 @@ def hardware_env(params: dict) -> dict:
 SIM_SWITCHES = ("sim_wheel", "sim_ld19", "sim_sonar", "sim_battery", "sim_env")
 
 
-# Diagnostic applications that exercise real hardware, and the env key that says
-# the hardware they exercise is simulated (user, 2026-10-04: "sim mode devices
-# should not run the tools ... only real robot can run them", per tool, by what it
-# tests). A simulated subsystem has nothing for the tool to measure: test_sensors
-# on a simulated IMU printed uninitialised floats -- ACC Y / GYR Z of 90-180
-# digits -- and claimed "[+] IMU initialized successfully" on a board with no IMU.
-# i2c_detect is judged apart (tool_refusal): by the config assigning I2C pins, not by
-# a simulated part. The firmware applies the same rules (firmware/src/tools/tools.cpp):
-# legacyRefusal() boots base for a refused app name, simulatedFor() refuses the command.
-REAL_ONLY_TOOLS = {
-    "test_sensors":  ("imu", ("sim", "none"), "the IMU"),
-    "test_motors":   ("sim_wheel", "1", "the wheels"),
-    "test_acc":      ("sim_wheel", "1", "the wheels"),
-    "adc_calibrate": ("sim_battery", "1", "the battery"),
-}
-
-
-def _pin_set(value) -> bool:
-    try:
-        return int(value) >= 0
-    except (TypeError, ValueError):
-        return False
-
-
-def tool_refusal(env: dict):
-    """Why this env's `app` may not run, or None. The tools above are judged by what
-    they test being real, and i2c_detect by the robot having an I2C bus at all."""
-    app = str(env.get("app", "base") or "base")
-    if app == "i2c_detect":
-        # On a real robot by default, unless its config assigns no I2C pins (user,
-        # 2026-10-07): the scan would probe a bus nobody wired, on whatever pins the
-        # board's Wire happens to default to. A bus fixed in hardware is named instead
-        # of numbered (`i2c_bus`, from pins.i2c.bus: the UNO Q's Qwiic i2c4), and counts.
-        # A bare module has neither: it runs in simulation mode first, and applying the
-        # robot's reference design is what brings its I2C (and motor) pins.
-        if (_pin_set(env.get("i2c_sda")) and _pin_set(env.get("i2c_scl"))) or env.get("i2c_bus"):
-            return None
-        return ("'i2c_detect' scans the robot's I2C bus, and this robot's config assigns no "
-                "I2C pins (base_controller.pins.i2c sda/scl). A bare module has none: apply "
-                "the robot's reference design, or set the pins in Config Studio (Pin Matrix), "
-                "and try again.")
-    rule = REAL_ONLY_TOOLS.get(app)
-    if not rule:
-        return None
-    key, simulated, what = rule
-    if app == "test_sensors":
-        return _sensors_refusal(env)
-    value = str(env.get(key, "")).strip().lower()
-    if value == "none":
-        return (f"'{app}' tests {what}, and this robot has none ({key}=none). "
-                f"There is nothing for it to measure.")
-    if value in ((simulated,) if isinstance(simulated, str) else simulated):
-        return (f"'{app}' tests {what}, and this robot's config simulates {what} "
-                f"({key}={value}). The tools run on a real robot only: describe the "
-                f"real hardware in the config (or flash with --sensors real) and try again.")
-    return None
-
-
-def _sensors_refusal(env: dict):
-    """test_sensors reads every I2C sensor -- IMU, magnetometer, barometer -- so it may
-    run when ANY of them is real. Judging it by the IMU alone refused an ESP32-S3 whose
-    one real part is its BMP280 (imu none): the tool that exists to read it."""
-    def real(name):
-        return str(env.get(name, "")).strip().lower() not in ("", "sim", "none")
-    env_real = str(env.get("pub_env", "0")) == "1" and str(env.get("sim_env", "0")) != "1"
-    if real("imu") or real("mag") or env_real:
-        return None
-    imu = str(env.get("imu", "")).strip().lower()
-    if imu == "sim":
-        return ("'test_sensors' tests the robot's sensors, and this robot's config simulates "
-                "them (imu=sim, no real magnetometer or barometer). The tools run on a real "
-                "robot only: describe the real hardware in the config (or flash with "
-                "--sensors real) and try again.")
-    return ("'test_sensors' tests the robot's sensors, and this robot has none (imu=none, no "
-            "magnetometer, no barometer). There is nothing for it to measure.")
-
-
 # Sim and real cannot mix; the result of a mix is useless. The simulated wheels drive a pose
 # the real IMU never feels; a simulated LiDAR scans a virtual room the robot is not
 # in; a simulated IMU on real wheels reports a rotation nothing measured -- so the
 # odometry, the EKF and SLAM are each told about a different robot, and it does not
-# run. A bare module simulates everything, a real robot nothing. The diagnostic tools
-# are the exception by design: each tests one real subsystem on a half-built robot,
-# which is how a robot gets built (REAL_ONLY_TOOLS, tool_refusal).
+# run. A bare module simulates everything, a real robot nothing. Every env boots base
+# (the tool is opened by the boot escape), so every env is judged; a half-built robot
+# is flashed in Real mode, and the tool (real parts only, firmware tools.cpp) reports the
+# parts not wired yet as missing.
 MIXED_SIM_TAG = "MIXED SIMULATION REFUSED"
 RAW_SCAN_UART_TAG = "RAW_SCAN OVER UART REFUSED"
 MIXED_SIM_EXIT = 3   # flash_mcu stops on it rather than flashing without an env
@@ -1635,21 +1559,20 @@ def main():
         for item in a.set:
             key, _, value = item.partition("=")
             env[key] = value
-        # The robot firmware only: the diagnostic tools test one real part of a
-        # half-built robot by design (tool_refusal judges them).
-        if str(env.get("app", "base") or "base") == "base":
-            import yaml
-            with open(a.params) as fh:
-                whole = yaml.safe_load(fh) or {}
-            why = mixed_simulation(whole, a.sensors, a.params)
-            if why:
-                print(f"❌ [{MIXED_SIM_TAG}] {why}")
-                sys.exit(MIXED_SIM_EXIT)
-            import depth_camera
-            why = depth_camera.raw_scan_over_uart(whole.get("base_controller") or {})
-            if why:
-                print(f"❌ [{RAW_SCAN_UART_TAG}] {why}")
-                sys.exit(MIXED_SIM_EXIT)
+        # Every env boots the robot firmware (user, 2026-10-16: only base, the tool by its
+        # escape), whatever `app` a --set wrote, so every env is judged.
+        import yaml
+        with open(a.params) as fh:
+            whole = yaml.safe_load(fh) or {}
+        why = mixed_simulation(whole, a.sensors, a.params)
+        if why:
+            print(f"❌ [{MIXED_SIM_TAG}] {why}")
+            sys.exit(MIXED_SIM_EXIT)
+        import depth_camera
+        why = depth_camera.raw_scan_over_uart(whole.get("base_controller") or {})
+        if why:
+            print(f"❌ [{RAW_SCAN_UART_TAG}] {why}")
+            sys.exit(MIXED_SIM_EXIT)
         with open(a.out, "wb") as fh:
             fh.write(encode(env))
         offset = env_offset(a.board) if a.board else ENV_OFFSET

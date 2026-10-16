@@ -43,7 +43,7 @@ The verdict combines them:
   no_firmware   BOOTSEL / nothing enumerated -- the board has no application.
   up_to_date    the board is running this tree's build and the env matches.
   env_stale     right image, but the config implies a different env block: a
-                4 KB write, no reflash (this is the `switch tool` / `edit config`
+                4 KB write, no reflash (this is the `edit config`
                 case, and it is the only write this project makes without asking).
   stale         the board is running a different build (revision or ROS 2 distro).
   unknown       an application is running and did not identify itself -- treated

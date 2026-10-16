@@ -1,4 +1,4 @@
-"""Two diagnostics that reported the wrong thing, found by sweeping every app.
+"""Two diagnostics that reported the wrong thing, found by sweeping every tool.
 
 Both are the same class of fault as the rest of the env work: the code that
 *acts* reads the env partition, while the code that *reports* read the compile
@@ -12,10 +12,9 @@ Measured on a real Pico 2 with an MPU6050 on SDA 0 / SCL 1 (2026-09-21):
     `envInt("i2c_sda", SDA_PIN)` while the banner printed `SDA_PIN` alone. On a
     release image, built from a generated bare config, that banner is wrong for
     every user of the unified image.
-  * `--app adc_calibrate` was accepted and reported success on a part with no
-    DAC. The firmware's fallback to `base` is correct and deliberate, but its
-    only trace is a boot line on a serial port nobody is attached to during a
-    4 KB env write.
+  * the battery ADC calibration was offered on a part with no DAC. It is the
+    tool's `adc` command now, compiled in only where ADC_LUT_SUPPORTED holds, and
+    the web UI offers it on the same parts only (app-adc.js mcuHasDac).
 """
 import os
 import re
@@ -64,39 +63,23 @@ def test_i2c_scan_macros_always_defined():
     )
 
 
-def test_dac_env_list_matches_the_firmware_condition():
-    """One fact, stated once: the flasher's list and ADC_LUT_SUPPORTED agree."""
-    import flash_mcu
-
+def test_the_web_uis_dac_list_matches_the_firmware_condition():
+    """One fact, stated twice: the panel's list and ADC_LUT_SUPPORTED agree."""
     gate = read(ADC_LUT_H)
     supported = gate.split("#define ADC_LUT_SUPPORTED 1", 1)[0]
     assert "CONFIG_IDF_TARGET_ESP32S2" in supported
-    assert "esp32s2" in flash_mcu._DAC_ENVS and "esp32" in flash_mcu._DAC_ENVS
+    js = read(os.path.join(REPO_ROOT, "web", "frontend", "app-adc.js"))
+    fn = js[js.index("function mcuHasDac(env)"):]
+    fn = fn[:fn.index("\n}")]
+    assert '"esp32"' in fn and '"esp32s2"' in fn
     for absent in ("esp32s3", "pico", "picow", "pico2", "pico2w"):
-        assert absent not in flash_mcu._DAC_ENVS, (
-            f"{absent} has no hardware DAC; adc_calibrate is not compiled in for it"
-        )
+        assert f'"{absent}"' not in fn, f"{absent} has no hardware DAC"
 
 
-def test_warn_fires_only_for_adc_calibrate_on_a_dacless_board(capsys):
-    import flash_mcu
-
-    flash_mcu.warn_if_app_unsupported("adc_calibrate", "pico2")
-    warned = capsys.readouterr().out
-    assert "hardware DAC" in warned and "boot `base`" in warned
-
-    flash_mcu.warn_if_app_unsupported("adc_calibrate", "esp32")
-    assert capsys.readouterr().out == "", "the classic ESP32 has a DAC; do not warn"
-
-    for app in ("base", "test_sensors", "i2c_detect", "test_motors"):
-        flash_mcu.warn_if_app_unsupported(app, "pico2")
-        assert capsys.readouterr().out == "", f"{app} runs on every board"
-
-
-def test_adc_calibrate_is_gated_in_the_tool_table():
-    """The firmware side of the same fact, so the two cannot drift apart."""
+def test_adc_is_gated_in_the_tool():
+    """The firmware side of the same fact: no `adc` command where no DAC is."""
     src = read(TOOLS_CPP)
-    entry = re.search(r"#if ADC_LUT_SUPPORTED(.*?)#endif", src, re.S)
-    assert entry and "adc_calibrate" in entry.group(1), (
-        "adc_calibrate must stay inside the ADC_LUT_SUPPORTED guard in TOOLS[]"
-    )
+    blocks = re.findall(r"#if ADC_LUT_SUPPORTED(.*?)#endif", src, re.S)
+    assert any('!strcmp(cmd, "adc")' in b for b in blocks), "the `adc` command left its guard"
+    assert any("adc_calibrate_run" in b for b in blocks)
+    assert "adc_calibrate" not in src.split("#if ADC_LUT_SUPPORTED", 1)[0].split("extern \"C\"", 1)[0]

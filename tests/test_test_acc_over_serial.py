@@ -1,53 +1,69 @@
-"""test_acc on a serial robot (test_acc_run.py --serial, robot_bringup.py acc).
+"""test_acc on a robot (test_acc_run.py, robot_bringup.py acc, the 1-Click's --test-acc).
 
-The bring-up card's acc step refused every serial robot: a Wi-Fi board sends test_acc's
-results by syslog, and nothing read them anywhere else. The UNO Q's STM32 has no radio, but
-while a tool runs it prints on its micro-ROS tty; the agent there is paused, the tty read,
-and app=base -- which restarts the board -- is the stop.
+The board boots base only (user, 2026-10-16): test_acc is the tool's `acc`, and the tool is
+entered by its boot escape, through scripts/lino_tool.py, as the web UI's Hardware Tests tab
+enters it -- never by an env write. On a serial robot (the UNO Q, an ESP32 or an RP2 on USB)
+the agent on the tty is paused, the board restarted and `tool` typed into its window, `acc`
+sent, its lines read, and `stop` then `base` end it whatever happened. On Wi-Fi, "lino-tool"
+and the TCP terminal, with "lino-stop" in the cleanup too.
 """
 import os
 import sys
 
+import pytest
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 
+import lino_tool  # noqa: E402
 import test_acc_run as tar  # noqa: E402
 
 BRINGUP = open(os.path.join(REPO_ROOT, "scripts", "robot_bringup.py")).read()
+SOURCE = open(os.path.join(REPO_ROOT, "scripts", "test_acc_run.py")).read()
 
-RUN = [b"[fw] linorobot2_hardware app=test_acc\r\nIDENT gains kp=0.6\r\nIDENT pl",
+RUN = [b"ok: acc (running)\r\nIDENT gains kp=0.6\r\nIDENT pl",
        b"ant wheel=1 steady_rpm=168.3\r\n", b"MAX VEL   0.21   0.01 m/s    0.04 rad/s\r\n",
-       b"[test_acc] done -- write app=base to leave\r\n"]
+       b"[test_acc] done -- 'base' to leave the tool\r\ndone: acc\r\ntool> "]
 
 
 class FakeLink:
-    def __init__(self, chunks, boom=False):
-        self.chunks, self.boom, self.s, self.reopened = list(chunks), boom, None, 0
-        self.written = []
+    """A board in the tool, as lino_tool's SerialLink / TcpLink show it."""
+
+    def __init__(self, chunks=(), calls=None, boom=False, answers_base=True, reboots=True):
+        self.chunks, self.boom = list(chunks), boom
+        self.calls = calls if calls is not None else []
+        self.answers_base, self.reboots = answers_base, reboots
+        self.s, self.reopened, self.closed = object(), 0, False
+        self.out = []
 
     def write(self, data):
-        self.written.append(data)
-
-    def open(self, timeout=15.0):
-        self.s = object()
-        return True
+        self.calls.append(("write", data))
+        if data == b"acc\r\n":
+            self.out += self.chunks
+        elif data == b"base\r\n" and self.answers_base:
+            self.out.append(b"ok: base (restarting into base)\r\n[tool] restarting into base\r\n")
+        elif data == tar.CONSOLE_STOP:
+            self.out.append(b"ok: stop (idle, motors off)\r\ntool> ")
 
     def read(self):
-        if self.boom and not self.chunks:
+        if self.boom and ("write", b"acc\r\n") in self.calls and not self.out:
             raise KeyboardInterrupt
-        return self.chunks.pop(0) if self.chunks else b""
+        return self.out.pop(0) if self.out else b""
+
+    def keepalive(self):
+        self.kept = getattr(self, "kept", None) or len(self.calls) + 1   # the first one's place
+
+
+    def reboot(self, release=True):
+        self.calls.append(("reboot", release))
+        return self.reboots
 
     def _reopen(self):
         self.reopened += 1
         return True
 
-
-def _source(chunks, boom=False):
-    src = tar.SerialSource.__new__(tar.SerialSource)
-    src.link, src.buf, src.where = FakeLink(chunks, boom), b"", "fake"
-    src.heard = tar.time.time()
-    src.link.open()
-    return src
+    def close(self):
+        pass
 
 
 def _args(**kw):
@@ -58,56 +74,137 @@ def _args(**kw):
     return argparse.Namespace(**d)
 
 
+def _wire(monkeypatch, link, calls, holders=(4242,), paused=(4242,), agents=(), enters=True):
+    import flash_mcu
+    seen = {}
+
+    def serial_link(port, baud, env):
+        seen.update(port=port, baud=baud, env=env)
+        return link
+    monkeypatch.setattr(lino_tool, "SerialLink", serial_link)
+    monkeypatch.setattr(lino_tool, "catch_window",
+                        lambda lk, seconds: calls.append("catch") or enters)
+    monkeypatch.setattr(tar, "pause_holders", lambda port: calls.append("pause") or list(paused))
+    monkeypatch.setattr(flash_mcu, "_holders_of", lambda port: list(holders))
+    monkeypatch.setattr(tar, "agents_on", lambda port: list(agents))
+    monkeypatch.setattr(tar, "resume", lambda pids: calls.append(("resume", tuple(pids))))
+    return seen
+
+
+def _flow(calls):
+    """The calls, with the writes named: acc, stop, base."""
+    names = {b"acc\r\n": "acc", tar.CONSOLE_STOP: "stop", b"base\r\n": "base"}
+    out = []
+    for c in calls:
+        if isinstance(c, tuple) and c[0] == "write":
+            out.append(names.get(c[1], c[1]))
+        else:
+            out.append(c)
+    return out
+
+
 def test_console_lines_are_split_across_reads():
-    got = _source(RUN).lines(0.3)
+    link = FakeLink()
+    link.out = list(RUN)
+    got = tar.ConsoleSource(link, "fake").lines(0.3)
     assert "IDENT plant wheel=1 steady_rpm=168.3" in got
     assert tar.ended(got).startswith("[test_acc] done")
 
 
 def test_a_silent_tty_is_reopened():
-    src = _source([])
+    src = tar.ConsoleSource(FakeLink(), "fake")
     src.heard -= tar.SERIAL_QUIET_S + 1
     src.lines(0.1)
     assert src.link.reopened == 1
 
 
-def _wire(monkeypatch, src, calls, holders=(4242,), paused=(4242,), agents=()):
-    import flash_mcu
-    monkeypatch.setattr(tar, "SerialSource", lambda port, baud, env: src)
-    monkeypatch.setattr(tar, "pause_holders", lambda port: calls.append("pause") or list(paused))
-    monkeypatch.setattr(flash_mcu, "_holders_of", lambda port: list(holders))
-    monkeypatch.setattr(tar, "agents_on", lambda port: list(agents))
-    monkeypatch.setattr(tar, "resume", lambda pids: calls.append(("resume", tuple(pids))))
-    monkeypatch.setattr(tar, "write_app", lambda a, app: calls.append(app) or True)
-    src.open = lambda timeout=15.0: True
-
-
-def test_the_serial_run_pauses_the_agent_reads_and_ends_on_base(monkeypatch, tmp_path):
+def test_the_serial_run_enters_by_the_escape_runs_acc_and_ends_on_base(monkeypatch, tmp_path):
     calls = []
-    _wire(monkeypatch, _source(RUN), calls)
+    _wire(monkeypatch, FakeLink(RUN, calls), calls)
     rc = tar.main(["--params", "c.yaml", "--env", "unoq", "--port", "/dev/ttyHS1", "--baud", "4000000",
                    "--controller", "unoq", "--serial", "--timeout", "5",
                    "--transcript", str(tmp_path / "t.txt")])
     assert rc == 0
-    assert calls == ["pause", "test_acc", "base", ("resume", (4242,))]
+    # the agent paused first, and the reboot leaves it alone (a SIGINT would kill it on SIGCONT)
+    assert _flow(calls) == ["pause", ("reboot", False), "catch", "acc", "stop", "base",
+                            ("resume", (4242,))]
     assert "IDENT plant wheel=1" in (tmp_path / "t.txt").read_text()
 
 
-def test_base_is_written_and_the_agent_let_go_whatever_happens(monkeypatch):
+def test_a_keep_alive_goes_ahead_of_acc_so_the_tools_deadman_is_armed(monkeypatch):
     calls = []
-    _wire(monkeypatch, _source([], boom=True), calls)
-    try:
+    link = FakeLink(RUN, calls)
+    _wire(monkeypatch, link, calls)
+    assert tar.run_serial(_args()) == 0
+    # the first keep-alive went out with N calls made, and `acc` is a later call
+    assert calls.index(("write", b"acc\r\n")) >= link.kept - 1
+
+
+def test_it_never_writes_the_env_and_enters_through_lino_tool():
+    # Only base boots (user, 2026-10-16): no app= other than base, and no env write at all.
+    assert "--env-only" not in SOURCE and "subprocess" not in SOURCE
+    assert '"--app"' not in SOURCE and "write_app" not in SOURCE
+    import re
+    assert not re.search(r"app=(?!base)\w", SOURCE)
+    assert "lino_tool.SerialLink(" in SOURCE and "lino_tool.catch_window(" in SOURCE
+    assert "lino_tool.request_tool_udp(" in SOURCE and "lino_tool.TcpLink(" in SOURCE
+
+
+def test_stop_and_base_are_sent_and_the_agent_let_go_whatever_happens(monkeypatch):
+    calls = []
+    _wire(monkeypatch, FakeLink([], calls, boom=True), calls)
+    with pytest.raises(KeyboardInterrupt):
         tar.run_serial(_args())
-    except KeyboardInterrupt:
-        pass
-    assert calls == ["pause", "test_acc", "base", ("resume", (4242,))]
+    assert _flow(calls)[-3:] == ["stop", "base", ("resume", (4242,))]
 
 
 def test_no_end_line_fails_after_base(monkeypatch):
     calls = []
-    _wire(monkeypatch, _source(RUN[:2]), calls)
+    _wire(monkeypatch, FakeLink(RUN[:2], calls), calls)
     assert tar.run_serial(_args(timeout=0.5)) == 1
-    assert calls[-2:] == ["base", ("resume", (4242,))]
+    assert _flow(calls)[-2:] == ["base", ("resume", (4242,))]
+
+
+def test_a_refused_acc_ends_the_run_and_still_leaves(monkeypatch, capsys):
+    calls = []
+    refused = [b"fail: acc -- busy: sensors is running -- stop first\r\n"]
+    _wire(monkeypatch, FakeLink(refused, calls), calls)
+    assert tar.run_serial(_args()) == 1
+    assert "TEST_ACC_FAILED: fail: acc -- busy" in capsys.readouterr().out
+    assert _flow(calls)[-3:] == ["stop", "base", ("resume", (4242,))]
+
+
+def test_a_board_that_does_not_enter_the_tool_moves_nothing(monkeypatch, capsys):
+    calls = []
+    _wire(monkeypatch, FakeLink(RUN, calls), calls, enters=False)
+    assert tar.run_serial(_args()) == 1
+    flow = _flow(calls)
+    assert "acc" not in flow and "base" not in flow       # it booted base: nothing to leave
+    assert flow.count("catch") == 2                       # once more on a fresh open
+    assert flow[-1] == ("resume", (4242,))
+    out = capsys.readouterr().out
+    assert "did not enter the tool by its boot escape" in out and "-- nothing moved" in out
+
+
+def test_a_tool_that_does_not_answer_base_is_reset_into_base(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tar, "LEAVE_S", 0.2)
+    _wire(monkeypatch, FakeLink(RUN, calls, answers_base=False), calls)
+    assert tar.run_serial(_args()) == 0
+    flow = _flow(calls)
+    assert flow[flow.index("base") + 1] == ("reboot", False)
+
+
+def test_a_board_left_in_the_tool_fails_the_run(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(tar, "LEAVE_S", 0.2)
+    link = FakeLink(RUN, calls, answers_base=False)
+    # the entry's reboot works, the cleanup's reset does not
+    link.reboot = lambda release=True: calls.append(("reboot", release)) or len(
+        [c for c in calls if isinstance(c, tuple) and c[0] == "reboot"]) == 1
+    _wire(monkeypatch, link, calls)
+    assert tar.run_serial(_args()) == 1
+    assert "the board did not restart into base" in capsys.readouterr().out
 
 
 def test_wifi_still_needs_an_ip():
@@ -116,32 +213,42 @@ def test_wifi_still_needs_an_ip():
         tar.main(["--params", "c", "--env", "esp32", "--port", "p", "--baud", "1", "--controller", "c"])
 
 
+def test_the_wifi_run_opens_the_tool_terminal_and_stops_with_lino_stop(monkeypatch, capsys):
+    calls = []
+    link = FakeLink(RUN, calls)
+    monkeypatch.setattr(tar, "_ota", lambda a: ("pw", {"ping_port": "3233", "term_port": "2323"}))
+    monkeypatch.setattr(lino_tool, "request_tool_udp",
+                        lambda ip, port, password: calls.append(("lino-tool", ip, port)) or True)
+
+    class Tcp:
+        def __new__(cls, ip, port, password):
+            calls.append(("terminal", ip, port))
+            link.open = lambda timeout=30.0: True
+            link.port = port
+            return link
+    monkeypatch.setattr(lino_tool, "TcpLink", Tcp)
+    monkeypatch.setattr(tar, "stop_board", lambda ip: calls.append(("lino-stop", ip)) or True)
+    assert tar.run_wifi(_args(serial=False, ip="10.9.9.9", env="esp32")) == 0
+    assert _flow(calls) == [("lino-tool", "10.9.9.9", 3233), ("terminal", "10.9.9.9", 2323), "acc",
+                            ("lino-stop", "10.9.9.9"), "stop", "base"]
+
+
+def test_a_wifi_board_without_an_ota_password_is_not_touched(monkeypatch, capsys):
+    monkeypatch.setattr(tar, "_ota", lambda a: ("", {}))
+    monkeypatch.setattr(lino_tool, "request_tool_udp", lambda *a: pytest.fail("touched the board"))
+    assert tar.run_wifi(_args(serial=False, ip="10.9.9.9", env="esp32")) == 1
+    assert "nothing moved" in capsys.readouterr().out
+
+
 def test_the_acc_step_no_longer_refuses_a_serial_robot():
     assert "this robot is on serial" not in BRINGUP
     assert '(["--serial", "--console-baud", str(baud)] if on_serial' in BRINGUP
     assert "found = {} if on_serial else ocp.wireless_board(" in BRINGUP
 
 
-def test_an_esp32_or_rp2_reader_lets_go_of_the_tty_for_each_env_write(monkeypatch):
-    # esptool and an RP2's 1200-baud touch write through the console's own tty; the UNO Q's
-    # env goes over SWD, so only there does the reader keep it open
-    calls, src = [], _source(RUN)
-    _wire(monkeypatch, src, calls)
-    src.open = lambda timeout=15.0: calls.append("open") or True
-    src.close = lambda: calls.append("close")
-    assert tar.run_serial(_args(env="esp32", port="/dev/ttyUSB0", baud=921600, console_baud=1500000)) == 0
-    i = calls.index("test_acc")
-    assert calls[:i] == ["pause", "open", "close"]
-    assert calls[i + 1] == "open"
-    j = calls.index("base")
-    assert calls[j - 1] == "close" and calls[-1] == ("resume", (4242,))
-    assert not tar.env_over_tty("unoq") and tar.env_over_tty("esp32") and tar.env_over_tty("pico2w")
-
-
 def test_the_console_is_read_at_the_micro_ros_rate(monkeypatch):
-    seen, src = {}, _source(RUN)
-    _wire(monkeypatch, src, [], holders=(), paused=())
-    monkeypatch.setattr(tar, "SerialSource", lambda port, baud, env: seen.update(baud=baud) or src)
+    calls = []
+    seen = _wire(monkeypatch, FakeLink(RUN, calls), calls, holders=(), paused=())
     tar.run_serial(_args(env="unoq", baud=921600, console_baud=4000000))
     assert seen["baud"] == 4000000
 
@@ -171,7 +278,7 @@ def test_micro_ros_is_proved_back_by_data_after_each_env_write():
     # a 5 s `ros2 topic info` timed out on every try on a slow robot computer under SLAM and
     # Nav2, and a board that was back read "did not come back" for 120 s
     import re as _re
-    for msg in ("after app=base", "after the tuned env"):
+    for msg in ("after base", "after the tuned env"):
         i = OCP.index(f'"test_acc: micro-ROS did not come back {msg}"')
         assert 'require_message="header.stamp"' in OCP[i - 300:i], msg
     assert "timeout 15 ros2 topic info --no-daemon {topic_name}" in OCP
@@ -180,37 +287,27 @@ def test_micro_ros_is_proved_back_by_data_after_each_env_write():
 
 # ---- the cleanup always runs, the tool stops at once, and a run never starts unpaused ----
 
-def test_the_tool_is_stopped_on_its_console_before_app_base(monkeypatch):
-    calls, src = [], _source(RUN)
-    _wire(monkeypatch, src, calls)
-    link = src.link
-    link.write = lambda data: calls.append(("console", data))
-    assert tar.run_serial(_args()) == 0
-    i = calls.index(("console", tar.CONSOLE_STOP))
-    assert calls.index("test_acc") < i < calls.index("base")
-
-
-def test_an_agent_that_could_not_be_paused_refuses_before_anything_is_written(monkeypatch, capsys):
+def test_an_agent_that_could_not_be_paused_refuses_before_the_board_is_touched(monkeypatch, capsys):
     calls = []
-    _wire(monkeypatch, _source(RUN), calls, holders=(4242,), paused=())
+    _wire(monkeypatch, FakeLink(RUN, calls), calls, holders=(4242,), paused=())
     assert tar.run_serial(_args()) == 1
-    assert "test_acc" not in calls and "base" not in calls
+    assert not any(isinstance(c, tuple) and c[0] in ("reboot", "write") for c in calls)
     out = capsys.readouterr().out
     assert "TEST_ACC_REFUSED: pid 4242 holds /dev/ttyHS1 and could not be paused" in out
 
 
 def test_an_agent_this_user_cannot_see_refuses_too(monkeypatch, capsys):
     calls = []
-    _wire(monkeypatch, _source(RUN), calls, holders=(), paused=(), agents=(777,))
+    _wire(monkeypatch, FakeLink(RUN, calls), calls, holders=(), paused=(), agents=(777,))
     assert tar.run_serial(_args()) == 1
-    assert "test_acc" not in calls
+    assert "acc" not in _flow(calls)
     assert "micro-ROS agent (pid 777) runs on /dev/ttyHS1" in capsys.readouterr().out
 
 
 def test_no_agent_at_all_runs(monkeypatch):
     calls = []
-    _wire(monkeypatch, _source(RUN), calls, holders=(), paused=(), agents=())
-    assert tar.run_serial(_args()) == 0 and "test_acc" in calls
+    _wire(monkeypatch, FakeLink(RUN, calls), calls, holders=(), paused=(), agents=())
+    assert tar.run_serial(_args()) == 0 and "acc" in _flow(calls)
 
 
 def test_an_agent_is_counted_only_when_it_names_this_tty(monkeypatch, tmp_path):
@@ -245,40 +342,36 @@ def _with_handlers(fn):
             signal.signal(s, h)
 
 
-def test_sigterm_mid_run_still_stops_writes_base_and_lets_the_agent_go(monkeypatch, capsys):
+def test_sigterm_mid_run_still_stops_sends_base_and_lets_the_agent_go(monkeypatch, capsys):
     import signal
     calls = []
 
     class Killed(FakeLink):
         def read(self):
-            os.kill(os.getpid(), signal.SIGTERM)       # the 1-Click's timeout, the UI's cancel
-            return b""
-    src = _source([])
-    src.link = Killed([])
-    src.link.open()
-    src.link.write = lambda data: calls.append(("console", data))
-    _wire(monkeypatch, src, calls)
+            if ("write", b"acc\r\n") in self.calls and not self.out:
+                os.kill(os.getpid(), signal.SIGTERM)    # the 1-Click's timeout, the UI's cancel
+            return super().read()
+    _wire(monkeypatch, Killed([b"ok: acc (running)\r\n"], calls), calls)
     argv = ["--params", "c.yaml", "--env", "unoq", "--port", "/dev/ttyHS1", "--baud", "4000000",
             "--controller", "unoq", "--serial", "--timeout", "30"]
     assert _with_handlers(lambda: tar.main(argv)) == 1
-    assert calls[:2] == ["pause", "test_acc"]
-    assert ("console", tar.CONSOLE_STOP) in calls
-    assert calls[-2:] == ["base", ("resume", (4242,))]
+    flow = _flow(calls)
+    assert flow[:4] == ["pause", ("reboot", False), "catch", "acc"]
+    assert flow[-3:] == ["stop", "base", ("resume", (4242,))]
     assert "TEST_ACC_FAILED: interrupted" in capsys.readouterr().out
 
 
 def test_a_second_signal_waits_for_the_cleanup(monkeypatch):
     import signal
     calls = []
-    _wire(monkeypatch, _source([], boom=True), calls)
 
-    def write_app(a, app):
-        calls.append(app)
-        if app == "base":
-            os.kill(os.getpid(), signal.SIGTERM)      # again, while app=base is being written
-            calls.append("base done")
-        return True
-    monkeypatch.setattr(tar, "write_app", write_app)
+    class Again(FakeLink):
+        def write(self, data):
+            super().write(data)
+            if data == b"base\r\n":
+                os.kill(os.getpid(), signal.SIGTERM)    # again, while base is being sent
+                self.calls.append("base done")
+    _wire(monkeypatch, Again([], calls, boom=True), calls)
 
     def run():
         tar.install_signal_handlers()
@@ -287,7 +380,7 @@ def test_a_second_signal_waits_for_the_cleanup(monkeypatch):
         except KeyboardInterrupt:
             pass
     _with_handlers(run)
-    assert calls[-3:] == ["base", "base done", ("resume", (4242,))]
+    assert _flow(calls)[-3:] == ["base", "base done", ("resume", (4242,))]
 
 
 def test_resume_lets_each_pid_go_once(monkeypatch):

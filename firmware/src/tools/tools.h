@@ -5,16 +5,15 @@
 // is already assembled is the expensive step -- and the reason a user reaches
 // for a diagnostic at all is usually that the robot is misbehaving in place.
 //
-// They are one image now, chosen by the `app` key in the env partition, so
-// moving between the robot firmware and a sensor scan is a 4 KB env rewrite
-// (or, on ESP32, no reflash at all) rather than a rebuild.
+// They are one image now, and one application (2026-10-12, user: "merge tools into
+// one, use terminal command to drive i2c, sensors, motors, acc ... so that we have only
+// two modes, base and tool"): the tool is a command shell on the console -- USB serial,
+// or on a Wi-Fi robot a TCP terminal -- and each former tool is one of its commands.
 //
-// And one application (2026-10-12, user: "merge tools into one, use terminal command
-// to drive i2c, sensors, motors, acc ... so that we have only two modes, base and
-// tool"): `app=tool` boots a command shell on the console -- USB serial, or on a
-// Wi-Fi robot a TCP terminal -- and each former tool is one of its commands. The old
-// app names still boot the tool, running their command at once (`app=test_acc` is
-// `app=tool` + `tool_run=acc`), so a host that writes one keeps working.
+// Only base boots (user, 2026-10-16: "keep only base with tool escape, remove all tools
+// mode ... we will use tool escape to do all these tasks"). The tool is reached through
+// base's escape alone (toolEscape below, or toolRestart's flag): the env's `app` key
+// selects nothing, so no env write can leave a robot out of micro-ROS at its next boot.
 //
 // Two rules keep this from costing the robot firmware anything:
 //
@@ -42,15 +41,15 @@
 #include <stdint.h>
 
 enum AppMode {
-    APP_BASE = 0,       // the robot firmware; the default when `app` is unset
+    APP_BASE = 0,       // the robot firmware: every boot but a restart into the tool
     APP_TOOL,           // the command shell (tool_shell.cpp)
 };
 
-// Reads the `app` env key: `tool` (or a former tool's name) boots the shell, anything
-// else the robot firmware, so a typo boots the robot rather than nothing.
+// The boot's mode: the tool after a restart into it (toolRestart(true)), else base. An
+// `app` env key other than base is said once on the console and boots base.
 AppMode toolSelect(void);
 
-// Name of a mode, for the banner's `app=`.
+// Name of a mode, for the banner's `app=` (`tool` once the escape has opened it).
 const char *toolName(AppMode mode);
 
 // The boot's tool window (user, 2026-10-12: "only one mode, base boot wait for tool

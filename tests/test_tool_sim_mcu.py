@@ -2,8 +2,8 @@
 stdin/stdout and its terminal on a loopback TCP port.
 
 The other tool tests read the source. These run the shell -- the boot window, the parser,
-a person's `set` against a command's own arguments, the refusals, the stop, `base`, a former
-app name's fallback, the challenge login and the terminal's deadman -- because two of the
+a person's `set` against a command's own arguments, the refusals, the stop, `base`, an env
+`app` that names a tool booting base, the challenge login and the terminal's deadman -- because two of the
 2026-10-13 review's defects came from fixes that every source test still passed.
 
 They need the host build (scripts/host_firmware.py binary(): the robot image has it at
@@ -44,7 +44,7 @@ def _free_port() -> int:
 class SimMcu:
     """The host firmware with one env, its console read on a thread."""
 
-    def __init__(self, **env):
+    def __init__(self, next_boot=None, **env):
         import mcu_env
         e = host_firmware.env(GENDRV)
         e.update({k: str(v) for k, v in env.items()})
@@ -54,6 +54,8 @@ class SimMcu:
             fh.write(mcu_env.encode(e))
         penv = dict(os.environ, LINO_ENV_BIN=path)
         penv.pop("LINO_NEXT_BOOT", None)
+        if next_boot:
+            penv["LINO_NEXT_BOOT"] = next_boot     # a restart into the tool (tools.cpp)
         # Started as the backend starts it (host_firmware.shell_command): run bare, the
         # binary cannot load librclc and every test here saw an empty console.
         self.p = subprocess.Popen(["bash", "-c", host_firmware.shell_command(BINARY)],
@@ -166,7 +168,7 @@ def test_a_2wd_refuses_wheels_3_and_4(sim):
 def test_a_bare_cr_ends_a_line(sim):
     s = _in_tool(sim)
     s.send("status", end=b"\r")
-    s.wait("[tool] app=tool, idle")
+    s.wait("[tool] idle")
 
 
 def test_stop_stops_a_drive_and_says_why(sim):
@@ -178,18 +180,22 @@ def test_stop_stops_a_drive_and_says_why(sim):
     s.wait("stopped: motors 25 (you typed stop -- motors off)")
 
 
-def test_base_leaves_for_the_robot_even_when_the_env_boots_the_tool(sim):
-    s = sim(app="tool")
+def test_base_leaves_a_tool_entered_by_its_restart_flag(sim):
+    s = sim(next_boot="tool")
+    s.wait("[app] tool")
     s.wait("tool> ")
     s.send("base")
     s.wait("restarting into base")
     s.wait("[uros]", timeout=10)
 
 
-def test_a_refused_former_name_boots_base(sim):
-    s = sim(app="test_motors", sim_wheel=1)
-    s.wait("[app] 'test_motors' tests the wheels")
+@pytest.mark.parametrize("app", ["tool", "test_motors", "test_acc", "adc_calibrate"])
+def test_an_env_app_naming_a_tool_boots_base(sim, app):
+    # Only base boots (user, 2026-10-16): the tool is the escape's alone.
+    s = sim(app=app, sim_wheel=1)
+    s.wait(f"[app] '{app}' is not an application: this firmware boots base")
     s.wait("[uros]", timeout=8)
+    assert "[app] tool" not in s.text()
 
 
 def _login(port, password):

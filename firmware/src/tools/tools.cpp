@@ -28,27 +28,16 @@ void adc_calibrate_run(void);
 }
 
 // ---------------------------------------------------------------------------
-// Which application boots. One mode (user, 2026-10-12): `base`, which waits a moment for
-// the tool's escape before micro-ROS (toolEscape). `app=tool` boots the tool directly,
-// for a host, and so do the former tools' names, running their command, so a host that
-// writes `app=test_acc` gets what it always got -- including the old refusal, which
-// boots the robot firmware instead.
-struct Legacy { const char *app; const char *run; };
-static const Legacy LEGACY[] = {
-    {"test_sensors",  "sensors"},
-    {"test_motors",   "motors"},     // or `motor`, the env's one wheel (tm_only 1-5)
-    {"test_acc",      "acc"},
-    {"i2c_detect",    "i2c 5"},     // it scanned every 5 s
-    {"adc_calibrate", "adc"},
-};
-
+// Which application boots: always `base` (user, 2026-10-16: "keep only base with tool
+// escape, remove all tools mode including test_sensors, test_motors, test_acc,
+// adc_calibrate. we will use tool escape to do all these tasks"). base waits a moment for
+// the tool's escape before micro-ROS (toolEscape); the env's `app` key boots nothing else.
+// The tool's name is `tool` once the escape (or a restart into it) has opened it.
 static const char *app_name = "base";
-static const char *boot_run = "";
 
 // The next boot's mode, set before a restart: "come up in the tool" (lino-tool, or the
-// tool's own restart) or "come up in base" (`base` typed in a tool the env boots, which
-// would otherwise come straight back). Survives a soft reset, not a power cycle, so a
-// robot never stays out of micro-ROS by accident.
+// tool's own restart) or "come up in base" (`base` typed in the tool). Survives a soft
+// reset, not a power cycle, so a robot never stays out of micro-ROS by accident.
 #define NEXT_BOOT_TOOL 0x544F4F4Cu      // "TOOL"
 #define NEXT_BOOT_BASE 0x42415345u      // "BASE"
 #if defined(ARDUINO_ARCH_ESP32)
@@ -134,84 +123,25 @@ void toolRestart(bool tool)
     for (;;) delay(1000);      // a board that cannot restart itself: power-cycle it
 }
 
-// The former tools' refusals, unchanged: a refused app name boots the robot firmware,
-// as it always did, so an env written without the host's check never leaves a robot
-// out of micro-ROS. Same rules as scripts/mcu_env.py tool_refusal.
-static const char *legacyRefusal(const char *app)
-{
-    if (!strcmp(app, "test_sensors")) {
-        // It reads every I2C sensor, so it runs when ANY is real -- the host's own rule
-        // (mcu_env._sensors_refusal): an ESP32-S3 whose one real part is a BMP280 has to pass.
-        auto real = [](const char *k) {
-            const char *v = envGet(k, "");
-            return v[0] && strcasecmp(v, "sim") != 0 && strcasecmp(v, "none") != 0;
-        };
-        const bool baro = envInt("pub_env", 0) == 1 && envInt("sim_env", 0) != 1;
-        if (real("imu") || real("mag") || baro)
-            return NULL;
-        return "tests the robot's sensors, and this board has no real IMU, magnetometer or barometer";
-    }
-    if (!strcmp(app, "test_motors") || !strcmp(app, "test_acc"))
-        return envInt("sim_wheel", 0) == 1 ? "tests the wheels, and this board's env simulates them" : NULL;
-    if (!strcmp(app, "adc_calibrate")) {
-#if !ADC_LUT_SUPPORTED
-        return "needs a hardware DAC, which this MCU does not have";
-#else
-        return envInt("sim_battery", 0) == 1 ? "tests the battery, and this board's env simulates it" : NULL;
-#endif
-    }
-    if (!strcmp(app, "i2c_detect"))
-        return toolI2cUnassigned() ? "scans the I2C bus, and this board's env assigns no I2C pins" : NULL;
-    return NULL;
-}
-
 AppMode toolSelect(void)
 {
     initMcuEnv();
-    const char *want = envGet("app", "base");
-    // `base` is the robot, not a command: it returns before anything that belongs to the
-    // tool (rc-20261012.2: base turned real-only and faulted).
     const uint32_t next = nextBootGet();
-    nextBootSet(0);                  // once: the reset after is the env's again
-    if (next == NEXT_BOOT_BASE)
-        return APP_BASE;
+    nextBootSet(0);                  // once: the reset after boots base again
     if (next == NEXT_BOOT_TOOL) {
         app_name = "tool";
+        // A real robot only: no simulated IMU, magnetometer, battery or barometer stands
+        // in for a part the tool cannot find (mcu_env.h, envSetRealOnly).
         envSetRealOnly(!toolWalk());
         return APP_TOOL;
     }
-    if (!want || !*want || strcmp(want, "base") == 0)
-        return APP_BASE;
-    if (strcmp(want, "tool") == 0) {
-        app_name = "tool";
-        boot_run = envGet("tool_run", "");
-    } else {
-        size_t i = 0;
-        for (; i < sizeof(LEGACY) / sizeof(LEGACY[0]); i++)
-            if (strcmp(LEGACY[i].app, want) == 0) break;
-        if (i == sizeof(LEGACY) / sizeof(LEGACY[0])) {
-            Serial.printf("[app] '%s' is not an application this image carries - "
-                          "starting the robot firmware instead.\n", want);
-            return APP_BASE;
-        }
-        const char *why = legacyRefusal(want);
-        if (why) {
-            Serial.printf("[app] '%s' %s - the tools run on a real robot only. Starting the "
-                          "robot firmware instead.\n", want, why);
-            return APP_BASE;
-        }
-        app_name = LEGACY[i].app;
-        boot_run = LEGACY[i].run;
-        // test_motors with tm_only 1-5 in the env ran that one wheel (or all four).
-        if (!strcmp(want, "test_motors")) {
-            const int only = envInt("tm_only", 0);
-            if (only >= 1 && only <= 5) boot_run = "motor";
-        }
-    }
-    // A real robot only: no simulated IMU, magnetometer, battery or barometer stands
-    // in for a part the tool cannot find (mcu_env.h, envSetRealOnly).
-    envSetRealOnly(!toolWalk());
-    return APP_TOOL;
+    // Anything else in `app` is a name an older host wrote (test_acc, tool ...): said once,
+    // and the robot boots. The tool is the escape's alone.
+    const char *want = envGet("app", "base");
+    if (want && *want && strcmp(want, "base") != 0)
+        Serial.printf("[app] '%s' is not an application: this firmware boots base; open the "
+                      "tool with the escape (type tool at boot)\n", want);
+    return APP_BASE;
 }
 
 const char *toolName(AppMode mode) { return mode == APP_TOOL ? app_name : "base"; }
@@ -581,7 +511,8 @@ static bool settable(const char *k)
 
 static void status(void)
 {
-    Serial.printf("[tool] app=%s, %s\n", app_name, job_name ? job_name : "idle");
+    if (job_name) Serial.printf("[tool] running: %s\n", job_name);
+    else Serial.println("[tool] idle");
     tool_hw::report();
     Serial.printf("[tool] wheels: %u, %s\n", tool_hw::total_motors,
                   envInt("sim_wheel", 0) == 1 ? "simulated" : "real");
@@ -773,7 +704,7 @@ static void handleLine(char *line, bool busy)
         // motor <1-4|all> <pct> [secs]: sugar for tm_only / tm_pct / tm_secs, which the run
         // reads every second -- so `set tm_pct 40` while it runs changes its power. Each
         // `motor` sets all three (secs absent: the stored value, else 120), so nothing
-        // carries over from the last one. `motor` alone runs the env's (app=test_motors).
+        // carries over from the last one. `motor` alone runs the env's tm_only / tm_pct.
         if (argc > 1) {
             long wheel = 0, pct = 0, secs = -1;
             const bool all = !strcmp(argv[1], "all");
@@ -868,13 +799,8 @@ void toolSetup(void)
     tool_hw::init();
     termBegin();
     Serial.println("[tool] ready -- 'help' lists the commands");
-    if (!boot_run || !*boot_run)
-        prompt();
+    prompt();
 }
-
-// The boot command (tool_run, or a former tool's name) runs from the first loop(), as
-// the old tools' work did: announceBanner() and the radio are serviced there.
-static bool boot_done = false;
 
 void toolLoop(void)
 {
@@ -888,17 +814,6 @@ void toolLoop(void)
         stop_flag = false;
         prompt();
         return;
-    }
-    if (!boot_done) {
-        boot_done = true;
-        if (boot_run && *boot_run) {
-            Serial.printf("[tool] boot command: %s\n", boot_run);
-            char line[48];
-            strncpy(line, boot_run, sizeof(line) - 1);
-            line[sizeof(line) - 1] = '\0';
-            answerLine(line, false);
-            return;
-        }
     }
     pollInput(job_name != nullptr);
     if (stop_flag && job_name)

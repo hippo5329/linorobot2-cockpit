@@ -99,9 +99,13 @@ def test_scan_points_drop_masked_beams():
 
 
 def test_test_acc_end_lines():
-    assert test_acc_run.ended(["IDENT done", "[test_acc] done -- write app=base to leave"])
-    assert test_acc_run.ended(["[test_acc] STOPPED: lino-stop -- motors off; write app=base to leave"])
+    assert test_acc_run.ended(["IDENT done", "[test_acc] done -- 'base' to leave the tool"])
+    assert test_acc_run.ended(["[test_acc] STOPPED: lino-stop -- motors off"])
     assert test_acc_run.ended(["test_acc refused: sim_wheel=1, nothing to measure"])
+    # the tool's own end answers to `acc` (its command and response, tools.cpp)
+    assert test_acc_run.ended(["fail: acc -- busy: sensors is running -- stop first"])
+    assert test_acc_run.ended(["stopped: acc (the console went quiet -- motors off)"])
+    assert not test_acc_run.ended(["ok: acc (running)", "fail: motor 3 40 -- why"])
     assert not test_acc_run.ended(["MAX PWM  255.0 -255.0", "IDENT gains kp=0.6"])
     got = test_acc_run.results(["MAX VEL   0.71   0.00 m/s   0.00 rad/s", "noise", "IDENT plant wheel=1"])
     assert got == ["MAX VEL   0.71   0.00 m/s   0.00 rad/s", "IDENT plant wheel=1"]
@@ -148,7 +152,7 @@ IDENT plant wheel=2 steady_rpm=171.0 tau_ms=44 K=0.16716 peak_rpm=174.0
 IDENT done
 MAX VEL   0.49   0.00 m/s   0.00 rad/s
 time to 0.9x max vel   0.10 sec
-[test_acc] done -- write app=base to leave
+[test_acc] done -- 'base' to leave the tool
 """
 
 

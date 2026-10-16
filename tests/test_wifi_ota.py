@@ -303,7 +303,7 @@ def test_an_ota_transfer_has_the_radio_to_itself():
 def test_the_pet_comes_up_as_a_bare_esp32_and_its_design_brings_wifi_and_no_i2c(cfg):
     """The Maker's Pet mini is detected as a bare ESP32 (serial: no keys needed), then
     the user selects its design: Wi-Fi transport and no I2C -- so the Wi-Fi keys are
-    needed before its first flash, and i2c_detect is refused on it."""
+    needed before its first flash, and the tool's `i2c` is refused on it (no pins, no bus)."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pet = os.path.join(root, "config", "reference", "makerspet_mini_config.yaml")
     params = mcu_env.load_yaml(pet)
@@ -311,8 +311,8 @@ def test_the_pet_comes_up_as_a_bare_esp32_and_its_design_brings_wifi_and_no_i2c(
     assert mcu_env.transport_is_wifi(params["base_controller"]["transport"])
     (cfg / "secrets.yaml").write_text("wifi:\n  ssid: ''\n")
     assert mcu_env.wifi_keys_missing(pet, str(cfg / "secrets.yaml"))
-    env = dict(mcu_env.hardware_env(params), app="i2c_detect")
-    assert mcu_env.tool_refusal(env)
+    env = mcu_env.hardware_env(params)
+    assert not env.get("i2c_bus") and (int(env.get("i2c_sda", -1)) < 0 or int(env.get("i2c_scl", -1)) < 0)
     import gen_bare_config
     import yaml
     bare = cfg / "bare_esp32_config.yaml"

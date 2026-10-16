@@ -9,7 +9,7 @@
 /api/tool/stop      `stop`, and on Wi-Fi the ping port's lino-stop as well
 /api/tool/close     `base`, then close; and, when the board's env still names a tool, the
                     handle of the env-only write that makes it boot the robot again
-/api/tool/env_base  that write on its own, for a board an older cockpit left in a tool
+/api/tool/env_base  that write on its own, for an older firmware an older cockpit left in a tool
 /api/tool/state     what the session is doing
 
 The OTA password is read here from the robot's secrets and used here; it is in no response.
@@ -64,8 +64,8 @@ def _robot():
 
 
 class SimLink:
-    """The Sim MCU, started for the tool (lino_tool.SimLink: the host firmware booting straight
-    into the tool, its console as the link). Kept as this module's name for its callers."""
+    """The Sim MCU, started for the tool (lino_tool.SimLink: the host firmware restarted
+    straight into the tool, its console as the link). Kept as this module's name for its callers."""
 
     def __new__(cls, params_path: str):
         import lino_tool
@@ -341,8 +341,8 @@ def api_tool_close():
         return {"ok": True, "open": False}
     s.leave()
     time.sleep(1.0)
-    # The Sim MCU's env is the temp file SimLink wrote for this session (app=tool): nothing
-    # boots from it again, so there is no board env to set back to base.
+    # The Sim MCU's env is the temp file SimLink wrote for this session (it entered the tool
+    # by LINO_NEXT_BOOT=tool): nothing boots from it again, so there is no board env to set.
     needs = s.needs_env_base() and s.kind != "sim"
     tool_session.REGISTRY.remove(r["robot"])
     out = {"ok": True, "open": False, "needs_env_base": needs}

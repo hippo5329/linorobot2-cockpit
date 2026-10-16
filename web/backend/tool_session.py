@@ -18,8 +18,9 @@ Rules it keeps, each from the review:
     while a command runs, the session sends `stop` -- and on Wi-Fi the `lino-stop` datagram
     too -- itself.
   * Entering the tool writes nothing: the board is restarted and catches its boot window.
-    Leaving is `base`. A board whose env still names a former tool (an older cockpit wrote
-    `app=test_*`) is told so, and `env_base_command()` is the env-only write that fixes it.
+    Leaving is `base`. The firmware boots base whatever its env's `app` says; a board whose
+    banner names another app is an older firmware booting a tool from an env an older
+    cockpit wrote, and `env_base_command()` is the env-only write that fixes it.
 
 No FastAPI here: routes_tool.py wires it to HTTP, and the tests drive it with a fake link.
 """
@@ -393,8 +394,9 @@ class ToolSession:
             pass
 
     def needs_env_base(self) -> bool:
-        """The board's env names a tool (`app=tool` or a former tool's name): every power-on
-        would boot the tool again until `app=base` is written."""
+        """The board's banner names an app other than base: an older firmware that boots
+        the tool from its env (an older cockpit wrote a tool's name into `app`) would boot it
+        again at every power-on until `app=base` is written."""
         return bool(self.banner_app) and self.banner_app != "base"
 
     def _write(self, data: bytes) -> None:

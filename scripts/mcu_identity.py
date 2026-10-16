@@ -427,7 +427,7 @@ def pio_env_for(name: str, default: str = "esp32") -> str:
     key = (name or "").strip().lower()
     # The UNO Q's image is built with Zephyr, so it is in no platformio.ini; its names
     # are still envs (fetch_prebuilt maps them to unoq-<distro>, flash_mcu goes over SWD).
-    # Falling through to the default sent a UNO Q's tool switch off as a Pico 2 flash.
+    # Falling through to the default sent a UNO Q's env write off as a Pico 2 flash.
     if key in _ZEPHYR_ENVS:
         return key
     envs = _pio_envs()

@@ -135,9 +135,9 @@ bool sim_wheels = false;
 // and nothing could stop it short of the env). Every wait in this tool goes
 // through waitMs(), which services the radio -- so the stop datagram is read
 // within milliseconds, mid-step -- and halts on it. Halted means motors off and
-// nothing else, for good: the radio and OTA stay up so the host can write
-// app=base, which is the only way out. Not a return: every caller would have to
-// check, and one that forgot would drive on.
+// nothing else for this run: the radio and OTA stay up, and the tool goes back to its
+// prompt, where the host's `base` restarts the robot. Not a return: every caller would
+// have to check, and one that forgot would drive on.
 static void halt(const char *why)
 {
     motor1_controller->spin(0);

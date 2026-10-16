@@ -17,12 +17,12 @@ REF = os.path.join(REPO_ROOT, "config", "reference")
 SECRETS_EXAMPLE = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 
 # Keys the firmware reads that no config produces: bench tools set them with
-# `mcu_env.py build --set`, the flasher writes them, or a tool application
-# (adc_calibrate: dac_pin) takes them from the operator.
+# `mcu_env.py build --set`, the flasher writes them (app=base), or a tool command
+# (adc: dac_pin) takes them from the operator.
 BENCH_ONLY = {"diag_tx", "diag_baud", "app", "dac_pin", "boot_serial_wait",
               "banner_hold", "tm_pct", "tm_only", "tm_secs", "ta_ms",
-              # the tool (tools.cpp): its boot window, boot command and terminal port
-              "tool_wait", "tool_run", "term_port", "ta_pct",
+              # the tool (tools.cpp): its boot window and terminal port
+              "tool_wait", "term_port", "ta_pct",
               # the Sim MCU's walkthrough mode: written by lino_tool.SimLink only
               "tool_walk"}
 

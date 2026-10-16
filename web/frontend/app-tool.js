@@ -304,8 +304,9 @@ async function toolClose() {
     const j = await r.json().catch(() => ({}));
     toolDetached("The robot is back in micro-ROS.");
     if (j.needs_env_base && j.handle && typeof runCommand === "function") {
-      // An older cockpit left `app=test_*` in the env: every power-on would run that test
-      // again. One env-only write (4 KB, no reflash) makes it boot the robot.
+      // The board's banner named a tool: an older firmware, booting the tool from an env an
+      // older cockpit wrote, would run it at every power-on. One env-only write (4 KB, no
+      // reflash) of app=base makes it boot the robot; this firmware boots base whatever.
       toolStatus("The board's env still named a test: writing app=base (env only)…");
       await runCommand({ handle: j.handle }, { slot: "main", title: "Back to robot: env app=base" });
     }

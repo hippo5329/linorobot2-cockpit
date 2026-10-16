@@ -1,12 +1,13 @@
 """The Hardware Tests tab on an Arduino UNO Q, and Flash base on a lyrical stack.
 
-The tab switches the one image's application with a 4 KB env write (app=<tool>). On the
-UNO Q that write goes over SWD (flash_mcu.py -> unoq_swd.py), and the tool's text comes
-out the micro-ROS link, /dev/ttyHS1, which Monitor reads like any board's serial port.
+The board boots base; the tab opens the tool with the boot escape on the micro-ROS link,
+/dev/ttyHS1 (lino_tool.py: an SWD reset, then `tool` typed into the window). An env write
+on the UNO Q goes over SWD (flash_mcu.py -> unoq_swd.py), and Monitor reads /dev/ttyHS1
+like any board's serial port.
 
 Three faults this guards, each found while adding the UNO Q (2026-10-06):
-* mcu_identity.pio_env_for("unoq") gave "pico2": the UNO Q is in no platformio.ini, so a
-  tool switch asked for on a UNO Q went off as a Pico 2 flash;
+* mcu_identity.pio_env_for("unoq") gave "pico2": the UNO Q is in no platformio.ini, so an
+  env write asked for on a UNO Q went off as a Pico 2 flash;
 * /api/status read the UNO Q's empty USB bus as "no board", and the UI switched the robot
   to the Sim MCU -- the STM32 is on the board, wired to a UART and GPIOs, never on USB;
 * Flash base asked for `<board>-jazzy` whatever the stack's distro: on a lyrical stack the
@@ -62,7 +63,7 @@ def test_the_board_it_runs_on_is_read_from_its_device_tree(tmp_path):
 
 
 class _Args:
-    def __init__(self, env_only, app="test_sensors"):
+    def __init__(self, env_only, app="base"):
         self.env_only, self.app, self.env = env_only, app, "unoq"
 
 
@@ -77,7 +78,7 @@ def swd(monkeypatch, tmp_path):
     return calls, str(env_bin)
 
 
-def test_a_tool_switch_is_an_env_write_over_swd_and_leaves_the_image(swd):
+def test_an_env_write_goes_over_swd_and_leaves_the_image(swd):
     calls, env_bin = swd
     assert flash_mcu.flash_unoq(_Args(env_only=True), None) == 0
     assert calls == [(env_bin, None)]
@@ -115,9 +116,23 @@ def test_the_unoq_never_reaches_the_usb_paths(monkeypatch, tmp_path):
     params = tmp_path / "unoq_config.yaml"
     params.write_text("robot: {name: unoq}\n")
     monkeypatch.setattr(sys, "argv", ["flash_mcu.py", "--env", "unoq", "--env-only", "--port", "/dev/ttyHS1",
-                                      "--params", str(params), "--app", "test_sensors"])
+                                      "--params", str(params), "--app", "base"])
     assert flash_mcu.main() == 0
     assert seen == ["unoq"]
+
+
+@pytest.mark.parametrize("tool", ["tool", "test_sensors", "test_motors", "test_acc", "i2c_detect",
+                                  "adc_calibrate"])
+def test_flash_mcu_app_takes_base_only(monkeypatch, tool, capsys):
+    """Only base boots (user, 2026-10-16): the tool is opened by its boot escape, never by
+    an env write, so --app refuses a tool's name before anything is touched."""
+    monkeypatch.setattr(flash_mcu, "flash_unoq", lambda args, d: pytest.fail("flashed"))
+    monkeypatch.setattr(sys, "argv", ["flash_mcu.py", "--env", "unoq", "--env-only", "--port",
+                                      "/dev/ttyHS1", "--app", tool])
+    with pytest.raises(SystemExit) as e:
+        flash_mcu.main()
+    assert e.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_the_ui_offers_the_unoq_and_assigns_its_reference_pins():
@@ -170,3 +185,14 @@ def test_the_unoq_is_found_through_the_host_device_tree_mount(tmp_path, monkeypa
 def test_the_unoq_compose_mounts_the_device_tree():
     src = open(os.path.join(ROOT, "docker-compose.unoq.yml")).read()
     assert "/sys/firmware/devicetree/base/compatible:/host-dt/compatible:ro" in src
+
+
+def test_the_tabs_flash_writes_base_only():
+    """/api/hardware/test: the `firmware` field is base or refused (400) before anything runs;
+    no branch writes another application (test_tool_routes drives it over HTTP)."""
+    routes = open(os.path.join(ROOT, "web", "backend", "routes_hardware.py")).read()
+    fn = routes[routes.index("async def api_hardware_test"):routes.index("# Nav2 / EKF / SLAM")]
+    assert '"base")' in fn and 'if firmware != "base":' in fn
+    assert fn.index('if firmware != "base":') < fn.index("refuse_sim_flash(")
+    assert "--app {firmware}" not in fn and "--env-only" not in fn
+    assert '"--firmware-name base --app base "' in fn

@@ -415,13 +415,12 @@ def flash_over_air(args, prebuilt_dir: Optional[str], build_dir: str) -> int:
 
 
 def flash_unoq(args, prebuilt_dir: Optional[str]) -> int:
-    """The UNO Q over SWD: the env block (with its `app`) and, unless --env-only, the image.
+    """The UNO Q over SWD: the env block and, unless --env-only, the image.
 
     The env is built and checked exactly as for the other boards (resolve_env_bin: the
-    mixed-simulation refusal, [TOOL REFUSED]), so switching to a diagnostic tool from the
-    Hardware Tests tab is the same 4 KB write it is everywhere -- here over SWD, which
-    resets the MCU into the selected application. A tool's text goes out the micro-ROS
-    link (/dev/ttyHS1) like any board's serial, and into the firmware's RAM console.
+    mixed-simulation refusal), so an env write is the same 4 KB it is everywhere -- here
+    over SWD, which resets the MCU into base. The tool is opened at boot with the escape
+    on the micro-ROS link (/dev/ttyHS1), like any board's serial (lino_tool.py).
     """
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
     import unoq_swd
@@ -440,7 +439,7 @@ def flash_unoq(args, prebuilt_dir: Optional[str]) -> int:
         dev, uid = unoq_swd.identify()
         log(f"Board on SWD: STM32U5 DEV_ID 0x{dev:03x} uid={uid} (Arduino UNO Q)")
         log(f"Writing over SWD: {'firmware.elf and ' if elf else ''}the env block "
-            f"(app={getattr(args, 'app', None) or 'base'}) at 0x{unoq_swd.ENV_ADDR:08X}...")
+            f"at 0x{unoq_swd.ENV_ADDR:08X}...")
         unoq_swd.flash(env_bin, elf)
     except unoq_swd.SwdError as exc:
         log(f"❌ {exc}")
@@ -1614,35 +1613,6 @@ def rp2_env_offset(env: str) -> Optional[int]:
         return None
 
 
-# Parts with a hardware DAC, the same condition as ADC_LUT_SUPPORTED in
-# firmware/common/lib/adc_lut/adc_lut.h: the classic ESP32 and the ESP32-S2.
-# The S3, C3, C6 and H2 have none, and neither do the RP2040/RP2350.
-_DAC_ENVS = ("esp32", "esp32s2")
-
-
-def warn_if_app_unsupported(app: str, env: str) -> None:
-    """Say so HERE when the board cannot run the application being selected.
-
-    `adc_calibrate` is compiled in only on a part with a hardware DAC; elsewhere
-    the name is not in the firmware's tool table at all and `toolSelect()` falls
-    back to the robot firmware. That fallback is correct and deliberate -- but
-    its only trace is one line on the board's serial at boot, which nobody is
-    attached to during a 4 KB env write. So the write "succeeded", the flasher
-    reported success, and the board came up running `base` with nothing to
-    explain it. Measured on a Pico 2, 2026-09-21. Warn where the choice is made.
-    """
-    if app != "adc_calibrate":
-        return
-    name = (env or "").strip().lower()
-    if name in _DAC_ENVS:
-        return
-    log(f"\u26a0\ufe0f  '{app}' needs a hardware DAC; '{env or 'this board'}' has none "
-        f"(only {', '.join(_DAC_ENVS)} do).")
-    log("    The env key will be written, but this board has no `adc` command:")
-    log("    the board will print \"[app] 'adc_calibrate' needs a hardware DAC, which this "
-        "MCU does not have\" and boot `base`.")
-
-
 def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     """The env block to write alongside an application image, built on demand.
 
@@ -1655,7 +1625,6 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
     so this generates the 4 KB block from the config directory's secrets.yaml at flash time.
     """
     if args.env_bin:
-        refuse_simulated_tool(args.env_bin)
         return args.env_bin
     params = getattr(args, "params", None)
     if not prebuilt_dir and not params:
@@ -1697,12 +1666,10 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
            "--params", os.path.abspath(params),
            "--board", getattr(args, "env", "") or "",
            "--out", out]
-    # Which application the unified image boots. Written even when it is "base",
-    # so that flashing the robot firmware over a board left in a diagnostic mode
-    # actually returns it to the robot firmware.
-    app = getattr(args, "app", None) or "base"
-    warn_if_app_unsupported(app, getattr(args, "env", "") or "")
-    cmd += ["--set", f"app={app}"]
+    # The image boots base (user, 2026-10-16: the tool is the boot escape's alone, firmware
+    # tools.cpp toolSelect). `app=base` is still written: an older firmware on the board
+    # reads the key, and one an older cockpit left naming a tool boots the robot again.
+    cmd += ["--set", "app=base"]
     sensors = getattr(args, "sensors", None)
     if sensors and sensors != "config":
         cmd += ["--sensors", sensors]
@@ -1718,30 +1685,7 @@ def resolve_env_bin(args, prebuilt_dir: Optional[str]) -> Optional[str]:
         log("⚠️  could not build the env block; flashing the application only.")
         log("    The board will report a missing env partition over serial.")
         return None
-    refuse_simulated_tool(out)
     return out
-
-
-def refuse_simulated_tool(env_bin: str) -> None:
-    """Stop before writing anything when the env selects a tool whose subsystem is simulated.
-
-    The firmware refuses too (toolSelect() boots `base` instead), but its only
-    trace is a line on serial at boot; here the user is watching. Rule and
-    reasons: mcu_env.REAL_ONLY_TOOLS.
-    """
-    try:
-        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-        import mcu_env
-        with open(env_bin, "rb") as fh:
-            env = mcu_env.decode(fh.read())
-    except (Exception, SystemExit) as exc:   # an unreadable block is the writer's problem, not this check's
-        log(f"(could not read back the env block to check the application: {exc})")
-        return
-    why = mcu_env.tool_refusal(env)
-    if why:
-        log(f"❌ [TOOL REFUSED] {why}")
-        log("NEXT ACTION: run this tool on a robot whose config describes that hardware as real.")
-        sys.exit(2)
 
 
 # The ESP32 this port held at its last flash, as its banner said it (`uid`, the
@@ -2239,12 +2183,10 @@ def main() -> int:
                         help="force the env's sensor flags: sim simulates everything "
                              "whatever the config says, real is the opposite, config "
                              "(default) lets the YAML stand. The status LED is never touched.")
-    parser.add_argument("--app", default=None,
-                        help="application the image should boot: base (the robot), or tool "
-                             "(the command shell; scripts/lino_tool.py drives it). The former "
-                             "tools' names -- test_sensors, test_motors, test_acc, i2c_detect, "
-                             "adc_calibrate -- boot the tool running that test. Written as the "
-                             "`app` key of the env block: 4 KB of flash, no rebuild.")
+    parser.add_argument("--app", choices=["base"], default="base",
+                        help="the application the image boots: base, the robot firmware (the "
+                             "only one; the test tool is opened at boot with the escape -- "
+                             "scripts/lino_tool.py). Written as the `app` key of the env block.")
     # No default board name here. It used to be "pico2", so a hand-run flash of any
     # other board announced "Flashing firmware: pico2" and "flashed successfully to
     # pico2" while writing an ESP32 (seen on the bench, 2026-09-18, flashing the

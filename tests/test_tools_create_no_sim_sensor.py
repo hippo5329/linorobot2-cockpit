@@ -44,8 +44,8 @@ def _func(src, signature):
 
 def test_tool_select_sets_real_only_before_starting_a_tool():
     body = _func(_src("tools"), "AppMode toolSelect(void)")
-    assert body.rstrip().endswith("return APP_TOOL;")
-    assert "envSetRealOnly(!toolWalk());" in body[body.rfind("strcmp(want, \"base\")"):]
+    tool = body[:body.index("return APP_TOOL;")]
+    assert "envSetRealOnly(!toolWalk());" in tool[tool.index("if (next == NEXT_BOOT_TOOL)"):]
 
 
 def test_the_boot_window_turns_real_only_when_it_enters_the_tool():
@@ -60,9 +60,9 @@ def test_base_never_turns_real_only():
     45 s, the board re-enumerating between them). Every envSetRealOnly(true) in
     toolSelect() leads to `return APP_TOOL`, never to `return APP_BASE`."""
     body = _func(_src("tools"), "AppMode toolSelect(void)")
-    early = re.search(r'if \(!want \|\| !\*want \|\| strcmp\(want, "base"\) == 0\)\s*return APP_BASE;', body)
-    assert early, "toolSelect() must return APP_BASE for app=base before anything of the tool's"
-    assert early.start() < body.index("sizeof(LEGACY)")
+    # every path but the restart flag's ends in base, past nothing of the tool's
+    base = body[body.index("return APP_TOOL;"):]
+    assert "envSetRealOnly" not in base and base.rstrip().endswith("return APP_BASE;")
     for m in re.finditer(r"envSetRealOnly\(true\);", body):
         nxt = re.search(r"return (APP_\w+);", body[m.end():])
         assert nxt and nxt.group(1) == "APP_TOOL", "a path through envSetRealOnly ends in base"

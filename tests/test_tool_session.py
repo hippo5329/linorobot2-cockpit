@@ -320,7 +320,7 @@ def test_the_firmware_answers_every_path():
         at = body.index(marker)
         assert "ack(false" in body[max(0, at - 260):at], marker
     assert "ack(true, \"running\");" in src           # startJob: a running command answers at its start
-    assert src.count("answerLine(line,") == 3          # console, terminal, boot command
+    assert src.count("answerLine(line,") == 2          # console, terminal (no boot command: base only)
 
 
 def test_a_command_that_ends_without_its_work_says_fail():

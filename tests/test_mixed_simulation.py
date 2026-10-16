@@ -2,9 +2,10 @@
 
 A real IMU with simulated wheels or a simulated LiDAR tells the odometry, the EKF
 and SLAM about a different robot each. A bare module simulates everything, a real
-robot nothing; the diagnostic tools are the exception by design (they test one real
-part of a half-built robot). The rule lives in mcu_env.mixed_simulation() and is
-enforced where the env is written and again at bringup.
+robot nothing. Every env boots base (the tool is opened by its boot escape), so every env
+is judged; a half-built robot is flashed in Real mode and the tool reports what is not
+wired yet. The rule lives in mcu_env.mixed_simulation() and is enforced where the env is
+written and again at bringup.
 """
 import copy
 import os
@@ -88,7 +89,6 @@ def test_a_robot_with_no_imu_is_a_real_robot_not_a_mixed_one():
     assert env_g["imu"] == "sim" and env_g["mag"] == "sim"
     env = mcu_env.hardware_env(cfg)
     assert env["imu"] == "none"
-    assert mcu_env.tool_refusal(dict(env, app="test_sensors"))   # nothing to measure
 
 
 def test_every_consumer_of_no_imu_agrees():
@@ -120,14 +120,14 @@ def test_the_sim_mcu_is_never_mixed():
     assert mcu_env.mixed_simulation(cfg, "config") is None
 
 
-def _build(tmp_path, cfg, app):
+def _build(tmp_path, cfg, app, *extra):
     p = tmp_path / "robot_config.yaml"
     p.write_text(yaml.safe_dump(cfg))
     s = tmp_path / "secrets.yaml"
     s.write_text("{}\n")
     return subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "mcu_env.py"), "build",
                            "--params", str(p), "--secrets", str(s), "--host-ip", "127.0.0.1",
-                           "--out", str(tmp_path / "env.bin"), "--set", f"app={app}"],
+                           "--out", str(tmp_path / "env.bin"), "--set", f"app={app}", *extra],
                           capture_output=True, text=True)
 
 
@@ -139,10 +139,18 @@ def test_the_env_writer_refuses_a_mixed_robot_firmware_and_writes_nothing(tmp_pa
     assert not (tmp_path / "env.bin").exists()
 
 
-def test_a_diagnostic_tool_on_a_half_built_robot_is_not_judged_by_this_rule(tmp_path):
-    # test_sensors on a real IMU with the wheels not wired yet: that is how a robot is built.
+def test_an_env_naming_a_tool_is_judged_too_it_boots_base(tmp_path):
+    # Only base boots (user, 2026-10-16): `app=test_sensors` is no way past the rule.
     cfg = _sensors(_ref("gendrv"), use_sim_wheel=True, use_sim_ld19=True)
     res = _build(tmp_path, cfg, "test_sensors")
+    assert res.returncode == mcu_env.MIXED_SIM_EXIT, res.stdout + res.stderr
+    assert not (tmp_path / "env.bin").exists()
+
+
+def test_a_half_built_robot_is_flashed_in_real_mode_for_the_tool(tmp_path):
+    # a real IMU with the wheels not wired yet: Real mode, and the tool finds what is there
+    cfg = _sensors(_ref("gendrv"), use_sim_wheel=True, use_sim_ld19=True)
+    res = _build(tmp_path, cfg, "base", "--sensors", "real")
     assert res.returncode == 0, res.stdout + res.stderr
 
 

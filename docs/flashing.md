@@ -181,12 +181,14 @@ The robot is found by **its name**, the one the user picks it by:
 3. **Writes go over ArduinoOTA** (`scripts/ota_upload.py`, password-authenticated, MD5
    checked by the board): the application to the next OTA slot, the env block to the `env`
    partition. `flash_mcu.py` does this by itself when a Wi-Fi robot's port is absent (or
-   with `--ota`), so the pipeline, Hardware Tests and tool switching need nothing new. Each
+   with `--ota`), so the pipeline and Hardware Tests need nothing new. Each
    write is confirmed by the board's own answer: the new `git=` after an application, the
    new `envcrc=` after an env block. A board that answers as another uid is not written.
-4. **A tool's console is syslog.** A diagnostic tool on a Wi-Fi robot tees every console
-   line to syslog, and Hardware Tests' Monitor streams that board's syslog
-   (`scripts/wifi_boards.py monitor <robot config>`).
+4. **The tool is opened over the air.** "lino-tool" to the ping port, answered with the OTA
+   password's challenge, restarts the board into the tool, and its TCP terminal logs in the
+   same way (`scripts/lino_tool.py`, the Hardware Tests tab); no env write is involved. The
+   tool on a Wi-Fi robot also tees every console line to syslog, and Hardware Tests' Monitor
+   streams that board's syslog (`scripts/wifi_boards.py monitor <robot config>`).
 
 Config Studio (Hardware) shows both names of the robot on the network: **Network Name**
 (`telemetry.hostname`; blank is the robot's name) and **Robot IP Address**

@@ -675,8 +675,9 @@ def cmd_acc(robot: Robot, a) -> int:
     step on its own, with the robot brought up and nothing else running."""
     import gen_firmware_header
     import one_click_pipeline as ocp
-    # A Wi-Fi board sends its results by syslog; a serial one (the UNO Q) prints them on its
-    # tty, which test_acc_run.py --serial reads while the agent there is paused.
+    # test_acc is the tool's `acc` (test_acc_run.py enters the tool by its boot escape): on a
+    # Wi-Fi board over its TCP terminal, on a serial one (the UNO Q) on its tty, which
+    # test_acc_run.py --serial reads while the agent there is paused.
     on_serial = not robot.parts["wifi"]
     held = _floor_held(robot)
     if held:
@@ -710,8 +711,8 @@ def cmd_acc(robot: Robot, a) -> int:
     import mcu_identity
     port = str((a.port if on_serial else None) or robot.tgt.get("serial_port") or "/dev/ttyACM0")
     baud = int(robot.env.get("baud") or 921600)
-    # the env writes go at the upload rate (esptool's ceiling); a serial robot's console is
-    # read at the micro-ROS rate
+    # --baud is the upload rate (esptool's ceiling); a serial robot's tool console is read at
+    # the micro-ROS rate
     argv = [sys.executable, "-u", os.path.join(HERE, "test_acc_run.py"), "--params", robot.path,
             "--env", mcu_identity.pio_env_for(robot.pio_env, "esp32"), "--port", port,
             "--baud", str(min(baud, ocp.FLASH_BAUD_CEILING)),

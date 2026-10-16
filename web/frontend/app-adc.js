@@ -163,13 +163,7 @@ function initAdcChart() {
 // Sweeping a hardware DAC is the only way to measure the curve, and only the
 // classic ESP32 and the ESP32-S2 have one -- the ESP32-S3, the C-series and the
 // RP2040/RP2350 do not. adc_lut.h gates the whole facility on exactly this
-// condition, and elsewhere app=adc_calibrate boots the robot firmware instead (the tool
-// has no `adc` command there).
-//
-// Which is the problem: the panel offered it on every board. Flashing it to a
-// Pico spends a flash cycle and leaves the robot running a tool that can only
-// apologise -- no /odom, no /scan, until somebody reflashes. The firmware's own
-// comment says "the app list is supposed to exclude it there"; nothing did.
+// condition: elsewhere the tool has no `adc` command, so the panel does not offer it.
 function mcuHasDac(env) {
   const e = String(env || "").toLowerCase();
   return e === "esp32" || e === "esp32s2";

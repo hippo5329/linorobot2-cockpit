@@ -824,8 +824,8 @@ void linoWdtFeed(void)  { wdtFeed(); }
 //
 //     [fw] linorobot2_hardware app=base built=2026-09-16 git=6aa607f uid=E66138935F63A22A
 //
-// `app` is the sub-firmware this boot selected, `built` is the compile date and
-// `git` the 7-character revision of the tree it came from (a trailing '+' means
+// `app` is the mode this boot runs (base; tool once the escape opened it), `built`
+// is the compile date and `git` the 7-character revision of the tree it came from (a trailing '+' means
 // that tree had uncommitted edits, so the revision alone does not identify it).
 // The last field names the board: `uid=` where the SILICON can identify itself
 // (RP2350, ESP32), `flashid=` on an RP2040, whose only unique id belongs to the
@@ -1125,8 +1125,8 @@ void setup()
     }
 #endif
 
-    // Which application this boot runs, read from the env partition before
-    // anything is sized for it. The 4+4 KB UART rings below exist to carry
+    // Which application this boot runs (tools.h toolSelect: base, or the tool after a
+    // restart into it), decided before anything is sized for it. The 4+4 KB UART rings below exist to carry
     // micro-ROS traffic; a diagnostic that prints a line a second needs neither,
     // and in a unified image that memory would otherwise be spent in every mode.
 #if LINO_CONSOLE_SELECTABLE
