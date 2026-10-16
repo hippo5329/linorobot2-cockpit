@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 from fastapi import HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from core import (
     REPO_ROOT,
     actions,
@@ -50,6 +50,7 @@ from core import (
     text_field,
 )
 import robot_stack  # noqa: E402  (scripts/, via core's sys.path)
+import map_preview  # noqa: E402
 
 
 def _wifi_robot(params_path: str) -> bool:
@@ -958,10 +959,31 @@ def list_maps():
     return {"maps": map_list, "maps_dir": maps_dir}
 
 
+def _map_path(filename: str) -> str:
+    maps_dir = os.path.join(REPO_ROOT, "maps")
+    if os.path.basename(filename) != filename or filename in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="Bad map file name")
+    return os.path.join(maps_dir, filename)
+
+
+@app.get("/api/maps/{filename}/preview")
+def get_map_preview(filename: str, size: int = Query(512, ge=16, le=4096)):
+    """The map's .pgm as a PNG thumbnail: no browser decodes PGM, so the gallery's
+    <img> pointed at the .pgm was a broken image on every saved map."""
+    file_path = _map_path(filename)
+    if not filename.endswith(".pgm") or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Map image not found")
+    try:
+        with open(file_path, "rb") as fh:
+            png = map_preview.pgm_to_png(fh.read(), max_side=size)
+    except map_preview.PgmError as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot read {filename}: {exc}")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/maps/{filename}")
 def get_map_file(filename: str):
-    maps_dir = os.path.join(REPO_ROOT, "maps")
-    file_path = os.path.join(maps_dir, filename)
+    file_path = _map_path(filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Map file not found")
     media_type = "application/x-yaml" if filename.endswith(".yaml") else "application/octet-stream"

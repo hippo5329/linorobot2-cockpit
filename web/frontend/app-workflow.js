@@ -1083,7 +1083,9 @@ function initCockpitDashboard() {
         
         let imgHtml = "";
         if (m.image) {
-          imgHtml = `<img src="/api/maps/${encodeURIComponent(m.image)}" style="max-width:180px; max-height:140px; border-radius:4px; background:#000; object-fit:contain;" alt="${m.name}">`;
+          // A PNG made from the .pgm: no browser decodes PGM, so pointing <img> at
+          // the .pgm itself gave a broken image on every map.
+          imgHtml = `<img src="/api/maps/${encodeURIComponent(m.image)}/preview?size=360" style="max-width:180px; max-height:140px; border-radius:4px; background:#000; object-fit:contain;" alt="${m.name}">`;
         } else {
           imgHtml = `<div style="width:180px; height:120px; background:#0f172a; border-radius:4px; display:flex; align-items:center; justify-content:center; color:var(--text-dim); font-size:11px;">No Preview</div>`;
         }
