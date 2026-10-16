@@ -601,7 +601,7 @@ _HEALTH_PROBE_PY = r"""
 import sys, time, json, importlib
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
-spec = json.loads(sys.argv[1]); window = float(sys.argv[2])
+spec = json.loads(sys.argv[1]); window = float(sys.argv[2]); settle = float(sys.argv[3])
 rclpy.init(); node = rclpy.create_node("cockpit_bringup_health")
 stamps = {t: [] for t in spec}
 def sub(topic, typ):
@@ -611,24 +611,45 @@ def sub(topic, typ):
                              qos_profile_sensor_data)
 for t, typ in spec.items():
     sub(t, typ)
+# The graph is read here, by this node, rather than by a `ros2 topic list` before
+# it: that CLI's start-up alone took 5-14 s on a small robot computer, and the two
+# in series ran past 30 s. Every topic is subscribed before discovery, so none
+# waits on the listing.
+#
 # The micro-ROS agent's endpoints can take several seconds to match a new
 # participant under the cockpit's Fast DDS profile, where host nodes match at
 # once: a fixed 3 s window rated /odom and /scan and showed /odom/unfiltered
-# as silent while a 6 s reader beside it saw 50 Hz. So spin up to `window`
-# but leave as soon as every topic has enough samples to rate.
-deadline = time.monotonic() + window
-while time.monotonic() < deadline:
-    rclpy.spin_once(node, timeout_sec=0.05)
-    if all(len(v) >= 8 for v in stamps.values()):
+# as silent while a 6 s reader beside it saw 50 Hz. So spin up to `window`, and
+# leave as soon as every topic has rated -- or, after `settle` s of discovery,
+# as soon as every topic still unrated is one nobody advertises.
+#
+# Advertised means a PUBLISHER: the graph's topic list also names topics that only
+# have subscribers -- this probe's own, for one.
+start = time.monotonic(); deadline = start + window
+graph = set(); present = set(); listed = 0.0
+while True:
+    now = time.monotonic()
+    if now - listed >= 0.5 or now >= deadline:
+        graph = {n for n, _ in node.get_topic_names_and_types()}
+        present = {t for t in spec if t in graph and node.count_publishers(t) > 0}; listed = now
+    if now >= deadline:
         break
-print(json.dumps({t: s for t, s in stamps.items()}))
+    waiting = [t for t in spec if len(stamps[t]) < 8 and (t in present or now - start < settle)]
+    if not waiting:
+        break
+    rclpy.spin_once(node, timeout_sec=0.05)
+print(json.dumps({"graph": sorted(graph), "present": sorted(present), "stamps": stamps}))
 """
 
 
-LIST_TIMEOUT_S = 25.0   # the ros2 CLI's start-up on a slow robot computer (check_bringup_health)
+# The probe's start-up allowance on top of its measuring window: a login shell, the ROS setup
+# files and rclpy's import take 5-14 s on an Arduino UNO Q (2026-10-15), seconds on a PC.
+LIST_TIMEOUT_S = 20.0
+HEALTH_SETTLE_S = 3.0   # discovery time before an unadvertised topic stops being waited for
 
 
-def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str, Any]:
+def check_bringup_health(timeout: float = 4.0, has_imu: bool = True,
+                         has_scan: bool = True) -> Dict[str, Any]:
     """Queries the active ROS 2 graph on this machine.
 
     Rates come from a direct rclpy subscription with the sensor-data QoS, NOT
@@ -642,6 +663,12 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str
     1-Click gate had just measured both topics at 50 Hz -- through exactly the
     subscription used here, which matches best-effort and reliable alike and
     needs no graph lookup at all. Measured 2026-09-22 on a bare Pico 2.
+
+    Ready means the board publishes /odom/unfiltered AND, on a robot with a
+    LiDAR, /scan arrives: a check that passed with /scan not advertised at all
+    sent SLAM and Nav2 onto a robot that could see nothing (walkthrough
+    2026-10-16). One process lists and measures, so the whole check is bounded
+    by its window plus one start-up.
     """
     res: Dict[str, Any] = {
         "ready": False,
@@ -653,69 +680,91 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True) -> Dict[str
         "summary": "Checking bringup health...",
     }
 
-    check_cmd = ["bash", "-lc", f"{ros_setup_shell()} && ros2 topic list"]
-    try:
-        # The listing is the ros2 CLI starting up, not the measurement: on an Arduino UNO Q a
-        # login shell, the setup files and `ros2 topic list` take 5-14 s, so `timeout + 2`
-        # (6 s) reported "Could not query ROS 2 graph" on a healthy robot (2026-10-15).
-        listed = subprocess.run(check_cmd, capture_output=True, text=True,
-                                timeout=max(timeout + 2, LIST_TIMEOUT_S))
-        present = {t.strip() for t in listed.stdout.splitlines() if t.strip()}
-        res["ros_available"] = listed.returncode == 0 and bool(present)
-    except Exception as e:
-        res["status"] = "error"
-        res["summary"] = f"Could not query ROS 2 graph: {e}"
-        return res
-
-    if not res["ros_available"]:
-        res["status"] = "no_graph"
-        res["summary"] = "No ROS 2 graph reachable. Ensure micro-ROS agent and bringup are running."
-        return res
-
     for key, topic, what, min_hz in BRINGUP_HEALTH_TOPICS:
-        if key == "imu" and not has_imu:
-            # imu: NONE -- the board publishes no /imu/data, and that is correct.
+        if (key == "imu" and not has_imu) or (key == "scan" and not has_scan):
+            # imu: NONE -- the board publishes no /imu/data, and that is correct; the same
+            # for /scan on a robot with no LiDAR and no depth camera.
+            why = ("no IMU on this robot (imu: NONE): not expected" if key == "imu"
+                   else "no LiDAR or depth camera on this robot: not expected")
             res["topics"][key] = {
-                "topic": topic, "what": "no IMU on this robot (imu: NONE): not expected",
+                "topic": topic, "what": why,
                 "min_hz": 0.0, "advertised": False, "hz": None, "ok": True, "fitted": False,
             }
             continue
         res["topics"][key] = {
             "topic": topic, "what": what, "min_hz": min_hz,
-            "advertised": topic in present, "hz": None, "ok": False,
+            "advertised": False, "hz": None, "ok": False,
         }
 
-    # One process, every advertised topic at once, one window: cheaper than a
-    # CLI per topic and immune to the graph-lookup failure described above.
+    # One process, every topic at once, one window: cheaper than a CLI per topic
+    # and immune to the graph-lookup failure described above.
     spec = {e["topic"]: BRINGUP_HEALTH_TYPES[k]
             for k, e in res["topics"].items()
-            if e["advertised"] and k in BRINGUP_HEALTH_TYPES and e.get("fitted", True)}
-    if spec:
-        # Ceiling, not a duration: the probe returns the moment every topic has
-        # rated. 8 s covers the slow micro-ROS match; the card says "up to ~30 s".
-        window = max(4.0, min(8.0, timeout + 4.0))
-        cmd = ["bash", "-lc",
-               f"{ros_setup_shell()} && python3 -c {shlex.quote(_HEALTH_PROBE_PY)} "
-               f"{shlex.quote(json.dumps(spec))} {window}"]
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=window + timeout + 6)
-            line = [l for l in out.stdout.splitlines() if l.startswith("{")]
-            stamps = json.loads(line[-1]) if line else {}
-        except Exception:
-            stamps = {}
-        for key, entry in res["topics"].items():
-            if not entry.get("fitted", True):
-                continue
-            hz = rate_from_stamps(stamps.get(entry["topic"], []))
-            if hz is not None:
-                entry["hz"] = round(hz, 1)
-                entry["ok"] = hz >= entry["min_hz"]
+            if k in BRINGUP_HEALTH_TYPES and e.get("fitted", True)}
+    # Ceiling, not a duration: the probe returns the moment every topic has rated.
+    # 8 s covers the slow micro-ROS match.
+    window = max(4.0, min(8.0, timeout + 4.0))
+    cmd = ["bash", "-lc",
+           f"{ros_setup_shell()} && python3 -c {shlex.quote(_HEALTH_PROBE_PY)} "
+           f"{shlex.quote(json.dumps(spec))} {window} {HEALTH_SETTLE_S}"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=window + LIST_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        res["status"] = "error"
+        res["summary"] = (f"Could not query ROS 2 graph: the probe did not answer within "
+                          f"{window + LIST_TIMEOUT_S:.0f} s")
+        return res
+    except Exception as e:
+        res["status"] = "error"
+        res["summary"] = f"Could not query ROS 2 graph: {e}"
+        return res
+    lines = [l for l in (out.stdout or "").splitlines() if l.startswith("{")]
+    try:
+        probe = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        probe = None
+    if not isinstance(probe, dict) or not probe.get("graph"):
+        res["status"] = "no_graph"
+        tail = ((out.stderr or "").strip().splitlines() or [""])[-1][:200]
+        res["summary"] = ("No ROS 2 graph reachable. Ensure micro-ROS agent and bringup are running."
+                          + (f" ({tail})" if tail else ""))
+        return res
+    res["ros_available"] = True
+    present = set(probe.get("present") or [])
+    stamps = probe.get("stamps") or {}
+
+    for key, entry in res["topics"].items():
+        if not entry.get("fitted", True):
+            continue
+        entry["advertised"] = entry["topic"] in present
+        hz = rate_from_stamps(stamps.get(entry["topic"], []))
+        if hz is not None:
+            entry["hz"] = round(hz, 1)
+            entry["ok"] = hz >= entry["min_hz"]
+        elif entry["advertised"]:
+            res["advertised_but_silent"].append(entry["topic"])
 
     # Ready means the BOARD is publishing: /odom/unfiltered. The EKF publishes /odom at its own
     # rate with no input at all (prediction only), so "fused OR raw" read a stack whose board
     # had no agent session as ready -- /odom 33.5 Hz, /odom/unfiltered, /imu/data and /scan
-    # silent (walkthrough 2026-10-06).
-    odom_ok = res["topics"].get("odom_raw", {}).get("ok")
-    res["ready"] = bool(odom_ok)
-    res["summary"] = f"Bringup healthy: odom fused={res['topics'].get('odom', {}).get('ok')}, raw={res['topics'].get('odom_raw', {}).get('ok')}"
+    # silent (walkthrough 2026-10-06). And a robot with a LiDAR is not ready without its scan.
+    topics = res["topics"]
+    odom_ok = topics.get("odom_raw", {}).get("ok")
+    scan = topics.get("scan", {})
+    scan_ok = scan.get("ok") or not scan.get("fitted", True)
+    res["ready"] = bool(odom_ok and scan_ok)
+    if res["ready"]:
+        res["summary"] = (f"Bringup healthy: odom fused={topics.get('odom', {}).get('ok')}, "
+                          f"raw={odom_ok}, scan={'not fitted' if not scan.get('fitted', True) else scan_ok}")
+    else:
+        why = []
+        for key in ("odom_raw", "scan"):
+            e = topics.get(key, {})
+            if e.get("ok") or not e.get("fitted", True):
+                continue
+            state = ("not advertised" if not e.get("advertised")
+                     else "no messages" if e.get("hz") is None
+                     else f"{e['hz']} Hz < {e['min_hz']} Hz")
+            why.append(f"{e.get('topic')} {state}")
+        res["summary"] = "Bringup NOT healthy: " + "; ".join(why)
     return res

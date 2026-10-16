@@ -868,7 +868,7 @@ if (btnBringupHealth) {
     const summaryEl = document.getElementById("bringup-health-summary");
     const tableEl = document.getElementById("bringup-health-table");
     btnBringupHealth.disabled = true;
-    summaryEl.textContent = "Probing the ROS graph (up to ~30 s)…";
+    summaryEl.textContent = "Probing the ROS graph (a few seconds; longer on a small robot computer)…";
     tableEl.innerHTML = "";
     try {
       const h = await fetch("/api/bringup/health?timeout=4").then((r) => r.json());
@@ -878,8 +878,9 @@ if (btnBringupHealth) {
           <td>${mark(t.ok)}</td>
           <td><code>${escapeHtml(t.topic)}</code></td>
           <td>${escapeHtml(t.what)}</td>
-          <td>${t.hz == null ? (t.advertised ? "no messages" : "not advertised")
-                             : t.hz.toFixed(1) + " Hz"}</td>
+          <td>${t.fitted === false ? "not fitted"
+                : t.hz == null ? (t.advertised ? "no messages" : "not advertised")
+                : t.hz.toFixed(1) + " Hz"}</td>
           <td>&ge; ${t.min_hz} Hz</td>
         </tr>`).join("");
       const tfRows = (h.tf || []).map((l) => `

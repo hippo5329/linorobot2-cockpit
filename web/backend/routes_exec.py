@@ -249,12 +249,21 @@ def api_bringup_stream():
 @app.get("/api/bringup/health")
 def api_bringup_health(timeout: float = 4.0):
     # A robot with no IMU (imu: NONE) publishes no /imu/data; its row is "not fitted".
+    params = load_params() or {}
     try:
         import mcu_env
-        has_imu = mcu_env.robot_has_imu(load_params() or {})
+        has_imu = mcu_env.robot_has_imu(params)
     except Exception:
         has_imu = True
-    return check_bringup_health(timeout=timeout, has_imu=has_imu)
+    # A robot with a LiDAR (or a depth camera standing in) must publish /scan to be
+    # healthy -- the rule bringup and the 1-Click pipeline use (depth_camera.scan_source).
+    # Unreadable means expected: a missing /scan is exactly what this must not pass.
+    try:
+        import depth_camera
+        has_scan = depth_camera.scan_source(get_controller(params)) is not None
+    except Exception:
+        has_scan = True
+    return check_bringup_health(timeout=timeout, has_imu=has_imu, has_scan=has_scan)
 
 
 # ==============================================================================

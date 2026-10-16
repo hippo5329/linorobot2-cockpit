@@ -81,31 +81,77 @@ def test_rate_from_stamps():
     assert f([5.0, 5.0]) is None                      # zero span, no divide
 
 
-def _health_with(monkeypatch, rates):
-    """check_bringup_health on a fake graph: every health topic listed, `rates` Hz each."""
+def _health_with(monkeypatch, rates, present=None, **kw):
+    """check_bringup_health on a fake graph: `present` advertised (default: every health
+    topic), `rates` Hz each."""
     import json
     import subprocess
     import types
     sys.path.insert(0, os.path.join(REPO_ROOT, "web", "backend"))
     import runners
     topics = [t for _, t, _, _ in runners.BRINGUP_HEALTH_TOPICS]
+    listed = topics if present is None else present
 
-    def fake_run(cmd, **kw):
-        if "ros2 topic list" in cmd[-1]:
-            return types.SimpleNamespace(returncode=0, stdout="\n".join(topics), stderr="")
+    def fake_run(cmd, **_):
         stamps = {t: [i / hz for i in range(int(hz * 4))] if hz else [] for t, hz in
                   ((t, rates.get(t, 0.0)) for t in topics)}
-        return types.SimpleNamespace(returncode=0, stdout=json.dumps(stamps), stderr="")
+        out = {"graph": ["/rosout", "/parameter_events"] + topics, "present": list(listed),
+               "stamps": stamps}
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(out), stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(runners.subprocess, "run", fake_run)
-    return runners.check_bringup_health(timeout=1.0)
+    return runners.check_bringup_health(timeout=1.0, **kw)
 
 
 def test_the_ekf_alone_is_not_ready(monkeypatch):
     """The EKF publishes /odom with no input at all; a silent board is not a ready robot
     (walkthrough 2026-10-06: /odom 33.5 Hz, /odom/unfiltered silent, read as ready)."""
     assert not _health_with(monkeypatch, {"/odom": 33.5})["ready"]
-    assert _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0})["ready"]
+    assert _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0, "/scan": 10.0})["ready"]
+
+
+def test_a_missing_scan_fails_a_robot_with_a_lidar(monkeypatch):
+    """The first check passed with /scan not advertised at all (walkthrough 2026-10-16)."""
+    no_scan = ["/odom", "/odom/unfiltered", "/imu/data"]
+    h = _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0}, present=no_scan)
+    assert not h["ready"]
+    assert h["topics"]["scan"]["advertised"] is False
+    assert "/scan not advertised" in h["summary"]
+    # advertised but silent is not healthy either
+    h = _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0})
+    assert not h["ready"] and "/scan no messages" in h["summary"]
+    assert "/scan" in h["advertised_but_silent"]
+
+
+def test_a_robot_with_no_scan_source_does_not_need_one(monkeypatch):
+    h = _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0},
+                     present=["/odom", "/odom/unfiltered"], has_scan=False)
+    assert h["ready"]
+    assert h["topics"]["scan"]["fitted"] is False and h["topics"]["scan"]["ok"]
+
+
+def test_no_answer_from_the_probe_is_no_graph(monkeypatch):
+    import subprocess
+    import types
+    sys.path.insert(0, os.path.join(REPO_ROOT, "web", "backend"))
+    import runners
+    fake = lambda cmd, **_: types.SimpleNamespace(returncode=1, stdout="", stderr="ModuleNotFoundError: rclpy")
+    monkeypatch.setattr(runners.subprocess, "run", fake)
+    h = runners.check_bringup_health(timeout=1.0)
+    assert h["status"] == "no_graph" and not h["ready"] and "rclpy" in h["summary"]
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+    monkeypatch.setattr(runners.subprocess, "run", hang)
+    h = runners.check_bringup_health(timeout=1.0)
+    assert h["status"] == "error" and "did not answer" in h["summary"]
+
+
+def test_the_route_expects_a_scan_from_the_robots_scan_source():
+    src = open(os.path.join(REPO_ROOT, "web", "backend", "routes_exec.py")).read()
+    body = src[src.index("def api_bringup_health"):]
+    body = body[:body.index("\n\n\n")]
+    assert "depth_camera.scan_source(" in body and "has_scan=has_scan" in body
 
 
 def test_bringup_start_stops_a_stack_left_running():
