@@ -255,7 +255,7 @@ def test_a_wifi_robot_with_no_board_on_the_bus_may_bring_up(tmp_path):
 
 def test_the_status_says_whether_the_link_is_wifi():
     src = open(os.path.join(ROOT, "web", "backend", "routes_status.py")).read()
-    assert '"board_on_wifi": _transport_is_wifi(controller.get("transport"))' in src
+    assert '"board_on_wifi": _transport_is_wifi(controller.get("transport")) and not _is_sim_mcu(controller)' in src
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import mcu_env
     assert mcu_env.transport_is_wifi("udp4") and not mcu_env.transport_is_wifi("serial")
@@ -265,5 +265,7 @@ def test_the_header_does_not_call_a_wifi_robot_boardless():
     js = open(os.path.join(ROOT, "web", "frontend", "app-core.js")).read()
     a = js.index("async function noBoardSwitch(")
     body = js[a:js.index("\n}\n", a)]
-    assert "const overTheAir = !!s.board_on_wifi && !isGeneratedRobot(state.robot_name);" in body
-    assert "if (absent && !onSim && !overTheAir) {" in body
+    # A Wi-Fi robot is not absent at all, generated or not (bare_sim's udp4 is not Wi-Fi:
+    # /api/status leaves it out); tests/test_webui_board_state.py runs the function.
+    assert "const overTheAir = !!s.board_on_wifi;" in body
+    assert "const absent = s.board_on_bus === false && !overTheAir;" in body

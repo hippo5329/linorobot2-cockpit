@@ -9,9 +9,12 @@ const BOARD_SILICON = { gendrv: "esp32", yb_eet01: "esp32s3" };
 // whenever one loads, so a board this table never heard of (makerspet_mini -> esp32) is
 // still its silicon. Without this the controller select went blank on makerspet_mini, and
 // the board-action guard, handed an empty controller, waved a no-board Bringup through.
+// Not the Sim MCU's `mcu: host`: the selects list it as "sim", and learning sim -> host blanked
+// them on bare_sim (no option "host"), so the flash env fell back to pico2 and the ADC card
+// said "pico2 has no hardware DAC" on a robot with no board at all.
 function learnBoardSilicon(board, mcu) {
   const b = String(board || "").toLowerCase(), m = String(mcu || "").toLowerCase();
-  if (b && m && b !== m) BOARD_SILICON[b] = m;
+  if (b && m && b !== m && m !== "host") BOARD_SILICON[b] = m;
 }
 let loadedControllerName = null;
 function siliconOf(name) {
@@ -164,6 +167,12 @@ function hideActionBanner() {
 // A generated robot -- a bare module (`bare_<silicon>`) or the Sim MCU (`bare_sim`) -- as
 // opposed to a real one: a reference design, or a robot the user saved. Only a generated
 // robot may fall back to the Sim MCU when no board is attached.
+// A base controller built into the robot computer (the UNO Q's STM32): on its UART and SWD,
+// never on USB, whatever the bus shows.
+function controllerIsOnboard(s) {
+  const bc = (s && s.base_controller) || {};
+  return siliconOf(bc.mcu || bc.name || (s && s.controller)) === "unoq";
+}
 function isGeneratedRobot(name) {
   return !name || /^bare_/.test(String(name));
 }
@@ -619,8 +628,12 @@ async function refreshStatus() {
     // board-mismatch verdict it computes is about the run the user would get
     // -- not about the config's base_controller, which a Reference Build
     // preset can leave behind.
+    // Only once that select holds the robot's own controller: until the first answer syncs it,
+    // it shows the markup's pico2, and a UNO Q robot's page flashed "pico2 builds for RP2350,
+    // but the board on the bus is STM32U585" on every load. Without a hint the server judges
+    // the robot's config.
     const sel = document.getElementById("cockpit-target-select");
-    const q = sel && sel.value ? `?controller=${encodeURIComponent(sel.value)}` : "";
+    const q = state._ctrlSelSynced && sel && sel.value ? `?controller=${encodeURIComponent(sel.value)}` : "";
     const res = await fetch(`/api/status${q}`);
     const s = await res.json();
     if (epoch !== robotEpoch) return;
@@ -647,6 +660,8 @@ async function refreshStatus() {
         if (tsel.value !== want) {
           tsel.value = want;
           if (window.__syncControllerSelects) window.__syncControllerSelects(want, "cockpit-target-select");
+          // A programmatic set fires no "change": the DAC note follows by hand.
+          if (typeof applyDacAvailability === "function") applyDacAvailability();
           logLine(`[console] base controller -> ${bcName} (synced to the active robot)`);
         }
       }
@@ -730,6 +745,23 @@ async function refreshStatus() {
         const lp = busPorts.find(p => p.mcu_hint === detectedMcu) || busPorts[0];
         if (s.mcu_detected && lp) {
           baseMcuDesc.innerHTML = `Probed via USB sysfs VID:PID <code>${lp.vid || ""}:${lp.pid || ""}</code> on <code>${lp.path}</code> at ${escapeHtml(busWhere)} (${lp.product || lp.chip}).`;
+        } else if (s.mcu_onboard) {
+          // Built into this computer (the UNO Q's STM32): never on USB, so neither a VID:PID
+          // nor a board waiting in its USB bootloader has anything to do with it.
+          baseMcuDesc.innerHTML = `On this board, not on USB: <b>${escapeHtml(detectedChip)}</b>, the ` +
+            `board's own base controller, wired to ${escapeHtml(busWhere)} over its internal UART ` +
+            `<code>${escapeHtml(s.detected_port || "")}</code> (micro-ROS) and flashed over SWD.`;
+        } else if (controllerIsOnboard(s)) {
+          baseMcuDesc.innerHTML = `This robot's base controller is the UNO Q's on-board STM32, reached ` +
+            `over the board's internal UART (<code>/dev/ttyHS1</code>) and SWD — never USB — and ` +
+            `${escapeHtml(busWhere)} does not identify as a UNO Q. Open this cockpit on the UNO Q itself.`;
+        } else if (String(s.controller || "").toLowerCase() === "sim") {
+          baseMcuDesc.innerHTML = `The <b>Sim MCU</b>: the firmware runs on ${escapeHtml(busWhere)}, ` +
+            `so there is no board to probe. Plug one in to flash and run it.`;
+        } else if (s.board_on_wifi) {
+          baseMcuDesc.innerHTML = `This robot's board is reached over <b>Wi-Fi</b> (micro-ROS over udp4), ` +
+            `not USB: nothing on the bus is expected. Showing the controller from your robot config ` +
+            `(<code>${escapeHtml(detectedMcu)}</code>).`;
         } else {
           // Nothing answered. Say that, and clear the probe line -- leaving the
           // previous poll's VID:PID under a heading that says "Auto-Detected"
@@ -769,6 +801,12 @@ async function refreshStatus() {
         if (lp) {
           baseMcuPill.textContent = lp.busy ? "In Use / Busy" : "Online & Free";
           baseMcuPill.className = "pill " + (lp.busy ? "pill-busy" : "pill-ok");
+        } else if (s.mcu_onboard) {
+          baseMcuPill.textContent = "On board (UART / SWD)";
+          baseMcuPill.className = "pill pill-ok";
+        } else if (s.board_on_wifi) {
+          baseMcuPill.textContent = "Over Wi-Fi";
+          baseMcuPill.className = "pill pill-unknown";
         } else {
           baseMcuPill.textContent = "Offline / Not Connected";
           baseMcuPill.className = "pill pill-unknown";
@@ -1503,7 +1541,11 @@ async function useDefaultRobotFor(sil) {
 let noBoardBusy = false;
 async function noBoardSwitch(s) {
   const el = document.getElementById("hdr-no-board");
-  const absent = s.board_on_bus === false;
+  // A robot on Wi-Fi (udp4) is never on this bus: an empty bus is not "no board", so it is
+  // neither swapped for the Sim MCU nor told it was (2026-10-16: a Wi-Fi robot read "switched
+  // to the Sim MCU"). The Sim MCU's own udp4 is not Wi-Fi (/api/status leaves it out).
+  const overTheAir = !!s.board_on_wifi;
+  const absent = s.board_on_bus === false && !overTheAir;
   if (!noBoardBusy) {
     noBoardBusy = true;
     try {
@@ -1548,9 +1590,7 @@ async function noBoardSwitch(s) {
   }
   if (!el) return;
   const onSim = state.robot_name === "bare_sim";
-  // A real robot on Wi-Fi (udp4) is never on this bus: nothing is missing (a tracked robot, 2026-10-15).
-  const overTheAir = !!s.board_on_wifi && !isGeneratedRobot(state.robot_name);
-  if (absent && !onSim && !overTheAir) {
+  if (absent && !onSim) {
     // A board robot with nothing plugged in: say what will happen rather than overriding.
     el.innerHTML = isGeneratedRobot(state.robot_name)
       ? "⚠️ <b>No MCU board detected.</b> 1-Click will run the <b>Sim MCU</b> " +
@@ -1559,7 +1599,7 @@ async function noBoardSwitch(s) {
         "you can edit it freely, but Flash, 1-Click and Bringup need its board. " +
         "Pick the <b>Sim MCU</b> robot (<code>bare_sim</code>) to try the stack without hardware.";
     el.hidden = false;
-  } else if (absent) {
+  } else if (absent && onSim) {
     el.innerHTML = "⚠️ <b>No MCU board detected</b> — switched to the <b>Sim MCU</b> robot " +
       "(<code>bare_sim</code>: the firmware running on this computer over micro-ROS, every simulated device, " +
       "no pins), so 1-Click and Bringup work with nothing plugged in. Plug a board in to flash and run it" +

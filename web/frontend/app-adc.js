@@ -172,8 +172,9 @@ function mcuHasDac(env) {
 // Hides the calibration tool wherever it cannot run, and says why rather than
 // silently dropping a control the user saw a moment ago.
 function applyDacAvailability() {
-  const env = document.getElementById("hw-flash-env")?.value
+  let env = document.getElementById("hw-flash-env")?.value
     || document.getElementById("cfg-mcu")?.value || "";
+  if (env === "sim") env = "the Sim MCU (no board)";
   const usable = mcuHasDac(env);
 
   // The tool's `adc` button, with the reason beside it rather than a silent gap.
@@ -489,8 +490,18 @@ function initBaseControllerConfigModule() {
 const BOARD_ONLY_BUTTONS = [
   "btn-hw-flash", "btn-hw-build", "btn-auto-detect-i2c", "btn-adc-run-cal",
 ];
+// Whether the ROBOT is the Sim MCU -- asked of the robot, not of the controller select, which
+// shows the markup's default or the previous robot's controller until the config syncs (a UNO Q
+// robot's Hardware Tests read "The robot is the Sim MCU"). A real robot never is; picking "sim"
+// in a select switches the robot to bare_sim (useSimRobot), so that pick is still seen here.
+function robotIsSimMcu() {
+  if (activeRobotIsReal()) return false;
+  if (state.robot_name === "bare_sim") return true;
+  const bc = (state.config && state.config.base_controller) || {};
+  return String(bc.name || "").toLowerCase() === "sim" || String(bc.mcu || "").toLowerCase() === "host";
+}
 function updateBoardOnlyButtons() {
-  const sim = state.robot_name === "bare_sim" || document.getElementById("cfg-mcu")?.value === "sim";
+  const sim = robotIsSimMcu();
   for (const id of BOARD_ONLY_BUTTONS) {
     const b = document.getElementById(id);
     if (!b) continue;

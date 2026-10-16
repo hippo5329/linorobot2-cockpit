@@ -243,7 +243,12 @@ def get_status(controller: Optional[str] = None):
         # A robot whose micro-ROS link is Wi-Fi (udp4) has no board on this machine's bus by
         # design: a tracked robot's GenDrv is reached over the air, so "no board attached" is not a
         # reason to refuse its Bringup (the bringup health check says whether it answered).
-        "board_on_wifi": _transport_is_wifi(controller.get("transport")),
+        # The Sim MCU speaks udp4 too, but to the firmware on this computer: it is no robot on Wi-Fi.
+        "board_on_wifi": _transport_is_wifi(controller.get("transport")) and not _is_sim_mcu(controller),
+        # The base controller is built into this computer (the UNO Q's STM32 on its UART and SWD):
+        # found, but on no USB bus, so there is no VID:PID to show and no BOOTSEL to wait for.
+        "mcu_onboard": bool(mcu_detected and onboard and detected_mcu == onboard),
+        "detected_port": detected_port,
         "mcu_mismatch": mcu_mismatch,
         "board_id": board_id,
         "host_ip": ports_info.get("host_ip", ""),
@@ -361,6 +366,12 @@ async def api_gitinfo_branch(request: Request):
         yield f"data: {json.dumps({'exit_code': proc.returncode, 'branch': branch})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _is_sim_mcu(controller: dict) -> bool:
+    """The Sim MCU robot's controller: the firmware built for this computer (mcu: host)."""
+    return (str(controller.get("name") or "").lower() == SIM_MCU or
+            str(controller.get("mcu") or "").lower() == "host")
 
 
 def _transport_is_wifi(transport) -> bool:
