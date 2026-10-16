@@ -2146,7 +2146,7 @@ def main():
                              "for this env (prebuilt), or build-if-PlatformIO-is-here (auto, default)")
     parser.add_argument("--goal-x", type=float, default=3.0, help="Nav2 goal X behind the obstacle wall (m)")
     parser.add_argument("--goal-y", type=float, default=0.0, help="Nav2 goal Y (m)")
-    parser.add_argument("--map-output", default=os.path.join(REPO_ROOT, "maps", "one_click_map"),
+    parser.add_argument("--map-output", default=os.path.join(cockpit_paths.maps_dir(), "one_click_map"),
                         help="Output path prefix for the map saver")
     parser.add_argument("--no-nav2", action="store_true", help="Skip Nav2 (run SLAM only)")
     parser.add_argument("--map", default="",

@@ -47,8 +47,9 @@ def test_teleop_writes_params_and_runs():
 
 
 def test_map_save_name_is_an_identifier():
-    cmd = actions.build("map_save", {"name": "kitchen", "maps_dir": "/w/maps"})
-    assert "map_saver_cli -f /w/maps/kitchen" in cmd
+    import cockpit_paths
+    cmd = actions.build("map_save", {"name": "kitchen"})
+    assert f"map_saver_cli -f {cockpit_paths.maps_dir()}/kitchen" in cmd
 
 
 def test_apt_install_quotes_a_package_list():

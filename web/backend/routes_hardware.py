@@ -643,7 +643,9 @@ def trigger_one_click_workflow(controller: Optional[str] = None, explore_sec: in
 
 
 def maps_dir() -> str:
-    return os.path.join(REPO_ROOT, "maps")
+    """Where saved maps live: cockpit_paths.maps_dir(), the one place every saver writes."""
+    import cockpit_paths
+    return cockpit_paths.maps_dir()
 
 
 # A saved map's name: the file stem under maps/, never a path.
@@ -940,10 +942,10 @@ def api_verify_topics(no_scan: bool = False, distro: str = "lyrical"):
 
 @app.get("/api/maps")
 def list_maps():
-    maps_dir = os.path.join(REPO_ROOT, "maps")
-    if not os.path.isdir(maps_dir):
-        return {"maps": [], "maps_dir": maps_dir}
-    files = os.listdir(maps_dir)
+    d = maps_dir()
+    if not os.path.isdir(d):
+        return {"maps": [], "maps_dir": d}
+    files = os.listdir(d)
     map_list = []
     for f in files:
         if f.endswith(".yaml"):
@@ -956,14 +958,13 @@ def list_maps():
     # maps_dir is part of the contract: Nav2's map_server takes a filesystem
     # path (map:=/abs/path.yaml), not a URL, so the caller cannot build the
     # argument from the file names alone.
-    return {"maps": map_list, "maps_dir": maps_dir}
+    return {"maps": map_list, "maps_dir": d}
 
 
 def _map_path(filename: str) -> str:
-    maps_dir = os.path.join(REPO_ROOT, "maps")
     if os.path.basename(filename) != filename or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Bad map file name")
-    return os.path.join(maps_dir, filename)
+    return os.path.join(maps_dir(), filename)
 
 
 @app.get("/api/maps/{filename}/preview")

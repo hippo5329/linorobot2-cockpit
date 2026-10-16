@@ -76,7 +76,7 @@ def test_the_route_serves_a_png_and_refuses_paths(tmp_path, monkeypatch):
 
     (tmp_path / "maps").mkdir()
     (tmp_path / "maps" / "room.pgm").write_bytes(_pgm(2, 2, [0, 254, 205, 0]))
-    monkeypatch.setattr(routes_hardware, "REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(routes_hardware, "maps_dir", lambda: str(tmp_path / "maps"))
     client = TestClient(routes_hardware.app)
     r = client.get("/api/maps/room.pgm/preview")
     assert r.status_code == 200
@@ -95,7 +95,7 @@ def test_the_route_function_without_a_client(tmp_path, monkeypatch):
     (tmp_path / "maps").mkdir()
     (tmp_path / "maps" / "room.pgm").write_bytes(_pgm(2, 2, [0, 254, 205, 0]))
     (tmp_path / "maps" / "junk.pgm").write_bytes(b"not a map")
-    monkeypatch.setattr(routes_hardware, "REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(routes_hardware, "maps_dir", lambda: str(tmp_path / "maps"))
     r = routes_hardware.get_map_preview("room.pgm", size=512)
     assert r.media_type == "image/png"
     assert _decode_png(r.body)[:2] == (2, 2)

@@ -333,9 +333,21 @@ def _teleop(a: Dict) -> str:
             f"ros2 run teleop_twist_joy teleop_node --ros-args --params-file {tmp}; wait)")
 
 
+def _maps_dir() -> str:
+    scripts = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import cockpit_paths
+    return cockpit_paths.maps_dir()
+
+
 def _map_save(a: Dict) -> str:
+    """map_saver_cli into the one maps directory (cockpit_paths.maps_dir), never one the page
+    names: the page named the colcon workspace's linorobot2_navigation/maps, where neither the
+    Saved Maps gallery nor the Nav2 map list looks."""
     distro = _ident(a.get("distro"), "distro", "lyrical")
-    maps_dir = _path(a.get("maps_dir"), "maps_dir")
+    maps_dir = _path(_maps_dir(), "maps_dir")
     name = _ident(a.get("name"), "name")
     return (f"{ros_setup_shell(distro)}; mkdir -p {shlex.quote(maps_dir)} && "
             f"ros2 run nav2_map_server map_saver_cli -f {shlex.quote(maps_dir + '/' + name)}")

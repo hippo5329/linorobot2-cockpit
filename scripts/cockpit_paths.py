@@ -32,6 +32,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REFERENCE_CONFIG_DIR = os.path.join(REPO_ROOT, "config", "reference")
 SECRETS_EXAMPLE_PATH = os.path.join(REPO_ROOT, "config", "secrets.yaml.example")
 FASTDDS_PROFILE = os.path.join(REPO_ROOT, "config", "fastdds_service_qos.xml")
+# Saved maps: ONE directory, where the 1-Click's map saver writes, the SLAM card's Save map
+# writes, and the Saved Maps gallery and the Nav2 map list read. The Save map button wrote
+# into the colcon workspace's linorobot2_navigation/maps instead, so a map saved there never
+# appeared anywhere the UI looks.
+MAPS_DIR = os.path.join(REPO_ROOT, "maps")
+
+
+def maps_dir() -> str:
+    return MAPS_DIR
 # The Sim MCU robot, not a design: a reference design is a real robot, chosen by the user,
 # and with no design chosen the board decides -- a detected MCU's bare module (the UI
 # follows the bus), or with no board this, every device simulated (user, 2026-10-06).

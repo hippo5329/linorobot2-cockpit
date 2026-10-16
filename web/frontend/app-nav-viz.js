@@ -28,13 +28,18 @@ wireStartStop({
 document.getElementById("btn-map-save").addEventListener("click", () => {
   const name = document.getElementById("map-save-name").value.trim();
   if (!name) return;
-  const mapsDir = `${ws()}/src/linorobot2/linorobot2_navigation/maps`;
+  // The server saves into the one maps directory the gallery, the Nav2 map list and
+  // the 1-Click read; this page used to name a maps folder inside the colcon workspace,
+  // where nothing looks.
   // Saving needs SLAM still running -- it is what publishes /map -- so this
   // cannot take the slot SLAM is holding. On "main" it was refused with a 409
   // every time, i.e. the map could never be saved from the UI at all.
   runCommand(
-    { action: "map_save", args: { name, maps_dir: mapsDir, distro: getDistro() } },
-    { slot: "tool", title: `Save map: ${name}`, onDone: refreshMaps }
+    { action: "map_save", args: { name, distro: getDistro() } },
+    { slot: "tool", title: `Save map: ${name}`, onDone: () => {
+      refreshMaps();
+      document.getElementById("btn-cockpit-refresh-maps")?.click();   // the Saved Maps gallery
+    } }
   );
 });
 
