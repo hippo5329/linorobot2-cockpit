@@ -77,7 +77,7 @@ SEED_MAX_M = 3.0        # home: an odometry seed farther than this is a restarte
 HOME_MIN_FRAC = 0.40    # never under HOME_FLOOR_PAIRS: a LiDAR with a masked sector (a UNO Q
 HOME_FLOOR_PAIRS = 100  # robot's ~290 points) moved 0.5 m sees 46 % of its snapshot at best
 HOME_RIVAL_FRAC = 0.80  # another pose with this share of the best's inliers: ambiguous
-TF_WAIT_TRIES = 100     # x 0.2 s: the base_link -> laser TF, before a snapshot is refused
+TF_WAIT_S = 20.0        # s of wall time: the base_link -> laser TF, before a snapshot is refused
 HOME_MAX_RMS = 0.025
 LOOK_STEP_DEG = 30.0    # one turn of the look-around
 LOOK_MIN_PAIRS = 40     # a look-around step's match against the cloud so far; else /odom alone
@@ -459,11 +459,14 @@ class Robot:
         return self.scan
 
     def mount(self):
-        # TF_WAIT_TRIES: a stack whose /scan is up can still be seconds from its static TF --
-        # on a UNO Q, 6 s after the scan there was none, and a 5 s wait saved the home
+        # TF_WAIT_S: a stack whose /scan is up can still be seconds from its static TF --
+        # on a UNO Q, 6 s after the scan there was none, and a "5 s" wait saved the home
         # snapshot in the scan frame (2026-10-14; the drive home then refused a weak fix).
+        # That wait, and the "20 s" after it, were counts of spin_once() calls, each one
+        # callback on this node's /odom and /scan: about a second. Seconds now
+        # (scan_match.TF_WAIT_S).
         if self.laser is None:
-            self.laser = scan_match.laser_pose(self.node, self.frame or "laser", tries=TF_WAIT_TRIES)
+            self.laser = scan_match.laser_pose(self.node, self.frame or "laser", timeout=TF_WAIT_S)
             self.tf_ok = self.laser is not None
             if self.laser is None:
                 print(f"  ⚠️ no TF base_link -> {self.frame}; using the scan frame as base_link")
@@ -743,7 +746,7 @@ def save(path: str, P, r: "Robot", odom=None) -> bool:
     later match them against base_link points. `odom`: the /odom pose the points are
     relative to (the start of a look-around), else /odom now."""
     if not r.tf_ok:
-        print(f"  no start snapshot: no TF base_link -> {r.frame} in {TF_WAIT_TRIES * 0.2:.0f} s")
+        print(f"  no start snapshot: no TF base_link -> {r.frame} in {TF_WAIT_S:.0f} s")
         return False
     odom = odom or r.wait_odom(2.0)
     with open(path, "w") as fh:

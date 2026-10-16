@@ -225,18 +225,101 @@ def whole_circle_topic(node, wait: float = 8.0, override: str = None) -> str:
     return "/scan"
 
 
-def laser_pose(node, frame: str, base_frame: str = "base_link", tries: int = 25):
-    """The scan frame's (x, y, yaw) in base_link, from TF; None when TF has none."""
-    import rclpy
-    from tf2_ros import Buffer, TransformListener
-    buf = Buffer()
-    TransformListener(buf, node)
-    for _ in range(tries):
+# How long a reader waits for the base_link -> laser TF, in SECONDS of wall time.
+#
+# It used to be a count of rclpy.spin_once() calls at timeout_sec=0.2, read as "x 0.2 s".
+# spin_once runs ONE callback and returns at once when one is ready, and the node doing
+# the waiting is subscribed to /scan, often /odom, and through the listener to /tf at the
+# EKF's rate -- so ten "tries" were ten callbacks, a few tens of milliseconds, and
+# clearance's "100 x 0.2 s = 20 s" about a second. The listener was also created only
+# after the scans had been collected, so that window was all the time DDS had to match
+# the new /tf_static reader with robot_state_publisher's writer and deliver its latched
+# sample; /tf's frequent samples got through, the one static sample did not. A real
+# robot whose robot_state_publisher did publish base_link -> laser was judged "no TF",
+# in the scan frame, and a probe built the same way saw only map, odom and base_link.
+TF_WAIT_S = 5.0
+
+
+def wait_until(attempt, spin, timeout: float, clock=time.monotonic):
+    """attempt() until it returns a value, spin(seconds) between tries; None after
+    `timeout` seconds by `clock`. The bound is time, never a count of spins: a spin that
+    runs one ready callback returns in microseconds on a busy node."""
+    end = clock() + timeout
+    while True:
         try:
-            tf = buf.lookup_transform(base_frame, frame, rclpy.time.Time())
+            return attempt()
+        except Exception:
+            pass
+        left = end - clock()
+        if left <= 0:
+            return None
+        spin(min(0.1, left))
+
+
+def tf_frame(frame: str) -> str:
+    """tf2 refuses a frame id with a leading '/' (ROS 1 style, still sent by some
+    drivers) as invalid, which a lookup reports like a missing transform."""
+    return (frame or "").lstrip("/")
+
+
+def frames_in(yaml_text: str) -> list:
+    """Every frame named in Buffer.all_frames_as_yaml(): children and their parents."""
+    import yaml
+    try:
+        tree = yaml.safe_load(yaml_text) or {}
+    except Exception:
+        return []
+    if not isinstance(tree, dict):
+        return []
+    names = set(tree)
+    names |= {v.get("parent") for v in tree.values() if isinstance(v, dict) and v.get("parent")}
+    return sorted(str(n) for n in names)
+
+
+class TfWatch:
+    """A TF buffer fed on `node`'s own subscriptions (/tf and the latched /tf_static).
+
+    Start it BEFORE waiting for anything else -- the scans, the odometry -- so DDS
+    discovery and the static sample's delivery overlap that wait; then look up with
+    laser_pose(), and close() it: a listener left on a node keeps taking /tf callbacks
+    from the node's own spin_once() loop for as long as the node lives."""
+
+    def __init__(self, node):
+        from tf2_ros import Buffer, TransformListener
+        self.node = node
+        self.buf = Buffer()
+        self.listener = TransformListener(self.buf, node)
+
+    def laser_pose(self, frame: str, base_frame: str = "base_link", timeout: float = TF_WAIT_S):
+        """The scan frame's (x, y, yaw) in base_frame; None when TF has none in `timeout` s."""
+        import rclpy
+
+        def attempt():
+            tf = self.buf.lookup_transform(tf_frame(base_frame), tf_frame(frame), rclpy.time.Time())
             q = tf.transform.rotation
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             return (tf.transform.translation.x, tf.transform.translation.y, yaw)
+        return wait_until(attempt, lambda t: rclpy.spin_once(self.node, timeout_sec=t), timeout)
+
+    def frames(self) -> list:
+        """The frames this buffer has heard of, for a message that says why a lookup failed."""
+        try:
+            return frames_in(self.buf.all_frames_as_yaml())
         except Exception:
-            rclpy.spin_once(node, timeout_sec=0.2)
-    return None
+            return []
+
+    def close(self):
+        try:
+            self.listener.unregister()
+        except Exception:
+            pass
+
+
+def laser_pose(node, frame: str, base_frame: str = "base_link", timeout: float = TF_WAIT_S):
+    """The scan frame's (x, y, yaw) in base_link, from TF; None when TF has none in
+    `timeout` seconds. A caller that can, starts a TfWatch earlier and asks it instead."""
+    watch = TfWatch(node)
+    try:
+        return watch.laser_pose(frame, base_frame, timeout)
+    finally:
+        watch.close()

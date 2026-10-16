@@ -209,6 +209,7 @@ def run(a, params: dict) -> int:
     pre = f"/{ns}" if ns else ""
     rclpy.init()
     node = Node("lidar_check")
+    tf_watch = scan_match.TfWatch(node)   # first: /tf_static matches while the scans come in
     names = set()
     end = time.time() + 8.0
     topic = f"{pre}/scan"
@@ -238,7 +239,12 @@ def run(a, params: dict) -> int:
     res = analyse(scans, time.time() - (first or t0), expected_hz(params))
     res["topic"] = topic
     if scans:
-        laser = scan_match.laser_pose(node, frame[0] or "laser", tries=10) or (0.0, 0.0, 0.0)
+        laser = tf_watch.laser_pose(frame[0] or "laser",
+                                    base_frame=f"{ns}/base_link" if ns else "base_link")
+        if laser is None:
+            print(f"  ⚠️ no TF base_link -> {frame[0]} (TF has {', '.join(tf_watch.frames()) or 'no frames'}); "
+                  f"judging in the scan frame")
+            laser = (0.0, 0.0, 0.0)
         P = scan_match.median_points(scans[-10:], laser)
         q = clearance.quadrants(P)
         res["room"] = {k: (None if v == math.inf else round(v, 3)) for k, v in q.items()}
@@ -247,6 +253,7 @@ def run(a, params: dict) -> int:
         if selfr["fail"]:
             res["pass"] = False
             res["reasons"] = list(res.get("reasons") or []) + [selfr["fail"]]
+    tf_watch.close()
     node.destroy_node()
     rclpy.shutdown()
     if not scans:

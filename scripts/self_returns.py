@@ -295,6 +295,8 @@ def main(argv=None) -> int:
     ap.add_argument("--scans", type=int, default=10, help="scans to judge by (~1 s at 10 Hz)")
     ap.add_argument("--topic", default="", help="default: the collision monitor's scan source")
     ap.add_argument("--timeout", type=float, default=10.0)
+    ap.add_argument("--tf-timeout", type=float, default=5.0,
+                    help="seconds to wait for base_link -> the scan frame after the scans")
     a = ap.parse_args(argv)
     import yaml
     with open(os.path.expanduser(a.params)) as fh:
@@ -314,26 +316,34 @@ def main(argv=None) -> int:
     import scan_match
     rclpy.init()
     node = Node("self_returns")
+    # The TF listener first: its /tf_static reader is then matched with
+    # robot_state_publisher's latched writer while the scans come in, rather than in
+    # the moment after (scan_match.TF_WAIT_S says how that moment was a few ms).
+    tf_watch = scan_match.TfWatch(node)
     scans, frame = [], [None]
 
     def on_scan(m):
         frame[0] = m.header.frame_id
-        scans.append(scan_match.scan_dict(m))
+        if len(scans) < a.scans:
+            scans.append(scan_match.scan_dict(m))
     node.create_subscription(LaserScan, topic, on_scan, qos_profile_sensor_data)
     end = time.time() + a.timeout
     while len(scans) < a.scans and time.time() < end:
         rclpy.spin_once(node, timeout_sec=0.1)
-    laser = None
+    laser, base, known = None, (f"{ns}/base_link" if ns else "base_link"), []
     if scans:
-        base = f"{ns}/base_link" if ns else "base_link"
-        laser = scan_match.laser_pose(node, frame[0] or "laser", base_frame=base, tries=10)
+        laser = tf_watch.laser_pose(frame[0] or "laser", base_frame=base, timeout=a.tf_timeout)
+        if laser is None:
+            known = tf_watch.frames()
+    tf_watch.close()
     node.destroy_node()
     rclpy.shutdown()
     if not scans:
         print(f"SELF_RETURNS NO_SCAN: nothing on {topic} in {a.timeout:.0f} s")
         return 2
     if laser is None:
-        print(f"  ⚠️ no TF base_link -> {frame[0]}; judging in the scan frame")
+        print(f"  ⚠️ no TF {base} -> {frame[0]} in {a.tf_timeout:.0f} s (TF has "
+              f"{', '.join(known) if known else 'no frames'}); judging in the scan frame")
         laser = (0.0, 0.0, 0.0)
     arcs = self_return_arcs(scans, cs["radius"], cs["min_points"], laser)
     print(f"  {len(scans)} scans on {topic}: returns inside the {cs['radius']:.2f} m footprint "

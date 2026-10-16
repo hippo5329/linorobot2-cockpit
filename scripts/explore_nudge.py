@@ -68,7 +68,7 @@ def main():
         if scan["m"] is None:
             return 0.0                      # no scan, no room: a guarded leg does not move
         if scan["laser"] is None:
-            scan["laser"] = scan_match.laser_pose(node, scan["m"].header.frame_id, tries=10) \
+            scan["laser"] = scan_match.laser_pose(node, scan["m"].header.frame_id) \
                 or (0.0, 0.0, 0.0)
         pts = scan_match.scan_points(scan_match.scan_dict(scan["m"]), laser=scan["laser"])
         ahead = [px * direction for px, py in pts if px * direction > 0 and abs(py) <= args.radius]

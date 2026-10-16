@@ -381,7 +381,7 @@ def main() -> int:
 
         def _samples(raw):
             if lid["laser"] is None and raw:
-                lid["laser"] = scan_match.laser_pose(node, raw[0][0].header.frame_id, tries=10)
+                lid["laser"] = scan_match.laser_pose(node, raw[0][0].header.frame_id)
                 if lid["laser"] is None:
                     print("[drive_suite] no TF for the laser frame: its scans are taken as "
                           "centred on base_link", flush=True)
@@ -430,7 +430,7 @@ def main() -> int:
                 print("%-12s SKIPPED: no scan to check the room by (--guard)" % label, flush=True)
                 return None
             if lid["laser"] is None:
-                lid["laser"] = scan_match.laser_pose(node, lid["last"].header.frame_id, tries=10) \
+                lid["laser"] = scan_match.laser_pose(node, lid["last"].header.frame_id) \
                     or (0.0, 0.0, 0.0)
             pts = scan_match.scan_points(scan_match.scan_dict(lid["last"]), laser=lid["laser"])
             secs, note = odom_check.room_for(pts, lin, ang, lat, secs, ROBOT_R, guard)

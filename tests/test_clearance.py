@@ -254,9 +254,9 @@ def test_a_snapshot_with_the_same_mount_is_used_as_saved():
 
 
 def test_the_tf_wait_outlasts_a_slow_robot_computer():
-    assert clearance.TF_WAIT_TRIES * 0.2 >= 20.0
+    assert clearance.TF_WAIT_S >= 20.0
     src = open(os.path.join(REPO, "scripts", "clearance.py")).read()
-    assert "laser_pose(self.node, self.frame or \"laser\", tries=TF_WAIT_TRIES)" in src
+    assert "laser_pose(self.node, self.frame or \"laser\", timeout=TF_WAIT_S)" in src
 
 
 # ---------------------------------------------------------------- the first fix's gate
