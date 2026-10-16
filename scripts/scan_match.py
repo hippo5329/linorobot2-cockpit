@@ -153,7 +153,8 @@ def relative(a, b):
     return (b[0] - a[0], c * dx + s * dy, -s * dx + c * dy)
 
 
-def track(scans: list, laser=(0.0, 0.0, 0.0), kf_yaw: float = math.radians(30), kf_dist: float = 0.15):
+def track(scans: list, laser=(0.0, 0.0, 0.0), kf_yaw: float = math.radians(30), kf_dist: float = 0.15,
+          progress=None):
     """Where the robot went, scan by scan, with the room as the reference.
 
     [(stamp, x, y, yaw, rms, pairs)] -- base_link in the frame of the first scan, yaw
@@ -162,14 +163,19 @@ def track(scans: list, laser=(0.0, 0.0, 0.0), kf_yaw: float = math.radians(30), 
     keyframe every kf_yaw or kf_dist. Keyframe tracking drifts a little (each match slides
     along the walls, ~1.7 % of a turn); the end match does not, so when the robot turned
     more than 45 deg the yaw is scaled to agree with it -- a loop closure for a turn in
-    place. A scan with too few returns, or a weak match, keeps the last pose."""
+    place. A scan with too few returns, or a weak match, keeps the last pose.
+
+    `progress(done, total)`, if given, is called every 50 scans: matching a few hundred scans
+    takes a minute on a small robot computer, and a console silent that long reads as hung."""
     if not scans:
         return [], None
     pts = [scan_points(s, laser) for s in scans]
     kf_pose, kf_pts = (0.0, 0.0, 0.0), pts[0]
     pose = (0.0, 0.0, 0.0)
     out = [(scans[0]["stamp"], 0.0, 0.0, 0.0, 0.0, len(pts[0]))]
-    for sc, P in zip(scans[1:], pts[1:]):
+    for i, (sc, P) in enumerate(zip(scans[1:], pts[1:]), 2):
+        if progress and i % 50 == 0:
+            progress(i, len(scans))
         if len(P) < 30:
             continue
         guess = relative(kf_pose, pose)

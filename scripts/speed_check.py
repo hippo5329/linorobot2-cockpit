@@ -356,6 +356,7 @@ def run(a, params: dict) -> int:
             spin(0.1)
 
     try:
+        print(f"  waiting for {scan_topic} and {pre}/odom/unfiltered (up to 15 s)...", flush=True)
         t0 = time.time()
         while (not scans or not odom) and time.time() - t0 < 15:
             rclpy.spin_once(node, timeout_sec=0.1)
@@ -394,7 +395,9 @@ def run(a, params: dict) -> int:
         rest = [v for _, v, _ in batt[-10:]]
         windows = []
         hold(0, 0, 0, 1.0)
-        for kind, v in steps(a.strafe):
+        plan = steps(a.strafe)
+        for i, (kind, v) in enumerate(plan, 1):
+            print(f"  step {i}/{len(plan)}: {kind} {v:+.2f} {UNITS[kind]} for {RUN_S:g} s", flush=True)
             ta = time.time()
             hold(v if kind == "lin" else 0.0, v if kind == "ang" else 0.0, v if kind == "lat" else 0.0, RUN_S)
             tb = time.time()
@@ -413,7 +416,10 @@ def run(a, params: dict) -> int:
                 time.sleep(0.02)
     # Stamps are ROS time, the windows wall time on this host: the same clock here (the agent
     # syncs the board to the host).
-    poses, end = scan_match.track(sorted(scans, key=lambda s: s["stamp"]), laser)
+    print(f"--- the robot is stopped; matching {len(scans)} scans against the room...", flush=True)
+    poses, end = scan_match.track(
+        sorted(scans, key=lambda s: s["stamp"]), laser,
+        progress=lambda done, total: print(f"  matched {done}/{total} scans", flush=True))
     rows = []
     B = np.asarray(batt, float).reshape(-1, 3)
     if rest:
@@ -464,12 +470,16 @@ def ros_env_command(argv: list, distro: str) -> str:
     """This program again, under the shell prefix every ROS step of the 1-Click runs under
     (one_click_pipeline.get_ros_env: ROS, the workspaces and the Fast DDS profile). A reader
     without the stack's DDS profile cannot see a stack that has it, so a plain
-    `python3 speed_check.py` in the container would find no /odom at all."""
+    `python3 speed_check.py` in the container would find no /odom at all.
+
+    Unbuffered (-u): the caller reads a pipe, where Python buffers 8 KB, so the web UI's
+    console showed nothing for the whole ~90 s run and then everything at once -- the
+    caller's own -u does not reach a process exec'd under a new shell."""
     import shlex
     import one_click_pipeline
     args = " ".join(shlex.quote(x) for x in argv)
     return (f"{one_click_pipeline.get_ros_env(distro or 'auto')} && SPEED_CHECK_IN_ROS_ENV=1 "
-            f"exec python3 {shlex.quote(os.path.abspath(__file__))} {args}")
+            f"exec python3 -u {shlex.quote(os.path.abspath(__file__))} {args}")
 
 
 def main(argv=None) -> int:

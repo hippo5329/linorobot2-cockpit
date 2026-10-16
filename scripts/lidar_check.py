@@ -193,7 +193,8 @@ def ros_env_command(argv: list) -> str:
     import one_click_pipeline
     args = " ".join(shlex.quote(x) for x in argv)
     return (f"{one_click_pipeline.get_ros_env(os.environ.get('ROS_DISTRO', 'auto'))} && "
-            f"LIDAR_CHECK_IN_ROS_ENV=1 exec python3 {shlex.quote(os.path.abspath(__file__))} {args}")
+            # -u: its caller reads a pipe; buffered, the console showed nothing until the end
+            f"LIDAR_CHECK_IN_ROS_ENV=1 exec python3 -u {shlex.quote(os.path.abspath(__file__))} {args}")
 
 
 def run(a, params: dict) -> int:

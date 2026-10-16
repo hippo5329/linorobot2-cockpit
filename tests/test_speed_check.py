@@ -300,3 +300,37 @@ def test_the_gyro_is_judged_at_ten_percent():
 
 def test_healthy_ratios_have_no_faults():
     assert sc.faults({"lin": 0.97, "ang": 1.1, "lat": 0.8, "gyro": 1.02}) == []
+
+
+# ---- the console sees the run as it happens ----
+# Hardware Tests' "Speed check" showed nothing for ~90 s (web UI walkthrough, 2026-10-16): the
+# script re-execs itself under the ROS shell prefix, where its stdout is a pipe and Python
+# buffers 8 KB unless told otherwise, and after the steps it matches a few hundred scans in
+# silence.
+
+def test_the_ros_env_reexec_is_unbuffered(monkeypatch):
+    import one_click_pipeline
+    monkeypatch.setattr(one_click_pipeline, "get_ros_env", lambda distro="auto": "true")
+    cmd = sc.ros_env_command(["--json", "/tmp/x.json"], "jazzy")
+    assert "exec python3 -u " in cmd
+
+
+def test_the_lidar_check_reexec_is_unbuffered():
+    src = open(os.path.join(REPO, "scripts", "lidar_check.py")).read()
+    body = src[src.index("def ros_env_command"):]
+    body = body[:body.index("\ndef ")]
+    assert "exec python3 -u " in body
+
+
+def test_every_step_and_the_matching_say_so_as_they_start():
+    src = open(os.path.join(REPO, "scripts", "speed_check.py")).read()
+    loop = src[src.index("for i, (kind, v) in enumerate(plan, 1):"):]
+    assert 'print(f"  step {i}/{len(plan)}' in loop.split("\n")[1] and "flush=True" in loop.split("\n")[1]
+    assert "progress=lambda done, total:" in src
+
+
+def test_the_tracker_reports_progress():
+    scans = [_scan(0.001 * i, 0.0, 0.0, i * 0.1) for i in range(120)]
+    seen = []
+    scan_match.track(scans, progress=lambda done, total: seen.append((done, total)))
+    assert seen == [(50, 120), (100, 120)]
