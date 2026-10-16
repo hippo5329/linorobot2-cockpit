@@ -1,6 +1,6 @@
 """The map viewer draws a scan from where its LiDAR is mounted.
 
-The TS100's LD19 sits at -5 deg (geometry.laser.yaw -0.0873) and 2 cm ahead of
+The tracked robot's LD19 sits at -5 deg (geometry.laser.yaw -0.0873) and 2 cm ahead of
 base_link. The viewer drew every scan from the robot's centre with the robot's
 heading, so the live scan stood turned against the walls the map had just built
 (2026-10-16, after a Map Viewer goal) -- and an operator reads that as SLAM
@@ -39,21 +39,21 @@ def _run_node(expr):
     return json.loads(out.stdout)
 
 
-TS100_STATICS = ("new Map([['laser', {parent: 'base_link', x: 0.02, y: 0, yaw: -0.0873}],"
+TRACKED_STATICS = ("new Map([['laser', {parent: 'base_link', x: 0.02, y: 0, yaw: -0.0873}],"
                  " ['base_link', {parent: 'base_footprint', x: 0, y: 0, yaw: 0}]])")
 
 
 def test_the_scan_frame_is_found_through_the_chain():
-    off = _run_node(f"frameInBase({TS100_STATICS}, 'laser', 'base_footprint')")
+    off = _run_node(f"frameInBase({TRACKED_STATICS}, 'laser', 'base_footprint')")
     assert off["x"] == pytest.approx(0.02)
     assert off["yaw"] == pytest.approx(-0.0873)
-    off = _run_node(f"frameInBase({TS100_STATICS}, 'laser', 'base_link')")
+    off = _run_node(f"frameInBase({TRACKED_STATICS}, 'laser', 'base_link')")
     assert off["yaw"] == pytest.approx(-0.0873)
 
 
 def test_an_unknown_chain_is_null_not_a_guess():
-    assert _run_node(f"frameInBase({TS100_STATICS}, 'laser', 'chassis')") is None
-    assert _run_node(f"frameInBase({TS100_STATICS}, 'camera', 'base_link')") is None
+    assert _run_node(f"frameInBase({TRACKED_STATICS}, 'laser', 'chassis')") is None
+    assert _run_node(f"frameInBase({TRACKED_STATICS}, 'camera', 'base_link')") is None
 
 
 def test_the_laser_pose_in_map_carries_the_mount():

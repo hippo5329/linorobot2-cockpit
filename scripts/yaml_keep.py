@@ -2,7 +2,7 @@
 """Write a robot config back without losing its comments.
 
 yaml.safe_dump throws away every comment in the file, and a robot's config carries the
-user's reasons: its DDS domain, its LiDAR mask, its BMS cutoff (the TS100's, twice on
+user's reasons: its DDS domain, its LiDAR mask, its BMS cutoff (the tracked robot's, twice on
 2026-10-16 -- drivetrain_report --write, then the web UI's distro switch). Values are
 rewritten where they stand, keys the file lacks go under their parent, and the result
 must load back equal to the data, or the caller gets None and dumps the whole file.

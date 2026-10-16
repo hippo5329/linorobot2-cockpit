@@ -233,7 +233,7 @@ function applyLaserConfigToPanel() {
   const modeSel = document.getElementById("laser-driver-mode");
   // The robot's own LiDAR transport when nothing else chose one: base_controller.lidar
   // comm_mode udp is the board forwarding the UART over Wi-Fi, which bringup reads with the
-  // driver's own UDP server. The TS100 opened on "Direct serial" to /dev/ldlidar (2026-10-16).
+  // driver's own UDP server. The tracked robot opened on "Direct serial" to /dev/ldlidar (2026-10-16).
   const lidar = (c.base_controller || {}).lidar || {};
   const transport = c.laser_transport || (String(lidar.comm_mode || "").toLowerCase() === "udp" ? "udp_server" : "");
   if (modeSel && transport && [...modeSel.options].some((o) => o.value === transport)) {

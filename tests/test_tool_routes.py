@@ -133,7 +133,7 @@ def test_hardware_test_flashes_base_only(name):
 
 
 def test_a_wifi_robot_opens_over_the_air_when_the_page_names_an_absent_port(robot):
-    # the page sends the flash card's port selector whatever the link; on the TS100 (no cable)
+    # the page sends the flash card's port selector whatever the link; on the tracked robot (no cable)
     # /dev/ttyUSB0 was refused with "is the board plugged in" (2026-10-16)
     r, grams, links = robot
     c = TestClient(core.app)

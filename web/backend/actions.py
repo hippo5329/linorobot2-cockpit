@@ -449,7 +449,7 @@ def _ld_node_params(a: Dict, overrides: Dict) -> str:
         "angle_crop_min": "135.0",
         "angle_crop_max": "225.0",
         # bringup's LD_POLL_HZ: a 10 Hz look at a 10 Hz LiDAR loses revolutions (6.3 Hz on the
-        # TS100's Wi-Fi LD19 from this page, 2026-10-16); 50 Hz collects every one.
+        # tracked robot's Wi-Fi LD19 from this page, 2026-10-16); 50 Hz collects every one.
         "pub_rate": "50.0",
     }
     base.update(overrides)

@@ -2,7 +2,7 @@
 
 core.save_params dumped the whole file with yaml.dump, so every save from the UI -- a
 distro switch in the header, the LiDAR page -- threw away the user's reasons written
-beside the values (the TS100's DDS domain, LiDAR mask and BMS cutoff, 2026-10-16).
+beside the values (the tracked robot's DDS domain, LiDAR mask and BMS cutoff, 2026-10-16).
 """
 import os
 import sys
@@ -17,7 +17,7 @@ os.environ["COCKPIT_AUTH"] = "off"
 import core  # noqa: E402
 
 TEXT = """robot:
-  name: ts100_gendrv
+  name: rover_gendrv
 base_controller:
   # Its own DDS domain: two robots share the floor.
   domain_id: 10

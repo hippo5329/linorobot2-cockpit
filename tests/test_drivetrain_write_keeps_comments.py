@@ -1,7 +1,7 @@
 """drivetrain_report --write keeps the config's comments.
 
 It wrote the measured limits back with yaml.safe_dump, which threw away every
-comment in the robot's config: on the TS100 (2026-10-16) the user's dated reasons
+comment in the robot's config: on the tracked robot (2026-10-16) the user's dated reasons
 for its DDS domain, its LiDAR mask, its BMS cutoff and its heading-turn cap. The
 values were right; the file had lost why they were what they were.
 """

@@ -199,7 +199,7 @@ def test_teleop_refuses_when_its_packages_are_missing():
 
 
 def test_the_standalone_ld_driver_polls_like_bringup_and_bridges_where_it_may():
-    # TS100 2026-10-16: 6.3 Hz from a 10 Hz LD19 at the driver's pub_rate 10, and socat's
+    # The tracked robot, 2026-10-16: 6.3 Hz from a 10 Hz LD19 at the driver's pub_rate 10, and socat's
     # link in /dev refused to the app user ("Permission denied"), so no /scan at all
     import actions
     a = {"distro": "lyrical", "is_ld": True, "code": "ld19", "product": "LDLiDAR_LD19", "bins": 456,

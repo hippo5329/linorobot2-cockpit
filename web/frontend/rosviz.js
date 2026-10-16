@@ -50,7 +50,7 @@
 
   // Where `frame` sits in `base`, from the fixed transforms seen so far
   // (child -> { parent, x, y, yaw }); null when the chain does not reach `base`.
-  // The TS100's LD19 is mounted at -5 deg (geometry.laser.yaw): drawn as if it sat
+  // The tracked robot's LD19 is mounted at -5 deg (geometry.laser.yaw): drawn as if it sat
   // on base_link, every scan was turned 5 deg against the walls it had built.
   function frameInBase(statics, frame, base) {
     let off = { x: 0, y: 0, yaw: 0 };
@@ -646,7 +646,7 @@
       // a small fixed offset. map -> odom is not -- skipping that one drew the
       // scan at an angle to the walls it had just built.
       // The scan's own frame comes from the robot's fixed transforms (base_link ->
-      // laser: an x offset and, on the TS100, a -5 deg yaw); until they arrive, or
+      // laser: an x offset and, on the tracked robot, a -5 deg yaw); until they arrive, or
       // when the chain is unknown, it is drawn from the robot's centre as before.
       const sensor = frameInBase(this.statics, (scan.header && scan.header.frame_id) || "",
                                  this.baseFrame || "base_link");
