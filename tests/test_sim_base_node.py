@@ -175,8 +175,8 @@ def test_bringup_can_run_without_a_board():
     assert '"sim_base"' in launch
     assert "sim_base_node.py" in launch
     # ...and the agent must NOT start, or it holds a serial port nothing answers.
-    agent = launch[launch.index("micro_ros_agent\"] + micro_ros_args") - 900:]
-    agent = agent[:agent.index("micro_ros_agent\"] + micro_ros_args")]
+    agent = launch[launch.index("agent_cmd() + micro_ros_args") - 900:]
+    agent = agent[:agent.index("agent_cmd() + micro_ros_args")]
     assert "sim_base" in agent, "the agent still starts when the base is simulated"
 
 

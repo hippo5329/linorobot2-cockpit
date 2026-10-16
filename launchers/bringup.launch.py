@@ -74,6 +74,22 @@ def agent_rt_prefix() -> list:
     return [sys.executable, script] if os.path.isfile(script) else []
 
 
+def agent_cmd() -> list:
+    """The micro-ROS agent's own executable, not `ros2 run`: `ros2 run` stays resident as a
+    Python process for as long as the agent runs -- 145 MB of the UNO Q's 3.6 GB, where the
+    whole stack left Nav2 under 400 MB to start in (MC200, 2026-10-16). The argv is passed
+    through untouched either way (the agent's parser overruns on launch_ros's --ros-args).
+    Falls back to `ros2 run` when the package cannot be resolved here."""
+    try:
+        from ament_index_python.packages import get_package_prefix
+        exe = os.path.join(get_package_prefix("micro_ros_agent"), "lib", "micro_ros_agent", "micro_ros_agent")
+        if os.access(exe, os.X_OK):
+            return [exe]
+    except Exception:
+        pass
+    return ["ros2", "run", "micro_ros_agent", "micro_ros_agent"]
+
+
 def resolve_params_path(context):
     """Pick the robot config this launch is actually for.
 
@@ -587,7 +603,7 @@ def launch_setup(context, *args, **kwargs):
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration("micro_ros"), "'.lower() in ('true','1','yes') and ",
                 "True" if not no_board else "False"])),
-            cmd=agent_rt_prefix() + ["ros2", "run", "micro_ros_agent", "micro_ros_agent"] + micro_ros_args,
+            cmd=agent_rt_prefix() + agent_cmd() + micro_ros_args,
             name="micro_ros_agent",
             output="screen",
             # Respawn, for two reasons. An agent that dies mid-run -- a yanked

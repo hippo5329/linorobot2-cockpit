@@ -2,7 +2,13 @@
 """The pack's sag over a run: how far the voltage fell under load from where it stood at rest,
 and in which step -- the number that says whether a pack (and its cutoff) holds a robot up.
 
-    battery_sag.py log --out FILE [--ns NS]     one JSON line per /battery message: {"t", "v"}
+    battery_sag.py log --out FILE [--ns NS] [--rosbridge URL]
+                                                one JSON line per /battery message: {"t", "v"}
+
+It reads /battery through the stack's own rosbridge when one answers: a plain Python process
+of ~20 MB, where an rclpy subscriber is ~165 MB of the UNO Q's 3.6 GB (MC200, 2026-10-16:
+with the whole stack up Nav2 had under 400 MB to start in). Without rosbridge it subscribes
+itself.
 
 The 1-Click runs `log` beside a robot from bringup to the end, marks its steps on a timeline
 (clearance, exploration, test_acc, goals, the drive suite), and prints one BATTERY_SAG line
@@ -122,7 +128,61 @@ def sag_line(s) -> str:
             + f" ({s['n']} /battery samples)")
 
 
-def log(out: str, ns: str = "") -> int:
+def _topic(ns: str) -> str:
+    return f"/{ns.strip('/')}/battery" if ns.strip("/") else "/battery"
+
+
+def _voltage(raw: str):
+    """A rosbridge publish of a BatteryState -> its voltage, or None."""
+    try:
+        d = json.loads(raw)
+        v = float(d["msg"]["voltage"]) if d.get("op") == "publish" else float("nan")
+    except (ValueError, KeyError, TypeError):
+        return None
+    return v if math.isfinite(v) and v > 0.5 else None
+
+
+def log_rosbridge(out: str, ns: str, url: str, connect_s: float = 20.0) -> bool:
+    """/battery through rosbridge until killed. False when rosbridge never answered (the caller
+    then subscribes itself); True once it was used, whatever ended it."""
+    try:
+        import asyncio
+        import websockets
+    except ImportError:
+        return False
+
+    async def run():
+        deadline, used = time.time() + connect_s, False
+        while True:            # until killed; a rosbridge that drops is reconnected
+            try:
+                ws = await websockets.connect(url, open_timeout=3, max_size=None)
+            except Exception:
+                if not used and time.time() > deadline:
+                    return False
+                await asyncio.sleep(1.0)
+                continue
+            used = True
+            try:
+                async with ws:
+                    await ws.send(json.dumps({"op": "subscribe", "id": "battery_sag", "topic": _topic(ns),
+                                              "type": "sensor_msgs/msg/BatteryState", "queue_length": 1}))
+                    with open(out, "a", encoding="utf-8", buffering=1) as fh:
+                        async for raw in ws:
+                            v = _voltage(raw)
+                            if v is not None:
+                                fh.write(json.dumps({"t": round(time.time(), 3), "v": round(v, 3)}) + "\n")
+            except Exception:
+                await asyncio.sleep(1.0)
+
+    try:
+        return bool(asyncio.run(run()))
+    except (KeyboardInterrupt, Exception):
+        return True
+
+
+def log(out: str, ns: str = "", rosbridge: str = "") -> int:
+    if rosbridge and log_rosbridge(out, ns, rosbridge):
+        return 0
     import rclpy
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import BatteryState
@@ -136,7 +196,7 @@ def log(out: str, ns: str = "") -> int:
             fh.write(json.dumps({"t": round(time.time(), 3), "v": round(v, 3)}) + "\n")
 
     # best effort: the firmware's /battery is best effort, and a reliable reader never hears it
-    node.create_subscription(BatteryState, f"{ns.rstrip('/')}/battery" if ns else "battery",
+    node.create_subscription(BatteryState, _topic(ns) if ns else "battery",
                              on_battery, qos_profile_sensor_data)
     try:
         rclpy.spin(node)
@@ -158,8 +218,10 @@ def main(argv=None) -> int:
     lg = sub.add_parser("log")
     lg.add_argument("--out", required=True)
     lg.add_argument("--ns", default="")
+    lg.add_argument("--rosbridge", default="ws://127.0.0.1:9090",
+                    help="the stack's rosbridge; '' subscribes with rclpy instead")
     a = ap.parse_args(argv)
-    return log(a.out, a.ns)
+    return log(a.out, a.ns, a.rosbridge)
 
 
 if __name__ == "__main__":

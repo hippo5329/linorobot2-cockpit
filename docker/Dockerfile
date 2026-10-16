@@ -302,8 +302,10 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
 # varies by distro -- cryptography on jazzy, typing_extensions on lyrical -- so
 # naming them one at a time only moves the failure. Installing over the dpkg
 # copies instead of replacing them keeps the layer buildable on every distro.
+# websockets is uvicorn[standard]'s too; named here because scripts/battery_sag.py reads /battery
+# through rosbridge with it (a 20 MB process instead of a 165 MB rclpy node on the UNO Q).
 RUN pip install --no-cache-dir --ignore-installed \
-        "fastapi>=0.110" "uvicorn[standard]>=0.27" "esptool>=4.7"
+        "fastapi>=0.110" "uvicorn[standard]>=0.27" "esptool>=4.7" "websockets>=12"
 # libusb is the runtime half of picotool: RP2040/RP2350 flashing speaks raw USB
 # to the bootloader, not a serial protocol, so there is no tty involved at all.
 RUN apt-get update && apt-get install -y --no-install-recommends libusb-1.0-0 \

@@ -58,3 +58,41 @@ def test_the_logs_torn_lines_and_zero_volts_are_skipped(tmp_path):
     p = tmp_path / "b.jsonl"
     p.write_text(json.dumps({"t": 1, "v": 11.0}) + "\n{\"t\": 2, \n" + json.dumps({"t": 3, "v": 0.0}) + "\n")
     assert battery_sag.read_samples(str(p)) == [(1.0, 11.0)]
+
+
+def test_the_logger_reads_battery_through_rosbridge_and_reconnects(tmp_path):
+    # ~20 MB instead of an rclpy node's ~165 MB on the UNO Q (MC200 2026-10-16)
+    import pytest
+    websockets = pytest.importorskip("websockets")
+    import asyncio
+    import socket
+    import subprocess
+    import time as _t
+    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+    out = tmp_path / "bat.jsonl"
+    subs = []
+
+    async def handler(ws):
+        sub = json.loads(await ws.recv())
+        subs.append(sub)
+        for v in ((11.1, 11.0) if len(subs) == 1 else (10.9,)):
+            await ws.send(json.dumps({"op": "publish", "topic": sub["topic"], "msg": {"voltage": v}}))
+        await ws.send(json.dumps({"op": "status", "level": "info"}))   # not a reading
+        if len(subs) > 1:
+            await ws.wait_closed()     # held open until the logger is stopped
+
+    async def serve():
+        async with websockets.serve(handler, "127.0.0.1", port):
+            proc = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(battery_sag.__file__), "battery_sag.py"),
+                                     "log", "--out", str(out), "--ns", "/robot1",
+                                     "--rosbridge", f"ws://127.0.0.1:{port}"])
+            t_end = _t.time() + 15
+            while _t.time() < t_end and len(battery_sag.read_samples(str(out))) < 3:
+                await asyncio.sleep(0.2)
+            proc.terminate()
+            proc.wait(timeout=5)
+
+    asyncio.run(serve())
+    assert [v for _, v in battery_sag.read_samples(str(out))] == [11.1, 11.0, 10.9]
+    assert subs[0]["topic"] == "/robot1/battery" and subs[0]["type"] == "sensor_msgs/msg/BatteryState"
+    assert len(subs) == 2          # the dropped connection was reopened

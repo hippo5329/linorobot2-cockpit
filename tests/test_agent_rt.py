@@ -51,7 +51,7 @@ def test_a_missing_serial_port_is_reported_not_fatal():
 
 def test_bringup_puts_it_in_front_of_the_agent_only_when_asked():
     src = open(os.path.join(ROOT, "launchers", "bringup.launch.py")).read()
-    assert 'cmd=agent_rt_prefix() + ["ros2", "run", "micro_ros_agent", "micro_ros_agent"]' in src
+    assert "cmd=agent_rt_prefix() + agent_cmd() + micro_ros_args" in src
     body = src[src.index("def agent_rt_prefix()"):]
     assert 'os.environ.get("LINO_AGENT_RT_PRIO") or os.environ.get("LINO_AGENT_CPU")' in body
 
@@ -63,3 +63,24 @@ def test_the_unoq_compose_asks_for_it_and_allows_it():
     env = dict(e.split("=", 1) for e in c["environment"])
     assert env["LINO_AGENT_RT_PRIO"] == "50"
     assert "LINO_AGENT_CPU" not in env, "one CPU for every agent thread starved its serial reader"
+
+
+def test_the_agent_runs_as_its_own_executable_not_under_ros2_run(tmp_path, monkeypatch):
+    # `ros2 run` stays resident: a 145 MB Python process beside the agent on the UNO Q (2026-10-16)
+    import types
+    src = open(os.path.join(ROOT, "launchers", "bringup.launch.py")).read()
+    body = src[src.index("def agent_cmd()"):src.index("def resolve_params_path(")]
+    ns = {"os": os}
+    exec(body, ns)
+    exe = tmp_path / "lib" / "micro_ros_agent" / "micro_ros_agent"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    pkgs = types.ModuleType("ament_index_python.packages")
+    pkgs.get_package_prefix = lambda name: str(tmp_path)
+    monkeypatch.setitem(sys.modules, "ament_index_python", types.ModuleType("ament_index_python"))
+    monkeypatch.setitem(sys.modules, "ament_index_python.packages", pkgs)
+    assert ns["agent_cmd"]() == [str(exe)]
+    # not installed here: the old way, so a host without the package still launches
+    pkgs.get_package_prefix = lambda name: (_ for _ in ()).throw(LookupError(name))
+    assert ns["agent_cmd"]() == ["ros2", "run", "micro_ros_agent", "micro_ros_agent"]
