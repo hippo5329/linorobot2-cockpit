@@ -34,6 +34,28 @@
     return { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) };
   }
 
+  // a then b, both planar { x, y, yaw }: b is expressed in a's frame
+  function compose2d(a, b) {
+    const c = Math.cos(a.yaw), s = Math.sin(a.yaw);
+    return { x: a.x + c * b.x - s * b.y, y: a.y + s * b.x + c * b.y, yaw: a.yaw + b.yaw };
+  }
+
+  // Where `frame` sits in `base`, from the fixed transforms seen so far
+  // (child -> { parent, x, y, yaw }); null when the chain does not reach `base`.
+  // The TS100's LD19 is mounted at -5 deg (geometry.laser.yaw): drawn as if it sat
+  // on base_link, every scan was turned 5 deg against the walls it had built.
+  function frameInBase(statics, frame, base) {
+    let off = { x: 0, y: 0, yaw: 0 };
+    for (let f = frame, n = 0; n < 32; n++) {
+      if (f === base) return off;
+      const t = statics.get(f);
+      if (!t) return null;
+      off = compose2d(t, off);
+      f = t.parent;
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------ rosbridge IO
   class RosBridge {
     constructor() {
@@ -185,6 +207,10 @@
       // a map exists.
       this.mapOdom = { x: 0, y: 0, yaw: 0 };
       this.poseSource = "";
+      // the robot's own frames: child -> { parent, x, y, yaw }, from /tf_static
+      // (and /tf), so a scan is drawn from where its LiDAR is mounted
+      this.statics = new Map();
+      this.baseFrame = "";      // /odom's child_frame_id: what this.pose is the pose of
 
       this.tool = null;         // null | "initialpose" | "goal_pose"
       this.drag = null;         // { start:{x,y}, current:{x,y} }
@@ -289,6 +315,14 @@
       this.draw();
     }
 
+    setFrameTransform(t) {
+      const tr = t.transform;
+      this.statics.set(t.child_frame_id, {
+        parent: t.header.frame_id,
+        x: tr.translation.x, y: tr.translation.y, yaw: yawFromQuaternion(tr.rotation),
+      });
+    }
+
     _recomputePose() {
       const m = this.mapOdom, o = this.odomPose;
       const c = Math.cos(m.yaw), s = Math.sin(m.yaw);
@@ -299,7 +333,8 @@
       };
     }
 
-    setPose(pose, source) {
+    setPose(pose, source, frame) {
+      if (frame) this.baseFrame = frame;
       // /amcl_pose is the localized truth; do not let raw /odom overwrite it.
       if (source === "odom" && this.poseSource === "amcl") return;
       const p = {
@@ -502,7 +537,12 @@
       // browser has no full transform listener, and base_link -> laser really is
       // a small fixed offset. map -> odom is not -- skipping that one drew the
       // scan at an angle to the walls it had just built.
-      const { x: rx, y: ry, yaw } = this.pose;
+      // The scan's own frame comes from the robot's fixed transforms (base_link ->
+      // laser: an x offset and, on the TS100, a -5 deg yaw); until they arrive, or
+      // when the chain is unknown, it is drawn from the robot's centre as before.
+      const sensor = frameInBase(this.statics, (scan.header && scan.header.frame_id) || "",
+                                 this.baseFrame || "base_link");
+      const { x: rx, y: ry, yaw } = sensor ? compose2d(this.pose, sensor) : this.pose;
       ctx.fillStyle = "#f43f5e";
       for (let i = 0; i < ranges.length; i++) {
         const r = ranges[i];
@@ -650,11 +690,18 @@
         for (const t of msg.transforms || []) {
           if (t.header.frame_id === "map" && t.child_frame_id === "odom") {
             counts.tf++; updateTopicCounts(); viewer.setMapOdom(t.transform); updatePoseLabel();
+          } else if (t.header.frame_id !== "odom" && t.header.frame_id !== "map") {
+            viewer.setFrameTransform(t);   // a sensor some driver puts on /tf
           }
         }
       }, 200);
+      // Latched: rosbridge matches robot_state_publisher's transient-local QoS, so
+      // the mounts arrive once on connect -- never throttled, or they are lost.
+      bridge.subscribe("/tf_static", "tf2_msgs/msg/TFMessage", (msg) => {
+        for (const t of msg.transforms || []) viewer.setFrameTransform(t);
+      });
       bridge.subscribe("/odom", "nav_msgs/msg/Odometry", (msg) => {
-        counts.odom++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "odom"); updatePoseLabel();
+        counts.odom++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "odom", msg.child_frame_id); updatePoseLabel();
       }, 100);
 
       bridge.subscribe("/amcl_pose", "geometry_msgs/msg/PoseWithCovarianceStamped", (msg) => {

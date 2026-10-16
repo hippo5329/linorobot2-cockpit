@@ -2001,8 +2001,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <p class="hint" style="margin-top:10px;">
         <b>Controls:</b> scroll to zoom about the cursor · drag to pan · <kbd>Esc</kbd> cancels an armed tool.
-        Scan points are projected from the robot pose rather than through TF, so a large
-        <code>base_link</code>&nbsp;→&nbsp;<code>laser</code> offset will show a small constant shift.
+        Scan points are drawn from where the LiDAR is mounted (<code>base_link</code>&nbsp;→&nbsp;<code>laser</code>
+        from <code>/tf_static</code>); until that arrives they are drawn from the robot's centre.
       </p>
     </div>
   </section>
