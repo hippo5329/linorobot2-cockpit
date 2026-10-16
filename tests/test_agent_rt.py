@@ -41,7 +41,7 @@ def test_pinning_and_a_refused_priority_are_reported_never_fatal(monkeypatch):
     monkeypatch.setattr(os, "sched_setscheduler", refuse)
     notes = agent_rt.apply({"LINO_AGENT_CPU": str(have[-1]), "LINO_AGENT_RT_PRIO": "50"}, ["true"])
     assert any(n.startswith("pinned to CPU") for n in notes)
-    assert any("SCHED_FIFO 50 not set" in n and "CAP_SYS_NICE" in n for n in notes)
+    assert any("SCHED_RR 50 not set" in n and "CAP_SYS_NICE" in n for n in notes)
 
 
 def test_a_missing_serial_port_is_reported_not_fatal():
@@ -61,4 +61,5 @@ def test_the_unoq_compose_asks_for_it_and_allows_it():
     c = yaml.safe_load(open(os.path.join(ROOT, "docker-compose.unoq.yml")))["services"]["cockpit"]
     assert "SYS_NICE" in c["cap_add"] and c["ulimits"]["rtprio"] >= 50
     env = dict(e.split("=", 1) for e in c["environment"])
-    assert env["LINO_AGENT_RT_PRIO"] == "50" and env["LINO_AGENT_CPU"] == "3"
+    assert env["LINO_AGENT_RT_PRIO"] == "50"
+    assert "LINO_AGENT_CPU" not in env, "one CPU for every agent thread starved its serial reader"

@@ -8,8 +8,10 @@ nodes. Starved for tens of milliseconds it cannot drain the UART -- at 2 Mbaud a
 fills in ~20 ms -- frames are lost, the board's pings go unanswered and it drops the session
 (an Arduino UNO Q under SLAM + Nav2, 2026-10-15). From the environment, each step best-effort:
 
-  LINO_AGENT_RT_PRIO   SCHED_FIFO priority (1-99); needs CAP_SYS_NICE and an rtprio limit
-  LINO_AGENT_CPU       pin to these CPUs ("3", "2,3")
+  LINO_AGENT_RT_PRIO   real-time priority (1-99); needs CAP_SYS_NICE and an rtprio limit
+  LINO_AGENT_RT_POLICY rr (default) or fifo -- see apply()
+  LINO_AGENT_CPU       pin to these CPUs ("3", "2,3"); unset by default: one CPU for every
+                       agent thread starved its serial reader under load (2026-10-16)
   LINO_AGENT_LOW_LATENCY=1 (default)  ASYNC_LOW_LATENCY on the --dev serial port
 
 Policy and affinity are inherited across exec and by every thread the agent starts. A step
@@ -87,11 +89,17 @@ def apply(env, argv) -> list:
             notes.append(f"not pinned ({e.strerror})")
     prio = str(env.get("LINO_AGENT_RT_PRIO", "") or "").strip()
     if prio:
+        # RR, not FIFO, by default: every agent thread inherits the policy -- its Fast DDS
+        # threads too -- and FIFO never time-slices threads of one priority, so a discovery
+        # burst (Nav2 starting) on one of them held the CPU from the serial reader for over a
+        # second and the STM32 dropped the session; worse still pinned to one CPU (2026-10-16).
+        rr = str(env.get("LINO_AGENT_RT_POLICY", "rr")).strip().lower() != "fifo"
+        policy, label = (os.SCHED_RR, "SCHED_RR") if rr else (os.SCHED_FIFO, "SCHED_FIFO")
         try:
-            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(int(prio)))
-            notes.append(f"SCHED_FIFO priority {int(prio)}")
+            os.sched_setscheduler(0, policy, os.sched_param(int(prio)))
+            notes.append(f"{label} priority {int(prio)}")
         except (OSError, ValueError) as e:
-            notes.append(f"SCHED_FIFO {prio} not set ({getattr(e, 'strerror', None) or e}): "
+            notes.append(f"{label} {prio} not set ({getattr(e, 'strerror', None) or e}): "
                          "the container needs CAP_SYS_NICE and an rtprio limit")
     dev = serial_dev(argv)
     if dev and str(env.get("LINO_AGENT_LOW_LATENCY", "1")) == "1":
