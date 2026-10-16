@@ -191,7 +191,6 @@ def _open_wifi(r: dict):
     return tool_session.ToolSession(r["robot"], link, "wifi", ip=ip, ping_port=ping_port)
 
 
-_ROBOT_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _session_or_404(robot: str = ""):
@@ -199,7 +198,7 @@ def _session_or_404(robot: str = ""):
     for): resolving by the ACTIVE robot made STOP answer 404 once the header showed another
     robot, while the first one's wheel still turned."""
     if robot:
-        if not _ROBOT_NAME.match(robot):
+        if not cockpit_paths.valid_robot_name(robot):
             raise HTTPException(status_code=400, detail="robot: a robot's name")
         name = robot
     else:

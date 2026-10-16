@@ -1078,16 +1078,19 @@ function initHeaderPicker({ inputId, caretId, menuId, loadItems, onPick, emptyTe
   });
 }
 
+// A robot's name: the backend's one rule (cockpit_paths.ROBOT_NAME_PATTERN), which the header
+// field's `pattern` repeats. A hyphen is legal (rover-unoq: the firmware's node name maps it to
+// "_"); a stricter copy here and in the field left such a robot unselectable, or marked invalid
+// while selected (2026-10-15, 2026-10-16).
+const ROBOT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
 // byUser: the header's robot selector. A robot the user picks is a choice the
 // no-board switch must respect, exactly like a controller pick -- otherwise
 // choosing pico2_mecanum with nothing plugged in was undone by the next poll.
 async function selectRobot(name, byUser = true) {
   name = (name || "").trim();
-  // A hyphen is a legal robot name (rover-unoq: the firmware's node name maps it to "_" since
-  // rc-20261009.5, and /api/robot/select accepts it); refusing it here left such a robot
-  // unselectable from the header (2026-10-15).
-  if (!name || !/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
-    logLine(`[console] invalid robot name: "${name}" (use lowercase, digits, _ or -)`);
+  if (!name || !ROBOT_NAME_RE.test(name)) {
+    logLine(`[console] invalid robot name: "${name}" (letters, digits, _, - or ., starting with a letter or digit)`);
     const ri = document.getElementById("hdr-robot-name");
     if (ri) ri.value = state.robot_name;
     return;

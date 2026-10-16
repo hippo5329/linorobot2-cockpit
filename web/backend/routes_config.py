@@ -563,10 +563,11 @@ def get_robots():
 async def select_robot(request: Request):
     data = await json_body(request)
     name = text_field(data, "name", "robot")
-    if not name or not re.match(r"^[a-zA-Z0-9_.-]+$", name):
+    if not cockpit_paths.valid_robot_name(name):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid robot name: '{name}'. Use lowercase, digits, and underscores.",
+            detail=f"Invalid robot name: '{name}'. Use letters, digits, _, - or . "
+                   "(starting with a letter or digit, at most 64).",
         )
 
     config_dir = CONFIG_DIR

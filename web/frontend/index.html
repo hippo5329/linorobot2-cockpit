@@ -49,8 +49,8 @@
       <div class="hdr-field" title="Robot name -> &lt;robot&gt;_config.yaml">
         <label for="hdr-robot-name">🤖 Robot:</label>
         <input type="text" id="hdr-robot-name" class="hdr-input" placeholder="linorobot2"
-               pattern="[a-z0-9_]+" autocomplete="off" spellcheck="false"
-               title="Lowercase name, digits and underscore only">
+               pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}" autocomplete="off" spellcheck="false"
+               title="Letters, digits, _, - or . (rover-unoq), starting with a letter or digit">
         <button type="button" id="btn-robot-menu" class="hdr-caret" aria-expanded="false"
                 aria-haspopup="listbox" title="Saved robot configs">▾</button>
         <div id="robot-menu" class="branch-menu" role="listbox" hidden></div>

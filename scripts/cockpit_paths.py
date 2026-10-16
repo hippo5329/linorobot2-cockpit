@@ -311,6 +311,19 @@ def robot_namespace(params: dict) -> str:
 # The DDS domains a robot may name. Fast DDS's default port mapping ends at 232
 # (port 7400 + 250 * domain + offsets must stay under 65536), and so does ROS 2's
 # own documentation of ROS_DOMAIN_ID.
+# A robot's name, everywhere it is typed or posted: the web UI's robot field (index.html's
+# pattern), selectRobot() in app-core.js, /api/robot/select and the tool's routes all hold
+# this one rule (tests/test_robot_name_rule.py). Letters, digits, `_`, `-` and `.`, as the
+# backend always took (rover-unoq); it starts with a letter or a digit, so it is never an
+# option to a command (`-x`) nor a hidden file (`.x`). The firmware's node name maps the rest
+# (base_node_name).
+ROBOT_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}"
+
+
+def valid_robot_name(name) -> bool:
+    return isinstance(name, str) and re.fullmatch(ROBOT_NAME_PATTERN, name) is not None
+
+
 def base_node_name(robot_name):
     """The board's ROS node name, `<robot>_base_node`, made legal for rcl.
 
