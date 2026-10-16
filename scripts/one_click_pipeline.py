@@ -1789,7 +1789,7 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
             return "test_acc: micro-ROS did not come back after app=base", None
         wait_for_topic("/scan", timeout_sec=90, distro=args.distro, require_message="header.frame_id")
         # The drive home is closed on /odom, and the EKF has dead-reckoned with no measurements
-        # for the whole of test_acc (2026-10-15, a TS100: 1-3 m/s along a frozen heading, 258 m
+        # for the whole of test_acc (2026-10-15, a tracked robot: 1-3 m/s along a frozen heading, 258 m
         # by the end; the drive home refused and the EKF was never set back). Stop it first:
         # the snapshot's pose, at rest. Home places the robot by the LiDAR and needs only the
         # odometry's increments to be true; the pose is set again once it is there.

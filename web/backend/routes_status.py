@@ -241,7 +241,7 @@ def get_status(controller: Optional[str] = None):
         # the 1-Click pipeline falls back on (no_board_attached).
         "board_on_bus": bool(mcu_detected or _bus_devices()),
         # A robot whose micro-ROS link is Wi-Fi (udp4) has no board on this machine's bus by
-        # design: the TS100's GenDrv is reached over the air, so "no board attached" is not a
+        # design: a tracked robot's GenDrv is reached over the air, so "no board attached" is not a
         # reason to refuse its Bringup (the bringup health check says whether it answered).
         "board_on_wifi": _transport_is_wifi(controller.get("transport")),
         "mcu_mismatch": mcu_mismatch,

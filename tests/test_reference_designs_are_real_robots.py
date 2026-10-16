@@ -244,12 +244,12 @@ def test_the_mode_is_the_robots_not_a_select():
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_a_wifi_robot_with_no_board_on_the_bus_may_bring_up(tmp_path):
-    """A real robot on micro-ROS over Wi-Fi (udp4) is never on this machine's bus: the TS100's
+    """A real robot on micro-ROS over Wi-Fi (udp4) is never on this machine's bus: a tracked robot's
     GenDrv answered over the air while the Bringup button refused it "no board attached"
     (2026-10-15). /api/status says board_on_wifi; the guard lets it through. A USB robot with
     no board stays refused."""
-    assert guard(tmp_path, dict(NO_BOARD, board_on_wifi=True), "ts100_gendrv", "gendrv", "real")["ok"] is True
-    res = guard(tmp_path, dict(NO_BOARD, board_on_wifi=False), "ts100_gendrv", "gendrv", "real")
+    assert guard(tmp_path, dict(NO_BOARD, board_on_wifi=True), "rover_gendrv", "gendrv", "real")["ok"] is True
+    res = guard(tmp_path, dict(NO_BOARD, board_on_wifi=False), "rover_gendrv", "gendrv", "real")
     assert res["ok"] is False and "no board attached" in res["banners"][0], res
 
 

@@ -1,7 +1,7 @@
 """The topic gate holds /scan to 80 % of the LiDAR model's own rate, not a flat 5 Hz.
 
 The LD driver polled a 10 Hz LiDAR at 10 Hz and dropped one scan in four at times: the
-real TS100 ran at 6.6-8.8 Hz and its motion guard (80 % of the model's rate) stopped Nav2,
+real tracked robot ran at 6.6-8.8 Hz and its motion guard (80 % of the model's rate) stopped Nav2,
 while every simulation leg passed the 5 Hz gate (2026-10-15).
 """
 import os

@@ -1180,7 +1180,7 @@ def derived_limits(params):
     out.update(suggest_nav2_limits(d, measured=measured))
     # The turn in place to the goal heading is a heading-accuracy choice, not a
     # capability: RPP turns at this rate with no slow-down and Nav2's goal checker
-    # fires mid-turn, so a robot that coasts (the TS100's tracks: -27 deg at rest
+    # fires mid-turn, so a robot that coasts (a tracked robot's tracks: -27 deg at rest
     # at 0.94 rad/s, 2026-10-14) needs it slower than it can turn.
     # `kinematics.heading_turn_max_vel` (rad/s) caps it; derived limits never raise
     # it past that (a --test-acc run wrote 0.73 over a hand-set 0.5, 2026-10-16).

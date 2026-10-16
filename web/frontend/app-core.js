@@ -194,7 +194,7 @@ async function boardMatchesOrWarn(controller, action) {
   // place: a reference design is a real robot, selectable without its board, but its
   // actions need that board (user, 2026-10-06). A 1-Click pressed on one ran bare_sim.
   // A Wi-Fi robot (micro-ROS over udp4) has no board on this machine's bus at all: it is
-  // reached over the air, and its Bringup must not be refused for that (2026-10-15, the TS100).
+  // reached over the air, and its Bringup must not be refused for that (2026-10-15, a tracked robot).
   if (!mm && s && s.board_on_bus === false && !s.mcu_detected && !s.board_on_wifi && activeRobotIsReal()) {
     const want = siliconOf(controller);
     const title = `${action} blocked: no board attached.`;
@@ -1083,7 +1083,7 @@ function initHeaderPicker({ inputId, caretId, menuId, loadItems, onPick, emptyTe
 // choosing pico2_mecanum with nothing plugged in was undone by the next poll.
 async function selectRobot(name, byUser = true) {
   name = (name || "").trim();
-  // A hyphen is a legal robot name (mc200-unoq: the firmware's node name maps it to "_" since
+  // A hyphen is a legal robot name (rover-unoq: the firmware's node name maps it to "_" since
   // rc-20261009.5, and /api/robot/select accepts it); refusing it here left such a robot
   // unselectable from the header (2026-10-15).
   if (!name || !/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
@@ -1545,7 +1545,7 @@ async function noBoardSwitch(s) {
   }
   if (!el) return;
   const onSim = state.robot_name === "bare_sim";
-  // A real robot on Wi-Fi (udp4) is never on this bus: nothing is missing (the TS100, 2026-10-15).
+  // A real robot on Wi-Fi (udp4) is never on this bus: nothing is missing (a tracked robot, 2026-10-15).
   const overTheAir = !!s.board_on_wifi && !isGeneratedRobot(state.robot_name);
   if (absent && !onSim && !overTheAir) {
     // A board robot with nothing plugged in: say what will happen rather than overriding.

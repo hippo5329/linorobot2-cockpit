@@ -65,7 +65,7 @@ def test_the_body_marks_home_after_the_lidar_return():
 
 
 def test_the_ekf_is_stopped_before_the_drive_home_and_a_refusal_says_why(monkeypatch, capsys, tmp_path):
-    """The drive home is closed on /odom, which ran off for the whole of test_acc (a TS100,
+    """The drive home is closed on /odom, which ran off for the whole of test_acc (a tracked robot,
     2026-10-15: 258 m, the drive home refused, the EKF never set back). Once the board is
     back, the EKF goes to the start snapshot's pose BEFORE the drive home; a refused drive
     home prints its own reason."""

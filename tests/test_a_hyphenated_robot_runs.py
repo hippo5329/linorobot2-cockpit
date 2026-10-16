@@ -1,4 +1,4 @@
-"""A robot named with a hyphen (mc200-unoq) goes through every path that handles names.
+"""A robot named with a hyphen (rover-unoq) goes through every path that handles names.
 
 Every fixture in the suite was named with underscores, so the hyphen was met first by the
 real MC200: rcl refused its node name (fixed in base_node_name) and the web UI would not

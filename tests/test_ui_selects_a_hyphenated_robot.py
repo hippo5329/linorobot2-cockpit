@@ -1,4 +1,4 @@
-"""The header selects a robot whose name has a hyphen (mc200-unoq).
+"""The header selects a robot whose name has a hyphen (rover-unoq).
 
 The backend's /api/robot/select accepts [a-zA-Z0-9_.-] and the firmware maps the name's hyphen
 to "_" for its node name (rc-20261009.5), but selectRobot() refused anything outside
@@ -20,7 +20,7 @@ def _name_rule():
 
 def test_a_hyphenated_name_is_selectable():
     rule = _name_rule()
-    for ok in ("mc200-unoq", "ts100_gendrv", "bare_sim", "rover2"):
+    for ok in ("rover-unoq", "rover_gendrv", "bare_sim", "rover2"):
         assert rule.match(ok), ok
 
 
