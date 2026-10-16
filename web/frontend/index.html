@@ -1981,7 +1981,10 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
           📍 2D Pose Estimate <span class="hint" style="opacity:0.7;">/initialpose</span>
         </button>
         <button id="btn-rosviz-goal" class="btn btn-sm" title="Click the destination, drag to aim the final heading">
-          🎯 Nav Goal <span class="hint" style="opacity:0.7;">/goal_pose</span>
+          🎯 Nav Goal <span class="hint" style="opacity:0.7;">navigate_to_pose</span>
+        </button>
+        <button id="btn-rosviz-cancel" class="btn btn-sm btn-danger" disabled title="Cancel every Nav2 goal, including one sent from a shell or another client">
+          ⏹ Cancel goal
         </button>
         <span class="u-flex-1"></span>
         <button id="btn-rosviz-fit" class="btn btn-sm">Fit map</button>
@@ -1994,6 +1997,8 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
 
       <div class="row u-justify-between u-mt-8" style="flex-wrap:wrap; gap:8px;">
         <span id="rosviz-status" class="hint rosviz-status rosviz-status-info">Not connected.</span>
+        <span id="rosviz-nav" class="hint rosviz-status rosviz-status-info"
+              title="The Nav2 goal's progress and outcome: succeeded, aborted with Nav2's error, or canceled.">Nav2: no goal</span>
         <span id="rosviz-pose" class="hint" style="font-size:0.72rem;"
               title="Which pose the robot marker is drawn from. The filtered pose and the base's own odometry differ, and on a long run they differ by more than a robot radius.">pose: waiting</span>
         <span id="rosviz-topics" class="hint" style="font-family:var(--font-mono, monospace); font-size:0.72rem;"></span>

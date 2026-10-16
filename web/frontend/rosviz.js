@@ -12,7 +12,15 @@
 // and publishes back:
 //
 //   /initialpose  geometry_msgs/msg/PoseWithCovarianceStamped  (2D Pose Estimate)
-//   /goal_pose    geometry_msgs/msg/PoseStamped                (Nav Goal)
+//
+// A Nav Goal goes through Nav2's NavigateToPose action (rosbridge's
+// send_action_goal op), not /goal_pose: a topic publish has no answer, so the
+// viewer could only ever say "Goal sent" and never whether the robot got there.
+// The action streams feedback (distance left, recoveries) and ends in a result
+// (succeeded / aborted with Nav2's error / canceled). Cancel calls
+// /navigate_to_pose/_action/cancel_goal with an empty request, which cancels
+// every goal -- including one sent from a shell or by another client, which
+// /navigate_to_pose/_action/status shows here too.
 //
 // The rosbridge JSON protocol is spoken directly rather than through roslibjs:
 // the robot LAN is frequently offline, and a CDN <script> tag is the one thing
@@ -56,6 +64,61 @@
     return null;
   }
 
+  // --------------------------------------------------- Nav2 goal outcome
+  // action_msgs/msg/GoalStatus
+  const GOAL_STATUS = {
+    0: "unknown", 1: "accepted", 2: "executing", 3: "canceling",
+    4: "succeeded", 5: "canceled", 6: "aborted",
+  };
+  const NAV_ACTION = "/navigate_to_pose";
+  const NAV_ACTION_TYPE = "nav2_msgs/action/NavigateToPose";
+
+  function secondsOf(d) {
+    return d ? (d.sec || 0) + (d.nanosec || 0) / 1e9 : 0;
+  }
+
+  // rosbridge's action_feedback values -> one progress line
+  function describeNavFeedback(fb) {
+    if (!fb) return "Navigating…";
+    const parts = [];
+    if (typeof fb.distance_remaining === "number") {
+      parts.push(`${fb.distance_remaining.toFixed(2)} m to go`);
+    }
+    const t = secondsOf(fb.navigation_time);
+    if (t > 0) parts.push(`${t.toFixed(0)} s`);
+    const eta = secondsOf(fb.estimated_time_remaining);
+    if (eta > 0) parts.push(`ETA ${eta.toFixed(0)} s`);
+    const n = fb.number_of_recoveries || 0;
+    if (n > 0) parts.push(`${n} recover${n === 1 ? "y" : "ies"}`);
+    return "Navigating: " + (parts.length ? parts.join(", ") : "started");
+  }
+
+  // rosbridge's action_result op -> { level, text }. `result: false` means the
+  // goal never ran (no action server, rejected) and `values` is the reason.
+  function describeNavResult(msg) {
+    if (!msg) return { level: "err", text: "Goal: no result" };
+    if (msg.result === false) {
+      const why = typeof msg.values === "string" ? msg.values : "send failed";
+      const hint = /no action server/i.test(why) ? " (is Nav2 running?)" : "";
+      return { level: "err", text: `Goal failed: ${why}${hint}` };
+    }
+    const status = GOAL_STATUS[msg.status] || `status ${msg.status}`;
+    const v = (msg.values && typeof msg.values === "object") ? msg.values : {};
+    if (msg.status === 4) return { level: "ok", text: "Goal reached (Nav2: succeeded)" };
+    if (msg.status === 5) return { level: "warn", text: "Goal canceled" };
+    let text = `Goal ${status}`;
+    if (v.error_code) text += ` — Nav2 error ${v.error_code}`;
+    if (v.error_msg) text += `: ${v.error_msg}`;
+    return { level: "err", text };
+  }
+
+  // action_msgs/msg/GoalStatusArray -> the goals still live (accepted,
+  // executing or canceling), whoever sent them
+  function activeGoals(statusArray) {
+    return ((statusArray && statusArray.status_list) || [])
+      .filter((g) => g.status >= 1 && g.status <= 3);
+  }
+
   // ------------------------------------------------------------ rosbridge IO
   class RosBridge {
     constructor() {
@@ -63,6 +126,8 @@
       this.url = "";
       this.handlers = new Map();   // topic -> callback
       this.advertised = new Set();
+      this.pending = new Map();    // op id -> { onFeedback, onResult } (actions, services)
+      this.nextId = 1;
       this.onStatus = () => {};
       this.reconnectTimer = null;
       this.shouldReconnect = false;
@@ -110,6 +175,17 @@
               console.error(`[rosviz] handler for ${msg.topic} threw`, err);
             }
           }
+        } else if (msg.op === "action_feedback" || msg.op === "action_result"
+                   || msg.op === "service_response") {
+          const entry = this.pending.get(msg.id);
+          if (!entry) return;
+          if (msg.op !== "action_feedback") this.pending.delete(msg.id);
+          try {
+            if (msg.op === "action_feedback") entry.onFeedback?.(msg.values);
+            else entry.onResult?.(msg);
+          } catch (err) {
+            console.error(`[rosviz] ${msg.op} handler threw`, err);
+          }
         } else if (msg.op === "status" && msg.level === "error") {
           this.onStatus("warn", `rosbridge: ${msg.msg}`);
         }
@@ -117,6 +193,15 @@
 
       socket.onclose = () => {
         this.onStatus("err", "Disconnected from rosbridge");
+        // An action or service in flight is lost with its socket: say so
+        // rather than leave the caller waiting for an answer that cannot come.
+        const lost = [...this.pending.values()];
+        this.pending.clear();
+        for (const entry of lost) {
+          try {
+            entry.onResult?.({ result: false, values: "rosbridge connection lost" });
+          } catch { /* the caller's problem, not the socket's */ }
+        }
         if (this.shouldReconnect) {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = setTimeout(() => this.connect(this.url), 3000);
@@ -181,11 +266,34 @@
       if (!this.advertised.has(topic)) this.advertise(topic);
       return this._send({ op: "publish", topic, msg });
     }
+
+    // rosbridge's send_action_goal op (rosbridge_suite 2.x and later). Returns
+    // the goal's op id, or null when the socket is down.
+    sendActionGoal(action, actionType, args, { onFeedback, onResult } = {}) {
+      const id = `rosviz_goal_${this.nextId++}`;
+      this.pending.set(id, { onFeedback, onResult });
+      const ok = this._send({
+        op: "send_action_goal", id, action, action_type: actionType, args, feedback: true,
+      });
+      if (!ok) { this.pending.delete(id); return null; }
+      return id;
+    }
+
+    cancelActionGoal(action, id) {
+      return this._send({ op: "cancel_action_goal", id, action });
+    }
+
+    callService(service, type, args, onResult) {
+      const id = `rosviz_call_${this.nextId++}`;
+      this.pending.set(id, { onResult });
+      const ok = this._send({ op: "call_service", id, service, type, args });
+      if (!ok) this.pending.delete(id);
+      return ok;
+    }
   }
 
   const ADVERTISED_TYPES = {
     "/initialpose": "geometry_msgs/msg/PoseWithCovarianceStamped",
-    "/goal_pose": "geometry_msgs/msg/PoseStamped",
   };
 
   // -------------------------------------------------------------- the viewer
@@ -623,6 +731,24 @@
     const urlInput = el("rosviz-url");
     const topicsEl = el("rosviz-topics");
     const poseEl = el("rosviz-pose");
+    const navEl = el("rosviz-nav");
+    const cancelBtn = el("btn-rosviz-cancel");
+
+    // The navigation line is separate from the connection status: a goal's
+    // outcome must stay readable after the socket says something else.
+    function setNav(level, message) {
+      if (!navEl) return;
+      navEl.textContent = message;
+      navEl.className = "hint rosviz-status rosviz-status-" + level;
+    }
+
+    // goalId: the op id of the goal this page sent and is still waiting on.
+    // liveGoals: what /navigate_to_pose/_action/status says is live, from any client.
+    const nav = { goalId: null, liveGoals: 0 };
+
+    function updateCancel() {
+      if (cancelBtn) cancelBtn.disabled = !(nav.goalId || nav.liveGoals > 0);
+    }
 
     // Say which pose the marker is. The filtered pose (what the EKF believes,
     // corrected by SLAM) and the base's OWN odometry are different claims, and
@@ -708,8 +834,21 @@
         counts.amcl++; updateTopicCounts(); viewer.setPose(msg.pose.pose, "amcl"); updatePoseLabel();
       }, 200);
 
+      // Every goal Nav2 holds, whoever sent it: a goal from a shell or another
+      // browser still shows here, and still enables Cancel.
+      bridge.subscribe(`${NAV_ACTION}/_action/status`, "action_msgs/msg/GoalStatusArray", (msg) => {
+        const live = activeGoals(msg);
+        const wasLive = nav.liveGoals;
+        nav.liveGoals = live.length;
+        updateCancel();
+        if (!nav.goalId && live.length && !wasLive) {
+          setNav("info", `Nav2 is ${GOAL_STATUS[live[0].status]} a goal sent elsewhere`);
+        } else if (!nav.goalId && !live.length && wasLive) {
+          setNav("info", "Nav2 is idle");
+        }
+      }, 250);
+
       bridge.advertise("/initialpose");
-      bridge.advertise("/goal_pose");
     }
 
     function nowStamp() {
@@ -723,12 +862,27 @@
       const position = { x: pose.x, y: pose.y, z: 0 };
 
       if (tool === "goal_pose") {
-        const ok = bridge.publish("/goal_pose", {
-          header, pose: { position, orientation },
+        const where = `x=${pose.x.toFixed(2)} y=${pose.y.toFixed(2)} yaw=${(pose.yaw * 180 / Math.PI).toFixed(0)}°`;
+        const id = bridge.sendActionGoal(NAV_ACTION, NAV_ACTION_TYPE, {
+          pose: { header, pose: { position, orientation } },
+          behavior_tree: "",
+        }, {
+          onFeedback: (fb) => {
+            if (nav.goalId === id) setNav("info", describeNavFeedback(fb));
+          },
+          onResult: (msg) => {
+            // A newer goal preempts this one; its own result is what counts.
+            if (nav.goalId !== id) return;
+            nav.goalId = null;
+            updateCancel();
+            const r = describeNavResult(msg);
+            setNav(r.level, `${r.text} (${where})`);
+          },
         });
-        setStatus(ok ? "ok" : "err", ok
-          ? `Goal sent: x=${pose.x.toFixed(2)} y=${pose.y.toFixed(2)} yaw=${(pose.yaw * 180 / Math.PI).toFixed(0)}°`
-          : "Not connected — goal not sent");
+        nav.goalId = id;
+        updateCancel();
+        if (id) setNav("info", `Goal sent: ${where} — waiting for Nav2…`);
+        else setNav("err", "Not connected — goal not sent");
       } else {
         const covariance = new Array(36).fill(0);
         covariance[0] = 0.25;    // x
@@ -762,6 +916,25 @@
       viewer.setTool(viewer.tool === "initialpose" ? null : "initialpose"));
     el("btn-rosviz-goal")?.addEventListener("click", () =>
       viewer.setTool(viewer.tool === "goal_pose" ? null : "goal_pose"));
+    // Cancel every NavigateToPose goal: an empty CancelGoal request (zero goal
+    // id, zero stamp) cancels all of them, the ones this page did not send too.
+    cancelBtn?.addEventListener("click", () => {
+      if (nav.goalId) bridge.cancelActionGoal(NAV_ACTION, nav.goalId);
+      const ok = bridge.callService(`${NAV_ACTION}/_action/cancel_goal`,
+        "action_msgs/srv/CancelGoal", {}, (msg) => {
+          if (msg.result === false) {
+            setNav("err", `Cancel failed: ${typeof msg.values === "string" ? msg.values : "no answer"}`);
+            return;
+          }
+          const n = ((msg.values && msg.values.goals_canceling) || []).length;
+          setNav("warn", n ? `Cancel requested: ${n} goal${n === 1 ? "" : "s"} canceling`
+            : "No active goal to cancel");
+        });
+      if (!ok) setNav("err", "Not connected — cannot cancel");
+      else setNav("warn", "Canceling…");
+    });
+    updateCancel();
+
     el("btn-rosviz-fit")?.addEventListener("click", () => viewer.fitToMap());
     el("btn-rosviz-follow")?.addEventListener("click", () => viewer.followRobot());
 
