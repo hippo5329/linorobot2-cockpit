@@ -78,14 +78,8 @@ class SimLink:
 def _open_sim(r: dict):
     link = SimLink(r["params_path"])
     session = tool_session.ToolSession(r["robot"], link, "sim")
-    end = time.monotonic() + 10
-    seen = 0
-    while time.monotonic() < end:
-        session.pump()
-        lines = list(session._lines)[seen:]
-        seen += len(lines)
-        if any(any(e in ln for e in tool_session.ENTERED) for ln in lines):
-            return session
+    if _until_ready(session, 10):
+        return session
     link.close()
     raise Unavailable("The Sim MCU did not start its tool (see the server log).")
 
@@ -114,22 +108,33 @@ def _serial_port(r: dict, requested: str) -> str:
     return port
 
 
-def _catch_window(session, seconds: float = WINDOW_S) -> bool:
-    """Type `tool` until the board says it is in the tool; the board's own lines go to the
-    session, so the page shows the boot as it happens."""
+def _until_ready(session, seconds: float, knock: bool = False) -> bool:
+    """Pump the board's lines into the session (the page shows the boot as it happens) until
+    the tool reads lines: "[tool] ready" or its prompt (tool_session.READY says why "[app] tool"
+    is not enough). knock: type `tool` every 0.25 s to catch the boot window, and stop typing
+    once the board has entered the tool -- every later `tool` would reach its shell. A firmware
+    that enters but never says it is ready is let in after READY_GRACE_S."""
     end = time.monotonic() + seconds
     nxt = 0.0
     seen = 0
-    while time.monotonic() < end:
-        if time.monotonic() >= nxt:
+    entered_at = None
+    while time.monotonic() < (end if entered_at is None else entered_at + tool_session.READY_GRACE_S):
+        if knock and entered_at is None and time.monotonic() >= nxt:
             session.link.write(b"tool\r\n")
             nxt = time.monotonic() + 0.25
         session.pump()
         lines = list(session._lines)[seen:]
         seen += len(lines)
-        if any(any(e in ln for e in tool_session.ENTERED) for ln in lines):
+        if any(tool_session.is_ready_line(ln) for ln in lines):
             return True
-    return False
+        if entered_at is None and any(any(e in ln for e in tool_session.ENTERED) for ln in lines):
+            entered_at = time.monotonic()
+    return entered_at is not None
+
+
+def _catch_window(session, seconds: float = WINDOW_S) -> bool:
+    """Type `tool` until the board is in the tool and reads lines."""
+    return _until_ready(session, seconds, knock=True)
 
 
 def _open_serial(r: dict, port: str):

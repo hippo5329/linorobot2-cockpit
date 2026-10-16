@@ -37,6 +37,16 @@ import tool_answer  # noqa: E402
 
 PROMPT = "tool> "
 ENTERED = ("[app] tool", "[tool] ready")
+# "[app] tool" is printed before the tool sets up its hardware (tool_hw::init: a bus scan on a
+# board, the models on the Sim MCU); only "[tool] ready" and the prompt say it reads lines. A
+# page that sent its first command on "[app] tool" lost the answer to the 2 s window (the
+# bring-up card's sensors step on the lyrical Sim MCU, 2026-10-16). lino_tool waits the same.
+READY = "[tool] ready"
+READY_GRACE_S = 30.0       # lino_tool.TOOL_READY_S: a firmware without the line is let in after it
+
+
+def is_ready_line(ln: str) -> bool:
+    return READY in ln or ln.endswith(PROMPT)
 HEARTBEAT_S = 3.0          # a browser stream counts as watching for this long after a beat
 KEEPALIVE_S = 0.25         # the NUL the board's deadman wants (2 s under acc, 3 s otherwise)
 BACKLOG = 400              # lines a newly opened tab is shown
