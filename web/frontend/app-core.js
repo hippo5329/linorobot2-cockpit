@@ -489,12 +489,18 @@ function runCommand(spec, { slot = "main", title = "Running", action, onDone, on
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const frames = buf.split("\n\n");
-      buf = frames.pop();
+    // onDone fires exactly once. A stream that closes without its done event (a
+    // dropped tunnel), or whose last event has no blank line after it, left the
+    // caller waiting for ever: the LiDAR bring-up step hung on "Preparing micro-ROS
+    // agent" after AGENT_FOUND, and every bring-up button was dead until a reload
+    // (2026-10-16, a UNO Q robot over Wi-Fi).
+    let ended = false;
+    const finish = (code) => {
+      if (ended) return;
+      ended = true;
+      if (onDone) onDone(code);
+    };
+    const handle = (frames) => {
       for (const frame of frames) {
         const evMatch = frame.match(/^event: (.+)$/m);
         const dataMatch = frame.match(/^data: (.+)$/m);
@@ -512,10 +518,31 @@ function runCommand(spec, { slot = "main", title = "Running", action, onDone, on
           if (onLine) onLine(payload.line);
         } else if (evType === "done") {
           logLine(`[console] exited with code ${payload.exit_code}`);
-          if (onDone) onDone(payload.exit_code);
+          finish(payload.exit_code);
         }
       }
+    };
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop();
+        handle(frames);
+      }
+      handle([buf + decoder.decode()]);
+    } catch (e) {
+      if (!ended) logLine(`[console] the stream broke: ${e.message}`);
+      finish(-1);
+      throw e;
     }
+    if (!ended) logLine("[console] the stream closed without an exit code");
+    finish(-1);
+  }, (e) => {
+    logLine(`[console] failed to start: ${e.message}`);
+    if (onDone) onDone(-1);
+    throw e;
   });
 }
 
