@@ -1562,12 +1562,24 @@ function renderPortChips(ports, whereLabel) {
   });
 }
 
+// Whether a board on the bus may be adopted into the robot's config. A bare module (or the Sim
+// MCU) follows whatever board is plugged in. A REAL robot keeps its own base controller: a
+// different board only raises the mismatch banner, and its port is taken only from a board of
+// the robot's own silicon (a renumbered tty). Before this, a UNO Q robot on a computer with a
+// Pico plugged in had its controller rewritten to pico -- and autosaved -- on every page load.
+function boardFitsRobot(mcu) {
+  if (typeof activeRobotIsReal !== "function" || !activeRobotIsReal()) return true;
+  return !!mcu && siliconOf(mcu) === siliconOf(loadedControllerName);
+}
+
 function applyDetectedMcu(sug, data) {
   // The bus wins over the config, for the same reason the I2C bus does
   // (AGENTS.md §5): the YAML is a claim about the hardware and the tty is the
-  // hardware. The configured port is kept when the robot actually has it --
-  // switching a correct value to "the first port found" would be noise on a
-  // two-board bench.
+  // hardware -- for a bare module. A real robot's controller is the user's
+  // (boardFitsRobot). The configured port is kept when the robot actually has
+  // it -- switching a correct value to "the first port found" would be noise
+  // on a two-board bench.
+  if (!boardFitsRobot(sug.mcu)) return;
   const portEl = document.getElementById("cfg-serial-port");
   if (portEl) {
     const present = (data.ports || []).some(p => (p.path || p.port) === portEl.value.trim());
@@ -1602,7 +1614,7 @@ async function refreshHwSerialPorts() {
     renderPortChips(detail, "this robot computer");
     if (data.suggested && data.suggested.port) applyDetectedMcu(data.suggested, { ports: detail });
 
-    if (ports.length > 0 && document.getElementById("cfg-serial-port")) {
+    if (ports.length > 0 && document.getElementById("cfg-serial-port") && boardFitsRobot(data.suggested?.mcu)) {
       const current = document.getElementById("cfg-serial-port").value;
       if (!current || (current === "/dev/ttyACM0" && !ports.includes("/dev/ttyACM0"))) {
         document.getElementById("cfg-serial-port").value = ports[0];

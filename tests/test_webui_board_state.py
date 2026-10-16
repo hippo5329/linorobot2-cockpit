@@ -241,3 +241,63 @@ def test_the_dac_note_names_the_sim_mcu_and_follows_a_synced_select():
     js = open(CORE_JS).read()
     a = js.index("(synced to the active robot)")
     assert "applyDacAvailability()" in js[a - 400:a]
+
+
+# --- the page: a plugged board never rewrites a real robot's controller -------------------------
+
+ADOPT = r"""
+const core = require("fs").readFileSync(process.argv[2], "utf8");
+const hw = require("fs").readFileSync(process.argv[3], "utf8");
+const pick = (src, start) => { const a = src.indexOf(start); return src.slice(a, src.indexOf("\n}\n", a) + 3); };
+const c = JSON.parse(process.argv[4]);
+const changes = [];
+const opts = ["pico2", "pico2w", "pico", "picow", "xrp", "esp32", "esp32s3", "unoq", "sim"].map((value) => ({ value }));
+const mcu = { value: c.select, options: opts, dispatchEvent: () => changes.push(mcu.value) };
+const port = { value: c.port };
+const document = { getElementById: (id) => ({ "cfg-mcu": mcu, "cfg-serial-port": port })[id] || null };
+const state = { robot_name: c.robot, robots: [{ name: c.robot, real: c.real }], reference: [] };
+const BOARD_SILICON = { gendrv: "esp32" };
+let loadedControllerName = c.controller;
+function syncMcuSerialSettings() {}
+eval(pick(core, "function siliconOf(") + pick(core, "function isReferenceDesign(") + pick(core, "function activeRobot(") +
+     pick(core, "function activeRobotIsReal(") + pick(hw, "function boardFitsRobot(") + pick(hw, "function applyDetectedMcu("));
+applyDetectedMcu(c.sug, { ports: [{ path: c.sug.port }] });
+console.log(JSON.stringify({ mcu: mcu.value, port: port.value, changes }));
+"""
+
+
+def adopt(tmp_path, **case):
+    h = tmp_path / "adopt.js"
+    h.write_text(ADOPT)
+    out = subprocess.run([NODE, str(h), CORE_JS, os.path.join(ROOT, "web", "frontend", "app-hardware.js"),
+                          json.dumps(case)], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_real_robot_keeps_its_controller_and_port_whatever_is_plugged(tmp_path):
+    r = adopt(tmp_path, robot="rover-unoq", real=True, controller="unoq", select="unoq",
+              port="/dev/ttyHS1", sug={"mcu": "pico", "port": "/dev/ttyACM0"})
+    assert r == {"mcu": "unoq", "port": "/dev/ttyHS1", "changes": []}, r
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_real_robot_follows_its_own_board_to_a_new_tty(tmp_path):
+    r = adopt(tmp_path, robot="rover_gendrv", real=True, controller="gendrv", select="esp32",
+              port="/dev/ttyUSB0", sug={"mcu": "esp32", "port": "/dev/ttyUSB1"})
+    assert r == {"mcu": "esp32", "port": "/dev/ttyUSB1", "changes": []}, r
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+@pytest.mark.parametrize("robot, controller", [("bare_pico2", "pico2"), ("bare_sim", "sim")])
+def test_a_bare_module_or_the_sim_mcu_adopts_the_plugged_board(tmp_path, robot, controller):
+    r = adopt(tmp_path, robot=robot, real=False, controller=controller, select=controller,
+              port="/dev/ttyACM0", sug={"mcu": "esp32", "port": "/dev/ttyUSB0"})
+    assert r == {"mcu": "esp32", "port": "/dev/ttyUSB0", "changes": ["esp32"]}, r
+
+
+def test_the_port_fallback_asks_the_same_question():
+    hw = open(os.path.join(ROOT, "web", "frontend", "app-hardware.js")).read()
+    fn = hw[hw.index("async function refreshHwSerialPorts("):]
+    assert 'document.getElementById("cfg-serial-port") && boardFitsRobot(data.suggested?.mcu)' in fn[:1500]
