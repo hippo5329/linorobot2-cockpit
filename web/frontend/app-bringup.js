@@ -15,6 +15,9 @@ const bu = {
   rpmChanges: null, batChanges: null,
   turn: null,           // {wheel, first, last}
   timer: null,
+  ownTool: false,       // this card opened the tool session (not the user, by hand)
+  toolSteps: new Set(), // the steps using it now: the session closes when the last one ends
+  toolIdle: {},         // step -> its idle timer
 };
 
 const $b = (id) => document.getElementById(id);
@@ -70,9 +73,37 @@ async function buRefresh() {
 }
 
 // ---------------------------------------------------------------- the tool
-async function buTool() {
-  if (tool.open) return true;
-  return await toolOpen();
+// A step that opens the tool closes it when it is done, and on any error. "Read the board"
+// left the session open, and the board out of micro-ROS: the 1-Click then answered HTTP 409
+// until Back to robot was pressed (walkthrough, 2026-10-16). A tool the user opened by hand
+// stays open; a step abandoned half-way lets it go after BU_TOOL_IDLE_MS without a click.
+const BU_TOOL_IDLE_MS = 180000;
+
+async function buTool(step) {
+  if (!tool.open) {
+    if (!(await toolOpen())) return false;
+    bu.ownTool = true;
+    bu.toolSteps = new Set();       // a fresh session: whatever held the last one is gone
+  }
+  bu.toolSteps.add(step);
+  clearTimeout(bu.toolIdle[step]);
+  if (!bu.ownTool) return true;     // the user's own session: theirs to close
+  const idle = () => {
+    // a phase still collecting (a countdown, a wheel running) is not idle
+    if (bu.phase) { bu.toolIdle[step] = setTimeout(idle, BU_TOOL_IDLE_MS); return; }
+    buToolDone(step);
+  };
+  bu.toolIdle[step] = setTimeout(idle, BU_TOOL_IDLE_MS);
+  return true;
+}
+
+async function buToolDone(step) {
+  clearTimeout(bu.toolIdle[step]);
+  delete bu.toolIdle[step];
+  bu.toolSteps.delete(step);
+  if (bu.toolSteps.size || !bu.ownTool) return;
+  bu.ownTool = false;
+  if (tool.open) await toolClose();
 }
 
 function buCountdown(secs, label, done) {
@@ -176,17 +207,24 @@ async function buSensorsStill() {
   bu.sensBusy = true;
   buHold("bu-sens-still", true);
   const release = () => { bu.sensBusy = false; buHold("bu-sens-still", false); };
-  if (!(await buTool())) return release();
+  if (!(await buTool("sensors"))) return release();
   bu.rest = []; bu.moving = []; bu.plot = [];
   $b("bu-sens-verdict").innerHTML = "";
   bu.phase = "rest";
-  if (!(await toolSend("sensors 10"))) { bu.phase = null; return release(); }
+  if (!(await toolSend("sensors 10"))) { bu.phase = null; await buToolDone("sensors"); return release(); }
   $b("bu-sens-move").disabled = true;
-  buCountdown(5, "Hold still", () => {
+  buCountdown(5, "Hold still", async () => {
     bu.phase = null;
     release();
+    if (!bu.rest.length) {
+      // nothing to judge, so the step is over: the robot goes back to micro-ROS
+      await toolSend("stop");
+      await buToolDone("sensors");
+      $b("bu-sens-timer").textContent = "No readings came: is a sensor fitted?";
+      return;
+    }
     $b("bu-sens-move").disabled = false;
-    $b("bu-sens-timer").textContent = bu.rest.length ? "Now press ② and turn the robot." : "No readings came: is a sensor fitted?";
+    $b("bu-sens-timer").textContent = "Now press ② and turn the robot.";
   });
 }
 
@@ -194,6 +232,7 @@ async function buSensorsMove() {
   if (!tool.open) { $b("bu-sens-timer").textContent = "The tool closed: start again with ①."; return; }
   if (bu.sensBusy) return;
   bu.sensBusy = true;
+  await buTool("sensors");          // the same session, its idle timer started again
   buHold("bu-sens-still", true);
   bu.phase = "moving";
   $b("bu-sens-move").disabled = true;
@@ -201,8 +240,8 @@ async function buSensorsMove() {
     bu.phase = null;
     bu.sensBusy = false;
     buHold("bu-sens-still", false);
-    await toolSend("stop");
     try {
+      await toolSend("stop");
       const v = await buJson("/api/bringup/sensors", { rest: bu.rest, moving: bu.moving });
       const ul = $b("bu-sens-verdict");
       ul.innerHTML = "";
@@ -211,6 +250,7 @@ async function buSensorsMove() {
       li.innerHTML = `<b>${v.ok ? "PASS" : "FAIL"}</b> (${bu.rest.length + bu.moving.length} readings)`;
       ul.prepend(li);
     } catch (e) { $b("bu-sens-timer").textContent = e.message; }
+    finally { await buToolDone("sensors"); }
     buRefresh();
   });
 }
@@ -221,14 +261,18 @@ async function buBatteryRead() {
   bu.batBusy = true;
   buHold("bu-bat-read", true);
   const release = () => { bu.batBusy = false; buHold("bu-bat-read", false); };
-  if (!(await buTool())) return release();
+  if (!(await buTool("battery"))) return release();
   bu.batt = []; bu.phase = "battery";
   $b("bu-bat-board").textContent = "reading…";
-  if (!(await toolSend("sensors 5"))) { bu.phase = null; $b("bu-bat-board").textContent = "—"; return release(); }
+  if (!(await toolSend("sensors 5"))) {
+    bu.phase = null; $b("bu-bat-board").textContent = "—";
+    await buToolDone("battery");
+    return release();
+  }
   setTimeout(async () => {
     bu.phase = null;
     release();
-    await toolSend("stop");
+    try { await toolSend("stop"); } finally { await buToolDone("battery"); }
     const v = buMedian(bu.batt);
     bu.batBoard = v;
     $b("bu-bat-board").textContent = v == null ? "no voltage reported" : `${v.toFixed(2)} V`;
@@ -272,6 +316,12 @@ async function buApply(changes, title) {
   const j = await buJson("/api/bringup/apply", { changes, port: ($b("hw-flash-port")?.value || "").trim() });
   const wrote = Object.entries(j.written || {}).map(([k, v]) => `${k.split(".").slice(-2).join(".")} ${v.from} -> ${v.to}`).join(", ");
   if (j.tool_closed && typeof toolDetached === "function") toolDetached("The tool closed for the env write.");
+  if (j.tool_closed) {
+    // that session is gone: a later step's end must not close one the user opens by hand
+    bu.ownTool = false;
+    for (const st of [...bu.toolSteps]) { clearTimeout(bu.toolIdle[st]); delete bu.toolIdle[st]; }
+    bu.toolSteps.clear();
+  }
   if (!j.handle) {             // the Sim MCU: it reads the config when the tool starts again
     buRefresh();
     return { ok: true, wrote };
@@ -334,13 +384,13 @@ async function buSpin(w) {
   const spinButtons = (on) => { for (const b of document.querySelectorAll("[data-spin]")) b.disabled = on; };
   spinButtons(true);
   const release = () => { bu.spinning = false; spinButtons(false); };
-  if (!(await buTool())) return release();
+  if (!(await buTool("motors"))) return release();
   const pct = Math.max(10, Math.min(100, parseInt($b("bu-mot-pct").value, 10) || 40));
   const secs = Math.max(2, Math.min(10, parseInt($b("bu-mot-secs").value, 10) || 3));
   bu.spin = { wheel: w, rpms: [], t0: performance.now() / 1000 };
   bu.phase = "spin";
   $b(`bu-mot-enc-${w}`).textContent = "turning…";
-  if (!(await toolSend(`motor ${w} ${pct} ${secs}`))) { bu.phase = null; return release(); }
+  if (!(await toolSend(`motor ${w} ${pct} ${secs}`))) { bu.phase = null; await buToolDone("motors"); return release(); }
   setTimeout(async () => {
     bu.phase = null;
     release();
@@ -379,6 +429,8 @@ async function buMotorsVerdict() {
   $b("bu-mot-apply").hidden = !Object.keys(changes).length;
   bu.motChanges = changes;
   if (done.length < n) { $b("bu-mot-msg").textContent = `${done.length} of ${n} wheels checked.`; return; }
+  // every wheel answered: the step is over, and the robot goes back to micro-ROS
+  await buToolDone("motors");
   const ok = done.every(([, m]) => m.ok);
   const summary = done.map(([w, m]) => `wheel ${w}: ${m.result}`).join("; ");
   $b("bu-mot-msg").textContent = ok ? "Every wheel is right: passed." : (Object.keys(changes).length
@@ -430,14 +482,19 @@ async function buRpmRun(w) {
     if (btn) btn.textContent = "Run";
     return;
   }
-  if (!(await buTool())) return;
+  if (!(await buTool("rpm"))) return;
   for (const [ow, o] of Object.entries(bu.rpm)) {
     if (o.running && Number(ow) !== w) { o.running = false; document.querySelector(`[data-rpm="${ow}"]`).textContent = "Run"; }
   }
   const pct = Math.max(20, Math.min(100, parseInt($b("bu-rpm-pct").value, 10) || 100));
   Object.assign(r, { running: true, samples: [], t0: performance.now() / 1000, pct });
   bu.phase = "rpm";
-  if (!(await toolSend(`motor ${w} ${pct} 0`))) { r.running = false; return; }
+  if (!(await toolSend(`motor ${w} ${pct} 0`))) {
+    r.running = false;
+    bu.phase = Object.values(bu.rpm).some((x) => x.running) ? "rpm" : null;
+    if (!bu.phase) await buToolDone("rpm");
+    return;
+  }
   if (btn) btn.textContent = "Stop";
   $b("bu-rpm-msg").textContent = `Wheel ${w} at ${pct} %: read the tachometer, type it, press Stop.`;
 }
@@ -474,6 +531,8 @@ async function buRpmCalc() {
   }
   const summary = rows.map((r) => `wheel ${r.w}: encoder ${r.enc.toFixed(0)} / tacho ${r.tacho.toFixed(0)} RPM`).join("; ");
   bu.rpmChanges = changes;
+  // every wheel measured, none still running: the step is over
+  if (rows.length === n && !Object.values(bu.rpm).some((x) => x.running)) await buToolDone("rpm");
   if (!Object.keys(changes).length && rows.length === n) {
     msg.textContent = `counts_per_rev ${from} agrees within 2 %: passed.`;
     await buJson("/api/bringup/mark", { stage: "rpm", status: "pass", summary: `${summary}; counts_per_rev ${from} agrees`,
@@ -498,17 +557,17 @@ async function buRpmApply(changes) {
 }
 
 async function buTurnStart() {
-  if (!(await buTool())) return;
+  if (!(await buTool("turns"))) return;
   bu.turn = { wheel: parseInt($b("bu-turn-wheel").value, 10), first: null, last: null };
   $b("bu-turn-count").textContent = "0";
-  if (!(await toolSend("enc"))) { bu.turn = null; return; }
+  if (!(await toolSend("enc"))) { bu.turn = null; await buToolDone("turns"); return; }
   $b("bu-turn-done").disabled = false;
   $b("bu-turn-msg").textContent = "Turn the wheel forward by hand now, then press Done.";
 }
 
 async function buTurnDone() {
   $b("bu-turn-done").disabled = true;
-  await toolSend("stop");
+  try { await toolSend("stop"); } finally { await buToolDone("turns"); }
   const t = bu.turn;
   bu.turn = null;
   const msg = $b("bu-turn-msg");
