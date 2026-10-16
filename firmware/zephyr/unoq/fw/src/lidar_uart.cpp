@@ -12,7 +12,7 @@
 
 static const struct device *const usart1 = DEVICE_DT_GET(DT_NODELABEL(usart1));
 RING_BUF_DECLARE(lidar_ring, 2048);     // ~90 ms of LD19 at 230400
-static uint32_t lidar_dropped, lidar_errors;
+static uint32_t lidar_bytes, lidar_dropped, lidar_errors;
 
 static void lidarIsr(const struct device *dev, void *)
 {
@@ -20,8 +20,10 @@ static void lidarIsr(const struct device *dev, void *)
         if (uart_irq_rx_ready(dev)) {
             uint8_t buf[32];
             const int n = uart_fifo_read(dev, buf, sizeof(buf));
-            if (n > 0)
+            if (n > 0) {
+                lidar_bytes += (uint32_t)n;
                 lidar_dropped += (uint32_t)n - ring_buf_put(&lidar_ring, buf, (uint32_t)n);
+            }
         }
         if (uart_err_check(dev) > 0)
             lidar_errors++;
@@ -50,6 +52,15 @@ public:
     }
 };
 static LidarUart lidar_uart;
+
+// The LD19 input's counters, for the diagnostic /mcu_stats (LINO_MCU_STATS builds): bytes
+// the UART received, bytes lost to a full ring, UART errors (overrun, framing, noise).
+void lidarUartStats(uint32_t *bytes, uint32_t *dropped, uint32_t *errors)
+{
+    const unsigned int key = irq_lock();
+    *bytes = lidar_bytes; *dropped = lidar_dropped; *errors = lidar_errors;
+    irq_unlock(key);
+}
 
 Stream *lidarUartOpen(int rx_pin, uint32_t baud)
 {

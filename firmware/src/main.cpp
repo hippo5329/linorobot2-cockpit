@@ -38,6 +38,10 @@
 #include <sensor_msgs/msg/relative_humidity.h>
 #include <std_msgs/msg/bool.h>
 #include <std_msgs/msg/u_int8_multi_array.h>
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+#include <std_msgs/msg/u_int32_multi_array.h>
+#include "uart_link.h"
+#endif
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/twist_stamped.h>
 #include <geometry_msgs/msg/vector3.h>
@@ -471,6 +475,20 @@ static uint8_t real_lidar_pkt[LD19_PACKET_LEN];
 static size_t real_lidar_len = 0;
 static uint32_t real_lidar_packets = 0;
 
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+// A diagnostic build only (-DLINO_MCU_STATS): once a second on /mcu_stats, what the STM32
+// itself counts, so a scan that stops can be placed -- the LD19 stopped sending, the UART
+// lost bytes, or the link to the robot computer did (the MC200, 2026-10-16). Order:
+// lidar bytes, lidar dropped, lidar uart errors, ld19 packets parsed, link tx bytes, rx
+// bytes, tx full waits, tx dropped, rx dropped, link uart errors, uptime ms.
+void lidarUartStats(uint32_t *bytes, uint32_t *dropped, uint32_t *errors);
+static rcl_publisher_t mcu_stats_publisher;
+static std_msgs__msg__UInt32MultiArray mcu_stats_msg;
+static uint32_t mcu_stats_data[11];
+static bool mcu_stats_ready = false;
+static void publishMcuStats();
+#endif
+
 static void pumpRealLidar()
 {
     // Bounded: the loop also has a robot to run. 512 bytes is ~22 ms of LD19 at 230400.
@@ -496,6 +514,31 @@ static void pumpRealLidar()
         }
     }
 }
+
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+static void publishMcuStats()
+{
+    if (!mcu_stats_ready || state != AGENT_CONNECTED)
+        return;
+    static uint32_t last_ms = 0;
+    const uint32_t now = millis();
+    if (last_ms && now - last_ms < 1000)
+        return;
+    last_ms = now;
+    struct UartLinkStats ls;
+    linkStats(&ls);
+    lidarUartStats(&mcu_stats_data[0], &mcu_stats_data[1], &mcu_stats_data[2]);
+    mcu_stats_data[3] = real_lidar_packets;
+    mcu_stats_data[4] = ls.tx_bytes;      mcu_stats_data[5] = ls.rx_bytes;
+    mcu_stats_data[6] = ls.tx_full_waits; mcu_stats_data[7] = ls.tx_dropped;
+    mcu_stats_data[8] = ls.rx_dropped;    mcu_stats_data[9] = ls.uart_errors;
+    mcu_stats_data[10] = now;
+    mcu_stats_msg.data.data = mcu_stats_data;
+    mcu_stats_msg.data.size = 11;
+    mcu_stats_msg.data.capacity = 11;
+    (void)rcl_publish(&mcu_stats_publisher, &mcu_stats_msg, NULL);
+}
+#endif
 
 // The drivetrain is built in setup() from the env partition, not here. Pins,
 // wheel geometry, PID gains, the motor driver type and whether the wheels are
@@ -1772,6 +1815,9 @@ void loop() {
     if (real_lidar)
         pumpRealLidar();
     flushRawScan();
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+    publishMcuStats();
+#endif
     // The emulator's own account of itself every 5 s, over syslog (verified to
     // arrive with the agent up). Cumulative counters; read the deltas. Not
     // UDP-only: a serial robot's scan goes out of a UART pin, and "the
@@ -2003,6 +2049,12 @@ bool createEntities()
         std_msgs__msg__UInt8MultiArray__init(&raw_scan_msg);
         raw_scan_pub_ready = true;
     }
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+    RCCHECK(rclc_publisher_init_best_effort(&mcu_stats_publisher, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32MultiArray), topicName("mcu_stats")));
+    std_msgs__msg__UInt32MultiArray__init(&mcu_stats_msg);
+    mcu_stats_ready = true;
+#endif
     size_t executor_handles = 2;
     if (stamped_cmd_vel) {
     // create stamped twist subscriber for Nav2 on /cmd_vel
@@ -2140,6 +2192,14 @@ bool destroyEntities()
         std_msgs__msg__UInt8MultiArray__fini(&raw_scan_msg);
         RCSOFTCHECK(rcl_publisher_fini(&raw_scan_publisher, &node));
     }
+#if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
+    if (mcu_stats_ready) {
+        mcu_stats_ready = false;
+        mcu_stats_msg.data.data = NULL; mcu_stats_msg.data.size = 0; mcu_stats_msg.data.capacity = 0;
+        std_msgs__msg__UInt32MultiArray__fini(&mcu_stats_msg);
+        RCSOFTCHECK(rcl_publisher_fini(&mcu_stats_publisher, &node));
+    }
+#endif
     if (stamped_cmd_vel)
         RCSOFTCHECK(rcl_subscription_fini(&twist_stamped_subscriber, &node));
     RCSOFTCHECK(rcl_subscription_fini(&twist_subscriber, &node));

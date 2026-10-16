@@ -54,6 +54,10 @@ target_compile_definitions(app PRIVATE
   FW_ROS_DISTRO="${FW_ROS_DISTRO}"
   # rcutils headers ask for C11 Annex K; picolibc + Zephyr 4.4 cannot provide it.
   __STDC_WANT_LIB_EXT1__=0)
+# A diagnostic image (LINO_EXTRA_CMAKE=-DLINO_MCU_STATS=1 for build.sh): /mcu_stats at 1 Hz.
+if(LINO_MCU_STATS)
+  target_compile_definitions(app PRIVATE LINO_MCU_STATS=1)
+endif()
 # firmware/include first, so its config.h (which includes CONFIG_PATH) is the one found.
 target_include_directories(app PRIVATE
   ${FIRMWARE_ROOT}/include ${FIRMWARE_ROOT}/src shim src ${LIB_DIRS} ${DEP_INCLUDES})

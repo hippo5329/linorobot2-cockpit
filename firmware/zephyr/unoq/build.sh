@@ -37,7 +37,7 @@ if [ "$APP" = fw ]; then
   python3 "$HERE/../../../scripts/gen_firmware_header.py" --mcu unoq --no-embed-secrets --distro "$DISTRO" \
       --out "$WORK/unoq_header.h" >/dev/null
   REV=${FW_GIT_REV:-$(git -C "$HERE" rev-parse --short=7 HEAD 2>/dev/null || echo unknown)}   # from the caller when the tree is a copy
-  EXTRA_CMAKE="-DFIRMWARE_ROOT=/work/firmware -DLINO_HEADER=/work/unoq_header.h -DLINO_LIBDEPS=/work/libdeps -DFW_GIT_REV=$REV -DFW_ROS_DISTRO=$DISTRO"
+  EXTRA_CMAKE="-DFIRMWARE_ROOT=/work/firmware -DLINO_HEADER=/work/unoq_header.h -DLINO_LIBDEPS=/work/libdeps -DFW_GIT_REV=$REV -DFW_ROS_DISTRO=$DISTRO ${LINO_EXTRA_CMAKE:-}"
 fi
 # The base controller compiles the Arduino firmware's kinematics and PID as they are.
 if [ "$APP" = base ]; then
