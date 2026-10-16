@@ -105,7 +105,8 @@ def test_the_pipeline_starts_the_guard_for_a_real_robot_before_any_motion():
 
 
 def test_a_trip_fails_the_run_with_its_reason():
-    assert PIPELINE.count('motion_guard_tripped(mg["trip"])') == 3
+    # exploration, the goals, test_acc's start, and the drive home after a fenced exploration
+    assert PIPELINE.count('motion_guard_tripped(mg["trip"])') == 4
     assert PIPELINE.count('failures.append(f"Motion guard: {tripped}")') == 2
     assert 'failures.append(f"Motion guard: {why_not}")' in PIPELINE
 
@@ -220,3 +221,36 @@ def test_the_battery_is_read_best_effort():
     import re
     src = open(os.path.join(os.path.dirname(__file__), "..", "scripts", "motion_guard.py")).read()
     assert re.search(r'create_subscription\(BatteryState, "battery", on_battery, qos_profile_sensor_data\)', src)
+
+
+# ---- the room bound and frontier exploration (MC200, 2026-10-16) ----
+# explore_lite resends a cancelled frontier goal (a cancel does not blacklist it): with the room
+# bound on, a real robot explored its room in 9 minutes and spent the rest of its 900 s on one
+# frontier through a gap, cancelled 129 times. The guard records each refusal; the watcher ends
+# the exploration as "room explored" once refusals keep coming and the map stops growing, and
+# the pipeline drives the robot home.
+
+def test_the_guard_records_every_goal_it_refuses_for_the_room():
+    guard = open(os.path.join(REPO_ROOT, "scripts", "motion_guard.py")).read()
+    assert '"--fence-file"' in guard
+    assert "a.fence_file" in guard.split("def on_plan(m):")[1].split("node.create_subscription")[0]
+    assert "--fence-file {fence}" in PIPELINE
+
+
+def test_a_fenced_exploration_ends_and_drives_home():
+    watch = open(os.path.join(REPO_ROOT, "scripts", "explore_watch.py")).read()
+    assert "return 4" in watch and "room_explored" in watch
+    assert "--fence-file {run_log_path('motion_guard_fenced')}" in PIPELINE
+    home = PIPELINE.split("if ex_res.returncode == 4:")[1].split("tripped = motion_guard_tripped")[0]
+    assert "--goal-x 0.0 --goal-y 0.0" in home and "--require-goal" in home
+    assert "returned_to_origin" in home
+
+
+def test_fence_refusals_reads_the_guards_file(tmp_path):
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import importlib
+    ew = importlib.import_module("explore_watch")
+    p = tmp_path / "f.jsonl"
+    p.write_text('{"t": 10.5, "x": 1, "y": 2}\n{"t": \n{"t": 12.0, "x": 1, "y": 2}\n')
+    assert ew.fence_refusals(str(p)) == [10.5, 12.0]
+    assert ew.fence_refusals("") == [] and ew.fence_refusals(str(tmp_path / "none")) == []

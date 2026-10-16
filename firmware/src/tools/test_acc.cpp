@@ -47,6 +47,7 @@
 #include "tool_hw.h"
 #include "sensor_factory.h"
 #include "mcu_env.h"
+#include "battery.h"
 #include "i2c_probe.h"
 
 #ifndef BAUDRATE
@@ -288,6 +289,25 @@ static void setRunTime()
 float imu_max_acc_x, imu_min_acc_x;
 unsigned idx = 0;
 
+// Pack sag under the full-power runs: the heaviest load the robot ever sees, and the one
+// moment the host cannot read /battery (micro-ROS is off while a tool runs). The rest
+// reading is taken with the motors stopped before the first run; every BATTERY_EVERY-th
+// trace sample reads the pack (four ADC reads, or the INA219), so the 20 ms trace keeps its
+// timing. A board with no battery input reads 0 V and prints nothing.
+static const unsigned BATTERY_EVERY = 5;
+static float bat_rest = 0.0f, bat_run_min = 0.0f, bat_worst = 0.0f;
+
+static float batteryVolts() {
+    const float v = getBattery().voltage;
+    return (v > 0.5f && v < 100.0f) ? v : 0.0f;
+}
+
+static void batteryNote(float v) {
+    if (v <= 0.0f) return;
+    if (bat_run_min <= 0.0f || v < bat_run_min) bat_run_min = v;
+    if (bat_worst <= 0.0f || v < bat_worst) bat_worst = v;
+}
+
 void record(unsigned n, Kinematics::velocities *buf) {
     for (unsigned i = 0; i < n; i++, idx++) {
         float rpm1 = readRPM(0);
@@ -304,6 +324,7 @@ void record(unsigned n, Kinematics::velocities *buf) {
         if (idx < trace_n) {
             buf[idx] = kinematics->getVelocities(rpm1, rpm2, rpm3, rpm4);
         }
+        if (bat_rest > 0.0f && i % BATTERY_EVERY == 0) batteryNote(batteryVolts());
         waitMs(ticks);
     }
 }
@@ -358,6 +379,12 @@ void dump_record(const Kinematics::velocities *buf) {
         Serial.println("IMU ACC none (no IMU)");
     Serial.printf("time to 0.9x max vel %6.2f sec\n", idx * dt);
     Serial.printf("distance to stop %6.2f %s\n", dist, (runs & 1) ? "m" : "rad");
+    if (bat_rest > 0.0f && bat_run_min > 0.0f) {
+        Serial.printf("BATTERY rest %5.2f V  min %5.2f V  sag %5.2f V\n",
+                      bat_rest, bat_run_min, bat_rest - bat_run_min);
+        syslog(LOG_INFO, "BATTERY rest %5.2f V  min %5.2f V  sag %5.2f V",
+               bat_rest, bat_run_min, bat_rest - bat_run_min);
+    }
 
     syslog(LOG_INFO, "MAX VEL %6.2f %6.2f m/s  %6.2f rad/s", max_vel_x, max_vel_y, max_vel_z);
     syslog(LOG_INFO, "MIN VEL %6.2f %6.2f m/s  %6.2f rad/s", min_vel_x, min_vel_y, min_vel_z);
@@ -694,6 +721,19 @@ void runAcc() {
         waitMs(3000);
     }
 
+    // The pack at rest, before anything draws: the mean of five readings 20 ms apart.
+    {
+        float sum = 0.0f;
+        unsigned n = 0;
+        for (unsigned i = 0; i < 5; i++) {
+            const float v = batteryVolts();
+            if (v > 0.0f) { sum += v; n++; }
+            waitMs(20);
+        }
+        bat_rest = n ? sum / n : 0.0f;
+        bat_run_min = bat_worst = 0.0f;
+    }
+
     // Identification first, while the motors are cold and the pack is full:
     // once, not once per run, because the twelve runs below halve the PWM as
     // they go and a plant fitted across different step sizes is not a plant.
@@ -711,6 +751,7 @@ void runAcc() {
     while (runs > 0) {
         runs--;
         idx = 0;
+        bat_run_min = 0.0f;
         imu_max_acc_x = 0;
         imu_min_acc_x = 0;
 #ifdef LED_ACTIVE
@@ -760,6 +801,7 @@ void runAcc() {
     if (kinematics->base_platform_ == Kinematics::MECANUM) {
         const int p = pwm_max / 2;
         idx = 0;
+        bat_run_min = 0.0f;
         imu_max_acc_x = 0;
         imu_min_acc_x = 0;
         driveAll(-p, p, p, -p);
@@ -774,6 +816,12 @@ void runAcc() {
         dump_record(buf);
     }
     ident::reportPhase("runs");
+    if (bat_rest > 0.0f && bat_worst > 0.0f) {
+        Serial.printf("BATTERY worst %5.2f V  sag %5.2f V from %5.2f V at rest\n",
+                      bat_worst, bat_rest - bat_worst, bat_rest);
+        syslog(LOG_INFO, "BATTERY worst %5.2f V  sag %5.2f V from %5.2f V at rest",
+               bat_worst, bat_rest - bat_worst, bat_rest);
+    }
     Serial.println("[test_acc] done -- 'base' to leave the tool");
 }
 

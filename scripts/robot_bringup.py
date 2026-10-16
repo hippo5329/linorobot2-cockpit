@@ -653,6 +653,10 @@ def cmd_speed(robot: Robot, a) -> int:
         summary += " -- " + "; ".join(str(f) for f in faults)
     elif bad:
         summary += " -- outside 5 %: apply the change printed above (wheel_diameter / angular_scale)"
+    sag = res.get("sag") or {}
+    if sag.get("worst"):
+        summary += (f"; battery worst {sag['worst']:.2f} V ({sag['sag']:.2f} V below "
+                    f"{sag['rest']:.2f} V at rest, {sag['where']})")
     say(f"SPEED {'PASS' if ok else 'FAIL'}: {summary or 'no ratios'}")
     bc.mark(robot.name, robot.params, "speed", "pass" if ok else "fail", summary, values=rat, by=a.by)
     return 0 if ok else 1

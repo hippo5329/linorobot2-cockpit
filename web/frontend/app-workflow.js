@@ -973,6 +973,19 @@ function oneClickVerdict(o, exitCode, lines) {
   return `❌ Pipeline halted (exit code ${exitCode}): ${why}`;
 }
 
+// The pack's worst sag, from the run's own lines: the pipeline's BATTERY_SAG line at the end
+// (one_click_pipeline.battery_report), or while the run goes, test_acc's figures from the
+// board ("BATTERY worst ... at rest"). "" when the run printed neither.
+function oneClickBatterySag(lines) {
+  lines = lines || [];
+  const end = lines.map((l) => /BATTERY_SAG: (.+)$/.exec(l || "")).filter(Boolean).pop();
+  if (end) return `🔋 Battery: ${end[1].trim()}`;
+  const acc = lines.map((l) => /BATTERY worst\s+([\d.]+) V\s+sag\s+([-\d.]+) V from\s+([\d.]+) V at rest/.exec(l || ""))
+    .filter(Boolean).pop();
+  if (acc) return `🔋 Battery: worst ${acc[1]} V during test_acc, ${acc[2]} V below ${acc[3]} V at rest (so far)`;
+  return "";
+}
+
 function initCockpitDashboard() {
   const btnOneClick = document.getElementById("btn-cockpit-oneclick");
   const btnStopPipeline = document.getElementById("btn-cockpit-stop-pipeline");
@@ -981,6 +994,7 @@ function initCockpitDashboard() {
   const noNav2Check = document.getElementById("cockpit-no-nav2");
   const pipelineBadge = document.getElementById("cockpit-pipeline-badge");
   const pipelineMsg = document.getElementById("cockpit-pipeline-msg");
+  const batterySag = document.getElementById("cockpit-battery-sag");
 
   const btnVerifyTopics = document.getElementById("btn-cockpit-verify-topics");
   const verifyStatus = document.getElementById("cockpit-verify-status");
@@ -1385,6 +1399,7 @@ function initCockpitDashboard() {
     const worldMap = (!isReal && world === "map" && worldMapInput) ? worldMapInput.value.trim() : "";
 
     markStarted();
+    if (batterySag) { batterySag.textContent = ""; batterySag.hidden = true; }   // a new run, a new pack reading
     setBadge("pill-ok", "Running...");
     const usesExplore = scope === "full" && mapSource !== "saved" && explore;
     if (pipelineMsg) pipelineMsg.textContent = `Pipeline active: ${controller} [mode: ${mode}${world ? `, world: ${world}` : ""}], ${scope !== "full" ? scope.replace("_", " + ") : (usesExplore ? "autonomous exploration" : (mapSource === "saved" ? `saved map ${optIn.savedMap}` : "fixed goal"))}...`;
@@ -1447,6 +1462,10 @@ function initCockpitDashboard() {
               if (outLines.length > 400) outLines.splice(0, outLines.length - 400);
               const na = /NEXT ACTION: (.+)$/.exec(payload.line || "");
               if (na) nextAction = na[1].trim();
+              if (batterySag && /BATTERY(_SAG:| worst)/.test(payload.line || "")) {
+                batterySag.textContent = oneClickBatterySag(outLines);
+                batterySag.hidden = !batterySag.textContent;
+              }
             } else if (evType === "done") {
               const code = payload.exit_code;
               logLine(`[pipeline] Mission finished with exit code ${code}`);

@@ -95,6 +95,7 @@ const click = (id) => Promise.all((el(id).listeners.click || []).map((f) => f())
     fetched: fetched.filter((u) => u.startsWith("/api/workflow/one-click/stream")), during, toasts, confirms,
     badge: el("cockpit-pipeline-badge").textContent, msg: el("cockpit-pipeline-msg").textContent,
     optsMsg: el("cockpit-opts-msg").textContent,
+    battery: el("cockpit-battery-sag").textContent, batteryHidden: el("cockpit-battery-sag").hidden,
     after: { start: el("btn-cockpit-oneclick").disabled, abort: el("btn-cockpit-stop-pipeline").disabled,
              hdrAbort: el("btn-header-abort-pipeline").hidden },
   }));
@@ -285,3 +286,27 @@ def test_a_design_controller_selects_its_silicon_and_runs_as_itself(tmp_path):
     assert out.returncode == 0, out.stderr
     r = json.loads(out.stdout.strip().splitlines()[-1])
     assert r == {"gendrv": "esp32", "pico2": "pico2", "maker": "esp32", "unknown": None, "run": "gendrv"}
+
+
+# The pack's worst sag (user, 2026-10-16: "report worst sag in web ui"): the pipeline's
+# BATTERY_SAG line, and while the run goes test_acc's own figures from the board.
+@needs_node
+def test_the_worst_battery_sag_is_shown_under_the_run(tmp_path):
+    line = ("BATTERY_SAG: worst 10.42 V during test_acc, 0.56 V (5.1 %) below 10.98 V at rest; "
+            "lowest per step: exploration 10.50 V, test_acc 10.42 V (412 /battery samples)")
+    r = page(tmp_path, lines=["  ✅ Topic verification passed.", "\U0001f50b " + line,
+                              "✅ 1-Click Pipeline Finished Successfully!"])
+    assert r["battery"] == "\U0001f50b Battery: " + line.split("BATTERY_SAG: ")[1]
+    assert r["batteryHidden"] is False
+
+
+@needs_node
+def test_test_acc_figures_show_before_the_run_ends(tmp_path):
+    r = page(tmp_path, lines=["  | BATTERY worst 10.42 V  sag  0.56 V from 10.98 V at rest"], exit_code=1)
+    assert "worst 10.42 V during test_acc" in r["battery"] and "(so far)" in r["battery"]
+
+
+@needs_node
+def test_no_battery_line_no_sag_shown(tmp_path):
+    r = page(tmp_path, lines=["✅ 1-Click Pipeline Finished Successfully!"])
+    assert r["battery"] == ""

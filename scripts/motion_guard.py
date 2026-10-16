@@ -46,6 +46,7 @@ explorer then gives that frontier up.
 The trip file holds one line, "MOTION_GUARD_TRIPPED: <why>"; the ready file "MOTION_GUARD_READY".
 """
 import argparse
+import json
 import math
 import os
 import sys
@@ -235,6 +236,10 @@ def main(argv=None) -> int:
     ap.add_argument("--ns", default="")
     ap.add_argument("--room-bound", action="store_true")
     ap.add_argument("--room-margin", type=float, default=0.30)
+    # Every goal refused for the room's outline, one JSON line each: explore_lite resends a
+    # cancelled frontier (a cancel does not blacklist it), so the exploration watcher reads
+    # this to tell "the room is explored, what is left is beyond it" from a stall.
+    ap.add_argument("--fence-file", default="")
     ap.add_argument("--battery-min-start", type=float, default=0.10)
     ap.add_argument("--battery-min", type=float, default=0.05)
     a = ap.parse_args(argv)
@@ -310,6 +315,13 @@ def main(argv=None) -> int:
         if why:
             print(f"MOTION_GUARD goal cancelled: {why}", flush=True)
             cancel_all()
+            if a.fence_file:
+                try:
+                    with open(a.fence_file, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({"t": round(time.time(), 2), "x": round(end.x, 2),
+                                             "y": round(end.y, 2)}) + "\n")
+                except OSError:
+                    pass
 
     node.create_subscription(LaserScan, "scan", on_scan, qos_profile_sensor_data)
     # best effort: matches the firmware's best-effort /battery and a reliable one (sim_base_node);

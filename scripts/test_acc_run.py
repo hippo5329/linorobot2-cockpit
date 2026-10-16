@@ -50,7 +50,7 @@ import wifi_boards  # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 END_RE = re.compile(r"\[test_acc\] done|test_acc refused|\[test_acc\] STOPPED")
 RESULT_RE = re.compile(r"IDENT (gains|robot|plant|deadzone|done)|MAX VEL|MIN VEL|MAX ACC|MIN ACC|"
-                       r"IMU ACC|time to|distance to stop|HOME |refused|STOPPED")
+                       r"IMU ACC|time to|distance to stop|BATTERY |HOME |refused|STOPPED")
 # Longer than the base app's quietest syslog: a board at rest sends its [fw] banner once a
 # minute and little else, and a 30 s window that opened just after one heard nothing (a tracked robot).
 SYSLOG_WAIT_S = 65

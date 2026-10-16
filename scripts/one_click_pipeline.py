@@ -37,6 +37,7 @@ import host_firmware  # noqa: E402  (the Sim MCU as the firmware itself)
 import depth_camera  # noqa: E402  (who makes /scan: a LiDAR or a depth camera)
 import mcu_identity  # noqa: E402
 import robot_stack  # noqa: E402  (what a kept-running stack leaves behind)
+import battery_sag  # noqa: E402  (the pack's sag over the run)
 
 CONFIG_DIR = cockpit_paths.ensure_config_dir(quiet=True)
 DEFAULT_ROBOT = cockpit_paths.DEFAULT_ROBOT
@@ -153,6 +154,44 @@ def start_progress_log():
         sys.stdout = _Tee(sys.stdout, PROGRESS, out)
         sys.stderr = _Tee(sys.stderr, None, out)
     return PROGRESS
+
+
+# The pack over the run (battery_sag.py): the logger's samples from bringup to the end, the
+# steps on a timeline -- a label ending "(at rest)" is a stretch with the motors off, which
+# is where the rest voltage comes from -- and test_acc's own figures from the board (the
+# host hears no /battery while a tool runs). One BATTERY_SAG line at the end of every run.
+BATTERY = {"proc": None, "file": "", "phases": [], "test_acc": None}
+
+
+def battery_phase(label: str) -> None:
+    if BATTERY["file"]:
+        BATTERY["phases"].append((time.time(), label))
+
+
+def battery_start(distro: str, ns: str, bg_processes: list) -> None:
+    if BATTERY["proc"] is not None:
+        return
+    BATTERY["file"] = os.path.join(LOG_DIR, "battery_sag.jsonl")
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        open(BATTERY["file"], "w").close()
+    except OSError:
+        BATTERY["file"] = ""
+        return
+    BATTERY["proc"] = launch_bg(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'battery_sag.py')} log "
+                                f"--out {BATTERY['file']}" + (f" --ns {ns}" if ns else ""),
+                                log_tag="battery_sag", distro=distro)
+    bg_processes.append(BATTERY["proc"])
+    battery_phase("bringup (at rest)")
+
+
+def battery_report() -> None:
+    """The run's BATTERY_SAG line (app-workflow.js oneClickBatterySag shows it)."""
+    if not BATTERY["file"]:
+        return
+    s = battery_sag.summarize(battery_sag.read_samples(BATTERY["file"]), BATTERY["phases"],
+                              BATTERY["test_acc"])
+    print(f"\n🔋 {battery_sag.sag_line(s)}", flush=True)
 
 
 def run_log_path(tag: str) -> str:
@@ -918,11 +957,12 @@ def start_motion_guard(params_path: str, ns: str, room_bound: bool, distro: str)
     """motion_guard.py beside a real robot's motion: (process, trip_file, why-not) -- why-not
     is '' once the guard says the scan and battery are good enough to move on."""
     trip, ready = run_log_path("motion_guard_trip"), run_log_path("motion_guard_ready")
-    for f in (trip, ready):
+    fence = run_log_path("motion_guard_fenced")
+    for f in (trip, ready, fence):
         if os.path.exists(f):
             os.remove(f)
     cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'motion_guard.py')} --params {params_path} "
-           f"--trip-file {trip} --ready-file {ready}" + (f" --ns {ns}" if ns else "")
+           f"--trip-file {trip} --ready-file {ready} --fence-file {fence}" + (f" --ns {ns}" if ns else "")
            + (" --room-bound" if room_bound else ""))
     proc = launch_bg(cmd, log_tag="motion_guard", distro=distro)
     t0 = time.time()
@@ -943,7 +983,8 @@ def watch_exploration(args, trip_file: str, poll_s: float = 0.5) -> subprocess.C
     whole exploration time, the guard cancelling each within half a second -- the robot
     moving in bursts on a stopped or starved scan."""
     cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
-           f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}")
+           f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}"
+           + (f" --fence-file {run_log_path('motion_guard_fenced')}" if trip_file else ""))
     proc = launch_bg(cmd, log_tag="explore_watch", distro=args.distro)
     deadline = time.time() + args.explore_timeout + 60
     rc = None
@@ -1746,6 +1787,7 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
     import gen_firmware_header
     import mcu_env
     import drivetrain_report
+    battery_phase("test_acc")
     print(f"\n[6.2/6] [TEST_ACC] Measuring the drivetrain on the initial map...")
     on_serial = not sim and not mcu_env.transport_is_wifi(controller_cfg.get("transport"))
     found = {} if (sim or on_serial) else wireless_board(controller_cfg, params_path, params)
@@ -1788,6 +1830,10 @@ def _test_acc_body(args, params: dict, controller_cfg: dict, params_path: str, p
                            + (["--serial", "--console-baud", str(int(controller_cfg.get("baudrate", 921600)))]
                               if on_serial else ["--ip", found["ip"]]),
                            timeout=900, log_tag="test_acc", prefix="  ")
+        try:
+            BATTERY["test_acc"] = battery_sag.test_acc_figures(open(transcript, encoding="utf-8").read())
+        except OSError:
+            pass
         # app=base reboots the board: a new micro-ROS session, then the scan again. Data, not a
         # listing: only a message proves the board opened a session with the agent again.
         if not wait_for_topic("/odom/unfiltered", timeout_sec=120, distro=args.distro,
@@ -2848,6 +2894,9 @@ def main():
             print("❌ Topic verification failed! Aborting before SLAM/Nav2. See logs/bringup.log.")
             return 1
         print("  ✅ Topic verification passed.")
+        # The pack from here to the end: the rest voltage before anything moves, the sag after.
+        if not args.topics_only or args.drive_test:
+            battery_start(args.distro, cockpit_paths.robot_namespace(params), bg_processes)
 
         # Step 4.7: SLAM and Nav2 must start from a known pose.
         #
@@ -2920,6 +2969,7 @@ def main():
         if args.clearance is None:
             args.clearance = clearance_real(params) if real_checks else 0.0
         if scan_from == "lidar" and has_lidar and args.clearance > 0:
+            battery_phase("clearance")
             print(f"\n[4.8/6] [CLEARANCE] Nothing within {args.clearance:.2f} m of the robot before it moves"
                   + (" (inching to clear space if needed)" if (args.inch and not args.topics_only) else "") + "...")
             if not clearance_step(args, params, controller_cfg, args.clearance):
@@ -2940,6 +2990,7 @@ def main():
                 failures.append(f"map: {args.map} does not exist")
                 print(f"  ❌ {args.map} does not exist.")
         elif has_lidar:
+            battery_phase("SLAM and Nav2 start-up (at rest)")
             print(f"\n[5/6] [SLAM] Launching SLAM Toolbox (distro={args.distro})...")
             slam_ran = True
             failures += start_slam(f"ros2 launch linorobot2_cockpit slam.launch.py config_file:={params_path}",
@@ -3095,6 +3146,7 @@ def main():
                 # Frontier exploration instead of the fixed goal: explore_lite
                 # drives Nav2 to the edge of the known map until none is left and
                 # then home -- how a robot maps a space it has never seen.
+                battery_phase("exploration")
                 print(f"  Frontier exploration (explore_lite), up to {args.explore_timeout} s...")
                 if nav2_ok and motion_ok:
                     explore = launch_bg(f"ros2 launch linorobot2_cockpit explore.launch.py "
@@ -3104,6 +3156,24 @@ def main():
                     ex_res = watch_exploration(args, mg["trip"])
                     stop_bg(explore)
                     print(ex_res.stdout)
+                    if ex_res.returncode == 4:
+                        # The room is explored and the rest lies beyond its outline: explore_lite
+                        # would ask for the far side until its time limit, so it is stopped and
+                        # Nav2 drives the robot home -- what explore_lite's return_to_init does.
+                        print("  The room is explored: driving home (0, 0) with Nav2...")
+                        home_cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
+                                    f"--goal-x 0.0 --goal-y 0.0 --timeout {args.goal_timeout} "
+                                    f"--cmd-vel-type {'twist_stamped' if stamped_cmd else 'twist'} "
+                                    f"--round-trips 0 --require-goal --goal-tolerance {args.goal_tolerance}"
+                                    + (" --no-wall" if is_real else ""))
+                        home_res = run_ros(home_cmd, timeout=args.goal_timeout + 30, distro=args.distro)
+                        print(home_res.stdout)
+                        if home_res.returncode == 0 and not motion_guard_tripped(mg["trip"]):
+                            print("  ✅ EXPLORE: returned_to_origin (the room explored, driven home by Nav2)")
+                            ex_res = subprocess.CompletedProcess(ex_res.args, 0, ex_res.stdout, "")
+                        else:
+                            print("  ❌ EXPLORE: the room was explored, but the drive home failed")
+                            ex_res = subprocess.CompletedProcess(ex_res.args, 5, ex_res.stdout, "")
                     tripped = motion_guard_tripped(mg["trip"])
                     if tripped:
                         print(f"  ❌ MOTION GUARD STOPPED THE EXPLORATION: {tripped}")
@@ -3143,6 +3213,7 @@ def main():
                     goal_args += f" --home-yaw-tolerance {args.home_yaw_tolerance}"
                 if is_real:
                     goal_args += " --no-wall"     # the room's own obstacles, not the sim's wall
+                battery_phase("Nav2 goals")
                 if nav2_ok and motion_ok:
                     test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
                                        + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
@@ -3222,6 +3293,7 @@ def main():
             # manoeuvre and judges odometry's distance and turn by them (odom_check.py) --
             # the one check a wrong wheel diameter or a slipping track cannot pass.
             drive_lidar = scan_from == "lidar" and has_lidar
+            battery_phase("drive suite")
             print(f"\n[6.5/6] [DRIVE] {n_moves} manoeuvres ({base_type}), checked against "
                   f"odometry" + (" and odometry against the LiDAR" if drive_lidar else "") + "...")
             stamped_now = wants_stamped_cmd_vel(args.distro, controller_cfg, params)
@@ -3253,7 +3325,15 @@ def main():
                       f"goal fails while the base drives. Check the ekf block and the TF tree.")
                 failures.append("EKF does not follow /odom/unfiltered")
             if drive_res.returncode == 0:
-                print(f"  ✅ All {n_moves} manoeuvres correct ({base_type}).")
+                # the suite's own count: a real room skips what it has no space for, and
+                # "all 8 correct" over 5 driven and 3 skipped said more than was tested
+                v = re.search(r"VERDICT: (\d+)/(\d+) manoeuvres correct.*?(\d+) skipped",
+                              drive_res.stdout or "")
+                if v and int(v.group(3)):
+                    print(f"  ✅ {v.group(1)}/{v.group(2)} manoeuvres driven were correct ({base_type}); "
+                          f"{v.group(3)} of {n_moves} skipped: no room for them here.")
+                else:
+                    print(f"  ✅ All {n_moves} manoeuvres correct ({base_type}).")
             else:
                 print(f"  ⚠️ Drive suite returned {drive_res.returncode} — see the verdict above.")
                 failures.append(f"Drive suite: exit {drive_res.returncode}")
@@ -3285,6 +3365,7 @@ def main():
             # saver for one failed a run that did everything it could.
             print("\n[MAP] Skipped: no SLAM ran (no scan source), so there is no map to save.")
         else:
+            battery_phase("map save (at rest)")
             print(f"\n[MAP] Saving the map to '{args.map_output}'...")
             # save_map_timeout=15: /map is transient-local and the saver has to get
             # its subscription matched inside the window; 2 s is a coin toss on a
@@ -3308,6 +3389,7 @@ def main():
         print("==================================================================")
         return 0
     finally:
+        battery_report()
         keep = getattr(args, "keep_running", False)
         kept = {id(p) for _, p in stack_processes} if keep else set()
         if keep and stack_processes:

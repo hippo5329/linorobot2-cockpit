@@ -439,10 +439,21 @@ def run(a, params: dict) -> int:
     bad = faults(rat)
     for f in bad:
         print(f"SPEED_CHECK FAULT: {f}")
+    # The pack's worst sag over the steps (user, 2026-10-16): the lowest reading under load
+    # against the mean at rest before the first step.
+    sag = None
+    loaded = [r for r in rows if r["volt_min"] == r["volt_min"]]
+    if rest and loaded:
+        w = min(loaded, key=lambda r: r["volt_min"])
+        r0 = sum(rest) / len(rest)
+        sag = {"rest": r0, "worst": w["volt_min"], "sag": r0 - w["volt_min"],
+               "where": "%s %+.2f %s" % (w["kind"], w["cmd"], UNITS[w["kind"]])}
+        print("BATTERY_SAG: worst %.2f V during %s, %.2f V (%.1f %%) below %.2f V at rest"
+              % (sag["worst"], sag["where"], sag["sag"], 100.0 * sag["sag"] / r0, r0))
     if a.json:
         with open(a.json, "w") as fh:
             json.dump({"rows": rows, "ratios": rat, "faults": bad, "end": end, "windows": windows,
-                       "batt": batt}, fh)
+                       "batt": batt, "sag": sag}, fh)
     print("SPEED_CHECK_DONE")
     node.destroy_node()
     rclpy.shutdown()
