@@ -27,7 +27,10 @@ blanks them -- so the forms cannot be confused with the line they quote.
 import re
 
 TIMEOUT_S = 2.0          # an answer comes at once; none in this long is said
-_ANSWER = re.compile(r"^\s*(ok|fail|done|stopped): (.*?)(?: \(([^()]*)\)| -- (.*))?\s*$")
+# The shell prints its prompt before it answers, so an answer can share the prompt's line:
+# "tool> ok: status (done)" (the UNO Q, 2026-10-16: lino_tool missed every answer that way and
+# said the firmware answers nothing).
+_ANSWER = re.compile(r"^\s*(?:tool> ?)*\s*(ok|fail|done|stopped): (.*?)(?: \(([^()]*)\)| -- (.*))?\s*$")
 
 
 def parse(text: str):

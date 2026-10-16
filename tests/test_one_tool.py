@@ -228,3 +228,13 @@ def test_the_sim_mcus_tool_is_entered_by_its_restart_flag_not_the_env(monkeypatc
         env = mcu_env.decode(fh.read())
     assert env.get("app", "base") == "base"
     assert env["tool_wait"] == "0" and env["term_port"] == "0"
+
+
+def test_an_answer_on_the_prompts_line_is_an_answer():
+    # the UNO Q printed "tool> ok: status (done)" and lino_tool said the firmware answers nothing
+    import tool_answer
+    a = tool_answer.parse("tool> ok: status (done)")
+    assert a == {"kind": "ok", "line": "status", "ok": True, "msg": "done"}
+    assert tool_answer.parse("tool> tool> fail: motor 3 40 -- this robot has 2 wheels")["kind"] == "fail"
+    assert tool_answer.parse("tool> ") is None
+    assert tool_answer.parse("[tool] ok: not an answer") is None
