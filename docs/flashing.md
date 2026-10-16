@@ -90,6 +90,20 @@ Measured since, on a rig that flashes on **every** run:
   took 40 touches without a single failure. So the bare sketch is not the reproducer; something the real
   firmware does is needed, and finding what is the open question.
 
+### An RP2 board needs the host's udev rule when the cockpit runs as a user
+
+picotool reaches an RP2040 / RP2350 board's bootloader over raw USB, not its tty. The container
+may use raw USB (`device_cgroup_rules: c 189:* rwm`), but the node's own permissions still apply,
+and on a stock host `/dev/bus/usb/<bus>/<dev>` is `root:root 0664`: a cockpit that runs as its
+user -- the web UI does -- opens the tty but cannot flash the board or write its configuration.
+The flash then stops with `[NO USB ACCESS]`, naming the device. Install the rule once on the host:
+
+    sudo scripts/install_udev_rules.sh
+
+It copies `udev/60-linorobot2-usb.rules` (vendor `2e8a` to group `dialout`, mode 0660 -- the
+serial ports' group, which the cockpit's user already has) and re-triggers udev; replug the board.
+A host with PlatformIO's udev rules already lets the bootloader through.
+
 ### WebSerial Is a Monitor, Never a Flasher
 The browser's Web Serial API is reserved for the raw serial debug terminal. Only the native path can stop
 `micro_ros_agent`, confirm the tty was released, and restart it; a half-written flash bricks the board.

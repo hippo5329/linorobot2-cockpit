@@ -1277,6 +1277,41 @@ def flash_via_uf2_copy(uf2_path: str, mount_point: str) -> bool:
         return False
 
 
+
+# The RP2 bootloader is raw USB (picotool), not a tty: a cockpit that runs as its app user -- as the
+# web UI does -- needs write access to /dev/bus/usb/<bus>/<dev>, which a stock host gives root only
+# (root:root 0664). Found 2026-10-16 when the bench gate first ran as the app user: "Permission
+# denied" at the USB reset, then "sudo: a password is required" at the env write. The fix is on the
+# HOST: udev/60-linorobot2-usb.rules (scripts/install_udev_rules.sh) gives these devices group dialout.
+RP2_USB_VENDOR = "2e8a"
+UDEV_HINT = "sudo scripts/install_udev_rules.sh on the host (udev/60-linorobot2-usb.rules), then replug the board"
+
+
+def rp2_usb_access_problem(sys_root: str = "/sys/bus/usb/devices", dev_root: str = "/dev/bus/usb") -> Optional[str]:
+    """Why this process cannot drive an RP2 board's USB device, or None (root, or every one writable)."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return None
+    blocked = []
+    for d in sorted(glob.glob(os.path.join(sys_root, "*"))):
+        try:
+            with open(os.path.join(d, "idVendor")) as f:
+                if f.read().strip().lower() != RP2_USB_VENDOR:
+                    continue
+            with open(os.path.join(d, "busnum")) as f:
+                bus = int(f.read())
+            with open(os.path.join(d, "devnum")) as f:
+                dev = int(f.read())
+        except (OSError, ValueError):
+            continue
+        node = os.path.join(dev_root, f"{bus:03d}", f"{dev:03d}")
+        if os.path.exists(node) and not os.access(node, os.W_OK):
+            blocked.append(node)
+    if not blocked:
+        return None
+    return (f"[NO USB ACCESS] this user cannot write the RP2 board's USB device ({', '.join(blocked)}): "
+            f"picotool cannot reach its bootloader. Fix: {UDEV_HINT}.")
+
+
 def find_picotool_binaries() -> List[str]:
     """Discover all picotool executables across system PATH and PlatformIO package directories."""
     candidates = []
@@ -1499,6 +1534,9 @@ def flash_env_via_picotool(env_bin: str, env: str = "pico2") -> bool:
                 time.sleep(1.0)
                 return True
         log(f"env write via {pt} failed: {res.stderr or res.stdout}")
+        why = rp2_usb_access_problem()
+        if why:
+            log(why)
 
     return False
 
@@ -1879,6 +1917,9 @@ def print_failure_troubleshooting(target_name: str, env: str, port: str, uf2_pat
     print(f"❌ [FLASH FAILED] Microcontroller Firmware Upload Failed for Target '{target_name}'", flush=True)
     print(f"   Environment: {env} | Port: {port}", flush=True)
     print("=" * 80, flush=True)
+    why = rp2_usb_access_problem() if mcu_identity.env_family(env) in ("pico", "pico2") else None
+    if why:
+        print(f"   {why}", flush=True)
     print("⛔ HALTING EXECUTION: Cockpit will NOT proceed to bringup or ROS 2 navigation!", flush=True)
     print("   Starting bringup without valid firmware causes agent timeouts and hardware faults.", flush=True)
 

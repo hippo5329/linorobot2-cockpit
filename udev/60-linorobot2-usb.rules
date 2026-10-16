@@ -1,0 +1,9 @@
+# linorobot2 cockpit: USB access for the boards it flashes, for a cockpit that runs as a user.
+#
+# The Raspberry Pi RP2040 / RP2350 bootloader (BOOTSEL) and its reset interface are raw USB,
+# reached by picotool, not a tty: on a stock host /dev/bus/usb/<bus>/<dev> is root:root 0664,
+# and a cockpit running as its app user (the web UI does) cannot flash the board or write its
+# configuration. Group dialout is the serial ports' group, which the cockpit's user already has.
+#
+# Install: sudo scripts/install_udev_rules.sh   (copies this file, reloads udev, re-triggers usb)
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTRS{idVendor}=="2e8a", GROUP="dialout", MODE="0660"
