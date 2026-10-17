@@ -249,7 +249,7 @@ def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
     lies on ground already seen free, reached by a straight move that sweeps only seen ground
     -- forward only for a base that would have to turn to go anywhere else; None when there
     is none within max_travel. A blind sector behind the LiDAR means the robot's own spot is
-    never wholly known, so the distance is never 0 while something is blind. `also_free`:
+    never wholly known, so the distance is 0 only when `also_free` covers the blind part. `also_free`:
     a predicate for ground known some other way (map_grid.seen_by_map: the last run's map,
     at blind bearings only)."""
     ranges = free_ranges(P, blind, origin)
@@ -260,6 +260,11 @@ def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
 
     here = np.zeros(2)
     if not blind:
+        return 0.0, 0.0
+    # Known some other way (the last run's map), the robot's own circle may be wholly known
+    # here: then it turns where it stands. A tracked robot in a corner, its 20 deg blind sliver
+    # behind, could otherwise only look for room AHEAD -- into the wall that boxed it in.
+    if also_free is not None and seen(disk(here, circle)).all():
         return 0.0, 0.0
     heads = range(0, 360, HEADINGS_DEG) if holonomic else (0,)
     best = None

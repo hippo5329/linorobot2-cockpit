@@ -221,3 +221,22 @@ def test_a_long_odom_pause_still_stops_the_move():
     bot = _StallBot(gap=None)
     why = bot.stale(guarded=False)
     assert why.startswith("odometry stopped") and bot.stops == 1
+
+
+def test_a_tracked_robot_in_a_corner_turns_where_it_stands():
+    """A tracked robot: a narrow blind sliver (139:22 deg), not holonomic, a wall 0.32 m ahead and
+    0.30 m to its left. It may only look for room ahead, which the wall fills, and turning in
+    place sweeps the sliver -- refused. With the map covering the sliver it turns where it is."""
+    blind = clearance.parse_blind(["139:22"])
+    laser, circle = (0.02, 0.0), 0.21 + clearance.SPIN_MARGIN_M
+    pose = (0.0, 0.70, 2.70)                       # facing +x
+    room = [wall(0, 0, 4, 0), wall(4, 0, 4, 3), wall(4, 3, 0, 3), wall(0, 3, 0, 0),
+            wall(1.02, 1.5, 1.02, 3.0),             # the wall ahead, 0.32 m
+            wall(2.5, 0.8, 3.0, 0.8), wall(3.0, 0.8, 3.0, 1.0), wall(3.0, 1.0, 2.5, 1.0), wall(2.5, 1.0, 2.5, 0.8)]
+    P = scan(room, pose, blind)
+    assert clearance.open_spot(P, blind, circle, False, 0.8, laser) is None
+    m = grid(room)
+    fix, why = map_grid.locate(P, m, laser)
+    assert fix is not None, why
+    also = map_grid.seen_by_map(m, fix[:3], blind, laser)
+    assert clearance.open_spot(P, blind, circle, False, 0.8, laser, also_free=also) == (0.0, 0.0)
