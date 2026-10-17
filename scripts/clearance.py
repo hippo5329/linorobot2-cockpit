@@ -95,6 +95,7 @@ HOLD_MAX_RPS = 0.3
 # closing on the last cached pose drove on for its whole timeout -- the unguarded retrace
 # d / 0.05 + 8 s, a turn 15 s -- with nothing watching.
 ODOM_STALE_S = 0.3
+STALL_WAIT_S = 1.5      # a move holds still this long for /odom or the scan to come back
 # The scan (10 Hz on the LiDARs we know) guards: 0.5 s is five missed scans, and at LIN_MPS the
 # robot covers 2.5 cm in it, under a third of STOP_MARGIN_M, so the margin still holds when the
 # last scan is that old. Older, and the guard is looking at a room the robot has left.
@@ -243,13 +244,20 @@ def known_free(Q, ranges, origin=(0.0, 0.0)) -> "np.ndarray":
 
 
 def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
-              origin=(0.0, 0.0), step: float = STEP_M):
+              origin=(0.0, 0.0), step: float = STEP_M, also_free=None):
     """(heading, distance): the nearest place where the whole circle a turn in place sweeps
     lies on ground already seen free, reached by a straight move that sweeps only seen ground
     -- forward only for a base that would have to turn to go anywhere else; None when there
     is none within max_travel. A blind sector behind the LiDAR means the robot's own spot is
-    never wholly known, so the distance is never 0 while something is blind."""
+    never wholly known, so the distance is never 0 while something is blind. `also_free`:
+    a predicate for ground known some other way (map_grid.seen_by_map: the last run's map,
+    at blind bearings only)."""
     ranges = free_ranges(P, blind, origin)
+
+    def seen(Q):
+        ok = known_free(Q, ranges, origin)
+        return (ok | also_free(Q)) if also_free is not None else ok
+
     here = np.zeros(2)
     if not blind:
         return 0.0, 0.0
@@ -262,9 +270,9 @@ def open_spot(P, blind, circle: float, holonomic: bool, max_travel: float,
             c = k * step * u
             D = disk(c, circle)
             fresh = D[np.hypot(D[:, 0] - here[0], D[:, 1] - here[1]) > circle]   # swept on the way
-            if not known_free(fresh, ranges, origin).all():
+            if not seen(fresh).all():
                 break                                   # the way there leaves the known ground
-            if known_free(D, ranges, origin).all():
+            if seen(D).all():
                 d = k * step
                 score = (d, abs(scan_match.wrap(h)))
                 if best is None or score < best[0]:
@@ -528,14 +536,30 @@ class Robot:
                 return self.odom
         return None
 
-    def stale(self, guarded: bool) -> str:
-        """Why a closed-loop move must stop now, or '': the /odom it closes on, or the scan it
-        guards with, has stopped coming."""
+    def _stale_now(self, guarded: bool) -> str:
         if self.odom_age() > ODOM_STALE_S:
             return f"odometry stopped: the last /odom is {self.odom_age():.1f} s old"
         if guarded and self.scan_age() > SCAN_STALE_S:
             return f"scan stopped: the last scan is {self.scan_age():.1f} s old"
         return ""
+
+    def stale(self, guarded: bool) -> str:
+        """Why a closed-loop move must stop now, or '': the /odom it closes on, or the scan it
+        guards with, has stopped coming. A short pause holds the robot still and waits: on a
+        UNO Q the EKF's /odom stops for 0.2-0.4 s whenever any process joins the robot's DDS,
+        and the look-around's fifth turn was abandoned on one (2026-10-17), leaving the robot
+        turned 123 deg in a corner. Only a pause longer than STALL_WAIT_S stops the move."""
+        why = self._stale_now(guarded)
+        if not why:
+            return ""
+        self.stop()
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < STALL_WAIT_S:
+            self.pump(0.05)
+            if not self._stale_now(guarded):
+                print(f"  ⏸ held still {time.monotonic() - t0:.1f} s ({why}); resumed", flush=True)
+                return ""
+        return why
 
     def blocked(self, direction: float, radius: float) -> float:
         """The nearest return in the robot's corridor in the direction of travel, when it is
@@ -798,6 +822,31 @@ def warn_self_returns(r, blind) -> list:
     return arcs
 
 
+def map_seen(path: str, P, blind, laser=(0.0, 0.0)):
+    """map_grid.seen_by_map for the saved map at `path` (its .yaml), when the live scan P fits
+    it at one pose; None (and why, printed) otherwise."""
+    import map_grid
+    if not os.path.exists(path):
+        print(f"  no saved map at {path}")
+        return None
+    try:
+        m = map_grid.MapGrid.load(path)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"  the saved map {path} could not be read: {e}")
+        return None
+    Q = np.asarray(P, float).reshape(-1, 2)
+    S = Q[~in_blind(bearings(Q - np.asarray(laser[:2], float)), blind)]
+    pose, why = map_grid.locate(S, m, laser)
+    if pose is None:
+        print(f"  the saved map does not help: {why}")
+        return None
+    th, tx, ty, rms, hit = pose
+    print(f"  the scan fits the saved map at ({tx:+.2f}, {ty:+.2f}) {math.degrees(th):+.0f} deg "
+          f"(rms {rms:.3f} m, {hit:.0%} of points on its walls): its free ground behind the "
+          f"LiDAR counts as seen", flush=True)
+    return map_grid.seen_by_map(m, (th, tx, ty), blind, laser)
+
+
 def first_look(a, r: Robot):
     """(P, unseen, odom0, rc): the first look, the whole circle when the LiDAR is blind
     somewhere and --look-around lets the robot turn to see it; P None (and the exit code)
@@ -817,6 +866,14 @@ def first_look(a, r: Robot):
     # seen. So first move to where the circle lies on ground the look showed free, by a move
     # that sweeps only seen ground: the turn then sweeps nothing unknown.
     spot = open_spot(P, blind, a.radius + SPIN_MARGIN_M, a.holonomic, a.look_travel, r.laser[:2])
+    if spot is None and getattr(a, "map", ""):
+        # Every way out sweeps ground beside the robot that the masked LiDAR cannot see (a
+        # corner, 2026-10-16). The last run's map may hold it: used only when the live scan
+        # fits that map at exactly one pose, and only at the blind bearings.
+        also = map_seen(a.map, P, blind, r.laser[:2])
+        if also is not None:
+            spot = open_spot(P, blind, a.radius + SPIN_MARGIN_M, a.holonomic, a.look_travel,
+                             r.laser[:2], also_free=also)
     if spot is None:
         print(f"CLEARANCE_REFUSED: no ground already seen free within {a.look_travel:.2f} m holds the "
               f"{a.radius + SPIN_MARGIN_M:.2f} m circle a turn sweeps -- move the robot by hand "
@@ -1267,6 +1324,9 @@ def main(argv=None) -> int:
                                 "place until every bearing has been seen, and back (THE ROBOT MOVES)")
             p.add_argument("--look-travel", type=float, default=0.80,
                            help="the farthest the look-around moves to find open ground, m")
+            p.add_argument("--map", default="",
+                           help="a saved map (.yaml): when no open ground is in sight, the last run's "
+                                "map stands in for the blind sector -- if the scan fits it at one pose")
             p.add_argument("--holonomic", action="store_true",
                            help="a mecanum base: the look-around may slide sideways to open ground")
         if name == "inch":

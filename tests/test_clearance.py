@@ -781,7 +781,7 @@ def test_an_unguarded_retrace_stops_when_odom_stops(capsys):
     r = _ros_robot(w)
     t0 = _t.monotonic()
     assert r.slide(0.35, math.pi, 0.30, guard=False) is False      # 7 s of travel asked
-    assert _t.monotonic() - t0 < 2.0
+    assert _t.monotonic() - t0 < 2.0 + clearance.STALL_WAIT_S        # held still, then stopped
     assert w.cmds[-1] == (0.0, 0.0, 0.0)
     assert "odometry stopped" in capsys.readouterr().out
 
@@ -792,7 +792,7 @@ def test_a_turn_stops_when_odom_stops(capsys):
     r = _ros_robot(w)
     t0 = _t.monotonic()
     assert r.turn_by(math.radians(170)) is False
-    assert _t.monotonic() - t0 < 2.0 and w.cmds[-1] == (0.0, 0.0, 0.0)
+    assert _t.monotonic() - t0 < 2.0 + clearance.STALL_WAIT_S and w.cmds[-1] == (0.0, 0.0, 0.0)
     assert "odometry stopped" in capsys.readouterr().out
 
 

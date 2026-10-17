@@ -1634,7 +1634,8 @@ def clearance_step(args, params: dict, controller_cfg: dict, need: float, save: 
            f"--radius {radius:.2f}{stamped}{blind_flags(controller_cfg, look=moves)}{holonomic_flag(params)}"
            + (f" --max-travel {max_travel if max_travel is not None else args.inch_max:.2f}"
               if verb == "inch" else "")
-           + (f" --save {save}" if save else ""))
+           + (f" --save {save}" if save else "")
+           + last_map_flag(args, controller_cfg, moves))
     res = run_ros(cmd, timeout=300, distro=args.distro)
     for ln in (res.stdout or "").splitlines():
         print(ln if ln.startswith("  ") else "  " + ln)
@@ -1707,6 +1708,16 @@ def blind_flags(controller_cfg: dict, look: bool = True) -> str:
     out = "".join(f" --blind {(a - m['margin_deg']) % 360.0:g}:{min(359.0, w + 2 * m['margin_deg']):g}"
                   for a, w in m["sectors"])
     return out + (" --look-around" if out and look else "")
+
+
+def last_map_flag(args, controller_cfg: dict, moves: bool) -> str:
+    """clearance.py's --map: the last run's saved map (this run's is written only at its end),
+    which stands in for the LiDAR's masked sector when no open ground is in sight -- if the
+    live scan fits it at one pose. '' for a robot with nothing masked or a run that does not move."""
+    path = f"{args.map_output}.yaml"
+    if not moves or not blind_flags(controller_cfg, look=False) or not os.path.exists(path):
+        return ""
+    return f" --map {path}"
 
 
 def holonomic_flag(params: dict) -> str:
