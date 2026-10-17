@@ -2869,13 +2869,22 @@ void publishData()
 //    then sat "in the future" of the EKF's odom TF, collision_monitor dropped the laser
 //    as an invalid source and stopped the robot mid-leg. So the sync is NTP's: at
 //    connect the exchange with the shortest round trip of five (the least-delayed one
-//    has the least asymmetry error), then one exchange every 10 s, kept only when its
-//    round trip is no worse than twice the best seen.
+//    has the least asymmetry error), then the best of three every 10 s.
+// 3. A resync is kept when its error (at most half its round trip) is smaller than how
+//    far the clock may have drifted since the last one kept (TIME_DRIFT_PPM_BOUND of the
+//    time since), or when it is as quick as the best seen. Kept only when "no worse than
+//    twice the best seen" (2 ms), every resync of a loaded link -- odometry, IMU and the
+//    LiDAR's raw packets on the same UART -- was refused: the offset was set once at
+//    connect and the stamps fell 280 ppm behind for the whole session, 168 ms after ten
+//    minutes, and slam_toolbox's one-scan queue dropped the scans waiting for an odom TF
+//    that old (MC200, 2026-10-17).
 #include <zephyr/sys/printk.h>     // the RAM console: syslog has no Wi-Fi to leave by here
 extern uint64_t _lino_zephyr_now_us();
 static int64_t zephyr_epoch_offset_us = 0;      // epoch_us - uptime_us
 static bool zephyr_time_ok = false;
 static int64_t zephyr_best_rtt_us = INT64_MAX;
+static uint64_t zephyr_synced_at_us = 0;        // uptime of the last offset kept
+#define TIME_DRIFT_PPM_BOUND 1000               // the most a board clock is taken to drift
 
 static bool zephyrSyncOnce(int timeout_ms, int64_t *rtt_us, int64_t *offset_us)
 {
@@ -2901,13 +2910,20 @@ static bool zephyrSync(int tries, int timeout_ms)
     }
     if (best_rtt == INT64_MAX)
         return false;
-    if (zephyr_time_ok && best_rtt > 2 * zephyr_best_rtt_us && best_rtt > 2000)
-        return true;     // a delayed exchange: exactly the one that would mislead
+    if (zephyr_time_ok && best_rtt > 2 * zephyr_best_rtt_us && best_rtt > 2000) {
+        // A delayed exchange may be off by half its round trip; keep it only when the
+        // clock may by now be off by more than that.
+        const int64_t since_us = (int64_t)(_lino_zephyr_now_us() - zephyr_synced_at_us);
+        const int64_t drift_us = since_us / 1000000 * TIME_DRIFT_PPM_BOUND;
+        if (best_rtt / 2 >= drift_us)
+            return true;
+    }
     if (best_rtt < zephyr_best_rtt_us)
         zephyr_best_rtt_us = best_rtt;
     printk("[time] sync: rtt %ld us, offset moved %ld us\n",
            (long)best_rtt, (long)(zephyr_time_ok ? best_off - zephyr_epoch_offset_us : 0));
     zephyr_epoch_offset_us = best_off;
+    zephyr_synced_at_us = _lino_zephyr_now_us();
     zephyr_time_ok = true;
     return true;
 }
@@ -2920,7 +2936,7 @@ bool syncTime()
 
 static void resyncTime()
 {
-    EXECUTE_EVERY_N_MS(10000, { zephyrSync(1, 20); });
+    EXECUTE_EVERY_N_MS(10000, { zephyrSync(3, 20); });
 }
 
 struct timespec getTime()
