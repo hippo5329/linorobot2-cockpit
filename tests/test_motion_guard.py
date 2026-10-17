@@ -256,3 +256,17 @@ def test_fence_refusals_reads_the_guards_file(tmp_path):
     p.write_text('{"t": 10.5, "x": 1, "y": 2}\n{"t": \n{"t": 12.0, "x": 1, "y": 2}\n')
     assert ew.fence_refusals(str(p)) == [10.5, 12.0]
     assert ew.fence_refusals("") == [] and ew.fence_refusals(str(tmp_path / "none")) == []
+
+
+def test_the_floor_the_robot_stood_on_is_room_behind_a_masked_sector():
+    # The MC200 masks 118-263 deg (its own body): returns only ahead and to the sides, so
+    # the hull's back edge ran just behind the start and the goal home was cancelled.
+    import math
+    ahead = [(r * math.cos(math.radians(d)), r * math.sin(math.radians(d)))
+             for d, r in [(-97, 1.2), (-60, 1.4), (-30, 2.3), (0, 2.0), (30, 2.3), (60, 1.4), (117, 1.2)]]
+    bare = mg.hull(ahead)
+    assert mg.plan_outside(bare, (-0.10, 0.05), 0.30) != ""          # the defect
+    poly = mg.hull(ahead + mg.robot_spot(0.0, 0.0, 0.30 + mg.ROBOT_SPOT_M))
+    assert mg.plan_outside(poly, (-0.10, 0.05), 0.30) == ""          # home is room
+    assert mg.plan_outside(poly, (0.0, 0.0), 0.30) == ""
+    assert "beyond" in mg.plan_outside(poly, (3.5, 0.0), 0.30)        # past the wall: still named

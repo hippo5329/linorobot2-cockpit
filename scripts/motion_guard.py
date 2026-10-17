@@ -66,6 +66,12 @@ SCAN_STALE_FORWARDED_S = 2.0
 READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
+# The floor the robot stood on while the outline was taken is room, whatever the LiDAR
+# saw: a disc this much wider than --room-margin goes into the hull at each of those
+# poses. A masked sector (the robot's own body) leaves no returns behind it, and the
+# hull's back edge then ran 0.26 m behind the start: the MC200 (118-263 deg masked)
+# had its goal home cancelled as "a frontier through a gap" (2026-10-17).
+ROBOT_SPOT_M = 0.25
 BATTERY_WINDOW_S = 3.0     # the battery is judged on the median of this long, not the last sample
 # action_msgs/GoalStatus: a goal the action server has taken and may be driving
 GOAL_ACCEPTED, GOAL_EXECUTING = 1, 2
@@ -199,6 +205,12 @@ def hull(points: list) -> list:
     return lo[:-1] + hi[:-1]
 
 
+def robot_spot(x: float, y: float, radius: float, n: int = 16) -> list:
+    """Points on a circle of `radius` round (x, y): the floor the robot occupies, for the hull."""
+    return [(x + radius * math.cos(2 * math.pi * k / n), y + radius * math.sin(2 * math.pi * k / n))
+            for k in range(n)]
+
+
 def inside_by(poly: list, x: float, y: float) -> float:
     """How far (x, y) lies inside the counter-clockwise polygon: the least distance to an
     edge's line, negative when outside any edge."""
@@ -286,6 +298,7 @@ def main(argv=None) -> int:
                     ang = m.angle_min + i * m.angle_increment
                     lx, ly = r * math.cos(ang), r * math.sin(ang)
                     st["outline_pts"].append((t.x + c * lx - s * ly, t.y + s * lx + c * ly))
+            st["outline_pts"].extend(robot_spot(t.x, t.y, a.room_margin + ROBOT_SPOT_M))
             st["scans_in"] += 1
             if st["scans_in"] == OUTLINE_SCANS:
                 st["outline"] = hull(st["outline_pts"])
