@@ -33,10 +33,18 @@ void runWifis(void);
 // Wi-Fi" stopped being the same question. Answered from the env (`wifi`), and
 // forced true when the transport needs the radio to reach the agent at all.
 bool wifiWanted(void);
+// Drop the association so runWifis() makes a new one. For a link that the radio
+// still calls connected but that no longer delivers anything TO the board: a
+// GenDrv on udp4 (2026-10-17) kept streaming its LiDAR out for 70 s after its
+// agent session died, while not one ping answer came back, and never recovered
+// on its own. A no-op when the radio is not wanted or not associated (runWifis
+// is already rejoining then).
+void wifiRejoin(const char *why);
 #else
 #define initWifis()
 #define runWifis()
 #define wifiWanted() false
+#define wifiRejoin(why)
 #endif
 
 #endif

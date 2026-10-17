@@ -189,6 +189,16 @@ void initWifis(void)
 	   WiFi.localIP().toString().c_str());
 }
 
+void wifiRejoin(const char *why)
+{
+    if (!wifiWanted() || WiFi.status() != WL_CONNECTED)
+        return;
+    // Said before the drop: syslog needs this radio, and the way OUT still works.
+    syslog(LOG_WARNING, "%s %s: rejoining rssi %d", __FUNCTION__, why, WiFi.RSSI());
+    Serial.printf("[wifi] rejoin: %s\n", why);
+    WiFi.disconnect();   // runWifis(): not connected -> wifiMulti.run(), then wifiAwake()
+}
+
 void runWifis(void)
 {
     static uint8_t dis_bssid[6]; // check previous disconnected bssid to avoid repeated disconnection

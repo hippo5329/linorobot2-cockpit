@@ -362,6 +362,14 @@ static const uint32_t SIM_POSE_RESET_AFTER_MS = 3000;
 static uint32_t agent_ok_ms = 0;      // the last proof the agent answered: a session made or a ping returned
 static bool ping_failing = false;     // the current run of failed pings started at ping_fail_since_ms
 static uint32_t ping_fail_since_ms = 0;
+// A lost udp4 session gets ONE Wi-Fi rejoin if the agent is still silent this long
+// after: on 2026-10-17 a GenDrv's downlink died while its uplink kept working (the
+// LiDAR stream reached the agent's host for 70 s; no ping answer came back), and the
+// board pinged into the void for good. One, not a schedule: the gate stops the agent
+// on purpose at the end of every leg, and a rejoin at 10 s is over well before the
+// next leg flashes (~50 s on); boot never triggers it (there was no session to lose).
+static const uint32_t AGENT_REJOIN_MS = 10000;
+static uint32_t session_lost_ms = 0;  // when the last session was lost; 0 = no rejoin pending
 static bool had_session = false;      // a session has existed since boot
 
 // Compiled in unconditionally, and that is the point: whether THIS BOARD has
@@ -1729,6 +1737,12 @@ void loop() {
                 const bool ok = (RMW_RET_OK == rmw_uros_ping_agent(100, 1));
                 diagCount(ok ? DIAG_PING_OK : DIAG_PING_FAIL);
                 state = ok ? AGENT_AVAILABLE : WAITING_AGENT;
+                if (ok) {
+                    session_lost_ms = 0;
+                } else if (session_lost_ms && millis() - session_lost_ms >= AGENT_REJOIN_MS) {
+                    session_lost_ms = 0;
+                    wifiRejoin("agent silent 10 s after the session was lost");
+                }
             });
             break;
         case AGENT_AVAILABLE:
@@ -1796,6 +1810,8 @@ void loop() {
             ping_failing = false;
             fullStop();
             destroyEntities();
+            if (urosTransportIsUdp())
+                session_lost_ms = millis() | 1;   // 0 means none pending
             state = WAITING_AGENT;
             break;
         default:
