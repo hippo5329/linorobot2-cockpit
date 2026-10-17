@@ -11,7 +11,10 @@
 #   network_mode: host  — DDS discovery is multicast, and a board on Wi-Fi has
 #                         to reach micro_ros_agent's UDP port directly.
 #   ipc: host + /dev/shm — without shared memory the DDS transport silently
-#                         drops large costmap and map messages.
+#                         drops large costmap and map messages. And run
+#                         `sudo scripts/install_keep_ipc.sh` once on the robot:
+#                         logind deletes a user's /dev/shm files at their last
+#                         logout, the stack's included (same uid).
 #
 # Nothing to set for file ownership: the container works out whose files these
 # are by itself. See the host-anchor mount below. COCKPIT_UID / COCKPIT_GID

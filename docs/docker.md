@@ -38,3 +38,13 @@ prints what it found and exits. On a machine with neither it installs Docker Eng
 Docker's apt repository and sets it up **rootless**, so the container runs as you. It never
 replaces an engine you already have.
 
+
+**Run `sudo scripts/install_keep_ipc.sh` once.** The stack keeps its DDS shared memory in the
+host's `/dev/shm`, owned by the same uid as you, and systemd-logind by default deletes every
+`/dev/shm` file a user owns when that user's last session ends. So logging out of your last
+SSH session took the running stack's shared memory with it: the topics were still listed, but
+anything that started reading afterwards -- the Map Viewer reconnecting, a test, Nav2
+restarting -- received nothing until bringup was restarted. The script installs
+`systemd/logind.conf.d/50-linorobot2-keep-ipc.conf` (`RemoveIPC=no`) and restarts logind,
+which keeps the sessions it manages. A robot computer that only ever runs the cockpit and is
+never logged into is not affected, but most are.
