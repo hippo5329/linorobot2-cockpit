@@ -232,6 +232,16 @@ LEG_SETTLE_SEC = 0.5
 # behaviour visible before there is a robot to be hurt by it.
 RUNAWAY_RADIUS_M = 6.0
 
+# The base's own odometry arrives at 20-50 Hz; this long without one is not a
+# late message, it is a base that is no longer there -- the agent session gone,
+# on a Wi-Fi robot most often. Everything the pose does after that is the EKF
+# predicting with nothing to correct it: on 2026-10-17 a GenDrv's session
+# dropped 13 s before its first goal and the filtered pose then "ran away" 6.7 m
+# in 2 s, printed as the controller driving the robot off. Longer than the
+# firmware's own udp4 verdict (AGENT_LOSS_UDP_MS, 5 s of unanswered pings), so a
+# Wi-Fi gap the board rides out -- 0.5-2 s ones are routine -- never ends a leg.
+BASE_SILENT_S = 6.0
+
 # How much longer to wait for bt_navigator to acknowledge a goal after the first
 # 5 s. Generous on purpose: the cost of waiting is seconds on one leg of a soak,
 # and the cost of not waiting is a red charged to the robot for a handshake that
@@ -387,6 +397,13 @@ class Nav2GoalTester(Node):
         # a wall the base is pinned against. Reading both is what lets a verdict
         # say which of the two happened.
         self.raw_max_x: float = float("-inf")
+        # When the base's own odometry last ARRIVED (monotonic, this process's
+        # clock: the stamps are the board's), and how far that pose has been
+        # from where it started -- the excursion the wheels really reported.
+        # Neither resets per leg: a base that went silent stays silent.
+        self.raw_last_arrival: Optional[float] = None
+        self.raw_first = None
+        self.raw_max_dist: float = 0.0
         # Crossings measured on the UNFILTERED pose. The firmware clamps that
         # one -- it is where the simulation's physics live -- so it, not the
         # filtered estimate, answers "did the robot go through the wall".
@@ -554,6 +571,11 @@ class Nav2GoalTester(Node):
     def _raw_odom_cb(self, msg: Odometry):
         rx = msg.pose.pose.position.x
         ry = msg.pose.pose.position.y
+        self.raw_last_arrival = time.monotonic()
+        if self.raw_first is None:
+            self.raw_first = (rx, ry)
+        self.raw_max_dist = max(self.raw_max_dist,
+                                math.hypot(rx - self.raw_first[0], ry - self.raw_first[1]))
         self.raw_max_x = max(self.raw_max_x, rx)
         prev = self._raw_prev
         self._raw_prev = (rx, ry)
@@ -844,6 +866,19 @@ def _pose_is_coherent(node):
     return math.hypot((p.x + off[0]) - xy[0], (p.y + off[1]) - xy[1]) <= POSE_COHERENCE_TOL_M
 
 
+def _base_silent_for(node, now: Optional[float] = None) -> Optional[float]:
+    """Seconds since the base's own odometry last arrived, when that is longer
+    than BASE_SILENT_S; None while it is arriving, or if it never did (a stack
+    without /odom/unfiltered has nothing to say here, and silence that was never
+    sound is not a lost base).
+    """
+    last = getattr(node, "raw_last_arrival", None)
+    if last is None:
+        return None
+    age = (time.monotonic() if now is None else now) - last
+    return age if age > BASE_SILENT_S else None
+
+
 def _runaway(node) -> bool:
     """Has the base left the room?
 
@@ -875,6 +910,12 @@ def _runaway(node) -> bool:
     # Half the radius: generous enough that a genuine runaway which slipped or
     # was pushed still counts, strict enough that a pose jump never does.
     if getattr(node, "odom_max_dist", 0.0) < RUNAWAY_RADIUS_M / 2:
+        return False
+    # odom_max_dist is the FILTERED pose's excursion, and the filter can carry
+    # it off on its own (2026-10-17: a dead agent session, the EKF predicting).
+    # Where the base's own odometry was heard, its excursion has the last word.
+    if (getattr(node, "raw_last_arrival", None) is not None
+            and getattr(node, "raw_max_dist", 0.0) < RUNAWAY_RADIUS_M / 2):
         return False
     return True
 
@@ -1460,6 +1501,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                         unturned_since = time.time()
                     elif time.time() - unturned_since > PHANTOM_CONFIRM_SEC:
                         return False
+                if _base_silent_for(node) is not None:
+                    return False         # the base is gone; see the report below
                 if _runaway(node):
                     return False         # gone; see the report below
                 if node.goal_status in (5, 6) and not reached_goal():   # CANCELED, ABORTED
@@ -1588,6 +1631,16 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                     print(f"   leg {i}/{n}: it drove on the second ask, so the first SUCCEEDED "
                           f"was a phantom -- bt_navigator answering for a goal it never ran.")
             if not arrived:
+                silent = _base_silent_for(node)
+                if silent is not None:
+                    print(f"❌ NAV2 LEG {i}/{n} LOST THE BASE: /odom/unfiltered stopped "
+                          f"{silent:.1f} s ago (the base's last own pose moved "
+                          f"{getattr(node, 'raw_max_dist', 0.0):.2f} m from its start), so the "
+                          f"agent session is gone -- on a Wi-Fi robot, the link. Every pose "
+                          f"after that is the EKF predicting with nothing to correct it, not "
+                          f"the robot moving{_where(node)} after {took:.0f} s."
+                          f"{_scan_gap_note(node, since=t0)}")
+                    return False
                 if not start_gap_is_meaningful():
                     print(f"❌ NAV2 LEG {i}/{n} IS VACUOUS: began {node.goal_dist_start:.3f} m "
                           f"from ({gx:.2f}, {gy:.2f}), inside the {min_start_gap:.2f} m this gate "

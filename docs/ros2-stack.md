@@ -421,8 +421,10 @@ covariance the board publishes (1e-4 with a field) is the variance the node's
   take that drift as absolute. A real robot may have no magnetometer; that is the path it takes.
 * The robot config's `ekf.imu0_config` must fuse index **5**, absolute yaw — the 15-element vector
   is `[x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]`. Every shipped
-  config now fuses `yaw, vyaw, ax, ay` from the IMU and `vx, vy, vyaw` from the wheels, which is
-  what the upstream linorobot2_hardware wiki specifies.
+  config fuses `yaw, vyaw` from the IMU and `vx, vy, vyaw` from the wheels. Linear acceleration
+  (`ax, ay`) is not fused, as in upstream linorobot2's `ekf.yaml`: when the wheels and the IMU stop
+  together (a Wi-Fi robot whose agent session drops), the EKF keeps predicting from its last
+  acceleration with nothing to correct it, and the pose runs off quadratically.
 
 Without index 5 nothing looks broken. The robot drives, the map builds, and the heading error is
 absorbed into `map -> odom` — a transform nothing prints. It reaches you as a map view drawing the

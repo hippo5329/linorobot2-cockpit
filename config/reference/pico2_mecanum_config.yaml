@@ -261,8 +261,8 @@ ekf:
       - false
       - false
       - true    # yaw rate
-      - true    # ax
-      - true    # ay
+      - false   # ax: not fused -- with odom gone the EKF integrates it into a runaway
+      - false   # ay
       - false
 slam:
   # A scan that sees less than 270 deg -- a depth camera (~87), a masked LiDAR --

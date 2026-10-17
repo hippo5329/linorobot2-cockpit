@@ -505,7 +505,13 @@ def launch_setup(context, *args, **kwargs):
 
     # GRAVITY IS REMOVED ONCE, AND NOT HERE.
     #
-    # The EKF fuses ax and ay (imu0_config 12, 13). An accelerometer measures
+    # The shipped configs no longer fuse ax and ay (imu0_config 12, 13), as
+    # upstream linorobot2's ekf.yaml never did: when /odom/unfiltered and
+    # imu/data stop together -- a Wi-Fi robot whose agent session drops -- the
+    # filter keeps predicting from its last acceleration state with nothing to
+    # correct it, and the pose ran off as a*t^2/2 (a GenDrv on udp4, 2026-10-17:
+    # 5.3 m in 13 s, a = 0.063 m/s2, judged "RAN AWAY"). A config that still
+    # fuses them gets the rule below. An accelerometer measures
     # SPECIFIC FORCE, so gravity is in that reading, and a part mounted a couple
     # of degrees off leans a constant into the horizontal axes -- 0.85 m/s2 at
     # five degrees of pitch -- which the filter reads as real acceleration and
@@ -523,6 +529,11 @@ def launch_setup(context, *args, **kwargs):
     # deliberate choice about their own hardware, and the yaw rule above overrides
     # a template value only because the template always says `true`.
     rp = ekf_data.setdefault("ekf_filter_node", {}).setdefault("ros__parameters", {})
+    _acc = rp.get("imu0_config")
+    if has_imu and isinstance(_acc, list) and len(_acc) > 13 and (_acc[12] or _acc[13]):
+        print("[bringup] WARNING: ekf imu0_config fuses linear acceleration (indices 12/13). "
+              "If the base's odometry stops (a dropped Wi-Fi session), the EKF integrates the "
+              "last acceleration and the pose runs off. The shipped configs set both false.")
     if has_imu and rp.get("imu0_remove_gravitational_acceleration") is None:
         rp["imu0_remove_gravitational_acceleration"] = False
 
