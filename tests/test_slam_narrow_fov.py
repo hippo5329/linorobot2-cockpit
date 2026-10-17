@@ -1,4 +1,4 @@
-"""A narrow scan takes slam.narrow_fov_overrides; a 360 deg LiDAR keeps slam_toolbox's defaults.
+"""A depth camera's scan takes slam.narrow_fov_overrides; a LiDAR, masked or not, keeps slam_toolbox's defaults.
 
 Replayed on recorded runs (2026-10-03), the same parameters were right for one
 and wrong for the other: held hard to the odometry, a depth camera's map stopped
@@ -50,12 +50,15 @@ def test_scan_fov_by_source():
     assert depth_camera.scan_fov_deg({"lidar": {"model": "NONE"}}) is None
 
 
-def test_overrides_apply_to_a_camera_and_a_masked_lidar_only():
+def test_overrides_apply_to_a_depth_camera_only():
+    """A masked LiDAR on a real mecanum base (MC200, 215 deg, 2026-10-17), held to the odometry,
+    came home within 0.01 m in the map and 0.8 m away on the floor; every Nav2 robot compared
+    (TurtleBot 4, Clearpath, Husarion, Neobotix) runs slam_toolbox's own values on its LiDAR."""
     camera = {"lidar": {"model": "NONE"}, "sensors": {"use_sim_depth": True}}
     masked = {"lidar": {"model": "LD19", "mask": {"sectors": [[105, 255]]}}}
     full = {"lidar": {"model": "LD19"}}
     assert depth_camera.narrow_slam_overrides(_with(camera)) == STRONG
-    assert depth_camera.narrow_slam_overrides(_with(masked)) == STRONG
+    assert depth_camera.narrow_slam_overrides(_with(masked)) == {}
     assert depth_camera.narrow_slam_overrides(_with(full)) == {}
     # no block, no overrides -- whatever the sensor
     assert depth_camera.narrow_slam_overrides(_with(camera, slam={})) == {}

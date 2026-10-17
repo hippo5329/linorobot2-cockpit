@@ -271,9 +271,9 @@ def scan_fov_deg(controller: dict):
     """How many degrees /scan sees, or None when nothing publishes it.
 
     A depth camera's horizontal view (HFOV, ~87 deg); a LiDAR's 360 less what its
-    mask blocks (lidar.mask.sectors -- a mower body, a mast). SLAM holds a narrow
-    view to the odometry harder (slam.launch.py, narrow_fov_overrides): a scan
-    matcher with ~90 deg of wall to work from rotates maps that odometry has right.
+    mask blocks (lidar.mask.sectors -- a mower body, a mast). A narrow scan maps
+    with a capped turn rate (mapping_limits.py); a depth camera's is also held to
+    the odometry (narrow_slam_overrides).
     """
     src = scan_source(controller)
     if src == "depth":
@@ -285,22 +285,27 @@ def scan_fov_deg(controller: dict):
     return None
 
 
-# A scan that sees less than this many degrees takes slam.narrow_fov_overrides.
+# A scan that sees less than this many degrees is narrow (mapping_limits.py).
 # A depth camera (~87) and a masked mower LiDAR (the gate's: 210) are narrow; a
 # full LiDAR (360) is not.
 NARROW_FOV_DEG = 270.0
 
 
 def narrow_slam_overrides(params: dict) -> dict:
-    """The slam_toolbox parameters a narrow scan takes over the template's, or {}.
+    """The slam_toolbox parameters a depth camera's scan takes over the template's, or {}.
 
     slam.narrow_fov_overrides sits beside slam.slam_toolbox in the robot config;
-    slam.launch.py applies it when scan_fov_deg() is under NARROW_FOV_DEG. A full
-    360 deg LiDAR keeps slam_toolbox's own values.
+    slam.launch.py applies it when /scan comes from a depth camera. A LiDAR, masked
+    or not, keeps slam_toolbox's own values, as every Nav2 robot we compared does
+    (TurtleBot 4, Clearpath, Husarion, Neobotix). Held to the odometry, a masked
+    LiDAR on a real mecanum base (215 deg, 2026-10-17) followed the odometry's
+    heading creep: home within 0.01 m in the map, 0.8 m away on the floor. Without
+    the overrides, the same robot's position held; ~10 deg of heading per soak
+    chunk remained (the odometry's, not SLAM's).
     """
     narrow = ((params or {}).get("slam") or {}).get("narrow_fov_overrides")
-    fov = scan_fov_deg((params or {}).get("base_controller") or {})
-    if isinstance(narrow, dict) and narrow and fov is not None and fov < NARROW_FOV_DEG:
+    bc = (params or {}).get("base_controller") or {}
+    if isinstance(narrow, dict) and narrow and scan_source(bc) == "depth":
         return dict(narrow)
     return {}
 
