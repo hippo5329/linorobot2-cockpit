@@ -914,13 +914,23 @@ def stop_one_click_workflow():
     return {"status": "ok", **_stop_one_click()}
 
 
+# The audit's budget. verify_topics.py collects for --timeout, then measures a short topic
+# once more (--retries) for as long again, after ~2 s of rclpy start-up: 10 + 10 + 2 is past
+# the 20 s this route used to allow, so every audit with a topic to report died as a 500
+# and the page said "no topics" (mc200-yahboom, 2026-10-18). The deadline sits past it.
+VERIFY_TIMEOUT_S = 10.0
+VERIFY_RETRIES = 1
+VERIFY_DEADLINE_S = VERIFY_TIMEOUT_S * (1 + VERIFY_RETRIES) + 15.0
+
+
 @app.get("/api/topics/verify")
 def api_verify_topics(no_scan: bool = False, distro: str = "lyrical"):
     verify_script = os.path.join(REPO_ROOT, "scripts", "verify_topics.py")
     flag = " --no-scan" if no_scan else ""
-    cmd = get_ros_exec_cmd(f"python3 {verify_script} --json{flag}", distro=distro)
+    cmd = get_ros_exec_cmd(f"python3 {verify_script} --json --timeout {VERIFY_TIMEOUT_S:g} "
+                           f"--retries {VERIFY_RETRIES}{flag}", distro=distro)
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=VERIFY_DEADLINE_S)
         parsed = None
         for line in reversed(res.stdout.splitlines()):
             line = line.strip()
@@ -936,6 +946,11 @@ def api_verify_topics(no_scan: bool = False, distro: str = "lyrical"):
             "data": parsed,
             "raw": res.stdout or res.stderr,
         }
+    except subprocess.TimeoutExpired:
+        # Said as a result, not a 500: the page read a 500 as "no topics -- is the stack
+        # running?" while the stack ran and one topic was merely short.
+        return {"success": False, "exit_code": None, "data": None,
+                "raw": f"[audit] verify_topics.py did not finish in {VERIFY_DEADLINE_S:g} s"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

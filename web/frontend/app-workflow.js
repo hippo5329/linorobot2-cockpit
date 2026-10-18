@@ -1161,7 +1161,9 @@ function initCockpitDashboard() {
         const names = Object.keys(topics);
         const passed = names.filter((n) => topics[n].passed);
         if (!names.length) {
-          verifyStatus.textContent = "no topics — is the stack running?";
+          // No verdict at all (the audit did not finish) is not "no topics".
+          verifyStatus.textContent = json.data ? "no topics — is the stack running?"
+            : "audit did not finish" + (json.raw ? ": " + String(json.raw).slice(0, 120) : "");
           verifyStatus.className = "hint pill-off";
         } else {
           verifyStatus.textContent = `${passed.length}/${names.length} topics passed`;
