@@ -107,11 +107,26 @@ function findOrBuildAgentCommand() {
   ].join("; ");
 }
 
+// The agent's transport and UDP port: the selected robot's own (base_controller.transport,
+// .agent_port) first -- the hidden cfg-agent-* fields are filled only from the serial port,
+// so a Wi-Fi robot's Bringup/LiDAR check started a SERIAL agent and the board, calling
+// over udp4, had nothing to talk to (found on mc200-yahboom, 2026-10-18).
+function agentTransport() {
+  const t = String(state.config?.base_controller?.transport || "").trim().toLowerCase();
+  if (["udp4", "udp", "wifi"].includes(t)) return "udp4";
+  if (t) return "serial";
+  return document.getElementById("cfg-agent-transport")?.value || (state.config || {}).agent_transport || "serial";
+}
+function agentUdpPort() {
+  return state.config?.base_controller?.agent_port
+    || document.getElementById("cfg-agent-port")?.value || (state.config || {}).agent_port || "8888";
+}
+
 function agentLaunchCommand() {
   const c = state.config || {};
-  const transport = document.getElementById("cfg-agent-transport").value || c.agent_transport || "serial";
+  const transport = agentTransport();
   const device = document.getElementById("cfg-agent-device").value || c.agent_device || "/dev/ttyACM0";
-  const port = document.getElementById("cfg-agent-port").value || c.agent_port || "8888";
+  const port = agentUdpPort();
   const baud = document.getElementById("cfg-agent-baud").value || c.agent_baud || "921600";
   const engine = getAgentEngine();
   const distro = state.status?.ros_distro || "lyrical";
@@ -157,9 +172,9 @@ function agentLaunchCommand() {
 
 function _unused_old_agentLaunchCommand() {
   const c = state.config || {};
-  const transport = document.getElementById("cfg-agent-transport").value || c.agent_transport || "serial";
+  const transport = agentTransport();
   const device = document.getElementById("cfg-agent-device").value || c.agent_device || "/dev/ttyUSB0";
-  const port = document.getElementById("cfg-agent-port").value || c.agent_port || "8888";
+  const port = agentUdpPort();
   const baud = document.getElementById("cfg-agent-baud").value || c.agent_baud || "921600";
   const isDocker = document.getElementById("cfg-agent-use-docker") ? document.getElementById("cfg-agent-use-docker").checked : (installModeSel?.value !== "native");
 
@@ -197,9 +212,9 @@ function agentStartSpec() {
   const c = state.config || {};
   return { action: "agent_start", args: {
     engine: getAgentEngine(),
-    transport: document.getElementById("cfg-agent-transport")?.value || c.agent_transport || "serial",
+    transport: agentTransport(),
     device: document.getElementById("cfg-agent-device")?.value || c.agent_device || "/dev/ttyACM0",
-    port: document.getElementById("cfg-agent-port")?.value || c.agent_port || "8888",
+    port: agentUdpPort(),
     baud: document.getElementById("cfg-agent-baud")?.value || c.agent_baud || "921600",
     distro: state.status?.ros_distro || getDistro(),
   } };

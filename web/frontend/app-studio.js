@@ -890,9 +890,9 @@ setTimeout(() => {
 // ---------- micro-ROS Agent Port Conflict Detection & Lifecycle ----------
 async function checkAgentPortStatus(opts = {}) {
   const c = state.config || {};
-  const transport = document.getElementById("cfg-agent-transport")?.value || c.agent_transport || "serial";
+  const transport = agentTransport();
   const device = document.getElementById("cfg-agent-device")?.value || c.agent_device || "/dev/ttyACM0";
-  const port = document.getElementById("cfg-agent-port")?.value || c.agent_port || "8888";
+  const port = agentUdpPort();
   
   const statusPill = document.getElementById("agent-port-status-pill");
   if (statusPill) {
@@ -939,9 +939,9 @@ async function checkAgentPortStatus(opts = {}) {
 
 async function releaseAgentPort() {
   const c = state.config || {};
-  const transport = document.getElementById("cfg-agent-transport")?.value || c.agent_transport || "serial";
+  const transport = agentTransport();
   const device = document.getElementById("cfg-agent-device")?.value || c.agent_device || "/dev/ttyACM0";
-  const port = document.getElementById("cfg-agent-port")?.value || c.agent_port || "8888";
+  const port = agentUdpPort();
 
   const btnRel = document.getElementById("btn-release-port-conflict");
   if (btnRel) {
