@@ -4,6 +4,7 @@
 #include "config.h"
 #include "tools.h"
 #include "tool_hw.h"
+#include "hw_factory.h"
 #include "tool_term.h"
 #include "mcu_env.h"
 #include "adc_lut.h"
@@ -482,8 +483,9 @@ static void help(void)
 #endif
         "  set <key> <value>         tm_pct tm_only tm_secs ta_ms ta_pct: a test setting\n"
         "                            until reboot (set <key> clears it). Any other key is\n"
-        "                            written to this board's env and the tool restarts with\n"
-        "                            it (e.g. set m1_inv 1); set <key> - removes it\n"
+        "                            written to this board's env: an invert (m1_inv 1,\n"
+        "                            m1_enc_inv 1) works at once, the rest after the tool\n"
+        "                            restarts itself; set <key> - removes it\n"
         "  get [key]                 show one setting, or all\n"
         "  status                    what this board has and what is running\n"
         "  base                      restart into the robot firmware (also: exit, reboot)");
@@ -502,7 +504,8 @@ static void printKey(const char *k, const char *v, bool overridden)
 // What `set` changes live, in RAM: the tests' own settings, read while a command runs.
 // Everything else is read once at boot (pins, PWM width, drivers, inverts, and sim_wheel --
 // the encoders were built simulated or real at boot), so `set` writes those to the env block
-// and restarts (saveKey below); secrets it refuses: the cockpit flashes those.
+// and is applied at once (an invert) or after the tool restarts itself (saveKey below);
+// secrets it refuses: the cockpit flashes those.
 static bool settable(const char *k)
 {
     static const char *const OK[] = {"tm_pct", "tm_only", "tm_secs", "ta_ms", "ta_pct"};
@@ -542,9 +545,10 @@ static bool setKey(const char *k, const char *v)
 
 // `set` of a key read at boot (user, 2026-10-18: "when we test motor, we want to inverse
 // motor, we can set to env without host esptool/picotool/ota"): the board writes it into the
-// env block it boots from, reads it back, and restarts into the tool -- the motors, encoders
-// and drivers read the env once, at boot, so the next `motor 1 25` runs with it. `-` removes
-// the key. A key must already be in this board's env (a typo would be a key nothing reads),
+// env block it boots from and reads it back. An invert (m<n>_inv, m<n>_enc_inv) is applied
+// to the running motors and encoders at once (user: "make inverts live, no reboot"); any
+// other key -- pins, driver, PWM -- is built into the drivetrain at boot, so the tool restarts
+// into itself with it. `-` removes the key. A key must already be in this board's env (a typo would be a key nothing reads),
 // except the inverts, which mcu_env.py writes only when they are on. Secrets never: the
 // cockpit flashes those. Only while idle: the write stops the flash for tens of ms.
 static bool saveableNew(const char *k)
@@ -579,15 +583,19 @@ static void saveKey(const char *key, const char *value, bool busy)
         Serial.printf("[tool] not written: %s\n", why);
         return;
     }
+    const bool live = applyInvert(key, remove ? nullptr : value, motor_controllers, motor_encoders);
     char m[64];
-    snprintf(m, sizeof(m), "saved, envcrc %08X -> %08X", (unsigned)before, (unsigned)after);
+    snprintf(m, sizeof(m), "saved, %s, envcrc %08X -> %08X", live ? "live now" : "restarting",
+             (unsigned)before, (unsigned)after);
     ack(true, m);
     if (remove) Serial.printf("[tool] removed %s from this board's env", key);
     else        Serial.printf("[tool] %s = %s, written to this board's env", key, value);
-    Serial.printf(" (envcrc %08X -> %08X, read back and checked)\n", (unsigned)before, (unsigned)after);
+    Serial.printf(" (envcrc %08X -> %08X, read back and checked)%s\n", (unsigned)before,
+                  (unsigned)after, live ? " -- and in use now" : "");
     Serial.println("[tool] the cockpit's config still has the old value: change it there too, "
                    "or the next Flash MCU writes the old one back");
-    toolRestart(true);
+    if (!live)
+        toolRestart(true);                   // built at boot: the drivetrain is rebuilt with it
 }
 
 // A command's own argument versus a person's `set`. `motor 1 30 20` writes tm_secs=20 for

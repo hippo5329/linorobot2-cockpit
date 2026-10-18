@@ -44,11 +44,16 @@ class RealEncoder : public EncoderInterface
 {
     public:
         RealEncoder(int pin_a, int pin_b, int counts_per_rev, bool invert)
-            : enc_(pin_a, pin_b, counts_per_rev, invert) {}
-        float getRPM() override { return enc_.getRPM(); }
-        int32_t count() override { return enc_.read(); }
+            : enc_(pin_a, pin_b, counts_per_rev, invert), boot_inv_(invert) {}
+        float getRPM() override { return flip_ ? -enc_.getRPM() : enc_.getRPM(); }
+        int32_t count() override { return flip_ ? -enc_.read() : enc_.read(); }
+        // The boot's invert swapped A and B inside `Encoder` (all three variants); a later
+        // one is the sign of what it reads -- the same thing, with no pins re-attached.
+        void setInvert(bool on) override { flip_ = on != boot_inv_; }
     private:
         Encoder enc_;
+        const bool boot_inv_;
+        bool flip_ = false;
 };
 
 #ifndef SIM_WHEEL_DEFAULT
@@ -94,6 +99,28 @@ bool motorShortBrake()
     if (cached < 0)
         cached = envFlag("short_brake", true) ? 1 : 0;
     return cached == 1;
+}
+
+// The tool's `set` of an invert (tools.cpp saveKey), applied to the running drivetrain as
+// well as written to the env: m<n>_inv or m<n>_enc_inv, read as envFlag() reads it, and
+// `value` NULL (the key removed) is the compiled default a boot would take. False for a key
+// that is not an invert -- those need the restart.
+bool applyInvert(const char *key, const char *value, MotorInterface *const motors[4],
+                 EncoderInterface *const encoders[4])
+{
+    int n = 0;
+    char what[8] = "";
+    if (sscanf(key, "m%d_%7s", &n, what) != 2 || n < 1 || n > 4)
+        return false;
+    const bool enc = strcmp(what, "enc_inv") == 0;
+    if (!enc && strcmp(what, "inv") != 0)
+        return false;
+    const bool on = value ? !(strcmp(value, "0") == 0 || strcasecmp(value, "false") == 0 ||
+                              strcasecmp(value, "no") == 0)
+                          : (enc ? ENC_INV[n - 1] : MOTOR_INV[n - 1]);
+    if (enc && encoders[n - 1]) encoders[n - 1]->setInvert(on);
+    if (!enc && motors[n - 1]) motors[n - 1]->setInvert(on);
+    return true;
 }
 
 MotorInterface *createMotor(int index)

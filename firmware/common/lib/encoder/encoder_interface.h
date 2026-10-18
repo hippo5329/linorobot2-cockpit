@@ -30,6 +30,10 @@ class EncoderInterface
         // The raw count, signed, with the config's invert: the tool's `enc` (a wheel turned
         // by hand). A simulated wheel has none to read.
         virtual int32_t count() { return 0; }
+
+        // The tool's `set m<n>_enc_inv` (tools.cpp), live. A simulated wheel has no
+        // direction of its own to flip (sim_wheel.h), so the default does nothing.
+        virtual void setInvert(bool on) { (void)on; }
 };
 
 #endif // ENCODER_INTERFACE_H

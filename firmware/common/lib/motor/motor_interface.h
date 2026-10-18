@@ -29,6 +29,8 @@ class MotorInterface
         }
 
         virtual void brake() = 0;
+        // The tool's `set m<n>_inv` (tools.cpp): the direction, live -- it is this one flag.
+        void setInvert(bool on) { invert_ = on; }
         void spin(int pwm)
         {
             if(invert_)

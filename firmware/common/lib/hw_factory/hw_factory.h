@@ -29,5 +29,7 @@ Kinematics       *createKinematics(void);
 // Whether this boot simulates the wheels. Read once; the control loop and the
 // simulated IMU both need the same answer.
 bool wheelsAreSim(void);
+bool applyInvert(const char *key, const char *value, MotorInterface *const motors[4],
+                 EncoderInterface *const encoders[4]);
 
 #endif // HW_FACTORY_H
