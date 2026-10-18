@@ -41,6 +41,7 @@ from core import (
     list_robot_config_files,
     load_params,
     main_runner,
+    nav_runner,
     mcu_identity,
     mcu_probe,
     nav2_stack_status,
@@ -286,6 +287,7 @@ def get_status(controller: Optional[str] = None):
         "agent_busy_console": agent_runner.is_busy(),
         "bringup_busy_console": bringup_runner.is_busy(),
         "main_busy": main_runner.is_busy(),
+        "nav_busy": nav_runner.is_busy(),
         "laser_busy": laser_runner.is_busy(),
         "gamepad_running": gamepad_runner.is_running(),
     }

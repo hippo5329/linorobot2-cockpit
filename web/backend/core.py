@@ -270,6 +270,11 @@ tool_runner = ProcessRunner("tool")
 # shared "main" with them, so it could only be started when there was nothing
 # to look at ("that slot is already busy", browser walk 2026-09-26).
 viewer_runner = ProcessRunner("viewer")
+# Navigation runs BESIDE SLAM: nav2.launch.py without a saved map navigates on
+# the map SLAM is publishing. On "main" with SLAM it was refused with a 409
+# ("Slot 'main' is busy") whenever SLAM was up, i.e. every time it was needed
+# (real robot, 2026-10-18). SLAM keeps "main".
+nav_runner = ProcessRunner("nav")
 gamepad_runner = GamepadRunner(REPO_ROOT)
 
 RUNNERS = {
@@ -279,6 +284,7 @@ RUNNERS = {
     "laser": laser_runner,
     "tool": tool_runner,
     "viewer": viewer_runner,
+    "nav": nav_runner,
 }
 
 
@@ -978,14 +984,21 @@ def get_serial_ports_dict(params: Optional[Dict[str, Any]] = None) -> Dict[str, 
 _LIVENESS_TTL_SEC = 6.0
 _liveness_lock = threading.Lock()
 _liveness_cache: Dict[str, Any] = {"ts": 0.0, "agent": False, "bringup": False,
-                                   "slam": False, "nav2": False, "where": "host", "detail": ""}
+                                   "slam": False, "nav2": False, "where": "host", "detail": "",
+                                   "gen": 0}
 
 
 def invalidate_liveness() -> None:
-    """Forget the cached probe, so the next status after a Stop is measured, not remembered."""
+    """Forget the cached probe, so the next status after a Stop is measured, not remembered.
+
+    A probe already running behind a poll started before the Stop: what it finds is
+    the old stack. It used to land as a fresh answer, and for six seconds the status
+    said the agent the Stop had just killed was alive -- the Bringup button then
+    started a bringup with micro_ros:=false and no agent at all (real robot,
+    2026-10-18). Bumping the generation makes that probe store its answer as stale."""
     with _liveness_lock:
-        if not _liveness_cache.get("refreshing"):
-            _liveness_cache["ts"] = 0.0
+        _liveness_cache["gen"] = _liveness_cache.get("gen", 0) + 1
+        _liveness_cache["ts"] = 0.0
 
 
 def get_exec_shell_cmd(cmd_str: str) -> List[str]:
@@ -1019,6 +1032,8 @@ def probe_stack_liveness() -> Dict[str, Any]:
 
 
 def _refresh_liveness() -> Dict[str, Any]:
+    with _liveness_lock:
+        gen = _liveness_cache.get("gen", 0)
     # The bracketed first letter keeps `pgrep -f` from matching the probe's own
     # shell: this command line contains "[m]icro_ros_agent", which the regex
     # (literal "micro_ros_agent") does not match. Without it every probe finds
@@ -1079,8 +1094,10 @@ def _refresh_liveness() -> Dict[str, Any]:
         detail = f"probe failed: {e}"
 
     with _liveness_lock:
+        # Invalidated while probing: keep the answer, but never as a fresh one.
+        current = _liveness_cache.get("gen", 0) == gen
         _liveness_cache.update({
-            "ts": time.time(), "agent": agent, "bringup": bringup,
+            "ts": time.time() if current else 0.0, "agent": agent, "bringup": bringup,
             "slam": slam, "nav2": nav2, "where": where, "detail": detail, "refreshing": False,
         })
         return dict(_liveness_cache)
@@ -1555,6 +1572,7 @@ __all__ = [
     "main_runner",
     "mcu_identity",
     "nav2_stack_status",
+    "nav_runner",
     "one_click_pipeline",
     "patcher",
     "pin_catalog",

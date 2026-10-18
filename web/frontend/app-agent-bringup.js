@@ -440,6 +440,24 @@ function robotIsSimMcu() {
   return state.robot_name === "bare_sim" || String(r?.controller || "").toLowerCase() === "sim";
 }
 
+// The agent a Bringup about to start will talk to, judged on a status read NOW. Pressed
+// over a 1-Click run's stack, the Bringup button stopped that stack -- and with it the
+// agent its bringup had launched as a child -- then decided from the status read before
+// the stop that an agent was up: no agent, micro_ros:=false, and the robot came up with
+// "/odom/unfiltered not advertised" (real robot, 2026-10-18). A native bringup starts its
+// own agent when none is up (bringupLaunchCommand, micro_ros:=true); a container agent
+// is started here. On the Sim MCU bringup always starts its own (micro_ros:=true).
+async function ensureAgentForBringup() {
+  if (typeof refreshStatus === "function") await refreshStatus();
+  if (robotIsSimMcu()) return "sim";
+  if (isAgentAlive()) return "alive";
+  if (!isDockerMode() && getAgentEngine() === "native") return "bringup";
+  logLine("[console] The micro-ROS agent is down: starting it before Bringup.");
+  await ensureAgentRunning();
+  if (typeof refreshStatus === "function") await refreshStatus();
+  return "started";
+}
+
 // Returns an action SPEC (built server-side, actions.py), not a command string.
 function bringupLaunchCommand() {
   if (isDockerMode()) {
@@ -547,7 +565,8 @@ async function ensureBringupRunning(targetTitle = "requested action") {
     try {
       await killSlot("bringup");
       await new Promise((r) => setTimeout(r, 3000));
-      await refreshStatus();
+      // The stale bringup may have run the agent as its child: judge it again.
+      await ensureAgentForBringup();
     } catch (e) {
       logLine(`[console] ⚠ Could not stop the stale bringup: ${e}`);
     }
@@ -848,10 +867,6 @@ wireStartStop({
     if (laser && !isDockerMode()) {
       await checkAndInstallLidarDriver(laser);
     }
-    // The config path comes from the status: refresh it, or right after a robot switch Bringup
-    // launched the robot just LEFT (found by the walkthrough: bare_sim selected, the previous
-    // robot's serial agent started on /dev/ttyACM0).
-    if (typeof refreshStatus === "function") await refreshStatus();
     // One robot at a time. A 1-Click run leaves its stack up on purpose (robot_stack.py), and a
     // second launch beside it fought it for the agent's port: the new launch freed 8888 by
     // killing the old stack's agent, the old launch respawned it, the board never got a session
@@ -867,6 +882,12 @@ wireStartStop({
     } catch (err) {
       console.warn("stack check before Bringup:", err);
     }
+    // The config path comes from the status: refresh it, or right after a robot switch Bringup
+    // launched the robot just LEFT (found by the walkthrough: bare_sim selected, the previous
+    // robot's serial agent started on /dev/ttyACM0). AFTER the stop above, and the agent is
+    // judged on that same answer: the stack's bringup ran the agent as its own child, so the
+    // stop took the agent with it.
+    await ensureAgentForBringup();
     openTerminal("Robot Bringup [streaming]");
     attachBringupStream();
     return bringupLaunchCommand();

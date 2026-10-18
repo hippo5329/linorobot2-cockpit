@@ -569,7 +569,11 @@ function stackPartState(tag, s) {
     return { running: true, stoppable: true, level: "ok",
              text: `Running — left up by a 1-Click run${since}` };
   }
-  if (live && s.main_busy) {
+  // "Started from this cockpit" is the part's OWN runner: Nav2 runs in "nav", the
+  // Bringup tab's bringup in "bringup", SLAM in "main". All three were judged by
+  // main_busy, so Nav2 read as stoppable while only SLAM was running.
+  const busy = tag === "nav2" ? s.nav_busy : (tag === "bringup" ? s.bringup_busy_console : s.main_busy);
+  if (live && busy) {
     return { running: true, stoppable: true, level: "ok", text: "Running (started from this cockpit)" };
   }
   if (live) {

@@ -68,7 +68,10 @@ wireStartStop({
   stopBtn: document.getElementById("btn-nav-stop"),
   stackTag: "nav2",
   stateEl: document.getElementById("nav-stack-state"),
-  slot: "main",
+  // Its own slot: without a saved map Nav2 navigates on the map SLAM publishes, so
+  // it has to start while SLAM holds "main". There it was refused with a 409 (real
+  // robot, 2026-10-18), the same trap the map save fell into.
+  slot: "nav",
   title: "Navigation",
   needsBringup: true,
   buildCommand: async () => {

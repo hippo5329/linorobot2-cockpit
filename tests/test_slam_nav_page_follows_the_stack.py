@@ -63,7 +63,7 @@ def test_a_stack_nobody_recorded_is_shown_but_not_offered_to_stop():
 
 
 def test_this_cockpits_own_run_is_stoppable():
-    st = _state("nav2", {"stack": [], "liveness": {"nav2": True}, "main_busy": True})
+    st = _state("nav2", {"stack": [], "liveness": {"nav2": True}, "nav_busy": True})
     assert st["running"] and st["stoppable"]
 
 
