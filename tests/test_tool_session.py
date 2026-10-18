@@ -59,6 +59,30 @@ def test_the_shells_own_lines_pass(line):
     assert ts.validate(line) == " ".join(line.split())
 
 
+@pytest.mark.parametrize("short,full", [
+    ("m 1 30", "motor 1 30"), ("mm 40", "motors 40"), ("e", "enc"), ("r 2 50", "ramp 2 50"),
+    ("i", "i2c"), ("sn 5", "sensors 5"), ("st", "status"), ("g m1_inv", "get m1_inv"), ("h", "help"),
+    ("b", "base"), ("x", "stop"), ("M 1 30", "motor 1 30"),
+])
+def test_a_short_form_is_sent_as_its_command(short, full):
+    assert ts.validate(short) == full
+
+
+def test_acc_has_no_short_form():
+    with pytest.raises(ts.Refused):
+        ts.validate("a 500")
+
+
+def test_the_firmware_and_the_page_share_one_alias_table():
+    import re as _re
+    src = open(os.path.join(REPO_ROOT, "firmware", "src", "tools", "tools.cpp")).read()
+    table = src[src.index("static const char *const ALIASES[][2] = {"):]
+    table = table[:table.index("};")]
+    fw = dict(_re.findall(r'\{"([^"]+)", "([^"]+)"\}', table))
+    import tool_answer
+    assert fw == tool_answer.ALIASES
+
+
 @pytest.mark.parametrize("line,why", [
     ("", "empty"), ("motor 1 0", "0 turns nothing"), ("motor 5 30", "outside"),
     ("motor 1 101", "outside"), ("motor 1 30 -1", "outside"), ("motors 0", "outside"),

@@ -31,6 +31,13 @@ Secrets are refused, and so is a key the board's env does not have (a typo would
 reads), except the inverts. The cockpit's config still has the old value: the next Flash MCU writes
 it back unless the config is changed too.
 
+**Short forms and Esc.** `m` motor, `mm` motors, `e` enc, `r` ramp, `i` i2c, `sn` sensors, `st` status,
+`g` get, `h` help, `b` base, and `s`, `x`, Esc or an empty line stop. Esc stops at once, without Enter,
+and drops whatever was half typed; an arrow key starts with Esc too, so it stops a running command and
+the rest of its sequence is swallowed. `acc` has no short form: it drives every wheel on the floor.
+The answer quotes the line as typed (`ok: m 1 30 (running)`). The table is `ALIASES` in
+`firmware/src/tools/tools.cpp` and in `scripts/tool_answer.py`; a test holds them equal.
+
 Two rules make this free for the robot firmware, and both are load-bearing:
 - **Each tool command is its own translation unit in its own namespace**, exposing nothing but its
   entry points, wired into `firmware/src/tools/tools.cpp`. Several tools and `base` independently

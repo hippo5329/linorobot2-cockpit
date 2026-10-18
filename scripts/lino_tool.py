@@ -18,8 +18,9 @@ command shell on its console. This script gets it there and drives it:
     python3 scripts/lino_tool.py --params robot_config.yaml -c "sensors" -c "sleep 3" -c stop
 
 The commands (the tool's `help`): i2c [secs], sensors, motor <1-4|all> <pct> [secs],
-motors [pct], acc [ms], adc, set <key> <value>, get [key], status, base. `stop`, `s` or an
-empty line stops the running one. `set` of a test setting (tm_pct tm_only tm_secs ta_ms ta_pct)
+motors [pct], acc [ms], adc, set <key> <value>, get [key], status, base. `stop`, `s`, `x`, Esc
+or an empty line stops the running one. Short forms: m motor, mm motors, e enc, r ramp, i i2c,
+sn sensors, st status, g get, h help, b base (acc has none). `set` of a test setting (tm_pct tm_only tm_secs ta_ms ta_pct)
 holds until reboot; any other key is written into the board's env: an invert (`set m1_inv 1`)
 works at once, the rest restart the board into the tool -- this script waits and goes on. On exit this script sends `stop`: a wheel it started is
 never left turning. On the Wi-Fi terminal it sends a keep-alive every second; the board
@@ -548,7 +549,7 @@ def run_commands(link, commands, answers: list = None) -> bool:
         say_answer(cmd, a)
         if answers is not None:
             answers.append(a)
-        head = words[0] if words else ""
+        head = tool_words.full_command(words[0]) if words else ""
         if head == "set" and a is not None and a.get("ok") and "restarting" in a.get("msg", ""):
             if not rejoin(link):
                 log("the board did not come back into the tool after the restart")

@@ -97,7 +97,8 @@ def validate(line: str) -> str:
     words = line.split()
     if not words:
         raise Refused("an empty line stops -- use Stop")
-    cmd, args = words[0].lower(), words[1:]
+    # A short form (`m 1 30`) is sent as the command it names, so the page and the board agree.
+    cmd, args = tool_answer.full_command(words[0]), words[1:]
     if cmd in ("stop", "s", "status", "help", "base", "enc", "adc"):
         if args:
             raise Refused(f"{cmd} takes no arguments")

@@ -26,6 +26,17 @@ blanks them -- so the forms cannot be confused with the line they quote.
 """
 import re
 
+# The tool's short forms (firmware tools.cpp ALIASES, the same table): a short line means what
+# the board reads it as. `acc` has none -- it drives every wheel on the floor.
+ALIASES = {"m": "motor", "mm": "motors", "e": "enc", "r": "ramp", "i": "i2c", "sn": "sensors",
+           "st": "status", "g": "get", "h": "help", "b": "base", "x": "stop"}
+
+
+def full_command(word: str) -> str:
+    """The command a typed first word names: `m` -> `motor`; any other word as it is."""
+    w = (word or "").lower()
+    return ALIASES.get(w, w)
+
 TIMEOUT_S = 2.0          # an answer comes at once; none in this long is said
 # The shell prints its prompt before it answers, so an answer can share the prompt's line:
 # "tool> ok: status (done)" (the UNO Q, 2026-10-16: lino_tool missed every answer that way and

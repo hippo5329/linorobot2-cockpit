@@ -311,6 +311,7 @@ static void answerLine(char *line, bool busy)
 static char con_buf[96];
 static size_t con_len = 0;
 static bool con_cr = false;
+static uint8_t con_esc = 0;        // 1: after Esc, 2: inside its CSI/SS3 sequence
 // A console that sends keep-alives (lino_tool.py: a NUL a second) gets the terminal's
 // deadman: a drive started there stops when it goes quiet, as when its ssh or USB dies.
 // A person at minicom sends none, and is never stopped for not typing.
@@ -324,6 +325,17 @@ static bool consoleLine(char *out, size_t n)
         if (c < 0) break;
         con_last = millis();
         if (c == 0) { con_heartbeat = true; continue; }
+        // An arrow key is Esc [ A: the stop has been given, the rest of it is swallowed.
+        if (con_esc == 2) { if (c >= 0x40 && c <= 0x7e) con_esc = 0; continue; }
+        if (con_esc == 1) { con_esc = 0; if (c == '[' || c == 'O') { con_esc = 2; continue; } }
+        if (c == 0x1b) {                   // Esc: stop, whatever was half typed
+            con_esc = 1;
+            con_len = 0;
+            Serial.print("\r\n");
+            strncpy(out, "stop", n - 1);
+            out[n - 1] = '\0';
+            return true;
+        }
         if (c == '\n' && con_cr) { con_cr = false; continue; }
         con_cr = (c == '\r');
         if (c == '\r' || c == '\n') {
@@ -488,6 +500,8 @@ static void help(void)
         "                            restarts itself; set <key> - removes it\n"
         "  get [key]                 show one setting, or all\n"
         "  status                    what this board has and what is running\n"
+        "  short forms: m motor, mm motors, e enc, r ramp, i i2c, sn sensors,\n"
+        "  st status, g get, h help, b base; s, x, Esc or an empty line stop\n"
         "  base                      restart into the robot firmware (also: exit, reboot)");
 }
 
@@ -670,6 +684,22 @@ static void usage(const char *what)
     prompt();
 }
 
+// Short forms (user, 2026-10-18: "allow short hand for tool command, eg, m for motor, esc for
+// stop"). The same table is scripts/tool_answer.py ALIASES: lino_tool.py and the web page read a
+// short line as the board does. The answer quotes the line as typed. `acc` has none: it drives
+// every wheel on the floor, and one stray letter must not start it.
+static const char *const ALIASES[][2] = {
+    {"m", "motor"}, {"mm", "motors"}, {"e", "enc"}, {"r", "ramp"}, {"i", "i2c"},
+    {"sn", "sensors"}, {"st", "status"}, {"g", "get"}, {"h", "help"}, {"b", "base"}, {"x", "stop"},
+};
+
+static const char *fullCommand(const char *cmd)
+{
+    for (const auto &a : ALIASES)
+        if (!strcmp(cmd, a[0])) return a[1];
+    return cmd;
+}
+
 static void handleLine(char *line, bool busy)
 {
     // Words: the command and up to three arguments.
@@ -679,6 +709,7 @@ static void handleLine(char *line, bool busy)
         argv[argc++] = t;
     const char *cmd = argc ? argv[0] : "";
     for (char *p = (char *)cmd; *p; p++) *p = (char)tolower(*p);
+    cmd = fullCommand(cmd);
 
     if (!*cmd || !strcmp(cmd, "stop") || !strcmp(cmd, "s")) {
         ack(true, busy ? "stopping" : "idle, motors off");

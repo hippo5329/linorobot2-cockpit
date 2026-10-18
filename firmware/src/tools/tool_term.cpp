@@ -116,6 +116,7 @@ static char nonce[9] = "";
 static char rx[96];
 static size_t rx_len = 0;
 static bool rx_cr = false;
+static uint8_t rx_esc = 0;         // 1: after Esc, 2: inside its CSI/SS3 sequence
 static char addr[32] = "";
 
 static void hangUp(void);
@@ -337,6 +338,17 @@ bool termLine(char *buf, size_t n)
         if (c < 0) break;
         if (authed) last_input = millis();      // any byte, the keep-alive NUL included
         if (c == 0) continue;
+        // An arrow key is Esc [ A: the stop has been given, the rest of it is swallowed.
+        if (rx_esc == 2) { if (c >= 0x40 && c <= 0x7e) rx_esc = 0; continue; }
+        if (rx_esc == 1) { rx_esc = 0; if (c == '[' || c == 'O') { rx_esc = 2; continue; } }
+        if (c == 0x1b && authed) {         // Esc: stop, whatever was half typed (tools.cpp)
+            rx_esc = 1;
+            rx_len = 0;
+            client.print("\r\n");
+            strncpy(buf, "stop", n - 1);
+            buf[n - 1] = '\0';
+            return true;
+        }
         if (c == '\n' && rx_cr) { rx_cr = false; continue; }
         rx_cr = (c == '\r');
         if (c == '\r' || c == '\n') {
