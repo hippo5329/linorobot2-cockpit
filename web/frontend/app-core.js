@@ -1249,6 +1249,12 @@ async function selectRobot(name, byUser = true) {
       return;
     }
     state.robot_name = res.active || res.robot_name || name;
+    // The robot's controller switches WITH its name: the awaits below let a status poll in, and
+    // noBoardSwitch() then saw the new robot beside the previous robot's controller, judged it a
+    // bare module on the wrong silicon and rebuilt it as one (2026-10-18: a udp4 robot on domain
+    // 43 came back serial on domain 0).
+    const bcNow = ((res.config || {}).base_controller || {}).name;
+    if (bcNow) loadedControllerName = bcNow;
     state.robots = res.robots || [];
     // The status names the active config; until the next poll it is the robot just left.
     if (res.robot_config_path) state.status = Object.assign({}, state.status || {}, { robot_config_path: res.robot_config_path });
@@ -1654,8 +1660,12 @@ async function noBoardSwitch(s) {
         // (lino_esp32) gives way to the new board's own default robot; one the user renamed
         // becomes the new board's bare module, keeping its name. A robot built from a design
         // is real and never follows.
+        // The robot's own controller, from the config this answer carries (the server's active
+        // robot), not the page's copy, which trails a robot switch.
         const sil = siliconOf(s.detected_mcu);
-        if (sil && sil !== siliconOf(loadedControllerName)) {
+        const bc = (s.config || {}).base_controller || {};
+        const own = bc.mcu && bc.mcu !== "host" ? bc.mcu : siliconOf(bc.name || loadedControllerName);
+        if (sil && sil !== own) {
           if (/^lino_[a-z0-9]+$/.test(state.robot_name)) await useDefaultRobotFor(sil);
           else if (typeof applyReferenceDesign === "function") {
             state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu, mcu_detected: true });

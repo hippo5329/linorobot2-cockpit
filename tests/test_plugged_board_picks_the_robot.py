@@ -157,3 +157,23 @@ def test_the_users_robot_with_no_design_follows_the_board(tmp_path):
     assert res["calls"] == ["apply:__bare__"], res
     res = run("my_rover", "unoq", [board("unoq")], tmp_path, "sim")
     assert res["calls"] == [], res          # already that board
+
+
+def with_config(poll, name, mcu):
+    return dict(poll, config={"base_controller": {"name": name, "mcu": mcu}})
+
+
+def test_a_robot_switch_in_flight_does_not_rebuild_the_robot(tmp_path):
+    """2026-10-18, gate r147: the page switched to a udp4 robot (esp32_wifi, domain 43) while the
+    previous robot's controller ("sim") was still the page's, a status poll landed in between, and
+    the robot was rebuilt as a bare esp32 module -- serial, domain 0. The poll carries the server's
+    active robot's config; its controller is the one to judge."""
+    poll = with_config(board("esp32"), "esp32_wifi", "esp32")
+    res = run("uileg_udp4", "sim", [poll], tmp_path, "sim")
+    assert res["calls"] == [] and res["robot"] == "uileg_udp4", res
+
+
+def test_the_polled_config_still_moves_a_robot_onto_a_new_board(tmp_path):
+    poll = with_config(board("esp32"), "pico2", "pico2")
+    res = run("my_rover", "pico2", [poll], tmp_path, "sim")
+    assert res["calls"] == ["apply:__bare__"], res
