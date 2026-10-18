@@ -9,6 +9,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
@@ -133,6 +134,30 @@ extern "C" const uint8_t *linoZephyrEnvBase(void)
 {
     return (const uint8_t *)(DT_REG_ADDR(DT_CHOSEN(zephyr_flash)) +
                              DT_REG_ADDR(DT_NODELABEL(lino_env_partition)));
+}
+
+// The tool's `set` (mcu_env.cpp envSaveKey): the whole 8 KB page erased, the 4 KB block
+// written at its start, and read back through the flash driver -- never through the memory
+// map, which the instruction cache could answer from. NULL on success, else why not.
+extern "C" const char *linoZephyrEnvWrite(const uint8_t *blk, size_t n)
+{
+    const struct flash_area *fa;
+    if (flash_area_open(FIXED_PARTITION_ID(lino_env_partition), &fa) != 0)
+        return "no env page";
+    const char *why = NULL;
+    uint8_t chunk[256];
+    if (flash_area_erase(fa, 0, fa->fa_size) != 0)
+        why = "erasing the env page failed";
+    else if (flash_area_write(fa, 0, blk, n) != 0)
+        why = "writing the env page failed";
+    for (size_t o = 0; !why && o < n; o += sizeof(chunk)) {
+        if (flash_area_read(fa, o, chunk, sizeof(chunk)) != 0)
+            why = "reading the env page back failed";
+        else if (memcmp(chunk, blk + o, sizeof(chunk)) != 0)
+            why = "the env page reads back different";
+    }
+    flash_area_close(fa);
+    return why;
 }
 
 void setup();

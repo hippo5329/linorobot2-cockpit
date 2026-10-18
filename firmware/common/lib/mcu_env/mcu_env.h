@@ -54,6 +54,14 @@ void        envSetRealOnly(bool on);
 // The tool's `set`: `value` shadows the stored one until the next boot (RAM only;
 // NULL unsets it). False for a key or value that does not fit, or a full table.
 bool        envSetOverride(const char *key, const char *value);
+// The tool's `set` of a key read at boot (user, 2026-10-18: "when we test motor, we want to
+// inverse motor, we can set to env without host esptool/picotool/ota"): the board writes key=value into the env block
+// it boots from -- packed as scripts/mcu_env.py packs it (sorted, NUL-separated, 0xFF-padded),
+// so the CRC is the one the host computes for the same keys. value NULL removes the key. The
+// block is read back and compared before this says yes. NULL on success, with the CRC before
+// and after; otherwise why not. It takes effect at the next boot: the drivetrain and every
+// driver read the env once, at boot.
+const char *envSaveKey(const char *key, const char *value, uint32_t *crc_before, uint32_t *crc_after);
 // Every key the board sees: the overrides first, then the stored env's other keys.
 void        envForEach(void (*cb)(const char *key, const char *value, bool overridden));
 bool        envRealOnly(void);

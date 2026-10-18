@@ -480,8 +480,10 @@ static void help(void)
 #if ADC_LUT_SUPPORTED
         "  adc                       battery ADC calibration (DAC pin wired to the ADC)\n"
 #endif
-        "  set <key> <value>         a test setting until reboot (set <key> clears it):\n"
-        "                            tm_pct tm_only tm_secs ta_ms ta_pct\n"
+        "  set <key> <value>         tm_pct tm_only tm_secs ta_ms ta_pct: a test setting\n"
+        "                            until reboot (set <key> clears it). Any other key is\n"
+        "                            written to this board's env and the tool restarts with\n"
+        "                            it (e.g. set m1_inv 1); set <key> - removes it\n"
         "  get [key]                 show one setting, or all\n"
         "  status                    what this board has and what is running\n"
         "  base                      restart into the robot firmware (also: exit, reboot)");
@@ -497,10 +499,10 @@ static void printKey(const char *k, const char *v, bool overridden)
     Serial.printf("  %-16s %s%s\n", k, secretKey(k) ? "********" : v, overridden ? "   (set)" : "");
 }
 
-// What `set` may change: the tests' own settings, read while a command runs. Everything
-// else is read once at boot (pins, PWM width, drivers, and sim_wheel -- the encoders were
-// built simulated or real at boot, and real motors against simulated encoders run away),
-// or is a secret: flash the env to change those.
+// What `set` changes live, in RAM: the tests' own settings, read while a command runs.
+// Everything else is read once at boot (pins, PWM width, drivers, inverts, and sim_wheel --
+// the encoders were built simulated or real at boot), so `set` writes those to the env block
+// and restarts (saveKey below); secrets it refuses: the cockpit flashes those.
 static bool settable(const char *k)
 {
     static const char *const OK[] = {"tm_pct", "tm_only", "tm_secs", "ta_ms", "ta_pct"};
@@ -536,6 +538,56 @@ static bool setKey(const char *k, const char *v)
         return false;
     }
     return true;
+}
+
+// `set` of a key read at boot (user, 2026-10-18: "when we test motor, we want to inverse
+// motor, we can set to env without host esptool/picotool/ota"): the board writes it into the
+// env block it boots from, reads it back, and restarts into the tool -- the motors, encoders
+// and drivers read the env once, at boot, so the next `motor 1 25` runs with it. `-` removes
+// the key. A key must already be in this board's env (a typo would be a key nothing reads),
+// except the inverts, which mcu_env.py writes only when they are on. Secrets never: the
+// cockpit flashes those. Only while idle: the write stops the flash for tens of ms.
+static bool saveableNew(const char *k)
+{
+    return strlen(k) >= 6 && k[0] == 'm' && k[1] >= '1' && k[1] <= '4' && k[2] == '_' &&
+           (!strcmp(k + 3, "inv") || !strcmp(k + 3, "enc_inv"));
+}
+
+static void saveKey(const char *key, const char *value, bool busy)
+{
+    if (secretKey(key)) {
+        ack(false, "a secret -- the cockpit flashes those");
+        Serial.printf("[tool] %s is a secret: change it in the cockpit and press Flash MCU\n", key);
+        return;
+    }
+    if (!saveableNew(key) && !envGet(key, nullptr)) {
+        ack(false, "not in this board's env");
+        Serial.printf("[tool] %s is not in this board's env -- check the spelling with `get`\n", key);
+        return;
+    }
+    if (busy) {
+        ack(false, "busy -- stop first: it is written to flash");
+        Serial.printf("[tool] busy: %s is running -- 'stop' first, then set %s again\n", job_name, key);
+        return;
+    }
+    const bool remove = !strcmp(value, "-");
+    uint32_t before = 0, after = 0;
+    toolMotorsOff();
+    const char *why = envSaveKey(key, remove ? nullptr : value, &before, &after);
+    if (why) {
+        ack(false, why);
+        Serial.printf("[tool] not written: %s\n", why);
+        return;
+    }
+    char m[64];
+    snprintf(m, sizeof(m), "saved, envcrc %08X -> %08X", (unsigned)before, (unsigned)after);
+    ack(true, m);
+    if (remove) Serial.printf("[tool] removed %s from this board's env", key);
+    else        Serial.printf("[tool] %s = %s, written to this board's env", key, value);
+    Serial.printf(" (envcrc %08X -> %08X, read back and checked)\n", (unsigned)before, (unsigned)after);
+    Serial.println("[tool] the cockpit's config still has the old value: change it there too, "
+                   "or the next Flash MCU writes the old one back");
+    toolRestart(true);
 }
 
 // A command's own argument versus a person's `set`. `motor 1 30 20` writes tm_secs=20 for
@@ -632,10 +684,13 @@ static void handleLine(char *line, bool busy)
             ack(false, "set <key> <value>");
             Serial.println("[tool] set <key> <value>");
         } else if (!settable(argv[1])) {
-            ack(false, "not a test setting (tm_pct tm_only tm_secs ta_ms ta_pct)");
-            Serial.printf("[tool] %s is not a test setting -- change it in the cockpit and "
-                          "press Flash MCU (the tool's settings: tm_pct tm_only tm_secs ta_ms "
-                          "ta_pct)\n", argv[1]);
+            if (argc < 3) {
+                ack(false, "set <key> <value> -- or set <key> - to remove it");
+                Serial.printf("[tool] %s is read at boot: set %s <value> writes it, "
+                              "set %s - removes it\n", argv[1], argv[1], argv[1]);
+            } else {
+                saveKey(argv[1], argv[2], busy);
+            }
         } else if (setKey(argv[1], argc >= 3 ? argv[2] : nullptr)) {
             const int i = cmdKeyIndex(argv[1]);
             if (i >= 0) cmd_wrote[i] = false;   // the person's now: commands leave it alone

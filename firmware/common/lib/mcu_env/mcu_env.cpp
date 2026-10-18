@@ -125,6 +125,29 @@ static void loadEnv(void)
     env_valid = true;
 }
 
+// The tool's `set`: the whole 4 KB block, erased and written in place -- the same
+// partition calls adc_lut.cpp makes for the ADC table -- then read back through the
+// partition API (not the mapping, which a cache could answer from).
+static const char *envWriteBlock(const uint8_t *blk)
+{
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ENV_PART_SUBTYPE, ENV_PART_NAME);
+    if (!part || part->size < ENV_SIZE)
+        return "no env partition";
+    if (esp_partition_erase_range(part, 0, ENV_SIZE) != ESP_OK)
+        return "erasing the env partition failed";
+    if (esp_partition_write(part, 0, blk, ENV_SIZE) != ESP_OK)
+        return "writing the env partition failed";
+    uint8_t chunk[256];
+    for (size_t o = 0; o < ENV_SIZE; o += sizeof(chunk)) {
+        if (esp_partition_read(part, o, chunk, sizeof(chunk)) != ESP_OK)
+            return "reading the env partition back failed";
+        if (memcmp(chunk, blk + o, sizeof(chunk)) != 0)
+            return "the env partition reads back different";
+    }
+    return NULL;
+}
+
 #elif defined(ARDUINO_ARCH_RP2040)
 
 // The RP2 boards have no partition table, but arduino-pico already reserves a
@@ -170,6 +193,28 @@ static void loadEnv(void)
     env_valid = true;
 }
 
+// The tool's `set`: what arduino-pico's EEPROM.commit() does for this same sector --
+// the other core parked and interrupts off while the flash is out of XIP -- with the
+// block from RAM. Read back through XIP, which flash_range_program() has flushed.
+#include <hardware/flash.h>
+static const char *envWriteBlock(const uint8_t *blk)
+{
+    const uint32_t off = (uint32_t)((uintptr_t)&_EEPROM_start - (uintptr_t)XIP_BASE);
+#ifndef __FREERTOS
+    noInterrupts();
+#endif
+    rp2040.idleOtherCore();
+    flash_range_erase(off, ENV_SIZE);
+    flash_range_program(off, blk, ENV_SIZE);
+    rp2040.resumeOtherCore();
+#ifndef __FREERTOS
+    interrupts();
+#endif
+    if (memcmp((const void *)&_EEPROM_start, blk, ENV_SIZE) != 0)
+        return "the env sector reads back different";
+    return NULL;
+}
+
 #elif defined(LINO_ZEPHYR)
 
 // The Arduino UNO Q's STM32U585 (firmware/zephyr/unoq/fw): the block sits in the last
@@ -193,6 +238,14 @@ static void loadEnv(void)
     }
     env_data = (const char *)(base + ENV_CRC_LEN);
     env_valid = true;
+}
+
+// The tool's `set`: zephyr_core.cpp erases the 8 KB page and writes the block through
+// the flash map, and reads it back through the flash driver.
+extern "C" const char *linoZephyrEnvWrite(const uint8_t *blk, size_t n);
+static const char *envWriteBlock(const uint8_t *blk)
+{
+    return linoZephyrEnvWrite(blk, ENV_SIZE);
 }
 
 #elif defined(LINO_HOST)
@@ -220,6 +273,7 @@ static void loadEnv(void)
 // is 0xFF-padded to the full partition and is walked against ENV_DATA_LEN. The
 // mapping keeps the host on the same code path rather than a kinder one.
 #define ENV_FILE_VAR      "LINO_ENV_BIN"
+static const char *env_path = NULL;   // the file loadEnv() mapped, for the tool's `set`
 #define ENV_FILE_DEFAULT  "env.bin"
 
 static void loadEnv(void)
@@ -271,7 +325,28 @@ static void loadEnv(void)
 
     env_data = (const char *)base + ENV_CRC_LEN;
     env_valid = true;
+    env_path = path;
     Serial.printf("[env] %s: %d bytes, CRC32 %08x OK\n", path, (int)ENV_SIZE, (unsigned)actual);
+}
+
+// The tool's `set`: the image file, rewritten in place and read back. The process keeps
+// its private mapping of the old one until it restarts, as a board keeps its boot env.
+static const char *envWriteBlock(const uint8_t *blk)
+{
+    if (!env_path)
+        return "no env file";
+    const int fd = open(env_path, O_RDWR | O_CLOEXEC);
+    if (fd < 0)
+        return "cannot open the env file for writing";
+    uint8_t back[ENV_SIZE];
+    const bool ok = pwrite(fd, blk, ENV_SIZE, 0) == (ssize_t)ENV_SIZE && fsync(fd) == 0 &&
+                    pread(fd, back, ENV_SIZE, 0) == (ssize_t)ENV_SIZE;
+    close(fd);
+    if (!ok)
+        return "writing the env file failed";
+    if (memcmp(back, blk, ENV_SIZE) != 0)
+        return "the env file reads back different";
+    return NULL;
 }
 
 #else
@@ -281,6 +356,10 @@ static void loadEnv(void)
     Serial.println("[env] no env backend for this MCU — using compiled-in defaults");
 }
 
+static const char *envWriteBlock(const uint8_t *)
+{
+    return "this board has no env backend";
+}
 #endif
 
 // The `fake_` -> `sim_` rename made the env a versioned contract for the first
@@ -373,9 +452,9 @@ uint32_t mcuEnvCrc(void)
 }
 
 // The tool's `set` (2026-10-12, user: "update env by command"): a value typed at the
-// tool's terminal shadows the stored one until the next boot. RAM only -- the env
-// block is written by the host (mcu_env.py / flash_mcu.py --env-only), never by the
-// board -- and only the tool writes here, so `base` reads exactly what was flashed.
+// tool's terminal shadows the stored one until the next boot. RAM only, for the test
+// settings; a key read at boot is written to the block itself (envSaveKey) -- and only the
+// tool writes here, so `base` reads exactly what is in the block.
 // Allocated on the first `set`: base never sets one, and esp32_lyrical's .bss has no
 // 1 KB to spare for a table it would never use.
 #define ENV_OVERRIDES 16
@@ -437,6 +516,80 @@ void envForEach(void (*cb)(const char *key, const char *value, bool overridden))
         }
         pos += elen + 1;
     }
+}
+
+// Keys compare as mcu_env.py's sorted() does: byte by byte, the key ending at its '='.
+static int envKeyCmp(const char *a, const char *b)
+{
+    for (;; a++, b++) {
+        const unsigned char ca = *a == '=' ? 0 : (unsigned char)*a;
+        const unsigned char cb = *b == '=' ? 0 : (unsigned char)*b;
+        if (ca != cb || !ca)
+            return (int)ca - (int)cb;
+    }
+}
+
+const char *envSaveKey(const char *key, const char *value, uint32_t *crc_before, uint32_t *crc_after)
+{
+    initMcuEnv();
+    if (!env_valid || !env_data)
+        return "this board has no valid env to add to -- flash one from the cockpit first";
+    if (!key || !*key || strlen(key) >= 24)
+        return "a key is 1-23 characters";
+    for (const char *c = key; *c; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_'))
+            return "a key is lower-case letters, digits and _";
+    if (value) {
+        if (!*value || strlen(value) >= 64)
+            return "a value is 1-63 characters";
+        for (const char *c = value; *c; c++)
+            if ((unsigned char)*c <= ' ' || (unsigned char)*c >= 0x7f)
+                return "a value is printable, with no spaces";
+    }
+    uint8_t *blk = (uint8_t *)malloc(ENV_SIZE);
+    if (!blk)
+        return "out of memory for the 4 KB block";
+    memset(blk, 0xFF, ENV_SIZE);
+    char *out = (char *)blk + ENV_CRC_LEN;
+    size_t n = 0;
+    bool fits = true, placed = (value == NULL);
+    // Copy the stored entries in order, dropping the key's old entry and putting the new one
+    // where sorted() puts it. mcu_env.py writes them sorted, so the block is the host's.
+    auto put = [&](const char *a, size_t alen, const char *b, size_t blen) {
+        if (n + alen + blen + 2 > ENV_DATA_LEN) { fits = false; return; }  // + NUL + list end
+        memcpy(out + n, a, alen); n += alen;
+        memcpy(out + n, b, blen); n += blen;
+        out[n++] = '\0';
+    };
+    char newkey[26];
+    snprintf(newkey, sizeof(newkey), "%s=", key);
+    const size_t klen = strlen(key);
+    for (size_t pos = 0; pos < ENV_DATA_LEN && env_data[pos]; ) {
+        const char *entry = &env_data[pos];
+        const size_t elen = strnlen(entry, ENV_DATA_LEN - pos);
+        const bool same = elen > klen && entry[klen] == '=' && strncmp(entry, key, klen) == 0;
+        if (!placed && envKeyCmp(newkey, entry) < 0) {
+            put(newkey, klen + 1, value, strlen(value));
+            placed = true;
+        }
+        if (!same)
+            put(entry, elen, "", 0);
+        pos += elen + 1;
+    }
+    if (!placed)
+        put(newkey, klen + 1, value, strlen(value));
+    if (!fits) {
+        free(blk);
+        return "the env block is full";
+    }
+    out[n] = '\0';                          // the empty entry that ends the list
+    const uint32_t crc = crc32_iso((const uint8_t *)out, ENV_DATA_LEN);
+    memcpy(blk, &crc, ENV_CRC_LEN);
+    if (crc_before) *crc_before = mcuEnvCrc();
+    if (crc_after) *crc_after = crc;
+    const char *why = envWriteBlock(blk);
+    free(blk);
+    return why;
 }
 
 const char *envGet(const char *key, const char *fallback)

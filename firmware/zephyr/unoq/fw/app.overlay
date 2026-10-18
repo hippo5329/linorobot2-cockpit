@@ -97,7 +97,7 @@
 		lino_env_partition: partition@1fe000 {
 			label = "lino-env";
 			reg = <0x001fe000 DT_SIZE_K(8)>;
-			read-only;
+			/* written by the host (openocd) and by the tool's `set` (zephyr_core.cpp) */
 		};
 	};
 };

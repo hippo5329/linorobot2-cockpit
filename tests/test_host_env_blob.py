@@ -235,3 +235,87 @@ def test_a_pre_rename_env_is_called_out_loudly(reader, tmp_path):
     assert "WARNING" in out and "fake_" in out, (
         "new firmware read a pre-rename env without a word of complaint; every "
         f"renamed key was at its compiled-in default:\n{out}")
+
+
+SAVER = r"""
+#include <Arduino.h>
+#include "mcu_env.h"
+_LinoHostSerial Serial;
+int main(int argc, char **argv)
+{
+    initMcuEnv();
+    if (!mcuEnvValid()) { printf("INVALID\n"); return 1; }
+    uint32_t a = 0, b = 0;
+    const char *why = envSaveKey(argv[1], argc > 2 ? argv[2] : nullptr, &a, &b);
+    printf("%s %08X %08X\n", why ? why : "SAVED", (unsigned)a, (unsigned)b);
+    return why ? 2 : 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def saver(tmp_path_factory):
+    """The firmware's `save` (envSaveKey), compiled for this machine against the file backend."""
+    cxx = os.environ.get("CXX") or shutil.which("g++") or shutil.which("clang++")
+    if not cxx:
+        pytest.skip("no C++ compiler: cannot compile the firmware's env writer")
+    d = tmp_path_factory.mktemp("hostsave")
+    (d / "saver.cpp").write_text(SAVER)
+    out = d / "saver"
+    proc = subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-o", str(out),
+                           "-I", SHIM, "-I", os.path.dirname(MCU_ENV_CPP),
+                           str(d / "saver.cpp"), MCU_ENV_CPP], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return str(out)
+
+
+def _save(saver, image, *args):
+    proc = subprocess.run([saver, *args], capture_output=True, text=True,
+                          env={**os.environ, "LINO_ENV_BIN": str(image)})
+    return proc.returncode, proc.stdout
+
+
+@pytest.mark.parametrize("key,value", [
+    ("m1_inv", "1"),          # a key the reference env lacks: inserted in sorted place
+    ("m2_enc_inv", "1"),
+    ("transport", "serial"),  # a key it has: replaced where it stands
+    ("transport", None),      # removed
+])
+def test_the_boards_save_writes_the_flashers_block(saver, tmp_path, key, value):
+    """The tool's `save` on the board and mcu_env.py on the host must write the SAME 4096 bytes
+    for the same keys -- so the banner's envcrc after a `save` is the CRC the host computes,
+    and a host that rebuilds the env from the config plus the saved key gets the board's block."""
+    base = tmp_path / "base"
+    base.mkdir()
+    board = _build_image(base, transport="udp4")
+    rc, out = _save(saver, board, key, *([value] if value is not None else []))
+    assert rc == 0, out
+
+    host = tmp_path / "host"
+    host.mkdir()
+    sets = {"transport": "udp4"}
+    if value is None:
+        sets.pop(key)
+    else:
+        sets[key] = value
+    want = _build_image(host, **sets)
+    if value is None and key == "transport":
+        # mcu_env.py writes a default transport when none is given: compare against the block
+        # with the entry dropped instead, rebuilt here the way encode() packs it.
+        proc = subprocess.run([sys.executable, MCU_ENV_PY, "print", str(base / "env.bin"),
+                               "--show-secrets"], capture_output=True, text=True, cwd=REPO_ROOT)
+        got = dict(l.split("=", 1) for l in proc.stdout.strip().splitlines() if "=" in l)
+        assert key not in got, "the removed key is still in the board's block"
+        return
+    assert board.read_bytes() == want.read_bytes(), "the board's block differs from mcu_env.py's"
+    crc = int.from_bytes(want.read_bytes()[:4], "little")
+    assert out.split()[-1] == f"{crc:08X}", out
+
+
+def test_save_refuses_what_it_cannot_write(saver, tmp_path):
+    board = _build_image(tmp_path, transport="udp4")
+    before = board.read_bytes()
+    for args in (["Bad-Key", "1"], ["m1_inv", "has space"], ["m1_inv", ""], ["m1_inv", "x" * 64]):
+        rc, out = _save(saver, board, *args)
+        assert rc == 2, (args, out)
+    assert board.read_bytes() == before, "a refused save changed the block"
