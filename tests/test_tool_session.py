@@ -53,6 +53,7 @@ def make(kind="serial"):
     "status", "help", "i2c", "i2c 5", "sensors", "enc", "motor 1 30", "motor all -25 0",
     "motor 2 100 3600", "motor", "motors", "motors 40", "acc", "acc 500", "acc 500 50", "adc",
     "set tm_pct -40", "set ta_ms 400", "set tm_secs", "get", "get tm_pct", "base", "stop", "s",
+    "set m1_inv 1", "set m4_enc_inv 0", "set m2_inv -",
 ])
 def test_the_shells_own_lines_pass(line):
     assert ts.validate(line) == " ".join(line.split())
@@ -63,7 +64,8 @@ def test_the_shells_own_lines_pass(line):
     ("motor 1 101", "outside"), ("motor 1 30 -1", "outside"), ("motors 0", "outside"),
     ("acc 200", "outside"), ("acc 500 5", "outside"), ("set pwm_bits 16", "not a test setting"),
     ("set sim_wheel 0", "not a test setting"), ("set ota_password x", "not a test setting"),
-    ("set tm_pct 500", "outside"), ("reboot now", "not a tool command"), ("rm -rf /", "not a tool command"),
+    ("set tm_pct 500", "outside"), ("set m1_inv", "an invert"), ("set m1_inv 2", "an invert"),
+    ("set m5_inv 1", "not a test setting"), ("set m1_invv 1", "not a test setting"), ("reboot now", "not a tool command"), ("rm -rf /", "not a tool command"),
     ("status\r\nmotor 1 100", "plain text"), ("motor 1 30\x00", "plain text"), ("i2c x", "whole number"),
     ("x" * 65, "plain text"), ("get ../../etc", "get [key]"),
 ])
@@ -315,7 +317,7 @@ def test_the_firmware_answers_every_path():
         assert form in src, form
     body = src[src.index("static void handleLine(char *line, bool busy)\n{"):src.index("void toolSetup(void)")]
     # every refusal the shell prints is answered first
-    for marker in ("unknown command", "busy: %s is running -- 'stop' first", "is not a test setting", "tests %s, and this robot",
+    for marker in ("unknown command", "busy: %s is running -- 'stop' first", "is read at boot: set %s <value>", "tests %s, and this robot",
                    "'adc' would drive"):
         at = body.index(marker)
         assert "ack(false" in body[max(0, at - 260):at], marker

@@ -19,6 +19,18 @@ and base boots —
 — so no env write can keep a robot out of micro-ROS at its next boot. `base` in the tool restarts
 the board into the robot firmware. Do **not** recreate a per-tool PlatformIO project.
 
+**`set` in the tool.** The tests' own settings (`tm_pct tm_only tm_secs ta_ms ta_pct`) are held in RAM
+until the next boot. Any other key is written by the board itself into the env block it boots from
+(`envSaveKey`, mcu_env.cpp: the ESP32 `env` partition, the RP2 top sector, the UNO Q env page, the
+host's env file), packed exactly as `scripts/mcu_env.py` packs it, read back, and CRC-checked, so the
+banner's `envcrc` after a `set` is the CRC the host computes for the same keys. An invert
+(`set m1_inv 1`, `set m1_enc_inv 1`) is applied to the running motor or encoder at once, so a motor
+test can flip a wheel with no esptool, picotool or OTA; any other key (pins, `motor_driver`, PWM) is
+built into the drivetrain at boot, so the tool restarts itself with it. `set <key> -` removes the key.
+Secrets are refused, and so is a key the board's env does not have (a typo would be a key nothing
+reads), except the inverts. The cockpit's config still has the old value: the next Flash MCU writes
+it back unless the config is changed too.
+
 Two rules make this free for the robot firmware, and both are load-bearing:
 - **Each tool command is its own translation unit in its own namespace**, exposing nothing but its
   entry points, wired into `firmware/src/tools/tools.cpp`. Several tools and `base` independently

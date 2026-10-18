@@ -61,6 +61,11 @@ SET_KEYS = {
     "ta_ms": (300, 1000),
     "ta_pct": (10, 100),
 }
+# An invert, written to the board's own env and in use at once (tools.cpp saveKey; user,
+# 2026-10-18: "when we test motor, we want to inverse motor ... without host esptool/
+# picotool/ota", "make inverts live, no reboot"). 1 on, 0 off, - back to the config's.
+# Every other key `set` writes restarts the board: that stays on lino_tool.py's console.
+INVERT_KEY = re.compile(r"^m[1-4]_(inv|enc_inv)$")
 # Commands that keep running until `stop` (or their own end), and the drives among them.
 # The board answers every line it receives, in words (scripts/tool_answer.py):
 #   ok: motor 1 40 3 (running)   fail: motor 3 40 -- why   done: ...   stopped: ... (why)
@@ -138,8 +143,13 @@ def validate(line: str) -> str:
         if not args or len(args) > 2:
             raise Refused("set <key> <value>")
         key = args[0]
+        if INVERT_KEY.match(key):
+            if len(args) != 2 or args[1] not in ("0", "1", "-"):
+                raise Refused(f"set {key} 1|0|- (an invert: written to the board's env, in use at once)")
+            return " ".join([cmd] + args)
         if key not in SET_KEYS:
-            raise Refused(f"set: {key} is not a test setting ({', '.join(sorted(SET_KEYS))})")
+            raise Refused(f"set: {key} is not a test setting ({', '.join(sorted(SET_KEYS))}) "
+                          "or an invert (m1_inv .. m4_enc_inv)")
         if len(args) == 2:
             lo, hi = SET_KEYS[key]
             _int(args[1], lo, hi, key)
