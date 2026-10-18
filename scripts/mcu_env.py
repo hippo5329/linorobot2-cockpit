@@ -985,7 +985,11 @@ def hardware_env(params: dict) -> dict:
             env[f"m{n}_enc_inv"] = _bool(enc["invert"])
         # Only for a motor this robot actually has. A 2wd config that emitted
         # m3_cpr and m4_cpr would be describing wheels that are not there.
-        if enc and (kin.get("counts_per_rev") is not None or kin.get("encoder_ppr") is not None):
+        # `encoder<N>.counts_per_rev` is one wheel's own measured figure (a replaced motor
+        # whose gearbox differs from the others); kinematics' counts_per_rev is the rest.
+        if enc and enc.get("counts_per_rev") is not None:
+            env[f"m{n}_cpr"] = int(enc["counts_per_rev"])
+        elif enc and (kin.get("counts_per_rev") is not None or kin.get("encoder_ppr") is not None):
             env[f"m{n}_cpr"] = gen_firmware_header.counts_per_rev(kin)
 
     driver = str(tgt.get("driver_type", "GENERIC_2_IN")).upper()

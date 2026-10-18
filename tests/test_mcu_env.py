@@ -155,6 +155,14 @@ def test_mecanum_reference_has_four_motors():
     assert env["m1_cpr"] == 887   # the MC200 kit's, by tachometer (kit_chassis.CHASSIS)
 
 
+def test_one_encoders_counts_per_rev_overrides_the_kinematics():
+    params = reference_params("pico2_mecanum")
+    params["base_controller"]["pins"]["encoder3"]["counts_per_rev"] = 448   # a replaced motor
+    env = _env_from_params(params)
+    assert env["m3_cpr"] == 448
+    assert [env[f"m{i}_cpr"] for i in (1, 2, 4)] == [887, 887, 887]
+
+
 def test_redact_hides_the_psk():
     env = {"wifi_psk": "hunter2", "wifi_ssid": "bench"}
     r = mcu_env.redact(env)
