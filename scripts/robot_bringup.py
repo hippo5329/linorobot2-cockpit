@@ -804,6 +804,11 @@ def main(argv=None) -> int:
     SIM_FLAG[0] = a.sim
     WALK_FLAG[0] = True if a.walk else None
     robot = Robot(a.params)
+    # Every ROS-side check started from here (lidar_check, speed_check, test_acc's homing)
+    # reads in the robot's own DDS domain (base_controller.domain_id). The web UI runs this
+    # without the backend's ROS prefix, so they inherited the container's 0 and saw no /scan
+    # from a robot on 21 (mc200-yahboom, 2026-10-18).
+    os.environ["ROS_DOMAIN_ID"] = str(cockpit_paths.robot_domain_id(robot.params))
     fn = {"status": cmd_status, "gate": cmd_gate, "mark": cmd_mark, "sensors": cmd_sensors,
           "battery": cmd_battery, "motors": cmd_motors, "rpm": cmd_rpm, "cpr-turns": cmd_cpr_turns,
           "lidar": cmd_lidar, "speed": cmd_speed, "acc": cmd_acc}[a.cmd]

@@ -340,3 +340,18 @@ def test_a_question_asked_mid_drive_keeps_the_link_alive():
     assert got == 142.0
     assert tool.link.keeps >= 5, "keep-alives while the question waits"
     assert any("stopped: motor 1 100 0" in s for s in said), "a drive that ended anyway is said"
+
+
+def test_every_check_reads_in_the_robots_own_domain(cfgdir, monkeypatch):
+    """The web UI runs robot_bringup.py with the container's ROS_DOMAIN_ID (0): lidar_check and
+    speed_check inherited it and saw no /scan from a robot whose base_controller.domain_id is 21."""
+    import robot_bringup
+    path, params = cfgdir
+    params["base_controller"]["domain_id"] = 21
+    with open(path, "w") as fh:
+        yaml.safe_dump(params, fh)
+    monkeypatch.setenv("ROS_DOMAIN_ID", "0")
+    seen = {}
+    monkeypatch.setattr(robot_bringup, "cmd_status", lambda robot, a: seen.setdefault("d", os.environ["ROS_DOMAIN_ID"]) and 0)
+    robot_bringup.main(["--params", path, "status"])
+    assert seen["d"] == "21"
