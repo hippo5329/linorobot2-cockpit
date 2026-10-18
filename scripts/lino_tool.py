@@ -570,7 +570,10 @@ def run_commands(link, commands, answers: list = None) -> bool:
         elif head in RUNNING or (head == "i2c" and len(words) > 1):
             driving = driving or head in ("motor", "motors")
             pump(link, 2.0)
-        else:
+        elif PROMPT not in got:
+            # A command that only prints (get, status, help) prompts BEFORE its "done" answer
+            # (tools.cpp answerLine), so the prompt is usually in `got` already: waiting for
+            # another cost 30 s a command, found by the Sim MCU `set` check.
             pump(link, 30.0, until=(PROMPT,))
     return driving
 
