@@ -20,7 +20,8 @@
 class PID
 {
     public:
-        PID(float min_val, float max_val, float kp, float ki, float kd);
+        // deadzone: the PWM below which the motor does not turn under load (0 = none).
+        PID(float min_val, float max_val, float kp, float ki, float kd, float deadzone = 0.0f);
         double compute(float setpoint, float measured_value);
         void updateConstants(float kp, float ki, float kd);
 
@@ -30,6 +31,7 @@ class PID
         float kp_;
         float ki_;
         float kd_;
+        float deadzone_;
         double integral_;
         double derivative_;
         double prev_error_;

@@ -160,8 +160,11 @@ PID *createPID(void)
     // and the motor was told 1023 on a 255-wide channel.
     const int bits = (int)envU16("pwm_bits", PWM_BITS);
     const float pwm_max = (float)((1L << bits) - 1);
+    // `pwm_deadzone`: the PWM a loaded wheel needs before it turns (config
+    // kinematics.pid.pwm_deadzone, measured with `lino-ident ramp`); 0 = off.
     return new PID(-pwm_max, pwm_max,
-                   envFloat("kp", K_P), envFloat("ki", K_I), envFloat("kd", K_D));
+                   envFloat("kp", K_P), envFloat("ki", K_I), envFloat("kd", K_D),
+                   envFloat("pwm_deadzone", 0.0f));
 }
 
 Kinematics *createKinematics(void)

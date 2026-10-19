@@ -62,7 +62,7 @@ one of them a particular robot is here:
     drivetrain  m<N>_pwm  m<N>_in_a  m<N>_in_b  m<N>_inv
                 m<N>_enc_a  m<N>_enc_b  m<N>_cpr  m<N>_enc_inv   (N = 1..4)
                 motor_driver  pwm_freq  pwm_bits  pwm_min  pwm_max
-                kp  ki  kd  sim_wheel
+                kp  ki  kd  pwm_deadzone  sim_wheel
 
     kinematics  base  max_rpm  rpm_ratio  wheel_d  lr_dist  fr_dist  angular_scale
                 motor_v  power_v
@@ -1357,7 +1357,7 @@ def hardware_env(params: dict) -> dict:
         if kin.get(src) is not None:
             env[key] = kin[src]
     pid = kin.get("pid", {}) or {}
-    for key in ("kp", "ki", "kd"):
+    for key in ("kp", "ki", "kd", "pwm_deadzone"):
         if pid.get(key) is not None:
             env[key] = pid[key]
 

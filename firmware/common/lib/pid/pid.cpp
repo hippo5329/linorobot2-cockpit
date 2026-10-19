@@ -16,12 +16,13 @@
 #include "pid.h"
 #include <math.h>
 
-PID::PID(float min_val, float max_val, float kp, float ki, float kd):
+PID::PID(float min_val, float max_val, float kp, float ki, float kd, float deadzone):
     min_val_(min_val),
     max_val_(max_val),
     kp_(kp),
     ki_(ki),
     kd_(kd),
+    deadzone_(deadzone),
     integral_(0.0),
     derivative_(0.0),
     prev_error_(0.0)
@@ -80,7 +81,32 @@ double PID::compute(float setpoint, float measured_value)
     pid = (kp_ * error) + (ki_ * integral_) + (kd_ * derivative_);
     prev_error_ = error;
 
-    return constrain(pid, min_val_, max_val_);
+    pid = constrain(pid, min_val_, max_val_);
+
+    // Dead-zone compensation. A loaded motor does not turn below some PWM:
+    // the TS100's tracks broke away at 130-210 of 1023 on the floor (ramp,
+    // 2026-10-19), while Nav2's 0.3 rad/s heading turn asks for about 84.
+    // The loop then sat in the dead zone until the integral wound up, the
+    // track broke loose and overshot, and it stuck again -- a slow turn was
+    // a stick-slip turn, and a tight heading window made Nav2 abort it.
+    //
+    // So while a wheel is asked to move, an output pushing in the requested
+    // direction is mapped from (0, rail] onto (deadzone, rail]: the smallest
+    // push already reaches the motor's threshold and the PID closes the rest.
+    // An output against the request (braking) and a standing-still request
+    // pass through unchanged, so a stop stays a stop and nothing chatters
+    // across zero.
+    if (deadzone_ > 0.0f && fabs(setpoint) > 0.5f)
+    {
+        const double rail = (pid > 0.0) ? (double)max_val_ : -(double)min_val_;
+        if (rail > deadzone_ && pid * setpoint > 0.0)
+        {
+            const double mag = deadzone_ + fabs(pid) * (rail - deadzone_) / rail;
+            pid = (pid > 0.0) ? mag : -mag;
+        }
+    }
+
+    return pid;
 }
 
 void PID::updateConstants(float kp, float ki, float kd)

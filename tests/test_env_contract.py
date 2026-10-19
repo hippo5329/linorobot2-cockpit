@@ -37,7 +37,7 @@ MAXIMAL_CONFIG = {
                    # until somebody measures their own chassis -- so this is the
                    # only place the contract can see them written.
                    "fr_wheels_distance": 0.18, "angular_scale": 1.25,
-                   "pid": {"kp": 1, "ki": 0, "kd": 0}},
+                   "pid": {"kp": 1, "ki": 0, "kd": 0, "pwm_deadzone": 120}},
     "base_controller": {
         "name": "esp32", "mcu": "esp32", "baudrate": 921600, "transport": "serial", "console": "uart0",
         "domain_id": 7,
