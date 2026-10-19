@@ -29,7 +29,7 @@ namespace {
 
 const unsigned TICK_MS = 20;            // the base's control timer
 
-enum Kind : uint8_t { K_REST, K_DEADZONE, K_PLANT, K_LOOP, K_LIN, K_SPIN };
+enum Kind : uint8_t { K_REST, K_DEADZONE, K_DZSPIN, K_PLANT, K_LOOP, K_LIN, K_SPIN };
 
 struct Step {
     Kind kind;
@@ -56,7 +56,16 @@ const Step STEPS[] = {
     {K_SPIN, +1, 0.25f, 50},{K_REST, 0, 0.0f, 50}, {K_SPIN, -1, 0.25f, 50},{K_REST, 0, 0.0f, 50},
     {K_LIN, +1, 0.25f, 50}, {K_REST, 0, 0.0f, 50}, {K_LIN, -1, 0.25f, 50}, {K_REST, 0, 0.0f, 50},
 };
-const unsigned N_STEPS = sizeof(STEPS) / sizeof(STEPS[0]);
+// "lino-ident ramp": only the dead zones, on the floor -- straight out and back, then a
+// spin left and right; each step ends the tick every wheel's encoder moves. ~10-60 s.
+const Step RAMP_STEPS[] = {
+    {K_DEADZONE, +1, 0.0f, 600}, {K_REST, 0, 0.0f, 50},
+    {K_DEADZONE, -1, 0.0f, 600}, {K_REST, 0, 0.0f, 50},
+    {K_DZSPIN, +1, 0.0f, 800},   {K_REST, 0, 0.0f, 50},
+    {K_DZSPIN, -1, 0.0f, 800},   {K_REST, 0, 0.0f, 50},
+};
+const Step *plan = STEPS;
+unsigned N_STEPS = sizeof(STEPS) / sizeof(STEPS[0]);
 const unsigned LOOP_PRE = 15;            // ticks of PID-to-zero before a loop step
 
 bool active = false;
@@ -98,8 +107,11 @@ void report(const Step &s, unsigned motors, int pwm_max, Kinematics *kin)
     const bool fwd = s.dir > 0;
     switch (s.kind) {
     case K_DEADZONE:
+    case K_DZSPIN:
         for (unsigned i = 0; i < motors; i++)
-            syslog(LOG_INFO, "IDENT %s wheel=%u pwm=%d duty=%.3f", fwd ? "deadzone" : "deadzone_rev",
+            syslog(LOG_INFO, "IDENT %s wheel=%u pwm=%d duty=%.3f",
+                   s.kind == K_DZSPIN ? (fwd ? "deadzone_spin" : "deadzone_spin_rev")
+                                      : (fwd ? "deadzone" : "deadzone_rev"),
                    i + 1, dz_found[i], dz_found[i] < 0 ? -1.0 : (float)dz_found[i] / (float)pwm_max);
         break;
     case K_PLANT:
@@ -161,6 +173,9 @@ bool baseIdentTick(const float cur[4], int pwm[4], PID *const pids[4], Kinematic
             return false;
         }
         hostStopClear();          // a stop that ended the last one must not end this one
+        const bool ramp = hostIdentRamp();
+        plan = ramp ? RAMP_STEPS : STEPS;
+        N_STEPS = ramp ? sizeof(RAMP_STEPS) / sizeof(RAMP_STEPS[0]) : sizeof(STEPS) / sizeof(STEPS[0]);
         active = true;
         step = 0;
         beginStep();
@@ -169,27 +184,35 @@ bool baseIdentTick(const float cur[4], int pwm[4], PID *const pids[4], Kinematic
         syslog(LOG_INFO, "IDENT robot base=%d wheels=%u max_rpm=%d ratio=%.3f wheel_d=%.4f",
                (int)kin->base_platform_, motors, (int)envU16("max_rpm", MOTOR_MAX_RPM),
                envFloat("rpm_ratio", MAX_RPM_RATIO), envFloat("wheel_d", WHEEL_DIAMETER));
-        syslog(LOG_INFO, "IDENT start: base mode, %u steps (stop: lino-stop, or any /cmd_vel)", N_STEPS);
+        syslog(LOG_INFO, "IDENT start: base mode, %s, %u steps (stop: lino-stop, or any /cmd_vel)",
+               ramp ? "dead-zone ramps only" : "full", N_STEPS);
     }
     if (hostStopRequested()) { finish(pwm, "stop from the host"); return true; }
     if (operator_cmd)        { finish(pwm, "/cmd_vel took over"); return true; }
 
-    const Step &s = STEPS[step];
+    const Step &s = plan[step];
     for (int i = 0; i < 4; i++) pwm[i] = 0;
     switch (s.kind) {
     case K_REST:
         break;
-    case K_DEADZONE: {
+    case K_DEADZONE:
+    case K_DZSPIN: {
         // 1 % of full PWM more every 200 ms; a wheel has found its dead zone when its
-        // encoder moves in the second half of that interval (the first carries the step)
+        // encoder moves in the second half of that interval (the first carries the step).
+        // A spin drags the tracks sideways, so it may ramp further: to 70 % (straight 50 %).
         const int level = (int)(tick / 10) * (pwm_max / 100);
+        const int cap = s.kind == K_DZSPIN ? pwm_max * 7 / 10 : pwm_max / 2;
         bool all = true;
         for (unsigned i = 0; i < motors; i++) {
             if (dz_found[i] < 0 && (tick % 10) >= 5 && fabsf(cur[i]) > 2.0f) dz_found[i] = level;
             if (dz_found[i] < 0) all = false;
         }
-        if (all || level > pwm_max / 2) { tick = s.ticks - 1; break; }   // ends this tick
-        for (unsigned i = 0; i < motors; i++) pwm[i] = s.dir * level;
+        if (all || level > cap) { tick = s.ticks - 1; break; }   // ends this tick
+        for (unsigned i = 0; i < motors; i++) {
+            // a spin: the left wheels (1, 3) one way, the right (2, 4) the other, as K_SPIN
+            const int side = (s.kind == K_DZSPIN && (i % 2 == 0)) ? -1 : 1;
+            pwm[i] = s.dir * side * level;
+        }
         break;
     }
     case K_PLANT:

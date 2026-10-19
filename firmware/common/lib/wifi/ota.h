@@ -50,6 +50,10 @@ void hostStopClear(void);
 // micro-ROS and the LiDAR still up. Read once: true at most once per request. Answered
 // "lino-ident ok <banner>".
 bool hostIdentRequested(void);
+// "lino-ident ramp": the same, but only the dead-zone ramps (straight and spin, both
+// ways) -- the PWM where the wheels first move with the robot on the floor, no sprints.
+// The kind of the last request; read when hostIdentRequested() was true.
+bool hostIdentRamp(void);
 // "lino-tool" on the ping port: base restarts into the tool; the boot's tool window
 // enters it. Read once. Guarded like OTA: with an OTA password the board answers
 // "lino-tool nonce <n> <banner>" and only "lino-tool <md5(password:nonce)>" within 10 s
@@ -65,6 +69,7 @@ void feedWatchdogFromTool(void);
 #define hostStopRequested() false
 #define hostStopClear()
 #define hostIdentRequested() false
+#define hostIdentRamp() false
 #define hostToolRequested() false
 #define feedWatchdogFromTool()
 #endif

@@ -36,6 +36,7 @@ static bool ping_started = false;
 static void (*ping_format)(char *, size_t) = NULL;
 static volatile bool stop_requested = false;
 static volatile bool ident_requested = false;
+static volatile bool ident_ramp = false;
 
 bool hostStopRequested(void) { return stop_requested; }
 void hostStopClear(void) { stop_requested = false; }
@@ -132,6 +133,8 @@ bool hostIdentRequested(void)
     return true;
 }
 
+bool hostIdentRamp(void) { return ident_ramp; }
+
 void initPing(void (*format_banner)(char *buf, size_t n))
 {
     const uint16_t port = envU16("ping_port", 3233);
@@ -169,6 +172,7 @@ static void runPing(void)
         memmove(line, h, hl + 1);
         ping_format(line + hl, sizeof(line) - hl);
     } else if (ident) {
+        ident_ramp = strncmp(req + 10, " ramp", 5) == 0;
         ident_requested = true;
         strcpy(line, "lino-ident ok ");
         ping_format(line + 14, sizeof(line) - 14);
