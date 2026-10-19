@@ -703,6 +703,14 @@ def spin_match(P, cloud, guess, spread_deg: float = 10.0):
     return scan_match.icp(P, cloud, guess[0] + math.radians(k), (guess[1], guess[2]))
 
 
+def seen_only(P, blind) -> "np.ndarray":
+    """A look's points (in the frame it was taken in) outside its blind sectors: what the
+    LiDAR saw, without its strays behind the mast."""
+    if not blind or P is None or not len(P):
+        return P
+    return P[~in_blind(bearings(P), blind)]
+
+
 def look_around(r: "Robot", P0, blind, radius: float, scans: int, status: dict = None):
     """A blind LiDAR's whole circle: turn in place in LOOK_STEP_DEG steps until every bearing
     of the start frame has been seen, merge each look into the start frame (matched against
@@ -723,7 +731,12 @@ def look_around(r: "Robot", P0, blind, radius: float, scans: int, status: dict =
         return None
     status["back"] = False          # from here on, until a fresh /odom says it is
     seen = seen_bins(0.0, blind)
-    cloud, turned, ok = P0, 0.0, True
+    # Each look adds only the bearings it SEES. The blind sector is where the robot's own mast
+    # stands, and a real LD19 still answers there now and then: one stray return per look, at
+    # 0.7-0.9 m behind the mast. Merged after a turn, each stray lands on an open bearing of the
+    # start frame as an obstacle (MC200, 2026-10-19: "right 0.72 m" on open floor, test_acc
+    # refused four times). The blind bearings are what the turns are for: others see them.
+    cloud, turned, ok = seen_only(P0, blind), 0.0, True
     print(f"  looking around: {360 - int(seen.sum())} deg unseen, turning in "
           f"{LOOK_STEP_DEG:.0f} deg steps (THE ROBOT TURNS IN PLACE)", flush=True)
     try:
@@ -734,6 +747,8 @@ def look_around(r: "Robot", P0, blind, radius: float, scans: int, status: dict =
             r.spin(0.5)
             P = r.points(scans)
             now = r.wait_odom(1.0)
+            if P is not None:
+                P = seen_only(P, blind)
             if P is None or now is None:
                 print("  ❌ the scan or /odom stopped while looking around")
                 ok = False

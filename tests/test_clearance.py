@@ -484,8 +484,9 @@ class _LookRobot:
 
     topic, laser = "/scan", (0.0, 0.0, 0.0)
 
-    def __init__(self, world, blind=BLIND, odom_err_deg=0.0, intruder_after=None):
+    def __init__(self, world, blind=BLIND, odom_err_deg=0.0, intruder_after=None, stray=None):
         self.world, self.blind, self.yaw, self.turns = world, blind, 0.0, []
+        self.stray = stray      # (bearing deg, range m) in its own frame: a return behind the mast
         self.err, self.intruder_after = math.radians(odom_err_deg), intruder_after
         self.x = self.y = 0.0
         self.slides = []
@@ -522,7 +523,11 @@ class _LookRobot:
     def points(self, n=5, timeout=15.0):
         P = clearance.into_frame(self.world, (self.yaw, self.x, self.y))
         keep = ~clearance.in_blind(clearance.bearings(P), self.blind)
-        return P[keep & (np.hypot(P[:, 0], P[:, 1]) >= scan_match.BODY_M)]
+        P = P[keep & (np.hypot(P[:, 0], P[:, 1]) >= scan_match.BODY_M)]
+        if self.stray:
+            b, d = math.radians(self.stray[0]), self.stray[1]
+            P = np.vstack([P, [[d * math.cos(b), d * math.sin(b)]]])
+        return P
 
 
 L_ROOM = [((-1.6, -1.2), (2.2, -1.2)), ((2.2, -1.2), (2.2, 0.4)), ((2.2, 0.4), (1.4, 1.3)),
@@ -967,3 +972,28 @@ def test_an_acc_refusal_says_whether_the_room_check_moved_the_robot():
     assert "test_acc did not run" in robot_bringup.room_check_moved(looked)
     assert robot_bringup.room_check_moved("  quadrants ...\\nCLEARANCE_REFUSED\\n") == "nothing moved"
     assert robot_bringup.room_check_moved(None) == "nothing moved"
+
+
+def test_a_stray_return_behind_the_mast_is_no_obstacle_after_a_turn():
+    """A real LD19 answers inside its blind sector now and then (MC200, 2026-10-19: one return per
+    look at 0.71-0.92 m, bearing 255 deg, behind the mast). Merged after a turn, each landed on an
+    open bearing of the start frame -- "right 0.72 m" on open floor, and test_acc refused."""
+    r = _LookRobot(_room(L_ROOM), stray=(180.0, 0.71))
+    assert clearance.in_blind([180.0], BLIND)[0], "the test needs the stray inside the blind sector"
+    P = clearance.look_around(r, r.points(), BLIND, 0.20, 5)
+    assert P is not None and clearance.nearest(P) > 0.9, clearance.nearest(P)
+    # and a real box behind is still found, by the looks that see it
+    r = _LookRobot(np.vstack([_room(L_ROOM), wall(-0.45, -0.3, -0.45, 0.3)]), stray=(180.0, 0.71))
+    P = clearance.look_around(r, r.points(), BLIND, 0.20, 5)
+    assert abs(clearance.nearest(P) - 0.45) < 0.03
+
+
+def test_an_acc_refusal_names_the_room_checks_own_reason():
+    import robot_bringup
+    busy = "  CLEARANCE REFUSED: /cmd_vel already has 2 publisher(s) -- something else is driving the robot\n"
+    why = robot_bringup.room_check_why(busy, 1.06)
+    assert "cmd_vel already has 2 publisher" in why and "m clear" not in why
+    short = "  quadrants (+-45 deg): front 1.09 m; nearest 0.51 m (need 1.06 m)\nCLEARANCE_REFUSED\n"
+    assert robot_bringup.room_check_why(short, 1.06) == "less than 1.06 m clear -- move the robot"
+    stuck = "CLEARANCE_REFUSED: the move to open ground stopped -- move the robot by hand\n"
+    assert "the move to open ground stopped" in robot_bringup.room_check_why(stuck, 1.06)

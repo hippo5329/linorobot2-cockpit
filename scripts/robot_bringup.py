@@ -628,6 +628,17 @@ def cmd_lidar(robot: Robot, a) -> int:
     return 0 if ok else 1
 
 
+def room_check_why(out: str, need: float) -> str:
+    """Why the room check refused, for the refusal line: too little room, or the check's own
+    reason. Every refusal read "less than N m clear", also when the room was fine and /cmd_vel
+    had two publishers (a 1-Click's Nav2 still up; MC200, 2026-10-19)."""
+    for ln in (out or "").splitlines():
+        ln = ln.strip()
+        if ln.startswith(("CLEARANCE REFUSED:", "CLEARANCE_REFUSED:", "CLEARANCE FAIL:")):
+            return "the room check refused -- " + ln.split(":", 1)[1].strip()
+    return f"less than {need:.2f} m clear -- move the robot"
+
+
 def room_check_moved(out: str) -> str:
     """What the room check did before it refused, for the refusal line. A LiDAR with a blind
     sector looks around first -- forward, a turn in place, and back -- so "nothing moved" was
@@ -708,7 +719,7 @@ def cmd_acc(robot: Robot, a) -> int:
     for ln in (chk.stdout or "").splitlines():
         say("  " + ln)
     if chk.returncode != 0:
-        say(f"ACC REFUSED: less than {need:.2f} m clear -- move the robot ({room_check_moved(chk.stdout)})")
+        say(f"ACC REFUSED: {room_check_why(chk.stdout, need)} ({room_check_moved(chk.stdout)})")
         return 2
     found = {} if on_serial else ocp.wireless_board(robot.tgt, robot.path, robot.params)
     if not on_serial and not found.get("ip"):
