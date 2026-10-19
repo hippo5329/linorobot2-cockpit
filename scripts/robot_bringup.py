@@ -628,6 +628,17 @@ def cmd_lidar(robot: Robot, a) -> int:
     return 0 if ok else 1
 
 
+def room_check_moved(out: str) -> str:
+    """What the room check did before it refused, for the refusal line. A LiDAR with a blind
+    sector looks around first -- forward, a turn in place, and back -- so "nothing moved" was
+    false on every masked robot (MC200, 2026-10-19: 0.40 m out, 171 deg of turning, 0.40 m back,
+    then "ACC REFUSED ... (nothing moved)"). test_acc itself never runs after a refusal."""
+    if "(THE ROBOT MOVES)" in (out or "") or "(THE ROBOT TURNS IN PLACE)" in (out or ""):
+        return ("the room check moved and turned it to look past the LiDAR's blind sector, then "
+                "brought it back; test_acc did not run")
+    return "nothing moved"
+
+
 def cmd_speed(robot: Robot, a) -> int:
     held = _floor_held(robot)
     if held:
@@ -697,7 +708,7 @@ def cmd_acc(robot: Robot, a) -> int:
     for ln in (chk.stdout or "").splitlines():
         say("  " + ln)
     if chk.returncode != 0:
-        say(f"ACC REFUSED: less than {need:.2f} m clear -- move the robot (nothing moved)")
+        say(f"ACC REFUSED: less than {need:.2f} m clear -- move the robot ({room_check_moved(chk.stdout)})")
         return 2
     found = {} if on_serial else ocp.wireless_board(robot.tgt, robot.path, robot.params)
     if not on_serial and not found.get("ip"):

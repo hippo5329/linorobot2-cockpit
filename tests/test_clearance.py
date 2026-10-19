@@ -954,3 +954,16 @@ def test_a_large_robot_s_own_posts_are_not_obstacles(capsys):
     assert clearance.report(P, 1.0)
     old = scan_match.median_points([w.scan()] * 3)
     assert clearance.nearest(old) == pytest.approx(0.30, abs=1e-6)  # read as boxes before
+
+
+def test_an_acc_refusal_says_whether_the_room_check_moved_the_robot():
+    """A masked LiDAR's room check drives out, turns and comes back before it refuses; the
+    refusal said "nothing moved" anyway (MC200, 2026-10-19)."""
+    import robot_bringup
+    looked = ("  first 0.40 m toward +15 deg, onto ground already seen free (THE ROBOT MOVES)\\n"
+              "  looking around: 147 deg unseen, turning in 30 deg steps (THE ROBOT TURNS IN PLACE)\\n"
+              "  quadrants (+-45 deg): front 1.09 m; nearest 0.51 m (need 1.06 m)\\nCLEARANCE_REFUSED\\n")
+    assert "nothing moved" not in robot_bringup.room_check_moved(looked)
+    assert "test_acc did not run" in robot_bringup.room_check_moved(looked)
+    assert robot_bringup.room_check_moved("  quadrants ...\\nCLEARANCE_REFUSED\\n") == "nothing moved"
+    assert robot_bringup.room_check_moved(None) == "nothing moved"
