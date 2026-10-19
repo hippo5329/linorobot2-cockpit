@@ -151,7 +151,7 @@ def test_the_route_expects_a_scan_from_the_robots_scan_source():
     src = open(os.path.join(REPO_ROOT, "web", "backend", "routes_exec.py")).read()
     body = src[src.index("def api_bringup_health"):]
     body = body[:body.index("\n\n\n")]
-    assert "depth_camera.scan_source(" in body and "has_scan=has_scan" in body
+    assert "expected_scan(get_controller(params))" in body and "has_scan=has_scan" in body
 
 
 def test_bringup_start_stops_a_stack_left_running():
@@ -161,3 +161,56 @@ def test_bringup_start_stops_a_stack_left_running():
     assert 'fetch("/api/stack")' in block and '"/api/stack/stop"' in block
     assert block.index("boardMatchesOrWarn") < block.index('"/api/stack/stop"'), \
         "a refused Bringup must not stop the running robot"
+
+
+def _expected_scan(controller):
+    sys.path[:0] = [os.path.join(REPO_ROOT, "web", "backend"), os.path.join(REPO_ROOT, "scripts")]
+    import runners
+    return runners.expected_scan(controller)
+
+
+def test_a_bare_esp32_in_sim_mode_has_no_scan_to_wait_for(tmp_path):
+    """A bare ESP32's simulated LD19 leaves by a UART bridge it does not have, and its 921600
+    link cannot carry raw_scan: the pipeline runs it "topics and drive only". The health card
+    demanded /scan and called it unhealthy (web UI gate 2026-10-19: "/scan not advertised after 248 s")."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import gen_bare_config
+    bc = gen_bare_config.bare_config("esp32")["base_controller"]
+    bc.setdefault("lidar", {})["serial_port"] = str(tmp_path / "absent")
+    has, why = _expected_scan(bc)
+    assert not has and "Sim mode" in why
+    # the same board with its bridge plugged in has a scan, and must show it
+    (tmp_path / "absent").write_text("")
+    assert _expected_scan(bc) == (True, "")
+
+
+def test_real_mode_and_an_rp2_still_need_their_scan(tmp_path):
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    import gen_bare_config
+    # a bare Pico 2 carries its simulated scan over micro-ROS
+    assert _expected_scan(gen_bare_config.bare_config("pico2")["base_controller"])[0]
+    # Real mode: a fitted LiDAR whose port is absent is unplugged -- a failure to report,
+    # however the same board behaves in Sim mode with no bridge
+    import yaml
+    bc = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference",
+                                          "nulllab_esp32_pro_config.yaml")))["base_controller"]
+    bc["lidar"]["serial_port"] = str(tmp_path / "absent")
+    bc.setdefault("sensors", {})["use_sim_ld19"] = False
+    assert _expected_scan(bc) == (True, "")
+    bc["sensors"]["use_sim_ld19"] = True
+    assert not _expected_scan(bc)[0]
+
+
+def test_the_health_row_says_why_no_scan_is_expected(monkeypatch):
+    h = _health_with(monkeypatch, {"/odom": 50.0, "/odom/unfiltered": 50.0},
+                     present=["/odom", "/odom/unfiltered"], has_scan=False,
+                     scan_why="no simulated scan in Sim mode: no bridge")
+    assert h["ready"] and h["topics"]["scan"]["what"].endswith("no bridge")
+
+
+def test_the_audit_skips_scan_where_health_expects_none():
+    """The Rate & Echo audit applies the health card's rule, or a healthy bare ESP32 shows a red /scan."""
+    src = open(os.path.join(REPO_ROOT, "web", "backend", "routes_hardware.py")).read()
+    body = src[src.index("def api_verify_topics"):]
+    body = body[:body.index("\n\n\n")]
+    assert "expected_scan(get_controller(" in body

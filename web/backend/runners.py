@@ -648,8 +648,31 @@ LIST_TIMEOUT_S = 20.0
 HEALTH_SETTLE_S = 3.0   # discovery time before an unadvertised topic stops being waited for
 
 
+def expected_scan(controller: Dict[str, Any]) -> tuple:
+    """(has_scan, why): whether bringup health must see /scan on this robot, and, when not, why.
+
+    The rule bringup and the 1-Click pipeline apply (depth_camera): no LiDAR and no depth
+    camera, no /scan; and a SIMULATED serial LD19 whose port is absent reaches nothing -- a
+    bare ESP32 has no LIDAR_RXD bridge and its 921600 link cannot carry raw_scan, so in Sim
+    mode it has no /scan, and the pipeline says "topics and drive only". The health card
+    demanded one anyway and called every bare ESP32 bringup unhealthy (web UI gate, 2026-10-19:
+    "/scan not advertised after 248 s"). Real mode keeps the demand: use_sim_ld19 is off there,
+    so an unplugged LiDAR stays a failure. Unreadable means expected, as before."""
+    try:
+        import depth_camera
+        if depth_camera.scan_source(controller) is None:
+            return False, "no LiDAR or depth camera on this robot: not expected"
+        port = str((controller.get("lidar") or {}).get("serial_port") or "/dev/ttyUSB1")
+        why = depth_camera.sim_scan_unreachable(controller, port)
+        if why:
+            return False, f"no simulated scan in Sim mode: {why}"
+    except Exception:
+        pass
+    return True, ""
+
+
 def check_bringup_health(timeout: float = 4.0, has_imu: bool = True,
-                         has_scan: bool = True) -> Dict[str, Any]:
+                         has_scan: bool = True, scan_why: str = "") -> Dict[str, Any]:
     """Queries the active ROS 2 graph on this machine.
 
     Rates come from a direct rclpy subscription with the sensor-data QoS, NOT
@@ -685,7 +708,7 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True,
             # imu: NONE -- the board publishes no /imu/data, and that is correct; the same
             # for /scan on a robot with no LiDAR and no depth camera.
             why = ("no IMU on this robot (imu: NONE): not expected" if key == "imu"
-                   else "no LiDAR or depth camera on this robot: not expected")
+                   else scan_why or "no LiDAR or depth camera on this robot: not expected")
             res["topics"][key] = {
                 "topic": topic, "what": why,
                 "min_hz": 0.0, "advertised": False, "hz": None, "ok": True, "fitted": False,

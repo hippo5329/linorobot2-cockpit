@@ -20,6 +20,7 @@ from core import (
     bringup_runner,
     check_agent_port_status,
     check_bringup_health,
+    expected_scan,
     gamepad_runner,
     get_controller,
     invalidate_liveness,
@@ -260,14 +261,11 @@ def api_bringup_health(timeout: float = 4.0):
     except Exception:
         has_imu = True
     # A robot with a LiDAR (or a depth camera standing in) must publish /scan to be
-    # healthy -- the rule bringup and the 1-Click pipeline use (depth_camera.scan_source).
+    # healthy -- the rule bringup and the 1-Click pipeline use (runners.expected_scan).
     # Unreadable means expected: a missing /scan is exactly what this must not pass.
-    try:
-        import depth_camera
-        has_scan = depth_camera.scan_source(get_controller(params)) is not None
-    except Exception:
-        has_scan = True
-    return check_bringup_health(timeout=timeout, has_imu=has_imu, has_scan=has_scan)
+    has_scan, scan_why = expected_scan(get_controller(params))
+    return check_bringup_health(timeout=timeout, has_imu=has_imu, has_scan=has_scan,
+                                scan_why=scan_why)
 
 
 # ==============================================================================

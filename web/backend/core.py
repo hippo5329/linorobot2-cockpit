@@ -196,6 +196,7 @@ from runners import (
     ros_setup_shell,
     check_agent_port_status,
     check_bringup_health,
+    expected_scan,
     release_agent_port,
 )
 from hardware_service import (
@@ -1535,6 +1536,7 @@ __all__ = [
     "build_sensor_install_cmd",
     "check_agent_port_status",
     "check_bringup_health",
+    "expected_scan",
     "check_container_status",
     "cockpit_paths",
     "disable_autostart",

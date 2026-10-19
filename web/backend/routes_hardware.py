@@ -27,6 +27,7 @@ from core import (
     build_base_install_cmd,
     build_ros2_install_cmd,
     build_sensor_install_cmd,
+    expected_scan,
     fetch_prebuilt,
     get_active_params_path,
     get_controller,
@@ -926,6 +927,10 @@ VERIFY_DEADLINE_S = VERIFY_TIMEOUT_S * (1 + VERIFY_RETRIES) + 15.0
 @app.get("/api/topics/verify")
 def api_verify_topics(no_scan: bool = False, distro: str = "lyrical"):
     verify_script = os.path.join(REPO_ROOT, "scripts", "verify_topics.py")
+    # /scan only where bringup health expects one (runners.expected_scan): a bare ESP32 in Sim
+    # mode has no scan source, and the audit drew a red /scan beside a healthy bringup (2026-10-19).
+    if not no_scan:
+        no_scan = not expected_scan(get_controller(load_params() or {}))[0]
     flag = " --no-scan" if no_scan else ""
     cmd = get_ros_exec_cmd(f"python3 {verify_script} --json --timeout {VERIFY_TIMEOUT_S:g} "
                            f"--retries {VERIFY_RETRIES}{flag}", distro=distro)
