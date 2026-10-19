@@ -185,8 +185,11 @@ RUN apt-get update \
 # them Start teleop printed "Package 'joy_linux' not found" and exited 0.
 # lsof is not optional: the serial-release check reads it to confirm the tty
 # was freed before esptool opens it.
+# python3-scipy for the on-robot analysis tools (map clusters, fits): +62 MB on
+# jazzy, +69 MB on lyrical (measured 2026-10-19; numpy is already in), ~1.5 % of
+# the image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3-pip python3-yaml python3-serial \
+        python3-pip python3-yaml python3-serial python3-scipy \
         ros-${ROS_DISTRO}-rosbridge-server \
         ros-${ROS_DISTRO}-rosapi \
         ros-${ROS_DISTRO}-robot-localization \
