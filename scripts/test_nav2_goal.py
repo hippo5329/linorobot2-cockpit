@@ -1351,6 +1351,22 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
         start = getattr(node, "goal_dist_start", float("nan"))
         return not (start == start) or start >= min_start_gap
 
+    def already_there() -> bool:
+        """Did the robot start inside the tolerance of a goal its caller let it start on?
+
+        Only with --min-start-gap 0, which the 1-Click's drive home passes: home is the
+        goal wherever exploration stopped. A room explored without the robot leaving
+        home (every frontier beyond the room's outline) began that leg 0.0x m from
+        (0, 0); there is nothing to drive, and requiring motion failed it as THE BASE
+        NEVER MOVED after the whole timeout (MC200, 2026-10-19). The arrival itself is
+        still judged by reached_goal().
+        """
+        start = getattr(node, "goal_dist_start", float("nan"))
+        return min_start_gap <= 0 and start == start and start <= goal_tolerance
+
+    def motion_owed() -> bool:
+        return require_motion and not already_there()
+
     def reached_goal() -> bool:
         """Did it actually get there?
 
@@ -1474,7 +1490,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 if node.goal_rejected:
                     return False
                 arrived = (start_gap_is_meaningful() and reached_goal() and wall_path_ok()
-                           and (moved() or not require_motion)
+                           and (moved() or not motion_owed())
                            and (not heading_leg or heading_ok()))
                 # The leg home waits for Nav2's own goal checker: cancelling the
                 # moment the heading came inside this looser bound stopped a tracked
@@ -1796,7 +1812,10 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                   f"{node.odom_peak_ang:.3f} rad/s and moved "
                   f"{node.odom_max_dist:.3f} m / {node.odom_max_yaw:.3f} rad; "
                   f"goal {_status_name(node.goal_status)}" + _why(node) + _gap(node))
-        if not require_motion or moved():
+        if not motion_owed() or moved():
+            if require_motion and not moved():
+                detail = (f"started {node.goal_dist_start:.3f} m from the goal, inside the "
+                          f"{goal_tolerance:.2f} m tolerance: nothing to drive; " + detail)
             print(f"✅ {headline}: {detail}")
             return True
         print(f"❌ {headline}, BUT THE BASE NEVER MOVED: {detail}")
@@ -1892,7 +1911,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 return verdict("NAV2 VERIFICATION SUCCESS: path planned around the obstacle wall")
 
             if require_goal and start_gap_is_meaningful() and reached_goal() \
-                    and wall_path_ok() and (moved() or not require_motion):
+                    and wall_path_ok() and (moved() or not motion_owed()):
                 return verdict(f"NAV2 GOAL REACHED (within {goal_tolerance:.2f} m){_room_note()}")
 
             if node.goal_rejected:
@@ -1907,7 +1926,7 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             # contract -- the caller asked whether Nav2 finished, not whether
             # the robot is on the spot.
             if node.goal_completed and not require_goal \
-                    and (moved() or not require_motion):
+                    and (moved() or not motion_owed()):
                 return verdict("NAV2 GOAL COMPLETED SUCCESSFULLY")
 
         # The commanded peak belongs here too. Without it a timeout line says the

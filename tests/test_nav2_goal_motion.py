@@ -980,3 +980,41 @@ def test_where_it_ended_comes_before_the_error_message():
     nxt = src.splitlines()[src.splitlines().index(line) + 1]
     assert nxt.index("_where(node)") < nxt.index("_why(node)"), \
         "the error message is back in front of the frame breakdown"
+
+
+class _StartsAt(StubNode):
+    """A leg that begins `start` m from its goal (begin_leg keeps it)."""
+    def __init__(self, start, **kw):
+        super().__init__(**kw)
+        self._start = self.goal_dist_start = start
+
+    def begin_leg(self, goal_x, goal_y):
+        super().begin_leg(goal_x, goal_y)
+        self.goal_dist_start = self._start
+
+
+def test_a_drive_home_that_starts_home_owes_no_motion(monkeypatch, capsys):
+    """The 1-Click's drive home after a room explored without leaving it: the robot sits
+    0.05 m from (0, 0), Nav2 has nothing to do, and the leg failed as THE BASE NEVER
+    MOVED after its whole timeout (MC200, 2026-10-19). --min-start-gap 0 is the
+    caller's leave to start on the goal; inside the tolerance there is nothing to drive."""
+    node = _StartsAt(0.05, odom_lin=0.0, odom_ang=0.0, dist=0.0, cmds=0, goal_dist=0.05,
+                     completed=True)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, min_start_gap=0.0,
+                goal_x=0.0, goal_y=0.0) is True
+    out = capsys.readouterr().out
+    assert "nothing to drive" in out and "NEVER MOVED" not in out, out
+
+
+def test_starting_on_the_goal_is_still_vacuous_without_the_callers_leave(monkeypatch, capsys):
+    node = _StartsAt(0.05, odom_lin=0.0, odom_ang=0.0, dist=0.0, cmds=0, goal_dist=0.05,
+                     completed=True)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True) is False
+
+
+def test_a_drive_home_from_outside_the_tolerance_still_has_to_move(monkeypatch, capsys):
+    node = _StartsAt(0.60, odom_lin=0.0, odom_ang=0.0, dist=0.0, cmds=40, goal_dist=0.05,
+                     completed=True)
+    assert _run(monkeypatch, node, timeout=0.3, require_goal=True, min_start_gap=0.0,
+                goal_x=0.0, goal_y=0.0) is False
+    assert "NEVER MOVED" in capsys.readouterr().out
