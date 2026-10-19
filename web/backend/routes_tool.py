@@ -94,7 +94,10 @@ def _refusal(r: dict):
     return None
 
 
-_DEVICE = re.compile(r"^/dev/[A-Za-z0-9_./-]{1,64}$")
+# ':' for the stable names the Hardware Tests page offers first (/dev/serial/by-path/...-usb-0:2:1.0-port0),
+# and room for a by-id name: this port is opened here, never spliced into a docker --device or compose
+# host:container string (actions._DEVICE_RE refuses ':' for those).
+_DEVICE = re.compile(r"^/dev/[A-Za-z0-9_./:-]{1,160}$")
 
 
 def _serial_port(r: dict, requested: str) -> str:

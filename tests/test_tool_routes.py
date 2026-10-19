@@ -140,3 +140,17 @@ def test_a_wifi_robot_opens_over_the_air_when_the_page_names_an_absent_port(robo
     res = c.post("/api/tool/open", json={"port": "/dev/ttyUSB-not-plugged-in"})
     assert res.status_code == 200, res.text
     assert len(links) == 1                     # the Wi-Fi opener ran
+
+
+def test_the_tool_opens_a_by_path_port(monkeypatch):
+    # the Hardware Tests page selects the board by its by-path name, whose ':'s the port check
+    # refused: "No serial port" on the motors step of a Pi 5's ESP32-S3 (2026-10-19)
+    r = {"tgt": {}, "pio_env": "esp32s3"}
+    by_path = "/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0"
+    by_id = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+    monkeypatch.setattr(routes_tool.os.path, "exists", lambda p: True)
+    assert routes_tool._serial_port(r, by_path) == by_path
+    assert routes_tool._serial_port(r, by_id) == by_id
+    for bad in ("/dev/serial/../../etc/passwd", "/dev/ttyUSB0; reboot", "/etc/passwd"):
+        with pytest.raises(routes_tool.Unavailable):
+            routes_tool._serial_port(r, bad)
