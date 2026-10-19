@@ -180,7 +180,7 @@ def test_revert_on_every_design():
 def test_the_revert_endpoint(monkeypatch):
     real = _real_from_design()
     rc, saved = _backend(monkeypatch, real)
-    monkeypatch.setattr(rc, "_named_robot_or_400", lambda: ("/tmp/myrobot_config.yaml", real, "myrobot"))
+    monkeypatch.setattr(rc, "_named_robot_or_400", lambda *a: ("/tmp/myrobot_config.yaml", real, "myrobot"))
     monkeypatch.setattr(rc, "get_robots_list", lambda *a, **k: [])
     body = asyncio.run(rc.revert_bare(_Req({})))
     assert body["status"] == "ok" and "bare" in body["message"]
@@ -196,3 +196,25 @@ def test_the_page_offers_the_revert_only_on_a_real_robot():
     assert '"/api/robot/revert_bare"' in presets and "revertToBareModule" in presets
     assert 'for (const id of ["btn-revert-bare", "btn-revert-bare-pins"])' in core
     assert "if (b) b.hidden = !real;" in core
+
+
+def test_a_rebuild_meant_for_another_robot_is_refused(monkeypatch):
+    """apply_bare / apply_reference / revert_bare rebuild WHICHEVER robot is active. The page's
+    two robot switches raced (2026-10-19): the board's default robot was being made a bare
+    module while a Wi-Fi robot was picked, and the bare module landed on the Wi-Fi robot. The
+    request names its robot; once another is active, nothing is applied."""
+    from fastapi import HTTPException
+    p = _bare("uileg_udp4")
+    rc, saved = _backend(monkeypatch, p)
+    monkeypatch.setattr(rc, "get_active_params_path", lambda: "/tmp/uileg_udp4_config.yaml")
+    monkeypatch.setattr(rc, "get_robots_list", lambda *a, **k: [])
+    for call, body in ((rc.apply_bare, {"mcu": "esp32", "robot": "lino_esp32"}),
+                       (rc.apply_reference, {"design": "gendrv", "robot": "lino_esp32"}),
+                       (rc.revert_bare, {"robot": "lino_esp32"})):
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(call(_Req(body)))
+        assert e.value.status_code == 409 and "uileg_udp4" in e.value.detail
+    assert "p" not in saved, "nothing may be saved for a robot that is no longer active"
+    # the robot it was meant for, or a request that names none (an older page), still applies
+    assert asyncio.run(rc.apply_bare(_Req({"mcu": "esp32", "robot": "uileg_udp4"})))["status"] == "ok"
+    assert asyncio.run(rc.apply_bare(_Req({"mcu": "esp32"})))["status"] == "ok"

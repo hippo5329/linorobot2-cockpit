@@ -56,15 +56,20 @@ function updateReferenceDesigns(mcuHint) {
   select.value = active.reference && designs.some((d) => d.name === active.reference) ? active.reference : BARE_CHOICE;
 }
 
-// Apply a design (or the bare module of the board) to the user's NAMED robot.
-async function applyReferenceDesign(designId) {
+// Apply a design (or the bare module of the board) to the user's NAMED robot: `forRobot`, the
+// robot this was meant for (default: the active one now). The request names it and the server
+// refuses it once another robot is active -- the board's default robot was made a bare module
+// while a robot switch landed, and the bare module rebuilt the robot just picked (2026-10-19).
+async function applyReferenceDesign(designId, forRobot) {
   const bare = designId === BARE_CHOICE;
+  const target = forRobot || state.robot_name;
   if (!robotIsNamed()) {           // a design or a generated robot takes nothing applied
     askForRobotName();
     updateReferenceDesigns(document.getElementById("cfg-mcu")?.value);
     return;
   }
   if (typeof flushAutosave === "function") await flushAutosave();
+  if (state.robot_name !== target) return;   // another robot was picked meanwhile
   // The board that is really on the bus; with none, the robot's own controller. (/api/status
   // still names a detected_mcu when nothing is detected: the configured one, as a fallback.)
   const onBus = state.status?.mcu_detected ? state.status.detected_mcu : null;
@@ -75,7 +80,7 @@ async function applyReferenceDesign(designId) {
     res = await fetch(bare ? "/api/robot/apply_bare" : "/api/robot/apply_reference", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(bare ? { mcu } : { design: designId }),
+      body: JSON.stringify(bare ? { mcu, robot: target } : { design: designId, robot: target }),
     }).then((r) => r.json());
   } catch (e) { res = { detail: String(e) }; }
   robotEpoch++;
@@ -123,7 +128,11 @@ async function revertToBareModule() {
   let res = null;
   robotEpoch++;
   try {
-    res = await fetch("/api/robot/revert_bare", { method: "POST" }).then((r) => r.json());
+    res = await fetch("/api/robot/revert_bare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ robot: state.robot_name }),
+    }).then((r) => r.json());
   } catch (e) { res = { detail: String(e) }; }
   robotEpoch++;
   if (!res || res.status !== "ok") {

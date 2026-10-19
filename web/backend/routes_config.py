@@ -629,14 +629,23 @@ async def select_robot(request: Request):
     }
 
 
-def _named_robot_or_400():
+def _named_robot_or_400(expected: str = ""):
     """(path, params, name) of the active robot when it is the user's own; 400 otherwise.
 
     A design is a template and a generated robot is rewritten on every run, so neither is
-    a robot to apply anything to: name your robot first (user, 2026-10-06)."""
+    a robot to apply anything to: name your robot first (user, 2026-10-06).
+
+    `expected`: the robot the page meant (the request's `robot`), 409 when another is active
+    now. These calls rebuild WHICHEVER robot is active, and a page's two robot switches race:
+    the board's default robot (lino_<mcu>) was being made a bare module while the user picked
+    a Wi-Fi robot, and the bare module landed on the Wi-Fi robot -- serial, domain 0
+    (web UI gate, 2026-10-19)."""
     path = get_active_params_path()
     params = load_params(path)
     name = (params.get("robot") or {}).get("name") or ""
+    if expected and expected != name:
+        raise HTTPException(status_code=409, detail=(
+            f"the active robot is now '{name}', not '{expected}': nothing applied"))
     # A design is a template and a generated robot is rewritten on every run. (Named robots of
     # either kind -- real or bare -- take a design or a board.)
     kind = one_click_pipeline.robot_kind(name, (params.get("robot") or {}).get("reference"),
@@ -664,7 +673,7 @@ async def apply_reference(request: Request):
     design = text_field(data, "design")
     if design not in one_click_pipeline.reference_design_names():
         raise HTTPException(status_code=400, detail=f"no reference design '{design}'")
-    path, old, name = _named_robot_or_400()
+    path, old, name = _named_robot_or_400(text_field(data, "robot"))
     with open(os.path.join(REPO_ROOT, "config", "reference", f"{design}_config.yaml")) as fh:
         design_params = yaml.safe_load(fh) or {}
     # The controller from the design; the chassis stays the user's unless it is still the
@@ -686,7 +695,7 @@ async def apply_bare(request: Request):
     mcu = text_field(data, "mcu")
     if mcu not in gen_bare_config.KNOWN:
         raise HTTPException(status_code=400, detail=f"no bare module for '{mcu}'")
-    path, old, name = _named_robot_or_400()
+    path, old, name = _named_robot_or_400(text_field(data, "robot"))
     params = robot_templates.apply_bare(name, mcu)
     save_params(params, path=path)
     return _robot_reply(path, params, f"'{name}' is now a bare {mcu} module (every device simulated)")
@@ -696,7 +705,7 @@ async def apply_bare(request: Request):
 async def revert_bare(request: Request):
     """A real robot back to a bare module of its own board: every pin unassigned, every device
     simulated, no design. Its name, chassis and Nav2 tuning stay (robot_templates.revert_to_bare)."""
-    path, old, name = _named_robot_or_400()
+    path, old, name = _named_robot_or_400(text_field(await json_body(request), "robot"))
     try:
         params = robot_templates.revert_to_bare(old)
     except ValueError as e:

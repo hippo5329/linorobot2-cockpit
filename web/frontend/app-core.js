@@ -1619,7 +1619,7 @@ async function useDefaultRobotFor(sil) {
   await selectRobot(name, false);
   if (!existed && state.robot_name === name && typeof applyReferenceDesign === "function") {
     state.status = Object.assign({}, state.status || {}, { detected_mcu: sil, mcu_detected: true });
-    await applyReferenceDesign(BARE_CHOICE);
+    await applyReferenceDesign(BARE_CHOICE, name);
   }
 }
 
@@ -1668,8 +1668,9 @@ async function noBoardSwitch(s) {
         if (sil && sil !== own) {
           if (/^lino_[a-z0-9]+$/.test(state.robot_name)) await useDefaultRobotFor(sil);
           else if (typeof applyReferenceDesign === "function") {
+            const was = state.robot_name;
             state.status = Object.assign({}, state.status || {}, { detected_mcu: s.detected_mcu, mcu_detected: true });
-            await applyReferenceDesign(BARE_CHOICE);
+            await applyReferenceDesign(BARE_CHOICE, was);
           }
         }
       }

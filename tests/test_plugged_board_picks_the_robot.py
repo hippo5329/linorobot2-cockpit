@@ -164,7 +164,7 @@ def with_config(poll, name, mcu):
 
 
 def test_a_robot_switch_in_flight_does_not_rebuild_the_robot(tmp_path):
-    """2026-10-18, gate r147: the page switched to a udp4 robot (esp32_wifi, domain 43) while the
+    """2026-10-18, web UI gate: the page switched to a udp4 robot (esp32_wifi, domain 43) while the
     previous robot's controller ("sim") was still the page's, a status poll landed in between, and
     the robot was rebuilt as a bare esp32 module -- serial, domain 0. The poll carries the server's
     active robot's config; its controller is the one to judge."""
