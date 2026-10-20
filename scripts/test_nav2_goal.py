@@ -170,6 +170,31 @@ def room_route_note(grid, start, goal, track):
     return True, (f"yes, round the room's own obstacle (the robot's disc on the straight "
                   f"line meets it for {blocked:.2f} m on /map; {driven})")
 
+
+# A GOAL THE ROBOT CANNOT STAND ON. NavFn's `tolerance` (0.5 m by default) plans to the
+# nearest point it can reach when the goal itself cannot be, and the controller then
+# reports SUCCEEDED for that point. On the MC200 (2026-10-20) the goal (1.2, 0) sat on a
+# wall 1.2 m ahead of home: Nav2 said SUCCEEDED twice with the robot 0.336 m short, and
+# this tester called it a phantom and asked again -- the robot was where the plan ended.
+def goal_obstacle_note(grid, gx: float, gy: float, radius: float = ROOM_ROBOT_RADIUS):
+    """Why /map says nothing can stand on (gx, gy), or None (no map, or open floor)."""
+    if grid is None:
+        return None
+    if grid_occupied(grid, gx, gy):
+        return "its own cell is occupied on /map"
+    if grid_near(grid, gx, gy, radius, MAP_OCCUPIED):
+        return f"an occupied cell of /map lies within the robot's {radius:.2f} m radius of it"
+    return None
+
+
+def plan_end_gap(path, gx: float, gy: float):
+    """(metres from the plan's last pose to the goal, that pose's (x, y)), or None."""
+    poses = getattr(path, "poses", None) if path is not None else None
+    if not poses:
+        return None
+    p = poses[-1].pose.position
+    return math.hypot(gx - p.x, gy - p.y), (p.x, p.y)
+
 # An abort inside this window, having moved less than this far and planned
 # nothing, is read as the stack still coming up and is retried once per run.
 STARTUP_ABORT_SEC = 5.0
@@ -1539,6 +1564,14 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             # just the spot, or the next run starts in a turned frame.
             heading_leg = (home_yaw_tolerance is not None and round_trips >= 1
                            and (gx, gy) == (home_x, home_y))
+            # Refused before anything moves: a goal /map already shows inside an obstacle.
+            inside = goal_obstacle_note(getattr(node, "room_grid", None), gx, gy) if NO_WALL else None
+            if inside:
+                print(f"❌ NAV2 GOAL INSIDE AN OBSTACLE on leg {i}/{n} ({gx:.2f}, {gy:.2f}): "
+                      f"{inside}. The robot cannot stand there, so the planner would end its "
+                      f"path at the nearest point it can reach and Nav2 would report SUCCEEDED "
+                      f"short of the goal. Nothing was sent: choose a goal on open floor.")
+                return False
             node.begin_leg(gx, gy)
             if not node.send_goal():
                 return False
@@ -1624,6 +1657,20 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 arrived = await_arrival(t0)
                 took = time.time() - t0
 
+            # Nav2 said it arrived where its plan ended, and the plan ended short of the
+            # goal: not a phantom, and asking again only plans to the same point.
+            short = plan_end_gap(getattr(node, "path_received", None), gx, gy)
+            if (not arrived and node.goal_status == 4 and not reached_goal()
+                    and short is not None and short[0] > goal_tolerance):
+                inside = goal_obstacle_note(getattr(node, "room_grid", None), gx, gy)
+                print(f"❌ NAV2 GOAL UNREACHABLE AS GIVEN on leg {i}/{n} ({gx:.2f}, {gy:.2f}): "
+                      f"the planner's path ended {short[0]:.3f} m short of it, at "
+                      f"({short[1][0]:+.2f}, {short[1][1]:+.2f}){' -- ' + inside if inside else ''}. "
+                      f"A planner with a goal tolerance plans to the nearest point it can "
+                      f"reach, and the controller reports SUCCEEDED for that point; the robot "
+                      f"stopped {node.goal_dist_min:.3f} m from the goal. Choose a goal on "
+                      f"open floor.")
+                return False
             # Nav2 said it arrived and the robot is not there. Ask once more.
             if (not arrived and node.goal_status == 4 and not reached_goal()
                     and start_gap_is_meaningful() and not retried_phantom):

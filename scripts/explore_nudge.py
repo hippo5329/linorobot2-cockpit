@@ -30,6 +30,8 @@ from geometry_msgs.msg import Twist, TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
+BACK_SLACK = 0.01   # m: "back" within this of the distance "out" drove is home
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -93,32 +95,42 @@ def main():
         print("❌ NUDGE: no /odom")
         return 1
 
-    def leg(vx, wz, done):
+    driven = {}
+
+    def leg(name, vx, wz, done):
         x0, y0, last = st["x"], st["y"], st["yaw"]
         turned, t0 = 0.0, time.time()
+
+        def gone():
+            driven[name] = math.hypot(st["x"] - x0, st["y"] - y0)
+            return driven[name]
+
         while time.time() - t0 < args.leg_timeout:
             rclpy.spin_once(node, timeout_sec=0.05)
             turned += abs(math.remainder(st["yaw"] - last, 2 * math.pi))
             last = st["yaw"]
-            if done(math.hypot(st["x"] - x0, st["y"] - y0), turned):
+            if done(gone(), turned):
                 send(0.0, 0.0)
                 return True
             if args.guard is not None and vx and clear_ahead(1.0 if vx > 0 else -1.0) <= args.guard:
                 send(0.0, 0.0)
-                print(f"  NUDGE: {math.hypot(st['x'] - x0, st['y'] - y0):.2f} m and the path is "
+                print(f"  NUDGE: {gone():.2f} m and the path is "
                       f"closing ({args.guard:.2f} m guard): this leg ends here")
                 return True
             send(vx, wz)
         send(0.0, 0.0)
         return False
 
+    # "back" undoes what "out" DROVE, not what it was asked for: with "out" cut short by
+    # the guard (a wall 1.14 m ahead, 0.00 m driven), reversing the full distance left an
+    # MC200 0.82 m behind home, and Nav2's first goal began vacuous (2026-10-20).
     ok = True
     for name, vx, wz, done in (
             ("out", args.speed, 0.0, lambda d, a: d >= args.distance),
             ("turn", 0.0, args.yaw_rate, lambda d, a: a >= 2 * math.pi),
-            ("back", -args.speed, 0.0, lambda d, a: d >= args.distance),
+            ("back", -args.speed, 0.0, lambda d, a: d >= driven.get("out", 0.0) - BACK_SLACK),
             ("turn", 0.0, args.yaw_rate, lambda d, a: a >= 2 * math.pi)):
-        if not leg(vx, wz, done):
+        if not leg(name, vx, wz, done):
             print(f"  ⚠️ NUDGE: the '{name}' leg timed out after {args.leg_timeout:.0f} s")
             ok = False
             break

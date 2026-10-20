@@ -1018,3 +1018,74 @@ def test_a_drive_home_from_outside_the_tolerance_still_has_to_move(monkeypatch, 
     assert _run(monkeypatch, node, timeout=0.3, require_goal=True, min_start_gap=0.0,
                 goal_x=0.0, goal_y=0.0) is False
     assert "NEVER MOVED" in capsys.readouterr().out
+
+
+def _path_ending_at(x, y):
+    from types import SimpleNamespace as NS
+    return NS(poses=[NS(pose=NS(position=NS(x=0.0, y=0.0))), NS(pose=NS(position=NS(x=x, y=y)))])
+
+
+def _grid_with_wall_at(x0, res=0.05, w=80, h=80, origin=(-2.0, -2.0)):
+    """A free grid with an occupied column at x >= x0 (a wall across the room)."""
+    data = [0] * (w * h)
+    for j in range(h):
+        for i in range(w):
+            if origin[0] + (i + 0.5) * res >= x0:
+                data[j * w + i] = 100
+    return (res, origin[0], origin[1], w, h, data)
+
+
+def test_goal_obstacle_note_names_a_goal_on_a_wall_and_passes_open_floor():
+    grid = _grid_with_wall_at(1.2)
+    assert "occupied" in MOD.goal_obstacle_note(grid, 1.2, 0.0)
+    assert "radius" in MOD.goal_obstacle_note(grid, 1.1, 0.0)
+    assert MOD.goal_obstacle_note(grid, 0.5, 0.0) is None
+    assert MOD.goal_obstacle_note(None, 1.2, 0.0) is None
+
+
+def test_a_success_where_the_plan_ended_short_is_unreachable_not_a_phantom(monkeypatch, capsys):
+    """MC200 2026-10-20: goal (1.2, 0) on a wall; NavFn's tolerance planned to x = 0.86,
+    the controller reported SUCCEEDED there with the robot 0.336 m short. Asking again
+    only plans to the same point, so the verdict names the goal, once."""
+    class StopsWherePlanEnds(StubNode):
+        sends = 0
+        def send_goal(self):
+            self.sends += 1
+            self.goal_status = 4
+            self.path_received = _path_ending_at(0.86, 0.0)
+            self.goal_dist_now = self.goal_dist_min = 0.336
+            return True
+    node = StopsWherePlanEnds(odom_lin=0.25, dist=1.2, goal_dist=0.336, goal_status=4)
+    assert _run(monkeypatch, node, require_goal=True, round_trips=1,
+                goal_x=1.2, goal_y=0.0, goal_tolerance=0.15) is False
+    out = capsys.readouterr().out
+    assert "NAV2 GOAL UNREACHABLE AS GIVEN" in out and "0.340 m short" in out
+    assert node.sends == 1 and "phantom" not in out
+
+
+def test_a_success_short_of_a_plan_that_reached_the_goal_is_still_asked_again(monkeypatch, capsys):
+    class PhantomThenDrives(StubNode):
+        sends = 0
+        def send_goal(self):
+            self.sends += 1
+            self.goal_status = 4
+            self.path_received = _path_ending_at(self.goal_x, self.goal_y)
+            d = 2.0 if self.sends == 1 else 0.05
+            self.goal_dist_now = self.goal_dist_min = d
+            return True
+    node = PhantomThenDrives(odom_lin=0.25, dist=3.1, goal_dist=2.0, goal_status=4)
+    _run(monkeypatch, node, require_goal=True, round_trips=1,
+         goal_x=3.0, goal_y=0.0, goal_tolerance=0.30)
+    out = capsys.readouterr().out
+    assert "UNREACHABLE AS GIVEN" not in out and "asking once more" in out and node.sends >= 2
+
+
+def test_a_real_room_goal_inside_an_obstacle_is_refused_before_anything_moves(monkeypatch, capsys):
+    monkeypatch.setattr(MOD, "NO_WALL", True)
+    node = StubNode(odom_lin=0.25, dist=1.2, goal_dist=0.05, completed=True)
+    node.room_grid = _grid_with_wall_at(1.2)
+    sent = []
+    node.send_goal = lambda: sent.append(1) or True
+    assert _run(monkeypatch, node, require_goal=True, round_trips=1,
+                goal_x=1.2, goal_y=0.0, goal_tolerance=0.15) is False
+    assert "NAV2 GOAL INSIDE AN OBSTACLE" in capsys.readouterr().out and not sent
