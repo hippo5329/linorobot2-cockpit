@@ -143,6 +143,8 @@ SIM_DEFAULTS = (
     ("wheel_noise_rpm",    "encoder/sim_wheel.h", "SIM_WHEEL_NOISE_RPM",     float),
     ("gear_efficiency",    "encoder/sim_wheel.h", "SIM_GEAR_EFFICIENCY",     float),
     ("gear_drag_rpm",      "encoder/sim_wheel.h", "SIM_WHEEL_COULOMB_RPM",   float),
+    ("stall_duty",         "encoder/sim_wheel.h", "SIM_WHEEL_STALL_DUTY",    float),
+    ("breakaway_duty",     "encoder/sim_wheel.h", "SIM_WHEEL_BREAKAWAY_DUTY", float),
     ("battery_sag",        "encoder/sim_wheel.h", "SIM_BATT_SAG",            float),
     ("battery_sag_tau_ms", "encoder/sim_wheel.h", "SIM_BATT_SAG_TAU_MS",     float),
     ("driver_drop",        "encoder/sim_wheel.h", "SIM_DRV_DROP",            float),

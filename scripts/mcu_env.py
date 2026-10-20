@@ -1189,7 +1189,8 @@ def hardware_env(params: dict) -> dict:
                           ("sim_wall_y1", float), ("sim_wall_x2", float),
                           ("sim_wall_y2", float), ("sim_mass", float),
                           ("sim_noise_rpm", float), ("sim_gear_eff", float),
-                          ("sim_coulomb", float), ("sim_sag", float),
+                          ("sim_coulomb", float), ("sim_stall_duty", float),
+                          ("sim_breakaway", float), ("sim_sag", float),
                           ("sim_sag_tau", float), ("sim_drv_drop", float),
                           ("sim_drv_r", float), ("sim_stall_a", float),
                           ("sim_ilimit_a", float),
@@ -1206,6 +1207,11 @@ def hardware_env(params: dict) -> dict:
                    # not cost a firmware build per value.
                    "sim_gear_eff": "gear_efficiency",
                    "sim_coulomb": "gear_drag_rpm",
+                   # Running and static friction, as duty fractions: a turning
+                   # wheel stops below stall_duty, a stopped one needs
+                   # breakaway_duty to start (lino-ident ramp measures it).
+                   "sim_stall_duty": "stall_duty",
+                   "sim_breakaway": "breakaway_duty",
                    "sim_sag": "battery_sag",
                    # The pack's sag LAGS -- a held load sags deeper than a brief
                    # one -- and the bridge keeps some of the voltage for itself,

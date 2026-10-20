@@ -75,7 +75,7 @@ MAXIMAL_CONFIG = {
                        "wall_y2": 1.5, "robot_mass": 3.5, "wheel_noise_rpm": 1.0,
                        # The simulated drivetrain's losses, swept from the env so
                        # a sensitivity test costs a 4 KB write, not a build.
-                       "gear_efficiency": 0.75, "gear_drag_rpm": 12.0,
+                       "gear_efficiency": 0.75, "gear_drag_rpm": 12.0, "stall_duty": 0.04, "breakaway_duty": 0.14,
                        "battery_sag": 0.25, "battery_sag_tau_ms": 400.0,
                        "driver_drop": 0.03, "driver_resistance": 0.10,
                        "motor_stall_amps": 2.5, "driver_current_limit": 2.0,

@@ -69,7 +69,18 @@
 #endif
 
 #ifndef SIM_WHEEL_STALL_DUTY
-#define SIM_WHEEL_STALL_DUTY 0.04  // duty below which the motor cannot break static friction
+#define SIM_WHEEL_STALL_DUTY 0.04  // duty below which a TURNING wheel stops (running friction)
+#endif
+
+// Static friction is higher than running friction: a stopped wheel needs MORE
+// duty to break away than a turning one needs to keep going. On the floor the
+// TS100's tracks broke away at 13-20 % duty (lino-ident ramp, 2026-10-19), and
+// Nav2's 0.3 rad/s heading turn asks for about 8 % -- so the real tracks
+// stick-slipped through every slow turn while the model, with one 4 % band
+// for both, turned smoothly. Equal to the stall duty here: no hysteresis
+// unless a config sets one (simulation.breakaway_duty).
+#ifndef SIM_WHEEL_BREAKAWAY_DUTY
+#define SIM_WHEEL_BREAKAWAY_DUTY 0.04
 #endif
 
 // --- the gearbox -----------------------------------------------------------
@@ -214,6 +225,28 @@ static inline float simGearEfficiency()
         if (eff > 1.0f) eff = 1.0f;     // a gearbox cannot return more than it is given
     }
     return eff;
+}
+
+static inline float simStallDuty()
+{
+    static float d = -1.0f;
+    if (d < 0.0f) {
+        d = envFloat("sim_stall_duty", (float)SIM_WHEEL_STALL_DUTY);
+        if (d < 0.0f) d = 0.0f;
+    }
+    return d;
+}
+
+// Never below the stall duty: a wheel that needs less to start than to keep
+// turning is not a wheel.
+static inline float simBreakawayDuty()
+{
+    static float d = -1.0f;
+    if (d < 0.0f) {
+        d = envFloat("sim_breakaway", (float)SIM_WHEEL_BREAKAWAY_DUTY);
+        if (d < simStallDuty()) d = simStallDuty();
+    }
+    return d;
 }
 
 static inline float simCoulombRpm()
@@ -491,8 +524,13 @@ private:
         // reaches 135.6 rpm, where the controller would never request beyond
         // 119.
         float no_load_rpm = duty_ * (float)MOTOR_MAX_RPM * simVoltageRatio();
-        // below the stall band the motor cannot hold the wheel against friction
-        if (fabsf(duty_) < (float)SIM_WHEEL_STALL_DUTY) no_load_rpm = 0.0;
+        // Below the stall band the motor cannot hold the wheel against friction;
+        // a wheel standing still must first beat static friction, which takes
+        // more. The gap between the two is what makes a slow request stick and
+        // slip: the loop winds up to the breakaway, the wheel jumps, the loop
+        // backs off under the stall duty, and it stops again.
+        const float floor_duty = (wheel_rpm_ == 0.0f) ? simBreakawayDuty() : simStallDuty();
+        if (fabsf(duty_) < floor_duty) no_load_rpm = 0.0;
 
         // The pack sags under the current the four wheels are drawing, and the
         // no-load speed scales with the voltage that survives. Recorded BEFORE

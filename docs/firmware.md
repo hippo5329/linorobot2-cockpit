@@ -1105,6 +1105,8 @@ base_controller:
     wheel_noise_rpm: 1.0     # +/- peak white noise on the reported RPM
     gear_efficiency: 0.75    # fraction of motor torque the reduction returns
     gear_drag_rpm: 12.0      # constant (Coulomb) drag, RPM/s, while turning
+    stall_duty: 0.04         # a TURNING wheel stops below this duty (running friction)
+    breakaway_duty: 0.04     # a STOPPED wheel needs this duty to start (static friction)
     battery_sag: 0.25        # fraction of V_oc lost at four-wheel stall current
     battery_sag_tau_ms: 400  # how long the pack takes to sag, and to recover
     driver_drop: 0.03        # bridge's fixed voltage floor, any current
@@ -1154,6 +1156,7 @@ because each behaves differently:
 | torque–speed | — | `accel ∝ (no_load_rpm − wheel_rpm)`: a brushed DC motor's torque falls linearly from stall to no-load, so acceleration dies as the wheel approaches its commanded speed and is greatest from rest. |
 | gearbox efficiency | `gear_efficiency` | a spur reduction returns 70–80% of the torque put in, so it scales the driving term. Reflected inertia (`N²·J_motor`) stays lumped into `SIM_WHEEL_TAU_MS`, where it belongs. |
 | Coulomb drag | `gear_drag_rpm` | a gear train's loss is roughly **constant**, not proportional to speed. It is why an unpowered gear motor stops instead of coasting, and why a small duty produces no motion at all. Guarded so it can never push the wheel backwards through zero. |
+| static vs running friction | `stall_duty`, `breakaway_duty` | a stopped wheel needs `breakaway_duty` to start, a turning one stops below `stall_duty`. Equal by default (no hysteresis). Set `breakaway_duty` above `stall_duty` and a slow request sticks and slips: the speed loop winds up while the wheel stands still, the wheel jumps past the request, and every slow start pays that delay. Measure the breakaway on the floor with `lino-ident ramp`; the motor PID's `pwm_deadzone` is the real robot's answer to it. |
 | viscous drag | — | `SIM_WHEEL_FRICTION`, proportional to current RPM; bearings and the motor's own windage. |
 | pack sag | `battery_sag`, `battery_sag_tau_ms` | `V_bus = V_oc − I·R_internal`, and for a brushed motor the current is proportional to the same `(no_load − ω)` term the torque uses — so a hard acceleration browns out its own supply. One pack, four wheels: **this is the only coupling between the simulated wheels.** It is also *lagged*: internal resistance drops the voltage at once but the chemistry polarises over hundreds of ms, so a **held** load sags deeper than a brief one. That is the real reason a heavy robot suffers more than its peak current suggests — being heavy means drawing that current for longer. |
 | driver loss | `driver_drop`, `driver_resistance` | the bridge keeps some of the voltage. A fixed fraction (body-diode / V_ce floor, worst at low duty) plus a current-proportional one (R_ds(on) and the shunt) that follows the current **instantly**, unlike the pack. Two terms rather than one fudge factor because their time constants differ. |
