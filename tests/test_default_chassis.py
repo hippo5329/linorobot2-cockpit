@@ -370,7 +370,10 @@ def test_the_gate_never_asks_for_tighter_than_nav2_promises():
     for name in _reference_names():
         d = yaml.safe_load(open(os.path.join(REPO_ROOT, "config", "reference", f"{name}_config.yaml")))
         checker = d["nav2"]["controller_server"]["ros__parameters"]["general_goal_checker"]
-        assert checker["xy_goal_tolerance"] == 0.35, f"{name}: {checker['xy_goal_tolerance']}"
+        # the TS100's, on every design since 2026-10-20 (0.35 / 0.35 let a robot stop 0.39 m short and
+        # come home 21 deg off its start heading)
+        assert checker["xy_goal_tolerance"] == 0.15, f"{name}: {checker['xy_goal_tolerance']}"
+        assert checker["yaw_goal_tolerance"] == 0.07, f"{name}: {checker['yaw_goal_tolerance']}"
 
 
 def test_topics_only_runs_no_slam_no_nav2_no_map():
