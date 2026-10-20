@@ -1170,7 +1170,7 @@ def _run_scans(monkeypatch, node, **kw):
     monkeypatch.setattr(MOD.rclpy, "shutdown", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(MOD.rclpy, "spin_once", lambda *a, **k: node.spin(), raising=False)
     monkeypatch.setattr(MOD, "tf_history_ready", lambda *a, **k: (True, "stub"))
-    monkeypatch.setattr(MOD, "SCAN_TF_GRACE_SEC", 0.0)
+    monkeypatch.setattr(MOD, "SCAN_TF_WAIT_SEC", 0.0)
     monkeypatch.setattr(MOD, "COSTMAP_READY_TIMEOUT_SEC", min(MOD.COSTMAP_READY_TIMEOUT_SEC, 5.0))
     _ros_time(monkeypatch)
     kw.setdefault("timeout", 0.3)
@@ -1185,6 +1185,30 @@ def test_late_scans_hold_the_first_goal_until_they_are_fresh(monkeypatch, capsys
     assert "Costmaps ready after" in out and "15 before them were not" in out
     assert "after its stamp" in out and node.sent == 1
 
+
+
+def test_a_transform_that_arrives_after_the_scan_is_waited_for_not_failed(monkeypatch, capsys):
+    """MC200 jazzy 2026-10-20: the TF at a scan's stamp lands a little after the scan.
+    A costmap's filter holds the scan for it, so the gate does too."""
+    import time as _t
+    class _LateTF:
+        def lookup_transform(self, target, source, stamp):
+            if _t.time_ns() - stamp < int(0.3e9):
+                raise RuntimeError("Lookup would require extrapolation into the future")
+    node = _ScanStub(odom_lin=0.25, dist=3.1, goal_dist=0.1, completed=True)
+    node.tf_buffer = _LateTF()
+    monkeypatch.setattr(MOD, "SCAN_TF_WAIT_SEC", 2.0)
+    monkeypatch.setattr(MOD, "Nav2GoalTester", lambda **_: node)
+    monkeypatch.setattr(MOD.rclpy, "init", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "shutdown", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "spin_once", lambda *a, **k: node.spin(), raising=False)
+    monkeypatch.setattr(MOD, "tf_history_ready", lambda *a, **k: (True, "stub"))
+    monkeypatch.setattr(MOD, "COSTMAP_READY_TIMEOUT_SEC", 5.0)
+    _ros_time(monkeypatch)
+    assert MOD.run_test(require_goal=True, round_trips=0, goal_x=3.0, goal_y=0.0,
+                        timeout=0.3) is True
+    out = capsys.readouterr().out
+    assert "Costmaps ready after" in out and "before them were not" not in out
 
 def test_costmaps_that_never_read_the_scan_send_no_goal(monkeypatch, capsys):
     monkeypatch.setattr(MOD, "COSTMAP_READY_TIMEOUT_SEC", 0.5)

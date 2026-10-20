@@ -322,7 +322,8 @@ TF_READY_TIMEOUT_SEC = 40.0
 # goal, the scan must be what a costmap's filter accepts: fresh on arrival, and
 # transformable into odom and map at its own stamp, for SCAN_HEALTHY_RUN scans running.
 SCAN_FRESH_SEC = 0.5            # arrival minus stamp, either way (the costmaps' 0.5 s tolerance)
-SCAN_TF_GRACE_SEC = 0.3         # a scan is judged this long after it arrived, as a filter waits
+SCAN_TF_WAIT_SEC = 2.0          # a scan whose transforms are not there this long after it
+                                # arrived is dropped (a costmap's filter queues ~5 s of scans)
 SCAN_HEALTHY_RUN = 10           # ~1 s at the LD19's 10 Hz
 COSTMAP_READY_TIMEOUT_SEC = 120.0
 SCAN_ABSENT_SEC = 10.0          # no /scan at all: the costmaps read none either, nothing to gate
@@ -346,8 +347,15 @@ class Nav2GoalTester(Node):
         # 2.829 m away: the robot had hit the wall, its wheels slipped, the
         # EKF's odom walked on, and SLAM absorbed the difference into map->odom.
         # Nav2 was right that it had arrived; the gate was reading another frame.
+        # The buffer is fed by a node of its own on its own thread. Fed by this node,
+        # it lagged: each spin_once runs one callback across every entity here, and on
+        # the MC200 under jazzy (2026-10-20) /tf queued faster than that -- for 120 s
+        # every scan's stamp was "in the future" of the buffer while the stack's own
+        # TF was 0.03 s behind its scans.
         self.tf_buffer = tf2_ros.Buffer() if tf2_ros else None
-        self.tf_listener = (tf2_ros.TransformListener(self.tf_buffer, self)
+        self._tf_node = rclpy.create_node("nav2_goal_tester_tf") if tf2_ros else None
+        self.tf_listener = (tf2_ros.TransformListener(self.tf_buffer, self._tf_node,
+                                                      spin_thread=True)
                             if tf2_ros else None)
         self.goal_frame = "map"
         self.base_frame = "base_link"
@@ -505,6 +513,9 @@ class Nav2GoalTester(Node):
         # the first goal; nothing looks them up during a leg.
         self.scan_recent = deque(maxlen=100)
         self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
+        # Arrival is timed on the TF thread's node, for the same reason as the buffer.
+        (self._tf_node or self).create_subscription(LaserScan, "/scan", self._scan_arrival_cb,
+                                                    sensor_qos)
 
         self.get_logger().info(
             f"Nav2 Goal Tester initialized for target ({goal_x:.2f}, {goal_y:.2f}) behind "
@@ -612,13 +623,15 @@ class Nav2GoalTester(Node):
         self.cmd_vel_stamped_count += 1
         self._note_command(msg.twist)
 
+    def _scan_arrival_cb(self, msg):
+        self.scan_recent.append((msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec,
+                                 msg.header.frame_id, self.get_clock().now().nanoseconds))
+
     def _scan_cb(self, msg):
         """Record the worst stamp interval and the worst arrival interval."""
         self.scan_count += 1
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         arrival = time.time()
-        self.scan_recent.append((msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec,
-                                 msg.header.frame_id, self.get_clock().now().nanoseconds))
         if self._scan_prev_stamp is not None:
             gap = stamp - self._scan_prev_stamp
             if gap > self.scan_max_stamp_gap:
@@ -2011,18 +2024,23 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
             print("   Costmap readiness not checked: this tester keeps no scan history.")
             return True
         frames = (getattr(node, "odom_frame", "odom"), getattr(node, "goal_frame", "map"))
-        grace = int(SCAN_TF_GRACE_SEC * 1e9)
+        wait = int(SCAN_TF_WAIT_SEC * 1e9)
         t0 = last_note = time.time()
         run = seen = bad = 0
         why = "no /scan yet"
         while time.time() - t0 < COSTMAP_READY_TIMEOUT_SEC:
             rclpy.spin_once(node, timeout_sec=0.1)
             now_ns = node.get_clock().now().nanoseconds
-            while recent and now_ns - recent[0][2] >= grace:
-                stamp_ns, frame, arrival_ns = recent.popleft()
-                seen += 1
+            while recent:
+                stamp_ns, frame, arrival_ns = recent[0]
                 ok, w = scan_health(getattr(node, "tf_buffer", None), frame, stamp_ns,
                                     arrival_ns, frames)
+                # Fresh but not yet transformable: a filter would hold it, so wait too.
+                if (not ok and abs(arrival_ns - stamp_ns) * 1e-9 <= SCAN_FRESH_SEC
+                        and now_ns - arrival_ns < wait):
+                    break
+                recent.popleft()
+                seen += 1
                 if ok:
                     run += 1
                 else:
