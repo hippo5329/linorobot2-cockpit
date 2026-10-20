@@ -120,6 +120,7 @@ class Wheels:
         self.kp = float(pid.get("kp", 0.6))
         self.ki = float(pid.get("ki", 0.8))
         self.kd = float(pid.get("kd", 0.5))
+        self.deadzone = float(pid.get("pwm_deadzone", 0.0) or 0.0)
         self.integral = [0.0] * 4
         self.prev_error = [0.0] * 4
 
@@ -139,6 +140,7 @@ class Wheels:
                 derivative = 0.0
             u = self.kp * error + self.ki * self.integral[i] + self.kd * derivative
             u = min(max(u, -pwm_max), pwm_max)
+            u = dr.pid_deadzone(u, setpoint, self.deadzone, pwm_max)
             self.prev_error[i] = error
             wheel.duty = u / pwm_max
             # Only the first wheel advances the shared pack's filter, exactly as

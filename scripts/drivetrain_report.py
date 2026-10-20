@@ -53,6 +53,7 @@ def model_defaults(path=SIM_WHEEL_H):
         "SIM_WHEEL_MAX_ACCEL_RPM": "accel_clamp",
         "SIM_WHEEL_FRICTION": "viscous",
         "SIM_WHEEL_STALL_DUTY": "stall_duty",
+        "SIM_WHEEL_BREAKAWAY_DUTY": "breakaway_duty",
         "SIM_ROBOT_MASS": "mass",
         "SIM_GEAR_EFFICIENCY": "gear_eff",
         "SIM_WHEEL_COULOMB_RPM": "coulomb",
@@ -114,9 +115,12 @@ def drivetrain(params):
                           ("battery_sag_tau_ms", "sag_tau_ms"),
                           ("driver_drop", "drv_drop"), ("driver_resistance", "drv_r"),
                           ("motor_stall_amps", "stall_a"),
-                          ("driver_current_limit", "ilimit_a")):
+                          ("driver_current_limit", "ilimit_a"),
+                          ("stall_duty", "stall_duty"), ("breakaway_duty", "breakaway_duty")):
         if sim.get(cfg_key) is not None:
             d[name] = float(sim[cfg_key])
+    # simBreakawayDuty(): never below the stall duty
+    d["breakaway_duty"] = max(d["breakaway_duty"], d["stall_duty"])
 
     base = str(kine.get("base_type", "2wd")).lower()
     lr = float(kine.get("lr_wheels_distance", 0.0))
@@ -284,7 +288,10 @@ class _Wheel:
     def step(self, dt, first_in_tick):
         d = self.d
         no_load = self.duty * d["motor_rpm"]      # motor_rpm already carries volt_ratio
-        if abs(self.duty) < d["stall_duty"]:
+        # A stopped wheel needs the breakaway duty, a turning one stops below
+        # the stall duty (static vs running friction, as in sim_wheel.h).
+        floor_duty = d.get("breakaway_duty", d["stall_duty"]) if self.rpm == 0.0 else d["stall_duty"]
+        if abs(self.duty) < floor_duty:
             no_load = 0.0
         # Recorded BEFORE the bus scale, or the sag feeds back on itself.
         stall = d["motor_rpm"]
@@ -334,6 +341,19 @@ class _Wheel:
                 self.rpm = 0.0
             # A simulated motor may not turn faster than its own no-load speed.
             self.rpm = min(max(self.rpm, -ceiling), ceiling)
+
+
+def pid_deadzone(u, setpoint, deadzone, pwm_max):
+    """PID::compute()'s dead-zone compensation (env pwm_deadzone).
+
+    An output pushing the way the setpoint asks is mapped from (0, rail] onto
+    (deadzone, rail], so a slow request already reaches the motor's breakaway;
+    braking and a stop pass through.
+    """
+    if deadzone > 0.0 and abs(setpoint) > 0.5 and pwm_max > deadzone and u * setpoint > 0.0:
+        mag = deadzone + abs(u) * (pwm_max - deadzone) / pwm_max
+        return mag if u > 0.0 else -mag
+    return u
 
 
 def _velocities(d, rpm):
@@ -541,6 +561,7 @@ def simulate_closed_loop(d, gains, setpoint_rpm=None, seconds=2.0):
             integral = derivative = 0.0
         u = kp * error + ki * integral + kd * derivative
         u = min(max(u, -pwm_max), pwm_max)
+        u = pid_deadzone(u, setpoint_rpm, float(gains.get("pwm_deadzone", 0.0) or 0.0), pwm_max)
         prev_error = error
         wheel.duty = u / pwm_max
         wheel.step(TICK_S, True)

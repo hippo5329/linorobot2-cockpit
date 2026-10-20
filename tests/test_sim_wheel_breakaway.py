@@ -151,3 +151,26 @@ def test_a_slow_request_from_rest_sticks_then_jumps(sticky):
         peak = max(peak, rpm)
     assert first_move is not None and first_move > 1.0, f"moved after {first_move} s"
     assert peak > 2 * 3.0, f"peak {peak:.1f} rpm for a 3 rpm request"
+
+
+def test_the_python_model_matches(sticky):
+    # sim_base_node (the board-less stack) and drivetrain_report run
+    # drivetrain_report._Wheel: the same breakaway, from the same config keys.
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import drivetrain_report as dr
+    params = {"kinematics": {"base_type": "2wd", "max_rpm": 100, "wheel_diameter": 0.1,
+                             "lr_wheels_distance": 0.2, "pwm_bits": 10},
+              "base_controller": {"simulation": {"breakaway_duty": 0.137, "stall_duty": 0.08}}}
+    d = dr.drivetrain(params)
+    assert (d["stall_duty"], d["breakaway_duty"]) == (0.08, 0.137)
+    w = dr._Wheel(d, dr._Pack(d), 0)
+    for duty, moves in ((82 / 1023, False), (150 / 1023, True), (110 / 1023, True)):
+        w.duty = duty
+        for _ in range(100):
+            w.step(STEP_US / 1e6, True)
+        assert (abs(w.rpm) > 0.5) == moves, (duty, w.rpm)
+    # ...and the PID's compensation: 84 of 1023 asked forward becomes ~ 130 + 84 * 0.87
+    assert abs(dr.pid_deadzone(84.0, 3.0, 130.0, 1023.0) - (130 + 84 * 893 / 1023)) < 1e-9
+    assert dr.pid_deadzone(-84.0, 3.0, 130.0, 1023.0) == -84.0     # braking passes through
+    assert dr.pid_deadzone(84.0, 0.0, 130.0, 1023.0) == 84.0       # a stop passes through
