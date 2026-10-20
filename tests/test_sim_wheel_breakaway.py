@@ -1,6 +1,6 @@
 """Static friction is higher than running friction in the simulated wheel.
 
-On the floor the TS100's tracks broke away at 13-20 % duty (lino-ident ramp,
+On the floor a tracked robot's tracks broke away at 13-20 % duty (lino-ident ramp,
 2026-10-19) while Nav2's 0.3 rad/s heading turn asks for about 8 %: the real
 tracks stick-slipped through every slow turn. The model had one 4 % band for
 both starting and running, so a simulated robot turned smoothly at any rate and
@@ -90,7 +90,7 @@ def _build(tmp_path_factory, name, defines):
 
 @pytest.fixture(scope="module")
 def sticky(tmp_path_factory):
-    # The TS100: breakaway measured (median 140 of 1023); the running floor is an
+    # A tracked robot: breakaway measured (median 140 of 1023); the running floor is an
     # estimate (Nav2's 8 % turn sat stuck), not yet measured by a down-ramp.
     return _build(tmp_path_factory, "sticky",
                   ["-DSIM_WHEEL_BREAKAWAY_DUTY=0.137", "-DSIM_WHEEL_STALL_DUTY=0.08"])
@@ -133,7 +133,7 @@ def test_a_turning_wheel_keeps_going_below_the_breakaway(sticky):
 
 
 def test_a_slow_request_from_rest_sticks_then_jumps(sticky):
-    # The firmware's PID, as configured on the TS100 (kp 0.961, ki 0.48 per tick),
+    # The firmware's PID, as configured on that robot (kp 0.961, ki 0.48 per tick),
     # asked for 3 rpm from rest: nothing moves while it winds up to the breakaway,
     # then the wheel jumps well past the request. That delay and that jump are what
     # a slow Nav2 heading turn meets on every start; the plain model had neither.

@@ -84,7 +84,7 @@ double PID::compute(float setpoint, float measured_value)
     pid = constrain(pid, min_val_, max_val_);
 
     // Dead-zone compensation. A loaded motor does not turn below some PWM:
-    // the TS100's tracks broke away at 130-210 of 1023 on the floor (ramp,
+    // a tracked robot's tracks broke away at 130-210 of 1023 on the floor (ramp,
     // 2026-10-19), while Nav2's 0.3 rad/s heading turn asks for about 84.
     // The loop then sat in the dead zone until the integral wound up, the
     // track broke loose and overshot, and it stuck again -- a slow turn was

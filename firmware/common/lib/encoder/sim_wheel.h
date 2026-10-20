@@ -73,8 +73,8 @@
 #endif
 
 // Static friction is higher than running friction: a stopped wheel needs MORE
-// duty to break away than a turning one needs to keep going. On the floor the
-// TS100's tracks broke away at 13-20 % duty (lino-ident ramp, 2026-10-19), and
+// duty to break away than a turning one needs to keep going. On the floor a
+// tracked robot's tracks broke away at 13-20 % duty (lino-ident ramp, 2026-10-19), and
 // Nav2's 0.3 rad/s heading turn asks for about 8 % -- so the real tracks
 // stick-slipped through every slow turn while the model, with one 4 % band
 // for both, turned smoothly. Equal to the stall duty here: no hysteresis
