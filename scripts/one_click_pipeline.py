@@ -28,6 +28,10 @@ import threading
 import time
 import yaml
 
+# test_nav2_goal.py waits up to 120 s for costmaps that can read the scan before its first
+# goal (COSTMAP_READY_TIMEOUT_SEC); its run_ros timeouts carry that wait.
+COSTMAP_READY_BUDGET_S = 130
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 import cockpit_paths  # noqa: E402
@@ -3209,7 +3213,8 @@ def main():
                                     # 0.39 m away, refused as "vacuous"): arriving is what counts.
                                     " --min-start-gap 0"
                                     + (" --no-wall" if is_real else ""))
-                        home_res = run_ros(home_cmd, timeout=args.goal_timeout + 30, distro=args.distro)
+                        home_res = run_ros(home_cmd, timeout=args.goal_timeout + 30 + COSTMAP_READY_BUDGET_S,
+                                           distro=args.distro)
                         print(home_res.stdout)
                         if home_res.returncode == 0 and not motion_guard_tripped(mg["trip"]):
                             print("  ✅ EXPLORE: returned_to_origin (the room explored, driven home by Nav2)")
@@ -3259,7 +3264,8 @@ def main():
                 battery_phase("Nav2 goals")
                 if nav2_ok and motion_ok:
                     test_res = run_ros(f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
-                                       + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15,
+                                       + goal_args, timeout=args.goal_timeout * n_legs + 20 * n_legs + 15
+                                       + COSTMAP_READY_BUDGET_S,
                                        distro=args.distro)
                     tripped = motion_guard_tripped(mg["trip"])
                     if tripped:

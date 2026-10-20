@@ -28,6 +28,7 @@ import argparse
 import math
 import sys
 import time
+from collections import deque
 from typing import List, Optional
 
 try:
@@ -289,6 +290,20 @@ ACCEPT_GRACE_S = 25.0
 # in the chain -- the global costmap updates at 1 Hz on these configs.
 TF_READY_HISTORY_SEC = 1.0
 TF_READY_TIMEOUT_SEC = 40.0
+
+# COSTMAPS THAT CAN READ THE SCAN. A tree that answers is not a stack that can navigate: on
+# the MC200 (UNO Q, 2026-10-20) scans reached the costmaps 1.5 s late (median, 3.8 s worst)
+# for minutes after "Nav2 stack active", every costmap's filter dropped them ("earlier than
+# all the data in the transform cache"), and the controller refused both asks of the first
+# goal with error 102 "Failed to transform end pose to global frame" -- 60 s after
+# activation, the robot never moved. The same goal 3 min later: 2/2. So before the first
+# goal, the scan must be what a costmap's filter accepts: fresh on arrival, and
+# transformable into odom and map at its own stamp, for SCAN_HEALTHY_RUN scans running.
+SCAN_FRESH_SEC = 0.5            # arrival minus stamp, either way (the costmaps' 0.5 s tolerance)
+SCAN_TF_GRACE_SEC = 0.3         # a scan is judged this long after it arrived, as a filter waits
+SCAN_HEALTHY_RUN = 10           # ~1 s at the LD19's 10 Hz
+COSTMAP_READY_TIMEOUT_SEC = 120.0
+SCAN_ABSENT_SEC = 10.0          # no /scan at all: the costmaps read none either, nothing to gate
 # How long to wait for Nav2 to give a cancelled goal a terminal status: between
 # legs, and once more on the way out. Named so a test can shrink them.
 GOAL_CLOSE_SEC = 20.0
@@ -464,6 +479,9 @@ class Nav2GoalTester(Node):
         self.scan_max_arrival_gap_at: float = 0.0
         self._scan_prev_stamp = None
         self._scan_prev_arrival = None
+        # (stamp ns, frame, arrival ns) for wait_for_costmaps(), which judges them before
+        # the first goal; nothing looks them up during a leg.
+        self.scan_recent = deque(maxlen=100)
         self.create_subscription(LaserScan, "/scan", self._scan_cb, sensor_qos)
 
         self.get_logger().info(
@@ -577,6 +595,8 @@ class Nav2GoalTester(Node):
         self.scan_count += 1
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         arrival = time.time()
+        self.scan_recent.append((msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec,
+                                 msg.header.frame_id, self.get_clock().now().nanoseconds))
         if self._scan_prev_stamp is not None:
             gap = stamp - self._scan_prev_stamp
             if gap > self.scan_max_stamp_gap:
@@ -811,6 +831,28 @@ def tf_history_ready(buffer, goal_frame: str, base_frame: str,
         return True, f"{goal_frame} <- {base_frame} answers for {history_sec:.1f} s ago"
     except Exception as exc:                     # tf2 raises several distinct types
         return False, str(exc).strip() or exc.__class__.__name__
+
+
+def scan_health(buffer, scan_frame: str, stamp_ns: int, arrival_ns: int, frames,
+                max_age: float = SCAN_FRESH_SEC):
+    """(ok, why) for one scan: would a costmap's message filter take it?
+
+    Fresh -- it arrived within `max_age` of its stamp, neither late nor stamped in the
+    future -- and transformable into each of `frames` at its own stamp."""
+    age = (arrival_ns - stamp_ns) * 1e-9
+    if age > max_age:
+        return False, f"a scan arrived {age:.2f} s after its stamp"
+    if age < -max_age:
+        return False, f"a scan was stamped {-age:.2f} s in the future"
+    if buffer is None:
+        return True, "fresh (no tf2_ros to check its transform)"
+    for f in frames:
+        try:
+            buffer.lookup_transform(f, scan_frame, rclpy.time.Time(nanoseconds=stamp_ns))
+        except Exception as exc:                 # tf2 raises several distinct types
+            return False, (f"{f} <- {scan_frame} at a scan's stamp: "
+                           f"{str(exc).strip() or exc.__class__.__name__}")
+    return True, "fresh and transformable"
 
 
 def _gap(node) -> str:
@@ -1650,6 +1692,8 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 t_w = time.time()
                 while time.time() - t_w < STARTUP_SETTLE_SEC:
                     rclpy.spin_once(node, timeout_sec=0.2)
+                if not wait_for_costmaps():
+                    return False
                 node.begin_leg(gx, gy)
                 if not node.send_goal():
                     return False
@@ -1928,8 +1972,57 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
               f"result.\n   tf2 says: {detail}")
         return False
 
+    def wait_for_costmaps() -> bool:
+        """Do not dispatch until the costmaps can read the scan (see SCAN_FRESH_SEC).
+
+        A precondition like wait_for_tf(), and its failure is its own verdict: no goal
+        was sent, so nothing here is a navigation result."""
+        recent = getattr(node, "scan_recent", None)
+        if recent is None:
+            print("   Costmap readiness not checked: this tester keeps no scan history.")
+            return True
+        frames = (getattr(node, "odom_frame", "odom"), getattr(node, "goal_frame", "map"))
+        grace = int(SCAN_TF_GRACE_SEC * 1e9)
+        t0 = last_note = time.time()
+        run = seen = bad = 0
+        why = "no /scan yet"
+        while time.time() - t0 < COSTMAP_READY_TIMEOUT_SEC:
+            rclpy.spin_once(node, timeout_sec=0.1)
+            now_ns = node.get_clock().now().nanoseconds
+            while recent and now_ns - recent[0][2] >= grace:
+                stamp_ns, frame, arrival_ns = recent.popleft()
+                seen += 1
+                ok, w = scan_health(getattr(node, "tf_buffer", None), frame, stamp_ns,
+                                    arrival_ns, frames)
+                if ok:
+                    run += 1
+                else:
+                    run, bad, why = 0, bad + 1, w
+                if run >= SCAN_HEALTHY_RUN:
+                    took = time.time() - t0
+                    print(f"   Costmaps ready after {took:.1f} s: {SCAN_HEALTHY_RUN} scans running "
+                          f"fresh and transformable into {' and '.join(frames)}"
+                          + (f"; {bad} before them were not (last: {why})" if bad else ""))
+                    return True
+            if seen == 0 and time.time() - t0 > SCAN_ABSENT_SEC:
+                print(f"   Costmap readiness not gated: no /scan in {SCAN_ABSENT_SEC:.0f} s, "
+                      f"so the costmaps read none either.")
+                return True
+            if time.time() - last_note > 30:
+                last_note = time.time()
+                print(f"   waiting for the costmaps: {run}/{SCAN_HEALTHY_RUN} healthy scans "
+                      f"running, {bad} not so far (last: {why})")
+        print(f"❌ NAV2 COSTMAPS NEVER READY: in {COSTMAP_READY_TIMEOUT_SEC:.0f} s no "
+              f"{SCAN_HEALTHY_RUN} scans running were fresh and transformable into "
+              f"{' and '.join(frames)} ({bad} of {seen} were not; last: {why}). The costmaps' "
+              f"filters drop such scans and the controller cannot transform its goal. No goal "
+              f"was sent, so this is not a navigation result.")
+        return False
+
     try:
         if not wait_for_tf():
+            return False
+        if not wait_for_costmaps():
             return False
 
         if round_trips >= 1:

@@ -1089,3 +1089,95 @@ def test_a_real_room_goal_inside_an_obstacle_is_refused_before_anything_moves(mo
     assert _run(monkeypatch, node, require_goal=True, round_trips=1,
                 goal_x=1.2, goal_y=0.0, goal_tolerance=0.15) is False
     assert "NAV2 GOAL INSIDE AN OBSTACLE" in capsys.readouterr().out and not sent
+
+
+# --- wait_for_costmaps: no goal until the costmaps can read the scan (MC200, 2026-10-20) ---
+
+class _TF:
+    def __init__(self, ok=True):
+        self.ok = ok
+    def lookup_transform(self, target, source, stamp):
+        if not self.ok:
+            raise RuntimeError("Lookup would require extrapolation into the past")
+
+
+def _ros_time(monkeypatch):
+    monkeypatch.setattr(MOD.rclpy, "time", types.SimpleNamespace(Time=lambda nanoseconds: nanoseconds),
+                        raising=False)
+
+
+def test_scan_health_names_late_future_and_untransformable_scans(monkeypatch):
+    _ros_time(monkeypatch)
+    s = 1_000_000_000
+    assert MOD.scan_health(_TF(), "laser", 10 * s, 10 * s + s // 10, ("odom", "map"))[0]
+    ok, why = MOD.scan_health(_TF(), "laser", 10 * s, 11 * s + s // 2, ("odom", "map"))
+    assert not ok and "1.50 s after its stamp" in why
+    ok, why = MOD.scan_health(_TF(), "laser", 12 * s, 10 * s, ("odom", "map"))
+    assert not ok and "in the future" in why
+    ok, why = MOD.scan_health(_TF(ok=False), "laser", 10 * s, 10 * s, ("odom", "map"))
+    assert not ok and "odom <- laser" in why and "extrapolation" in why
+
+
+class _ScanStub(StubNode):
+    """A tester whose /scan is late for the first `late` scans, then fresh."""
+    def __init__(self, late=0, lag=1.5, scans=True, **kw):
+        super().__init__(**kw)
+        import collections
+        self.scan_recent = collections.deque(maxlen=100)
+        self.tf_buffer, self.odom_frame, self.goal_frame = _TF(), "odom", "map"
+        self.base_frame = "base_link"
+        self.late, self.lag, self.scans, self.n, self.sent = late, lag, scans, 0, 0
+    def get_clock(self):
+        import time as _t
+        return types.SimpleNamespace(now=lambda: types.SimpleNamespace(nanoseconds=_t.time_ns()))
+    def spin(self):
+        import time as _t
+        _t.sleep(0.02)
+        if self.scans:
+            now = _t.time_ns()
+            lag = self.lag if self.n < self.late else 0.05
+            self.scan_recent.append((now - int(lag * 1e9), "laser", now))
+            self.n += 1
+    def send_goal(self):
+        self.sent += 1
+        return True
+
+
+def _run_scans(monkeypatch, node, **kw):
+    monkeypatch.setattr(MOD, "Nav2GoalTester", lambda **_: node)
+    monkeypatch.setattr(MOD.rclpy, "init", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "shutdown", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(MOD.rclpy, "spin_once", lambda *a, **k: node.spin(), raising=False)
+    monkeypatch.setattr(MOD, "tf_history_ready", lambda *a, **k: (True, "stub"))
+    monkeypatch.setattr(MOD, "SCAN_TF_GRACE_SEC", 0.0)
+    monkeypatch.setattr(MOD, "COSTMAP_READY_TIMEOUT_SEC", min(MOD.COSTMAP_READY_TIMEOUT_SEC, 5.0))
+    _ros_time(monkeypatch)
+    kw.setdefault("timeout", 0.3)
+    return MOD.run_test(**kw)
+
+
+def test_late_scans_hold_the_first_goal_until_they_are_fresh(monkeypatch, capsys):
+    node = _ScanStub(late=15, odom_lin=0.25, dist=3.1, goal_dist=0.1, completed=True)
+    assert _run_scans(monkeypatch, node, require_goal=True, round_trips=0,
+                      goal_x=3.0, goal_y=0.0) is True
+    out = capsys.readouterr().out
+    assert "Costmaps ready after" in out and "15 before them were not" in out
+    assert "after its stamp" in out and node.sent == 1
+
+
+def test_costmaps_that_never_read_the_scan_send_no_goal(monkeypatch, capsys):
+    monkeypatch.setattr(MOD, "COSTMAP_READY_TIMEOUT_SEC", 0.5)
+    node = _ScanStub(late=10**6, odom_lin=0.25, dist=3.1, goal_dist=0.1, completed=True)
+    assert _run_scans(monkeypatch, node, require_goal=True, round_trips=1,
+                      goal_x=3.0, goal_y=0.0) is False
+    out = capsys.readouterr().out
+    assert "NAV2 COSTMAPS NEVER READY" in out and "No goal was sent" in out
+    assert node.sent == 0
+
+
+def test_no_scan_at_all_is_not_gated(monkeypatch, capsys):
+    monkeypatch.setattr(MOD, "SCAN_ABSENT_SEC", 0.2)
+    node = _ScanStub(scans=False, odom_lin=0.25, dist=3.1, goal_dist=0.1, completed=True)
+    assert _run_scans(monkeypatch, node, require_goal=True, round_trips=0,
+                      goal_x=3.0, goal_y=0.0) is True
+    assert "not gated: no /scan" in capsys.readouterr().out and node.sent == 1
