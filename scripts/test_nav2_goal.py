@@ -188,6 +188,28 @@ def goal_obstacle_note(grid, gx: float, gy: float, radius: float = ROOM_ROBOT_RA
     return None
 
 
+# A GOAL PAST THE EDGE OF THE MAP. The global costmap's static layer takes its size from
+# /map, and NavFn refuses a goal off it at once ("Goal Coordinates of (x, y) was outside
+# bounds", error 204). On the MC200 (2026-10-20, lyrical) SLAM had not yet seen behind
+# the robot: /map began at x = -0.99 and the goal was (-1.4, -0.1). The abort came back in
+# 0.03 s and was read as the stack still settling, so it was retried for nothing.
+def grid_bounds(grid):
+    """(x min, x max, y min, y max) that /map covers."""
+    res, ox, oy, w, h, _data = grid
+    return ox, ox + w * res, oy, oy + h * res
+
+
+def goal_outside_map_note(grid, gx: float, gy: float):
+    """Why (gx, gy) is off /map, or None (no map, or on it)."""
+    if grid is None:
+        return None
+    x0, x1, y0, y1 = grid_bounds(grid)
+    if x0 <= gx < x1 and y0 <= gy < y1:
+        return None
+    return (f"/map covers only x [{x0:+.2f}, {x1:+.2f}] y [{y0:+.2f}, {y1:+.2f}]: "
+            f"SLAM has not seen that far yet")
+
+
 def plan_end_gap(path, gx: float, gy: float):
     """(metres from the plan's last pose to the goal, that pose's (x, y)), or None."""
     poses = getattr(path, "poses", None) if path is not None else None
@@ -1613,6 +1635,13 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                       f"{inside}. The robot cannot stand there, so the planner would end its "
                       f"path at the nearest point it can reach and Nav2 would report SUCCEEDED "
                       f"short of the goal. Nothing was sent: choose a goal on open floor.")
+                return False
+            off_map = goal_outside_map_note(getattr(node, "room_grid", None), gx, gy) if NO_WALL else None
+            if off_map:
+                print(f"❌ NAV2 GOAL OUTSIDE THE MAP on leg {i}/{n} ({gx:.2f}, {gy:.2f}): "
+                      f"{off_map}. The global costmap is the size of /map, so the planner "
+                      f"refuses the goal at once (error 204, outside bounds). Nothing was "
+                      f"sent: choose a goal the robot can already see from where it stands.")
                 return False
             node.begin_leg(gx, gy)
             if not node.send_goal():

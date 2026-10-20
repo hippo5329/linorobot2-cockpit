@@ -1091,6 +1091,27 @@ def test_a_real_room_goal_inside_an_obstacle_is_refused_before_anything_moves(mo
     assert "NAV2 GOAL INSIDE AN OBSTACLE" in capsys.readouterr().out and not sent
 
 
+
+def test_goal_outside_map_note_names_the_edge_slam_has_reached():
+    """MC200 2026-10-20 lyrical: /map began at x = -0.99, the goal was (-1.4, -0.1)."""
+    grid = (0.05, -0.99, -2.59, 61, 112, [0] * (61 * 112))
+    note = MOD.goal_outside_map_note(grid, -1.4, -0.1)
+    assert note and "-0.99" in note and "+2.06" in note
+    assert MOD.goal_outside_map_note(grid, -0.03, -1.02) is None
+    assert MOD.goal_outside_map_note(None, -1.4, -0.1) is None
+
+
+def test_a_real_room_goal_off_the_map_is_refused_before_anything_moves(monkeypatch, capsys):
+    monkeypatch.setattr(MOD, "NO_WALL", True)
+    node = StubNode(odom_lin=0.25, dist=1.4, goal_dist=0.05, completed=True)
+    node.room_grid = (0.05, -0.99, -2.59, 61, 112, [0] * (61 * 112))
+    sent = []
+    node.send_goal = lambda: sent.append(1) or True
+    assert _run(monkeypatch, node, require_goal=True, round_trips=1,
+                goal_x=-1.4, goal_y=-0.1, goal_tolerance=0.15) is False
+    out = capsys.readouterr().out
+    assert "NAV2 GOAL OUTSIDE THE MAP" in out and "x [-0.99, +2.06]" in out and not sent
+
 # --- wait_for_costmaps: no goal until the costmaps can read the scan (MC200, 2026-10-20) ---
 
 class _TF:
