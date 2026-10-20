@@ -32,12 +32,17 @@ def test_operators_win_and_simulated_wheels_are_refused():
 
 
 def test_every_step_goes_out_and_comes_back():
-    steps = re.findall(r"\{K_(DEADZONE|PLANT|LOOP|LIN|SPIN), ([+-]1), ([0-9.]+)f", IDENT)
-    seen = {}
-    for kind, d, lvl in steps:
-        seen.setdefault((kind, lvl), []).append(int(d))
-    for key, dirs in seen.items():
-        assert sorted(dirs) == [-1, 1], key
+    # per table: the full run (STEPS) and the dead-zone ramps alone (RAMP_STEPS)
+    tables = re.findall(r"const Step (\w+)\[\] = \{(.*?)\n\};", IDENT, re.S)
+    assert {name for name, _ in tables} == {"STEPS", "RAMP_STEPS"}
+    for name, body in tables:
+        steps = re.findall(r"\{K_(DEADZONE|DZSPIN|PLANT|LOOP|LIN|SPIN), ([+-]1), ([0-9.]+)f", body)
+        assert steps, name
+        seen = {}
+        for kind, d, lvl in steps:
+            seen.setdefault((kind, lvl), []).append(int(d))
+        for key, dirs in seen.items():
+            assert sorted(dirs) == [-1, 1], (name, key)
 
 
 def test_it_speaks_test_acc_and_the_parser_reads_it():

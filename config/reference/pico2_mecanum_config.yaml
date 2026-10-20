@@ -70,6 +70,8 @@ base_controller:
     # The MC200's 25 mm gear motor: 4.5 A locked-rotor current (the vendor's figure).
     motor_stall_amps: 4.5
     driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
+    stall_duty: 0.04                  # a turning wheel stops below this duty (running friction)
+    breakaway_duty: 0.04              # a stopped wheel needs this duty to start (static friction)
     # How the IMU is mounted, in degrees. Zero is a level part; a real one
     # sits a degree or two off and leans gravity into the ax/ay the EKF fuses.
     imu_mount_roll_deg: 0.0
