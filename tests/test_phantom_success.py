@@ -121,3 +121,17 @@ def test_one_wait_loop_serves_every_dispatch():
     assert body.count("while time.time() - t0 < timeout:") == 1
     assert "_sample_map_odom(node)" in body
     assert "_runaway(node)" in body
+
+
+def test_the_second_ask_keeps_the_legs_start_gap():
+    """The second ask is the same leg. Measured from where the first stopped, it
+    began inside min_start_gap and was failed as vacuous however it ended: a
+    camera-only Yahboom drove 1.99 m, Nav2 said SUCCEEDED 0.218 m out with 0.20
+    needed, and the ask began 0.218 m away (2026-10-21)."""
+    src = _src()
+    retry = src.split("retried_phantom = True")[1].split("arrived = await_arrival(t0)")[0]
+    assert "first_start = node.goal_dist_start" in retry
+    assert retry.index("first_start = node.goal_dist_start") < retry.index("node.begin_leg(gx, gy)")
+    assert "node.goal_dist_start = first_start" in retry.split("node.begin_leg(gx, gy)")[1]
+    # only the gap: moved() must still be earned by this ask
+    assert "leg_start_xy" not in retry

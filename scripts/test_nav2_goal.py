@@ -1770,7 +1770,15 @@ def run_test(goal_x: float = 3.0, goal_y: float = 0.0, timeout: float = 30.0, mi
                 t_w = time.time()
                 while time.time() - t_w < PHANTOM_SETTLE_SEC:
                     rclpy.spin_once(node, timeout_sec=0.2)
+                # The second ask is the same leg: it began where the first did. Measured from
+                # where the first stopped it could never count -- a camera-only Yahboom drove
+                # 1.99 m, Nav2 said SUCCEEDED 0.218 m out (0.20 needed), and the ask began
+                # 0.218 m from the goal and was failed as vacuous (2026-10-21).
+                # Only the start gap: moved() still asks this ask to move the base.
+                first_start = node.goal_dist_start
                 node.begin_leg(gx, gy)
+                if first_start == first_start:
+                    node.goal_dist_start = first_start
                 if not node.send_goal():
                     return False
                 t0 = time.time()
