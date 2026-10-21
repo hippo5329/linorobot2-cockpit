@@ -86,6 +86,12 @@ OUTLINE_SCANS = 10
 # and SLAM moved it 0.24 m on the narrow scan while the odometry stayed at zero; the outline,
 # taken there, put home 0.27 m inside its edge and the goal home was cancelled (2026-10-21).
 ROBOT_SPOT_M = 0.25
+# The outline bounds the room only when the scan sees round the robot. A depth camera's scan
+# (an Astra Pro, 58.5 deg) is a wedge: its hull is the box ahead of the robot, the goal behind
+# that box lay 0.08 m inside it, and a camera-only Yahboom's first patrol leg was cancelled as
+# "a frontier through a gap" without moving (2026-10-21). A scan narrower than this is not
+# taken for the outline; the goal's own check against /map still stands.
+OUTLINE_MIN_SPAN_DEG = 180.0
 BATTERY_WINDOW_S = 3.0     # the battery is judged on the median of this long, not the last sample
 # action_msgs/GoalStatus: a goal the action server has taken and may be driving
 GOAL_ACCEPTED, GOAL_EXECUTING = 1, 2
@@ -250,6 +256,15 @@ def inside_by(poly: list, x: float, y: float) -> float:
     return least
 
 
+def outline_unjudged(span_rad: float) -> str:
+    """Why a scan this wide cannot give the room's outline, or "" when it can."""
+    deg = math.degrees(abs(span_rad))
+    if deg < OUTLINE_MIN_SPAN_DEG:
+        return (f"the scan covers {deg:.0f} deg (under {OUTLINE_MIN_SPAN_DEG:.0f}): its hull is "
+                f"what lies ahead, not the room -- the room outline is not judged")
+    return ""
+
+
 def plan_outside(poly: list, end: tuple, margin: float) -> str:
     d = inside_by(poly, *end)
     if d < margin:
@@ -322,6 +337,11 @@ def main(argv=None) -> int:
         st["stamps"].append(time.time())
         st["stamps"] = st["stamps"][-200:]
         if a.room_bound and st["scans_in"] < OUTLINE_SCANS:
+            why = outline_unjudged(m.angle_max - m.angle_min)
+            if why:
+                print(f"MOTION_GUARD {why}", flush=True)
+                st["scans_in"] = OUTLINE_SCANS      # no outline: on_plan and the leave check skip
+                return
             try:
                 tf = tf_buf.lookup_transform(map_frame, m.header.frame_id, rclpy.time.Time())
             except Exception:

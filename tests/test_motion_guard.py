@@ -309,3 +309,20 @@ def test_home_stays_room_when_slam_moved_the_start():
     new = mg.hull(ahead + mg.start_floor((bx, by), 0.30 + mg.ROBOT_SPOT_M))
     assert mg.plan_outside(old, (0.0, 0.0), 0.30) != ""
     assert mg.plan_outside(new, (0.0, 0.0), 0.30) == ""
+
+
+# ---- a depth camera's scan is a wedge (camera-only Yahboom, 2026-10-21) ----
+def test_a_lidar_scan_gives_the_outline():
+    assert mg.outline_unjudged(2 * 3.14159) == ""
+    assert mg.outline_unjudged(3.5) == ""
+
+
+def test_a_depth_cameras_wedge_does_not_bound_the_room():
+    why = mg.outline_unjudged(1.02)   # Astra Pro, 58.5 deg
+    assert "58 deg" in why and "not judged" in why, why
+
+
+def test_an_unjudged_scan_leaves_no_outline_to_cancel_by():
+    src = open(mg.__file__).read().split("def on_scan(m):")[1].split("def on_battery")[0]
+    assert src.index("outline_unjudged") < src.index("lookup_transform")
+    assert 'st["scans_in"] = OUTLINE_SCANS' in src
