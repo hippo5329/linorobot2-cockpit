@@ -79,6 +79,12 @@ OUTLINE_SCANS = 10
 # poses. A masked sector (the robot's own body) leaves no returns behind it, and the
 # hull's back edge then ran 0.26 m behind the start: the MC200 (118-263 deg masked)
 # had its goal home cancelled as "a frontier through a gap" (2026-10-17).
+#
+# The disc is centred on base_link, not on the scan's frame: a depth camera 0.09 m ahead of
+# the robot moved it that far forward. And the map's origin -- where the robot stood when SLAM
+# started, the 1-Click's home -- gets one too: a camera-only Yahboom spun in place before Nav2
+# and SLAM moved it 0.24 m on the narrow scan while the odometry stayed at zero; the outline,
+# taken there, put home 0.27 m inside its edge and the goal home was cancelled (2026-10-21).
 ROBOT_SPOT_M = 0.25
 BATTERY_WINDOW_S = 3.0     # the battery is judged on the median of this long, not the last sample
 # action_msgs/GoalStatus: a goal the action server has taken and may be driving
@@ -223,6 +229,12 @@ def robot_spot(x: float, y: float, radius: float, n: int = 16) -> list:
             for k in range(n)]
 
 
+def start_floor(base_xy, radius: float) -> list:
+    """The floor the robot stood on while the outline was taken, for the hull: a robot_spot
+    round base_link there, and one round the map's origin (where SLAM started: home)."""
+    return robot_spot(base_xy[0], base_xy[1], radius) + robot_spot(0.0, 0.0, radius)
+
+
 def inside_by(poly: list, x: float, y: float) -> float:
     """How far (x, y) lies inside the counter-clockwise polygon: the least distance to an
     edge's line, negative when outside any edge."""
@@ -322,7 +334,12 @@ def main(argv=None) -> int:
                     ang = m.angle_min + i * m.angle_increment
                     lx, ly = r * math.cos(ang), r * math.sin(ang)
                     st["outline_pts"].append((t.x + c * lx - s * ly, t.y + s * lx + c * ly))
-            st["outline_pts"].extend(robot_spot(t.x, t.y, a.room_margin + ROBOT_SPOT_M))
+            try:
+                bt = tf_buf.lookup_transform(map_frame, base_frame, rclpy.time.Time()).transform.translation
+                base_xy = (bt.x, bt.y)
+            except Exception:
+                base_xy = (t.x, t.y)
+            st["outline_pts"].extend(start_floor(base_xy, a.room_margin + ROBOT_SPOT_M))
             st["scans_in"] += 1
             if st["scans_in"] == OUTLINE_SCANS:
                 st["outline"] = hull(st["outline_pts"])

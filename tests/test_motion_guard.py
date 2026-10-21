@@ -296,3 +296,16 @@ def test_a_lidar_beside_the_camera_keeps_the_lidars_rate():
     p = _cam_params("ld19")
     assert not mg.depth_scan(p)
     assert mg.want_hz(p) == 10.0
+
+
+def test_home_stays_room_when_slam_moved_the_start():
+    # the camera-only Yahboom (2026-10-21): SLAM put the robot at (0.04, 0.24) after spinning in
+    # place, a 58 deg camera saw only ahead, and home (0, 0) came out 0.27 m inside the outline
+    import math
+    bx, by = 0.04, 0.24
+    ahead = [(bx + 0.09 + r * math.cos(math.radians(a)), by + r * math.sin(math.radians(a)))
+             for a in range(-29, 30) for r in (1.1,)]
+    old = mg.hull(ahead + mg.robot_spot(bx + 0.09, by, 0.30 + mg.ROBOT_SPOT_M))
+    new = mg.hull(ahead + mg.start_floor((bx, by), 0.30 + mg.ROBOT_SPOT_M))
+    assert mg.plan_outside(old, (0.0, 0.0), 0.30) != ""
+    assert mg.plan_outside(new, (0.0, 0.0), 0.30) == ""
