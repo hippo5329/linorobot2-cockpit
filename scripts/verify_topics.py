@@ -135,6 +135,13 @@ AHRS_GRAVITY = 9.80665
 # publisher appears, so only a robot without one pays it in full.
 IMU_AUTO_BOARD_WAIT_S = 15.0
 IMU_AUTO_GRACE_S = 8.0
+# A required auxiliary topic (a fitted barometer, current monitor...) is judged on whether the
+# board advertises it -- but not at one instant. The rate verdict comes after --samples /odom
+# messages, about 1 s after the agent connects on a serial S3 (12.8 Hz while it settles), and
+# twice on one gate an S3 with its BMP280 answering was refused "NOT ADVERTISED" at that
+# instant; the same board passed test_sensors at once, and passed the other distro (r149,
+# 2026-10-21). Up to this long for a publisher to appear before the verdict; the wait is printed.
+AUX_ADVERTISE_WAIT_S = 8.0
 
 
 def _gravity_from(q, g=AHRS_GRAVITY):
@@ -336,6 +343,23 @@ class TopicVerifier(Node):
         a question for the robot, later.
         """
         return self.count_publishers(topic)
+
+
+def wait_for_advertised(verifier, topics, limit: float = None, clock=time.time, spin=None) -> Dict[str, float]:
+    """Spin until every topic in `topics` has a publisher, or `limit` seconds (AUX_ADVERTISE_WAIT_S)
+    pass. Returns {topic: seconds waited} for each topic that had none at first (inf: never)."""
+    limit = AUX_ADVERTISE_WAIT_S if limit is None else limit
+    spin = spin or (lambda: rclpy.spin_once(verifier, timeout_sec=0.1))
+    missing = [t for t in topics if verifier.aux_publishers(t) == 0]
+    t0, out = clock(), {}
+    while missing and clock() - t0 < limit:
+        spin()
+        for t in list(missing):
+            if verifier.aux_publishers(t) > 0:
+                out[t] = clock() - t0
+                missing.remove(t)
+    out.update({t: float("inf") for t in missing})
+    return out
 
 
 def measured_hz(ts_list) -> float:
@@ -553,6 +577,12 @@ def main():
                 print(f"   Range Check  : {range_note}")
 
     json_results["auxiliary_topics"] = {}
+    waited = wait_for_advertised(verifier, required_aux)
+    json_results["advertise_wait_s"] = {t: (round(w, 2) if w != float("inf") else None) for t, w in waited.items()}
+    if not args.json:
+        for t, w in waited.items():
+            if w != float("inf"):
+                print(f"   {t}: advertised {w:.1f} s after the rates were taken")
     for opt_topic, opt_sample in verifier.optional_samples.items():
         required = opt_topic in required_aux
         publishers = verifier.aux_publishers(opt_topic)
@@ -568,8 +598,8 @@ def main():
                 "echo": "NOT ADVERTISED (no publisher)",
             }
             if not args.json:
-                print(f"❌ {opt_topic:12s} : NOT ADVERTISED — the robot config says this "
-                      f"sensor is fitted")
+                print(f"❌ {opt_topic:12s} : NOT ADVERTISED (none in {AUX_ADVERTISE_WAIT_S:.0f} s) — the "
+                      f"robot config says this sensor is fitted")
             continue
 
         if opt_sample is None:
