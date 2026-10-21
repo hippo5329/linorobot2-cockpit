@@ -64,6 +64,9 @@ CHASSIS = {
             "counts_per_rev": 887,
             "motor_operating_voltage": 11.1,
             "motor_power_max_voltage": 11.1,
+            # The wheel loop, by hand on the floor on our MC200s (UNO Q 2026-10-14,
+            # Yahboom 2026-10-18): the same 10-bit PWM and PID code under both designs.
+            "pid": {"kp": 4.0, "ki": 2.0, "kd": 0.0},
         },
         "geometry": {
             "body": {"length": 0.2, "width": 0.15, "mass": 1.0},

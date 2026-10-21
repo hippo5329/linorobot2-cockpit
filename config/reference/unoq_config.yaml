@@ -164,10 +164,13 @@ kinematics:
   # A 3S pack.
   motor_operating_voltage: 11.1
   motor_power_max_voltage: 11.1
+  # The MC200's wheel loop, tuned by hand on the floor by encoder-distance steps (t90
+  # 140 ms, no overshoot) and kept through every box patrol since, on the UNO Q and on a
+  # Yahboom YB-EET01 under the same chassis. The default 0.6/0.8/0.5 is a different robot's.
   pid:
-    kp: 0.6
-    ki: 0.8
-    kd: 0.5
+    kp: 4.0
+    ki: 2.0
+    kd: 0.0
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
