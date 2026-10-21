@@ -22,6 +22,9 @@ The 1-Click runs this beside a real robot's exploration and goal legs. It watche
             at least SCAN_RATE_SHARE of it over the last SCAN_WINDOW_S (the same floor
             bring-up's lidar_check judges by), and never be older than scan_stale_s(). A
             model with no known rate is held to the rate it gave while the guard got ready.
+            A depth camera that IS /scan (no LiDAR) is held to DEPTH_SCAN_HZ instead: its
+            frame rate swings with USB and CPU load (an Astra Pro on a Pi 5: 19-26 Hz at
+            rest), so a share of whatever it gave at the start tripped a healthy camera.
             A tracked robot at 8 % charge gave 6.9 Hz scans of 456 beams from the start, then
             none at all while exploring; the robot was at a wall by then.
   battery   /battery, as a 0..1 fraction: its percentage, or -- when that is NaN (some boards
@@ -63,6 +66,11 @@ SCAN_STALE_S = 1.0
 # GenDrv's link has measured gaps of 0.5-2 s with the rate over 5 s still whole. One such gap is
 # the link, not a dead LiDAR; a link that gaps often fails the rate floor anyway.
 SCAN_STALE_FORWARDED_S = 2.0
+# A depth camera's scan, when it is /scan (depth_camera.scan_source "depth"), must keep up
+# with the LiDAR class Nav2 is tuned for: the floor is SCAN_RATE_SHARE of this, 8 Hz. Its own
+# rate is no reference: an Astra Pro on a Pi 5 gave 22 Hz while the guard got ready and 17.7 Hz
+# 0.2 m later, and 80 % of the 22 cancelled a healthy run (2026-10-21).
+DEPTH_SCAN_HZ = 10.0
 READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
@@ -92,10 +100,10 @@ def scan_stale_s(hz: float, forwarded: bool = False) -> float:
 
 
 def scan_fault(stamps: list, now: float, want_hz: float, started: float, stale_s: float = None,
-               model_hz: float = None) -> str:
+               model_hz: float = None, depth: bool = False) -> str:
     """Why the scan is not good enough to move on, or ''. `want_hz`: the rate the floor is a
     share of -- the model's, or the one measured while getting ready for a model with none
-    (`model_hz` 0 says which, for the message)."""
+    (`model_hz` 0 says which, for the message). `depth`: /scan is a depth camera's."""
     stale_s = SCAN_STALE_S if stale_s is None else stale_s
     if not stamps:
         return "no /scan at all" if now - started > stale_s else ""
@@ -106,6 +114,10 @@ def scan_fault(stamps: list, now: float, want_hz: float, started: float, stale_s
         hz = scan_rate(stamps, now)
         floor = SCAN_RATE_SHARE * want_hz
         if hz < floor:
+            if depth:
+                return (f"/scan at {hz:.1f} Hz, under {floor:.1f} Hz ({SCAN_RATE_SHARE:.0%} of the "
+                        f"{want_hz:.0f} Hz a depth camera's scan is held to): the camera is short "
+                        f"of power or USB bandwidth, or the computer of CPU")
             whose = ("model's" if model_hz is None or model_hz else "measured at the start,")
             return (f"/scan at {hz:.1f} Hz, under {floor:.1f} Hz ({SCAN_RATE_SHARE:.0%} of the "
                     f"{whose} {want_hz:.0f} Hz): the LiDAR is short of power or its link of room")
@@ -235,7 +247,18 @@ def plan_outside(poly: list, end: tuple, margin: float) -> str:
     return ""
 
 
+def depth_scan(params: dict) -> bool:
+    """/scan is the depth camera's (no LiDAR fitted): depth_camera.scan_source, the rule the
+    launcher and the pipeline share."""
+    import depth_camera
+    return depth_camera.scan_source((params or {}).get("base_controller") or {}) == "depth"
+
+
 def want_hz(params: dict) -> float:
+    """The rate the scan floor is a share of: the LiDAR model's, DEPTH_SCAN_HZ for a depth
+    camera's scan, or 0 (the rate measured while getting ready)."""
+    if depth_scan(params):
+        return DEPTH_SCAN_HZ
     return lidar_check.expected_hz(params)
 
 
@@ -270,6 +293,7 @@ def main(argv=None) -> int:
     with open(a.params) as fh:
         params = yaml.safe_load(fh) or {}
     model_hz = want_hz(params)
+    depth = depth_scan(params)
     hz = model_hz
     stale_s = scan_stale_s(model_hz, lidar_check.forwarded(params))
     battery = Battery(*battery_limits(params))
@@ -375,7 +399,7 @@ def main(argv=None) -> int:
             "no /battery reading came" if not battery.samples else
             "its percentage is NaN and the config has no battery min_v/max_v to read the voltage by")
             + "; nothing stops the robot on a low pack", flush=True)
-    why = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+    why = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz, depth)
            or ("" if hz else "no /scan rate to judge by")
            or battery_fault(frac, a.battery_min_start))
     if why:
@@ -393,7 +417,7 @@ def main(argv=None) -> int:
             rclpy.spin_once(node, timeout_sec=0.05)
             now = time.time()
             if not tripped:
-                tripped = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz)
+                tripped = (scan_fault(st["stamps"], now, hz, started, stale_s, model_hz, depth)
                            or battery_fault(battery.fraction(now), a.battery_min))
                 if not tripped and a.room_bound and st["outline"]:
                     try:

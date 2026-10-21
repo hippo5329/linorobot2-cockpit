@@ -270,3 +270,29 @@ def test_the_floor_the_robot_stood_on_is_room_behind_a_masked_sector():
     assert mg.plan_outside(poly, (-0.10, 0.05), 0.30) == ""          # home is room
     assert mg.plan_outside(poly, (0.0, 0.0), 0.30) == ""
     assert "beyond" in mg.plan_outside(poly, (3.5, 0.0), 0.30)        # past the wall: still named
+
+
+# ---- a depth camera that IS /scan (no LiDAR) ------------------------------------------------
+def _cam_params(lidar_model="none"):
+    return {"base_controller": {"lidar": {"model": lidar_model}, "depth_camera": {"model": "astra_pro"}}}
+
+
+def test_a_depth_cameras_scan_is_held_to_the_lidar_class_rate():
+    # an Astra Pro on a Pi 5 (2026-10-21): 22 Hz while the guard got ready, 17.7 Hz 0.2 m later
+    p = _cam_params()
+    assert mg.depth_scan(p)
+    assert mg.want_hz(p) == mg.DEPTH_SCAN_HZ
+    assert mg.scan_fault(_stamps(17.7, 5), 100.0, mg.want_hz(p), started=90.0,
+                         model_hz=mg.want_hz(p), depth=True) == ""
+
+
+def test_a_depth_scan_under_the_floor_names_the_camera():
+    why = mg.scan_fault(_stamps(6.0, 5), 100.0, mg.DEPTH_SCAN_HZ, started=90.0,
+                        model_hz=mg.DEPTH_SCAN_HZ, depth=True)
+    assert "depth camera" in why and "LiDAR" not in why
+
+
+def test_a_lidar_beside_the_camera_keeps_the_lidars_rate():
+    p = _cam_params("ld19")
+    assert not mg.depth_scan(p)
+    assert mg.want_hz(p) == 10.0
