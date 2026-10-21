@@ -218,9 +218,16 @@ kinematics:
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-geometry: {}   # the default chassis: derived by gen_robot_description.effective_geometry()
-               # from the kinematics above -- same body and mounts as every bare module,
-               # laser at the base origin. A real chassis gets measured values in October.
+# The default chassis otherwise: derived by gen_robot_description.effective_geometry() from
+# the kinematics above -- same body and mounts as every bare module, laser at the base origin.
+geometry:
+  # The onboard ICM-42670-P is turned 90 deg on this board. Measured on a real YB-EET01 under
+  # an MC200 (test_sensors, 2026-10-18): stood head up, gravity read on the chip's +Y with X
+  # about 0, so with the board mounted as there its +Y points forward and its +X to the right:
+  # yaw -pi/2 (pi, a reversed board, was tried first and was wrong). Mount the board any
+  # other way and the same head-up check gives its yaw.
+  imu:
+    yaw: -1.57079633
 ekf:
   ekf_filter_node:
     ros__parameters:
