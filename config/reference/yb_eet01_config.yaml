@@ -221,13 +221,14 @@ kinematics:
 # The default chassis otherwise: derived by gen_robot_description.effective_geometry() from
 # the kinematics above -- same body and mounts as every bare module, laser at the base origin.
 geometry:
-  # The onboard ICM-42670-P is turned 90 deg on this board. Measured on a real YB-EET01 under
-  # an MC200 (test_sensors, 2026-10-18): stood head up, gravity read on the chip's +Y with X
-  # about 0, so with the board mounted as there its +Y points forward and its +X to the right:
-  # yaw -pi/2 (pi, a reversed board, was tried first and was wrong). Mount the board any
-  # other way and the same head-up check gives its yaw.
+  # The board's front is the M1/M2 connector edge (as marked on the PCB): mount it with that
+  # edge forward. Its onboard ICM-42670-P is turned 90 deg to that: +Y points back, +X left,
+  # so yaw +pi/2. Measured on a real board under an MC200 mounted the other way round, M1/M2
+  # edge to the rear (test_sensors, 2026-10-18: stood head up, gravity on the chip's +Y with
+  # X about 0, so +Y forward there and yaw -pi/2). Mounted any other way, the same head-up
+  # check gives the yaw.
   imu:
-    yaw: -1.57079633
+    yaw: 1.57079633
 ekf:
   ekf_filter_node:
     ros__parameters:
