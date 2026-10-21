@@ -992,6 +992,15 @@ ROT_FRAC = 0.244
 ACCEL_FRAC = 0.31
 ANG_ACCEL_SECONDS = 0.8
 TARGET_FRAC = 0.83
+# The smoother's angular DECEL, rad/s^2, apart from the accel: a stop, not a ramp.
+# Nav2 reports a goal reached while the heading is still turning, and with the decel
+# equal to the accel the ramp down kept the wheels turning after that: home 13-15 deg
+# past the start heading against the 6.9 deg the box patrol needs, on all three real
+# robots, the tracked one and both mecanum (2026-10-20/21). At 3.2 all three passed
+# their box patrols on both distros, and the UNO Q mecanum then came home within 5.2 deg
+# on all but one of about 50 home legs (that one +7.3). A turn already stops this fast
+# on its own, so the faster ramp asks the loop for nothing the floor does not give anyway.
+ANG_DECEL = 3.2
 
 # The default driver margin: the controller may ask for 80% of no-load speed.
 #
@@ -1100,7 +1109,7 @@ def suggest_nav2_limits(d, p=None, measured=None):
         "nav2.velocity_smoother.ros__parameters.min_velocity": [-v, -vy + 0.0, -w],
         "nav2.velocity_smoother.ros__parameters.max_accel": [a, r2(a) if vy else 0.0, ang_a],
         "nav2.velocity_smoother.ros__parameters.max_decel":
-            [-a, -(r2(a)) if vy else 0.0, -ang_a],
+            [-a, -(r2(a)) if vy else 0.0, -max(ang_a, ANG_DECEL)],
         "nav2.controller_server.ros__parameters.FollowPath.desired_linear_vel":
             r2(v * TARGET_FRAC),
         "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel":

@@ -555,7 +555,7 @@ nav2:
       max_decel:
       - -0.8
       - 0.0
-      - -1.5
+      - -3.2
       odom_topic: odom
       odom_duration: 0.1
       deadband_velocity:
