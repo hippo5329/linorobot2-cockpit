@@ -2281,7 +2281,7 @@ def main():
     parser.add_argument("--home-yaw-tolerance", type=float, default=None,
                         help="radians: the leg home must also end facing the start heading "
                              "within this. Default: the robot's own Nav2 yaw_goal_tolerance "
-                             "plus 0.05 -- a home reached facing elsewhere starts the next run "
+                             "plus 0.10 -- a home reached facing elsewhere starts the next run "
                              "in a turned frame.")
     parser.add_argument("--goal-timeout", type=int, default=None,
                         help="seconds each Nav2 goal leg waits. Default: 180 when the goal "
@@ -2343,12 +2343,15 @@ def main():
                     .get("ros__parameters") or {}).get("general_goal_checker") or {})
         args.goal_tolerance = round(float(checker.get("xy_goal_tolerance", 0.25)) + 0.05, 3)
     if args.home_yaw_tolerance is None:
-        # The leg home is judged on heading as well, by the same rule: Nav2's own
-        # yaw_goal_tolerance plus a margin (0.05 rad) for the pose being sampled
-        # a moment off the goal checker's.
+        # The leg home is judged on heading as well: Nav2's own yaw_goal_tolerance
+        # plus a margin (0.10 rad) for the coast after the goal checker fires and for
+        # SLAM's map->odom corrections after arrival. With 0.05 the 0.07 rad checker
+        # gave 6.9 deg, and three mecanum home legs that Nav2 had finished within it
+        # read 8.2-8.9 deg at rest while the other home legs of the same runs read
+        # under 1 deg (rc-20261022.2 gate).
         checker = ((((params.get("nav2") or {}).get("controller_server") or {})
                     .get("ros__parameters") or {}).get("general_goal_checker") or {})
-        args.home_yaw_tolerance = round(float(checker.get("yaw_goal_tolerance", 0.25)) + 0.05, 3)
+        args.home_yaw_tolerance = round(float(checker.get("yaw_goal_tolerance", 0.25)) + 0.10, 3)
     if not controller_cfg:
         raise SystemExit(f"{os.path.basename(params_path)} has no base_controller: block. "
                          "Run scripts/migrate_config_schema.py to convert it.")

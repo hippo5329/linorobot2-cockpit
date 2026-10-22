@@ -59,7 +59,7 @@ def test_no_heading_measured_is_not_a_pass(monkeypatch):
 
 
 def test_the_pipeline_derives_it_from_the_robots_goal_checker_and_passes_it():
-    assert 'checker.get("yaw_goal_tolerance", 0.25)) + 0.05' in PIPELINE
+    assert 'checker.get("yaw_goal_tolerance", 0.25)) + 0.10' in PIPELINE
     assert '--home-yaw-tolerance {args.home_yaw_tolerance}' in PIPELINE
 
 

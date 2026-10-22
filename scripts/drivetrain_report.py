@@ -1168,11 +1168,12 @@ def config_plant(params, d=None):
 # The turn in place to the goal heading must stop inside the home-heading pass mark. Nav2's
 # goal checker fires as soon as the heading is within yaw_goal_tolerance, mid-turn, and the
 # robot keeps turning for the command latency and then its stop: w*LATENCY + w^2 / (2*decel).
-# The 1-Click passes home at yaw_goal_tolerance + HEADING_MARGIN, so that coast has to fit in
-# HEADING_MARGIN. A bare Pico 2 over serial at 1.0 rad/s came home -13.5 and -17.9 deg with
-# Nav2's SUCCEEDED (0.07 rad tolerance, 6.9 deg pass mark; rc-20261022.1 smoke, 2026-10-22);
+# The 1-Click passes home at yaw_goal_tolerance + 0.10 rad; the coast gets HEADING_MARGIN of
+# that, and the rest is left for SLAM's map->odom corrections after the robot stops. A bare
+# Pico 2 over serial at 1.0 rad/s came home -13.5 and -17.9 deg with Nav2's SUCCEEDED
+# (0.07 rad tolerance, then a 6.9 deg pass mark; rc-20261022.1 smoke, 2026-10-22);
 # the simulated legs, with no transport, passed. A tracked robot at 0.3 rad/s comes home within 6 deg.
-HEADING_MARGIN = 0.05       # rad: the pass mark's margin over the goal checker's yaw tolerance
+HEADING_MARGIN = 0.05       # rad: the coast's share of the pass mark's margin over the yaw tolerance
 HEADING_LATENCY = 0.1       # s: cmd_vel to the wheels, serial or Wi-Fi, plus one control cycle
 
 
