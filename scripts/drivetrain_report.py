@@ -1171,7 +1171,7 @@ def config_plant(params, d=None):
 # The 1-Click passes home at yaw_goal_tolerance + HEADING_MARGIN, so that coast has to fit in
 # HEADING_MARGIN. A bare Pico 2 over serial at 1.0 rad/s came home -13.5 and -17.9 deg with
 # Nav2's SUCCEEDED (0.07 rad tolerance, 6.9 deg pass mark; rc-20261022.1 smoke, 2026-10-22);
-# the simulated legs, with no transport, passed. The TS100 at 0.3 rad/s comes home within 6 deg.
+# the simulated legs, with no transport, passed. A tracked robot at 0.3 rad/s comes home within 6 deg.
 HEADING_MARGIN = 0.05       # rad: the pass mark's margin over the goal checker's yaw tolerance
 HEADING_LATENCY = 0.1       # s: cmd_vel to the wheels, serial or Wi-Fi, plus one control cycle
 

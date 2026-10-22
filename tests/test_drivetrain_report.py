@@ -172,7 +172,7 @@ def test_the_turn_home_stops_inside_the_heading_pass_mark():
     a = -out["nav2.velocity_smoother.ros__parameters.max_decel"][2]
     coast = w * dr.HEADING_LATENCY + w * w / (2.0 * a)
     assert coast <= dr.HEADING_MARGIN + 1e-3
-    assert 0.25 <= w <= 0.4                     # the TS100 comes home within 6 deg at 0.3
+    assert 0.25 <= w <= 0.4                     # a tracked robot comes home within 6 deg at 0.3
     assert abs(dr.heading_coast_cap(-3.2) - 0.33) < 0.005
 
 
