@@ -663,14 +663,16 @@ OTA. It is a controller design on the one default chassis.
 | part | wiring |
 |---|---|
 | drivetrain | mecanum, or 4WD with `kinematics.base_type: skid_steer` |
-| motors | RZ7889 x4 (`RZ7889`, the dual-PWM scheme): 27/13, 4/2, 17/12, 14/15 |
-| encoders | E0-E3: 18/19, 5/23, 35/36, 34/39 |
+| motors | RZ7889 x4 (`RZ7889`, the dual-PWM scheme; the README names the SS6625E), M+/M-: 27/13, 4/2, 17/12, 15/14 |
+| encoders | E0-E3 (GH1.25: M-, VCC 3.3 V, B, A, GND, M+), A/B: 18/19, 5/23, 35/36, 34/39 |
 | I2C | 21/22 |
 | LED | none (`led: -1`): only the CH340's TX/RX activity LEDs, which no GPIO drives |
 
-The DIP switch must be on the motor side for the motors it shares with header pins. The encoder
-ports supply 5 V while the ESP32 takes 3.3 V, so use encoders with open-collector or 3.3 V outputs;
-GPIO 34-39 have no internal pull-ups. Directions are confirmed by driving a robot, not by the build.
+The DIP switch must be on the motor side for the motors it shares with header pins. E3 is wired the
+other way round from the DC port M3 (M3 is 14, 15; E3 is +15 -14), so motor 4 is `in_a` 15. The encoder
+ports supply 3.3 V, so 3.3 V hall encoders plug straight in; GPIO 34-39 have no internal pull-ups.
+The GH1.25 E-ports are rated 1 A continuous per pin, not the bridge's 3 A: a motor that stalls above
+that (520 class, ~2.5 A) belongs on the PH2.0 DC ports, with only its encoder on the E-port. Directions are confirmed by driving a robot, not by the build.
 
 ### The Pimoroni Motor 2040 runs the Pico image
 `config/reference/pimoroni_motor2040_config.yaml` is the Pimoroni Motor 2040: an RP2040 with two DRV8833

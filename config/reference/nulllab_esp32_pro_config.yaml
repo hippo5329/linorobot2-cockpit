@@ -7,13 +7,22 @@
 #
 #   * MCU: ESP32-WROOM-32E, 4 MB flash, CH340G USB serial at 1.5 Mbaud (auto-reset
 #     on DTR/RTS).
-#   * Motors: four RZ7889 bridges (BI/FI, PWM on both inputs, no enable: our dual-PWM
-#     `bts7960` scheme), 3 A per motor. M2 and M3 (17/12, 14/15) are on the motor
-#     side of the DIP switch SW1 only when it is set to "Motor"; on "IO" they are
-#     header pins and the rear wheels do nothing.
-#   * Encoders: the E0-E3 ports (PH2.0). They supply 5 V, and the ESP32's inputs take
-#     3.3 V: use encoders with open-collector or 3.3 V outputs. E2/E3 are on GPIO
-#     34-39, which have no internal pull-ups: an open-collector encoder there needs its own.
+#   * Motors: four RZ7889 bridges on the schematic (the README names the SS6625E; both
+#     are BI/FI, PWM on both inputs, no enable: our dual-PWM `bts7960` scheme), 3 A per
+#     motor. M2 and M3 are on the motor side of the DIP switch SW1 only when it is set to
+#     "Motor"; on "IO" they are header pins and the rear wheels do nothing.
+#   * Encoder motors: the E0-E3 ports (GH1.25, 6 pins: M-, VCC, ENC B, ENC A, GND, M+;
+#     the plain DC ports M0-M3 are PH2.0). VCC is 3.3 V (measured on the board; the
+#     schematic's net is labelled +5V), so 3.3 V hall encoders plug straight in. E2/E3 are
+#     on GPIO 34-39, which have no internal pull-ups: an open-collector encoder there
+#     needs its own.
+#   * M+ is the bridge's FI input: 27, 4, 17 and 15. E3 is wired the other way round
+#     from the DC port M3 (M3 is 14, 15; E3 is +15 -14), so motor4 is in_a 15, in_b 14:
+#     in_a 14 drove an E3 motor backwards against its own encoder.
+#   * The GH1.25 pins carry 1 A continuous (JST GH, AWG #26; less on thinner wire), not
+#     the bridge's 3 A: fine for N20 / 370-class encoder motors, but a 520-class motor
+#     (the 2.5 A stall modelled below) overheats the E-port crimps at stall. Run those from
+#     the PH2.0 DC ports (2 A) and bring the encoder to the E-port's A/B/VCC/GND only.
 #   * I2C: SDA 21 / SCL 22 on the IIC and OLED headers. Nothing is fitted on the board.
 #   * No battery sense: the DC jack (6-16 V) reaches no ADC pin.
 #   * No user LED (led: -1): the board's only LEDs are the CH340's two yellow serial
@@ -89,8 +98,8 @@ base_controller:
     imu_mount_pitch_deg: 0.0
     mag_heading_deg: 37.0
   pins:
-    # Dual PWM: in_a / in_b are the bridge's two inputs in the vendor's pin order, no
-    # enable pin. Numbering is linorobot2's: 1 front-left, 2 front-right, 3 rear-left,
+    # Dual PWM: in_a / in_b are the bridge's FI (M+) and BI (M-) inputs, as the vendor
+    # lists the encoder ports E0-E3, no enable pin. Numbering is linorobot2's: 1 front-left, 2 front-right, 3 rear-left,
     # 4 rear-right = the board's M0-M3 and E0-E3. Correct a reversed motor with
     # invert, not by swapping wires.
     motor1:
@@ -110,8 +119,8 @@ base_controller:
       invert: false
     motor4:
       pwm: -1
-      in_a: 14
-      in_b: 15
+      in_a: 15
+      in_b: 14
       invert: false
     encoder1:
       pin_a: 18
