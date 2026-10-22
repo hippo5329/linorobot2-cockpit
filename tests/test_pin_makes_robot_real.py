@@ -203,7 +203,7 @@ def test_a_rebuild_meant_for_another_robot_is_refused(monkeypatch):
     two robot switches raced (2026-10-19): the board's default robot was being made a bare
     module while a Wi-Fi robot was picked, and the bare module landed on the Wi-Fi robot. The
     request names its robot; once another is active, nothing is applied."""
-    from fastapi import HTTPException
+    HTTPException = pytest.importorskip("fastapi", reason="the cockpit backend needs fastapi/uvicorn").HTTPException
     p = _bare("uileg_udp4")
     rc, saved = _backend(monkeypatch, p)
     monkeypatch.setattr(rc, "get_active_params_path", lambda: "/tmp/uileg_udp4_config.yaml")
