@@ -12,7 +12,7 @@ import types
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "explore_nudge.py")
 
 
-def _run(monkeypatch, wall_ahead, wall_behind=3.0, distance=0.8):
+def _run(monkeypatch, wall_ahead, wall_behind=3.0, distance=0.8, side_walls=None):
     robot = {"x": 0.0, "y": 0.0, "yaw": 0.0, "vx": 0.0, "wz": 0.0, "t": 0.0}
     subs = {}
 
@@ -48,11 +48,15 @@ def _run(monkeypatch, wall_ahead, wall_behind=3.0, distance=0.8):
             subs["scan"](types.SimpleNamespace(header=types.SimpleNamespace(frame_id="laser")))
 
     def scan_points(_d, laser=None):
-        # Two walls fixed in the room, returned in the robot's frame (it only drives straight here).
+        # Walls fixed in the room, returned in the robot's frame.
         c, s = math.cos(robot["yaw"]), math.sin(robot["yaw"])
         pts = []
-        for wx in (wall_ahead, -wall_behind):
-            dx, dy = wx - robot["x"], 0.0 - robot["y"]
+        walls = [(wall_ahead, 0.0), (-wall_behind, 0.0)]
+        if side_walls is not None:      # a ring of returns: no heading has room
+            walls += [(side_walls * math.cos(k * math.pi / 18), side_walls * math.sin(k * math.pi / 18))
+                      for k in range(36)]
+        for wx, wy in walls:
+            dx, dy = wx - robot["x"], wy - robot["y"]
             pts.append((c * dx + s * dy, -s * dx + c * dy))
         return pts
 
@@ -81,7 +85,24 @@ def _run(monkeypatch, wall_ahead, wall_behind=3.0, distance=0.8):
 
 def test_a_blocked_out_leg_does_not_send_the_robot_backwards(monkeypatch, capsys):
     robot = _run(monkeypatch, wall_ahead=0.6)
-    assert "this leg ends here" in capsys.readouterr().out
+    assert math.hypot(robot["x"], robot["y"]) < 0.05
+
+
+def test_a_blocked_start_heading_drives_out_the_clearest_way(monkeypatch, capsys):
+    """Yahboom 2026-10-22: a box 1.22 m ahead cut "out" to 0.00 m and the nudge only spun;
+    camera-only SLAM drifted 0.6 m. The look finds a clear heading and "out" drives there."""
+    robot = _run(monkeypatch, wall_ahead=0.6)
+    out = capsys.readouterr().out
+    assert "the clearest way is" in out
+    assert "out, turn, back, turn" in out              # the whole 0.8 m, not a warning
+    # faces its start, within one simulated step (2 rad/s x 0.05 s)
+    assert abs(math.remainder(robot["yaw"], 2 * math.pi)) <= 0.1 + 1e-9
+
+
+def test_boxed_in_all_round_says_so(monkeypatch, capsys):
+    robot = _run(monkeypatch, wall_ahead=0.6, side_walls=0.6)
+    out = capsys.readouterr().out
+    assert "the map may not grow" in out
     assert math.hypot(robot["x"], robot["y"]) < 0.05
 
 
