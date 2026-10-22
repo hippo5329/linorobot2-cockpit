@@ -348,6 +348,12 @@ def bare_config(mcu: str, name: str = None, donor_path: str = None) -> dict:
     #
     # So the bare config keeps the donor's numbers until the 2wd flakiness is
     # understood. See cockpit/PROGRESS.md.
+    #
+    # Except the turn in place to the goal heading: the donor's 1.0 rad/s coasted 13-19 deg
+    # past Nav2's goal on a bare Pico 2 (rc-20261022.1 smoke), against a 6.9 deg pass mark.
+    # That cap only ever lowers it (drivetrain_report.heading_coast_cap).
+    import drivetrain_report
+    drivetrain_report.apply_heading_coast_cap(params)
     return params
 
 

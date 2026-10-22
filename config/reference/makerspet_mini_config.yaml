@@ -343,7 +343,7 @@ nav2:
         angular_dist_threshold: 0.785
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
-        rotate_to_heading_angular_vel: 1.24
+        rotate_to_heading_angular_vel: 0.33
         max_angular_accel: 1.86
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false

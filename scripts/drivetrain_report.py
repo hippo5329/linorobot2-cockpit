@@ -1165,6 +1165,43 @@ def config_plant(params, d=None):
     return identify_plant(d)
 
 
+# The turn in place to the goal heading must stop inside the home-heading pass mark. Nav2's
+# goal checker fires as soon as the heading is within yaw_goal_tolerance, mid-turn, and the
+# robot keeps turning for the command latency and then its stop: w*LATENCY + w^2 / (2*decel).
+# The 1-Click passes home at yaw_goal_tolerance + HEADING_MARGIN, so that coast has to fit in
+# HEADING_MARGIN. A bare Pico 2 over serial at 1.0 rad/s came home -13.5 and -17.9 deg with
+# Nav2's SUCCEEDED (0.07 rad tolerance, 6.9 deg pass mark; rc-20261022.1 smoke, 2026-10-22);
+# the simulated legs, with no transport, passed. The TS100 at 0.3 rad/s comes home within 6 deg.
+HEADING_MARGIN = 0.05       # rad: the pass mark's margin over the goal checker's yaw tolerance
+HEADING_LATENCY = 0.1       # s: cmd_vel to the wheels, serial or Wi-Fi, plus one control cycle
+
+
+def heading_coast_cap(decel):
+    """The fastest turn in place (rad/s) whose coast after the goal checker fires --
+    HEADING_LATENCY at speed, then a stop at `decel` rad/s^2 -- fits in HEADING_MARGIN."""
+    a = abs(float(decel))
+    return a * (-HEADING_LATENCY + math.sqrt(HEADING_LATENCY ** 2 + 2.0 * HEADING_MARGIN / a))
+
+
+def apply_heading_coast_cap(params):
+    """Cap a config's FollowPath.rotate_to_heading_angular_vel at heading_coast_cap() of its
+    own smoother's angular stop, in place, for configs that do not derive their limits (the
+    bare rule keeps its donor's Nav2 block). Returns the new value, or None if unchanged."""
+    ros = (((params.get("nav2") or {}).get("controller_server") or {}).get("ros__parameters") or {})
+    fp = ros.get("FollowPath") or {}
+    sm = (((params.get("nav2") or {}).get("velocity_smoother") or {}).get("ros__parameters") or {})
+    w, decel = fp.get("rotate_to_heading_angular_vel"), sm.get("max_decel")
+    try:
+        cap = round(heading_coast_cap(decel[2]), 2)
+        w = float(w)
+    except (TypeError, ValueError, IndexError, ZeroDivisionError):
+        return None
+    if w <= cap:
+        return None
+    fp["rotate_to_heading_angular_vel"] = cap
+    return cap
+
+
 def _heading_turn_cap(params):
     """`kinematics.heading_turn_max_vel` in rad/s, or None when unset or not a positive number."""
     raw = (params.get("kinematics") or {}).get("heading_turn_max_vel")
@@ -1220,6 +1257,9 @@ def derived_limits(params):
     key = "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel"
     if cap is not None and key in out:
         out[key] = min(out[key], cap)
+    decel = out.get("nav2.velocity_smoother.ros__parameters.max_decel")
+    if key in out and decel:
+        out[key] = min(out[key], round(heading_coast_cap(decel[2]), 2))
 
     # The wheel loop's gains, from the step response -- the robot's own if it
     # has been measured, the model's otherwise. Only written when the closed-loop

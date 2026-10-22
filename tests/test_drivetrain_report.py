@@ -147,16 +147,47 @@ def test_heading_turn_cap_holds_the_derived_turn_in_place():
     derived limits (a --test-acc run's too) never raise the turn in place past it."""
     key = "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel"
     free = dr.derived_limits(_cfg())[key]
-    assert free > 0.5
+    assert free > 0.2
     capped = _cfg()
-    capped["kinematics"]["heading_turn_max_vel"] = 0.5
-    assert dr.derived_limits(capped)[key] == 0.5
+    capped["kinematics"]["heading_turn_max_vel"] = 0.2
+    assert dr.derived_limits(capped)[key] == 0.2
     capped["kinematics"]["heading_turn_max_vel"] = free + 1.0   # above: no change
     assert dr.derived_limits(capped)[key] == free
     for bad in ("x", 0, -1, None):
         capped["kinematics"]["heading_turn_max_vel"] = bad
         assert dr.derived_limits(capped)[key] == free
-    capped["kinematics"]["heading_turn_max_vel"] = 0.5
+    capped["kinematics"]["heading_turn_max_vel"] = 0.2
     dr.apply_derived_limits(capped)
     fp = capped["nav2"]["controller_server"]["ros__parameters"]["FollowPath"]   # the flat path it writes
-    assert fp["rotate_to_heading_angular_vel"] == 0.5
+    assert fp["rotate_to_heading_angular_vel"] == 0.2
+
+
+def test_the_turn_home_stops_inside_the_heading_pass_mark():
+    """The goal checker fires mid-turn; the coast after it (latency at speed, then the
+    smoother's stop) must fit in the pass mark's margin. A bare Pico 2 at 1.0 rad/s came
+    home -13.5 and -17.9 deg against 6.9 (rc-20261022.1 smoke, 2026-10-22)."""
+    key = "nav2.controller_server.ros__parameters.FollowPath.rotate_to_heading_angular_vel"
+    out = dr.derived_limits(_cfg())
+    w = out[key]
+    a = -out["nav2.velocity_smoother.ros__parameters.max_decel"][2]
+    coast = w * dr.HEADING_LATENCY + w * w / (2.0 * a)
+    assert coast <= dr.HEADING_MARGIN + 1e-3
+    assert 0.25 <= w <= 0.4                     # the TS100 comes home within 6 deg at 0.3
+    assert abs(dr.heading_coast_cap(-3.2) - 0.33) < 0.005
+
+
+def test_every_shipped_config_turns_home_inside_the_pass_mark():
+    """The bare rule keeps its donor's Nav2 block and the reference designs are written by
+    hand, so neither goes through derived_limits: both must still fit the coast budget."""
+    import glob
+    import gen_bare_config
+    cfgs = {f: yaml.safe_load(open(f)) for f in glob.glob(os.path.join(ROOT, "config", "reference", "*.yaml"))}
+    for mcu in ("pico2", "esp32", "esp32s3"):
+        cfgs["bare " + mcu] = gen_bare_config.bare_config(mcu)
+    for name, p in cfgs.items():
+        fp = p["nav2"]["controller_server"]["ros__parameters"].get("FollowPath") or {}
+        if "rotate_to_heading_angular_vel" not in fp:
+            continue
+        w = float(fp["rotate_to_heading_angular_vel"])
+        a = -float(p["nav2"]["velocity_smoother"]["ros__parameters"]["max_decel"][2])
+        assert w * dr.HEADING_LATENCY + w * w / (2.0 * a) <= dr.HEADING_MARGIN + 1e-3, (name, w, a)
