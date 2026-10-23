@@ -14,7 +14,8 @@ condition.
 Config (base_controller):
 
     depth_camera:
-      model: realsense   # none | realsense | zed | zedm | zed2 | zed2i | oakd | oakdlite | oakdpro | astra_pro
+      model: realsense   # none | realsense | zed | zedm | zed2 | zed2i | oakd | oakdlite | oakdpro
+                         # | astra_pro | astra_pro_openni2
     sensors:
       use_sim_depth: false   # the simulated camera instead of a real one
 
@@ -56,14 +57,24 @@ DEPTH_MODELS = {
     "oakdpro":   ("oakd", "Luxonis OAK-D Pro", "camera_link",
                   "/oak/stereo/image_raw", "/oak/stereo/camera_info"),
     # The original Astra Pro: depth over OpenNI2 (USB 2bc5:0403), colour as a separate
-    # UVC camera (2bc5:0501) that nothing here needs. ros-<distro>-openni2-camera drives
-    # it once Orbbec's own OpenNI2 is installed (ORBBEC_SDK_DIR below); Orbbec's current
-    # ROS 2 driver (OrbbecSDK_ROS2) does not cover this model. openni2_camera 2.x
-    # publishes depth as depth_raw/image (16UC1, millimetres) with depth_raw/camera_info,
-    # and depth/image (32FC1, metres) -- there is no depth/image_raw (2026-10-10).
-    "astra_pro": ("openni2", "Orbbec Astra Pro", "camera_link",
-                  "/camera/depth_raw/image", "/camera/depth_raw/camera_info"),
+    # UVC camera (2bc5:0501). Orbbec's ros2_astra_camera drives both (built into the
+    # robot image at ASTRA_WS, launchers/astra_camera_depth.launch.py): depth/image_raw
+    # (16UC1, millimetres), color/image_raw (rgb8), both 640x480 at 30 Hz with the
+    # camera's intrinsics (measured 2026-10-22). Orbbec's current ROS 2 driver,
+    # OrbbecSDK_ROS2, finds the camera but has no colour for it, and its depth is a tenth
+    # of the true range with NaN intrinsics.
+    "astra_pro": ("astra", "Orbbec Astra Pro", "camera_link",
+                  "/camera/depth/image_raw", "/camera/depth/camera_info"),
+    # The same camera, depth only, on ros-<distro>-openni2-camera once Orbbec's own
+    # OpenNI2 is installed (ORBBEC_SDK_DIR below): the fallback from before the image
+    # carried ros2_astra_camera. openni2_camera 2.x publishes depth as depth_raw/image
+    # (16UC1, millimetres) with depth_raw/camera_info, and depth/image (32FC1, metres)
+    # -- there is no depth/image_raw (2026-10-10).
+    "astra_pro_openni2": ("openni2", "Orbbec Astra Pro (OpenNI2, depth only)", "camera_link",
+                          "/camera/depth_raw/image", "/camera/depth_raw/camera_info"),
 }
+# The Astra Pro's two drivers see through one camera: optics and simulation are its.
+ASTRA_PRO_MODELS = ("astra_pro", "astra_pro_openni2")
 OAKD_MODEL = {"oakd": "OAK-D", "oakdlite": "OAK-D-LITE", "oakdpro": "OAK-D-PRO"}
 ZED_MODEL = {"zed": "zed", "zedm": "zedm", "zed2": "zed2", "zed2i": "zed2i"}
 
@@ -81,7 +92,7 @@ SCAN_HEIGHT = 1
 # A real camera's horizontal view (degrees) and near limit (metres), where it is not
 # the simulated D435's (HFOV, SCAN_RANGE_MIN). The Astra Pro: 58.4 x 45.5 deg, 0.6-8 m
 # (Orbbec's datasheet) -- inside 0.6 m it returns nothing, not a short range.
-DEPTH_OPTICS = {"astra_pro": (58.4, 0.6)}
+DEPTH_OPTICS = {m: (58.4, 0.6) for m in ASTRA_PRO_MODELS}
 
 # Orbbec's OpenNI2, which makes openni2_camera see an Astra. Orbbec's driver
 # (liborbbec.so) is built for OpenNI 2.3 and segfaults inside Debian's 2.2.0.33
@@ -93,6 +104,10 @@ DEPTH_OPTICS = {"astra_pro": (58.4, 0.6)}
 ORBBEC_SDK_DIR = "drivers/openni2/sdk"
 ORBBEC_SDK_FILES = ("libOpenNI2.so.0", "OpenNI.ini", "OpenNI2/Drivers/liborbbec.so")
 
+# Where the robot image keeps Orbbec's ros2_astra_camera (docker/Dockerfile, stage astra):
+# its own colcon install, outside /opt/ros, with Orbbec's OpenNI2 in its lib/.
+ASTRA_WS = "/opt/astra_ws/install"
+
 
 def orbbec_sdk_dir(config_dir: str = None) -> str:
     """Where install_orbbec_openni2.py keeps Orbbec's OpenNI2 for this cockpit."""
@@ -101,11 +116,13 @@ def orbbec_sdk_dir(config_dir: str = None) -> str:
 
 # What must be installed for each family, and what to tell someone when it is not.
 DRIVER_PACKAGE = {"realsense": "realsense2_camera", "zed": "zed_wrapper", "oakd": "depthai_ros_driver",
-                  "openni2": "openni2_camera"}
+                  "openni2": "openni2_camera", "astra": "astra_camera"}
 INSTALL_HINT = {
     "realsense": "sudo apt install ros-$ROS_DISTRO-realsense2-camera (the robot image carries it)",
     "oakd": "sudo apt install ros-$ROS_DISTRO-depthai-ros-driver (the robot image carries it)",
     "openni2": "sudo apt install ros-$ROS_DISTRO-openni2-camera (the robot image carries it)",
+    "astra": ("Orbbec's ros2_astra_camera, which the robot image builds into " + ASTRA_WS +
+              " -- update the cockpit image, or set depth_camera.model: astra_pro_openni2"),
     "zed": ("the ZED SDK (CUDA) and zed-ros2-wrapper, built on the robot: "
             "https://github.com/stereolabs/zed-ros2-wrapper -- no generic image can carry them"),
 }
@@ -350,14 +367,27 @@ def scan_range_min(controller: dict) -> float:
     return depth_optics(controller)[1]
 
 
-def openni2_frames(camera_frame: str):
-    """(depth frame, depth optical frame) under an OpenNI2 camera's root frame.
+def stream_frames(camera_frame: str, stream: str = "depth"):
+    """(frame, optical frame) of one of a camera's streams under its root frame.
 
-    camera_link -> camera_depth_frame, camera_depth_optical_frame; a prefix stays a
-    prefix (robot1/camera_link -> robot1/camera_depth_frame ...), never a leading "/".
+    camera_link, depth -> camera_depth_frame, camera_depth_optical_frame; a prefix stays
+    a prefix (robot1/camera_link -> robot1/camera_depth_frame ...), never a leading "/".
     """
     base = camera_frame[:-len("_link")] if camera_frame.endswith("_link") else camera_frame
-    return f"{base}_depth_frame", f"{base}_depth_optical_frame"
+    return f"{base}_{stream}_frame", f"{base}_{stream}_optical_frame"
+
+
+def openni2_frames(camera_frame: str):
+    """(depth frame, depth optical frame) under an OpenNI2 camera's root frame."""
+    return stream_frames(camera_frame, "depth")
+
+
+def astra_driver_missing(ws: str = None) -> bool:
+    """True when the image lacks ros2_astra_camera's node or the OpenNI2 it runs on."""
+    import os
+    ws = ws or ASTRA_WS
+    return not (os.access(os.path.join(ws, "lib", "astra_camera", "astra_camera_node"), os.X_OK)
+                and os.path.isfile(os.path.join(ws, "lib", "libOpenNI2.so")))
 
 
 def orbbec_driver_missing(model: str, config_dir: str = None) -> bool:
@@ -386,6 +416,12 @@ def driver_launch(model: str, distro: str, frame: str):
         return "zed_wrapper", "launch/zed_camera.launch.py", {
             "camera_model": ZED_MODEL[model], "camera_name": "zed",
             "publish_urdf": "true", "publish_tf": "false", "publish_map_tf": "false"}
+    if family == "astra":
+        # Our own launch file, not the package's astra_pro.launch.xml: that one names its
+        # frames after camera_name, turns the IR stream and a point cloud on, and runs on
+        # whatever libOpenNI2 the library path finds first.
+        return "linorobot2_cockpit", "launchers/astra_camera_depth.launch.py", {
+            "namespace": "camera", "camera_frame": frame}
     if family == "openni2":
         # Our own launch file, not the package's camera_only.launch.py: that one turns
         # depth registration on (an Astra Pro has no OpenNI colour stream to register to)
@@ -665,6 +701,8 @@ SIM_CAMERAS = {
 def sim_camera_key(controller: dict) -> str:
     """Which SIM_CAMERAS entry the simulated camera renders for this robot."""
     model = depth_model(controller)
+    if model in ASTRA_PRO_MODELS:
+        return "astra_pro"
     return model if model in SIM_CAMERAS else "d435"
 
 

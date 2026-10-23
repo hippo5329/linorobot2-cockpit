@@ -139,7 +139,7 @@ def main(argv=None) -> int:
     written = install(files, a.config_dir)
     for path in written:
         print(f"[orbbec] installed {path}")
-    print("[orbbec] the next bringup with depth_camera.model: astra_pro runs openni2_camera on it")
+    print("[orbbec] the next bringup with depth_camera.model: astra_pro_openni2 runs openni2_camera on it")
     return 0
 
 

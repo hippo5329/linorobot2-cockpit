@@ -142,19 +142,22 @@ DEPTH_SENSORS = {
     },
     "astra": {
         # The original Astra Pro (depth 2bc5:0403 over OpenNI2, colour 2bc5:0501 as UVC):
-        # openni2_camera, which the robot image carries, plus Orbbec's own OpenNI2 driver,
-        # which it does not redistribute -- install_orbbec_openni2.py fetches Orbbec's
-        # release into the config dir. Orbbec's current ROS 2 driver does not cover this
-        # model, and there is no ros-<distro>-astra-camera package for jazzy or lyrical.
+        # Orbbec's ros2_astra_camera, which the robot image builds (depth and colour), or
+        # openni2_camera plus Orbbec's own OpenNI2 driver (depth only), which
+        # install_orbbec_openni2.py fetches into the config dir. Orbbec's current ROS 2
+        # driver (OrbbecSDK_ROS2) has no colour for this model and misreads its depth.
         "label": "Orbbec Astra Pro",
         "serial": False,
         "symlink": None,
         "docker_key": "astra",
-        "driver_pkg": "openni2_camera",
+        "driver_pkg": "astra_camera",
         "models": [
             {"code": "astra_pro", "label": "Orbbec Astra Pro"},
+            {"code": "astra_pro_openni2", "label": "Orbbec Astra Pro (OpenNI2, depth only)"},
         ],
         "install": [
+            "# astra_pro: nothing to install, the robot image carries ros2_astra_camera",
+            "# astra_pro_openni2 only:",
             "docker exec linorobot2-cockpit python3 scripts/install_orbbec_openni2.py",
             "docker restart linorobot2-cockpit",
         ],
@@ -562,6 +565,16 @@ def sensor_registry() -> Dict[str, Any]:
     }
 
 
+# The Astra Pro's two drivers (scripts/depth_camera.py): Orbbec's ros2_astra_camera,
+# built into the image outside the ament index, and openni2_camera from apt.
+ASTRA_DRIVER_PKG = {"astra_pro": "astra_camera", "astra_pro_openni2": "openni2_camera"}
+ASTRA_NODE = "/opt/astra_ws/install/lib/astra_camera/astra_camera_node"   # depth_camera.ASTRA_WS
+
+
+def astra_camera_installed() -> bool:
+    return os.access(ASTRA_NODE, os.X_OK)
+
+
 def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
     pkg = ""
     # Check LASER_SENSORS
@@ -582,7 +595,11 @@ def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
                 if s.get("id") == sensor:
                     pkg = s.get("pkg", "")
                     break
-    installed = ros_pkg_installed(pkg) if pkg else False
+    pkg = ASTRA_DRIVER_PKG.get(sensor, pkg)
+    if pkg == "astra_camera":
+        installed = astra_camera_installed()
+    else:
+        installed = ros_pkg_installed(pkg) if pkg else False
     return {"sensor": sensor, "pkg": pkg, "installed": installed}
 
 
@@ -598,6 +615,12 @@ def build_sensor_install_cmd(sensor: str, distro: str = "lyrical", ws: str = "")
                 if s.get("id") == sensor:
                     pkg = s.get("pkg", "")
                     break
+    pkg = ASTRA_DRIVER_PKG.get(sensor, pkg)
+    if pkg == "astra_camera":
+        # Not an apt package: the robot image builds Orbbec's driver (docker/Dockerfile).
+        return {"sensor": sensor, "pkg": pkg,
+                "command": "echo 'Orbbec ros2_astra_camera is built into the cockpit robot image "
+                           "(/opt/astra_ws): update the image to get it.'"}
     clean_pkg = pkg.replace("_", "-") if pkg else sensor.replace("_", "-")
     cmd = f"sudo apt-get update && sudo apt-get install -y ros-{distro}-{clean_pkg}"
     return {"sensor": sensor, "command": cmd, "pkg": pkg}

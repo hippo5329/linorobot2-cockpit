@@ -141,6 +141,51 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh && . /opt/hosturos_ws/install/local_setup.
  && rm -rf /tmp/app_ws /tmp/libdeps /tmp/app.log
 
 # ---------------------------------------------------------------------------
+# Stage 1c — Orbbec's ros2_astra_camera, the driver for the original Astra Pro
+# (depth 2bc5:0403 over Orbbec's OpenNI2, colour 2bc5:0501 as UVC). Orbbec's current
+# ROS 2 driver, OrbbecSDK_ROS2, finds the camera but exits for want of a colour profile,
+# and with colour off its depth is a tenth of the true range and its camera_info all
+# NaN (measured on a real Astra Pro, 2026-10-22); ros2_astra_camera streams colour,
+# depth and real intrinsics at 30 Hz. It has no Jazzy/Lyrical release, so it is built
+# from a pinned upstream commit with docker/astra_camera_fixes.sh (the header and API
+# renames of its open PR #20, and Lyrical's: tf2 headers, ament_target_dependencies,
+# message_filters' QoS). It carries Orbbec's own OpenNI2 (libOpenNI2.so and the
+# Astra driver), installed beside it in /opt/astra_ws/install/lib --
+# launchers/astra_camera_depth.launch.py puts that first on the node's library path,
+# ahead of Debian's OpenNI2, which Orbbec's driver crashes in.
+#
+# Upgraded before building, like the runtime stage, so both agree on the rosidl ABI.
+# libusb-1.0-0-dev is named because Ubuntu 24.04's libuvc.pc requires libusb-1.0.pc and
+# libuvc-dev does not pull it in (CMake: "None of the required 'libuvc' found", jazzy).
+# ---------------------------------------------------------------------------
+FROM ros:${ROS_DISTRO}-ros-base AS astra
+ARG ROS_DISTRO
+ARG APT_PROXY=""
+ARG ASTRA_CAMERA_COMMIT=f7e71d9ce806e788cb48d8580aac2c778fba4214
+RUN if [ -n "$APT_PROXY" ]; then echo "Acquire::http::Proxy \"$APT_PROXY\";" > /etc/apt/apt.conf.d/01proxy; fi; \
+    apt-get update && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends \
+        git build-essential cmake pkg-config python3-colcon-common-extensions \
+        libuvc-dev libusb-1.0-0-dev libgoogle-glog-dev libeigen3-dev libopencv-dev nlohmann-json3-dev \
+        ros-${ROS_DISTRO}-camera-info-manager ros-${ROS_DISTRO}-cv-bridge \
+        ros-${ROS_DISTRO}-image-geometry ros-${ROS_DISTRO}-image-publisher \
+        ros-${ROS_DISTRO}-image-transport ros-${ROS_DISTRO}-message-filters \
+        ros-${ROS_DISTRO}-tf2-eigen ros-${ROS_DISTRO}-tf2-sensor-msgs ros-${ROS_DISTRO}-tf2-ros \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/astra_camera_fixes.sh /tmp/astra_camera_fixes.sh
+RUN mkdir -p /opt/astra_ws/src \
+ && git clone https://github.com/orbbec/ros2_astra_camera.git /opt/astra_ws/src/ros2_astra_camera \
+ && git -C /opt/astra_ws/src/ros2_astra_camera checkout -q ${ASTRA_CAMERA_COMMIT} \
+ && bash /tmp/astra_camera_fixes.sh /opt/astra_ws/src/ros2_astra_camera \
+ && . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && cd /opt/astra_ws \
+ && { colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release > /tmp/astra.log 2>&1 \
+      || { grep -E "error|Error" /tmp/astra.log | head -40; exit 1; }; } \
+ && test -x /opt/astra_ws/install/lib/astra_camera/astra_camera_node \
+ && test -f /opt/astra_ws/install/lib/libOpenNI2.so \
+ && rm -rf /opt/astra_ws/build /opt/astra_ws/log /opt/astra_ws/src /tmp/astra.log
+
+# ---------------------------------------------------------------------------
 # Stage 2 — the robot runtime.
 # ---------------------------------------------------------------------------
 FROM ros:${ROS_DISTRO}-ros-base
@@ -211,15 +256,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # configured and its wrapper is missing. The simulated camera needs only the
 # converter, so the bench tests the path with no camera attached. laser_filters
 # masks the robot's own structure out of the LiDAR scan (scripts/lidar_mask.py).
-# openni2_camera drives the Orbbec Astra Pro (jazzy 2.2.2, lyrical 2.3.0, 2026-10-08);
-# Orbbec's own OpenNI2 driver, without which OpenNI2 cannot see an Astra, is not
-# redistributed here -- scripts/install_orbbec_openni2.py fetches it on the robot.
+# The Orbbec Astra Pro runs on Orbbec's ros2_astra_camera (stage astra, copied in
+# below); these are its runtime libraries -- the -dev packages because their runtime
+# names differ between the distros' Ubuntu bases. openni2_camera stays as the
+# depth-only fallback (depth_camera.model astra_pro_openni2, jazzy 2.2.2, lyrical
+# 2.3.0): scripts/install_orbbec_openni2.py fetches Orbbec's OpenNI2 for it on the robot.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-depthimage-to-laserscan \
         ros-${ROS_DISTRO}-realsense2-camera \
         ros-${ROS_DISTRO}-depthai-ros-driver \
         ros-${ROS_DISTRO}-openni2-camera \
         ros-${ROS_DISTRO}-laser-filters \
+        ros-${ROS_DISTRO}-camera-info-manager ros-${ROS_DISTRO}-cv-bridge \
+        ros-${ROS_DISTRO}-image-geometry ros-${ROS_DISTRO}-image-publisher \
+        ros-${ROS_DISTRO}-image-transport ros-${ROS_DISTRO}-message-filters \
+        ros-${ROS_DISTRO}-tf2-eigen ros-${ROS_DISTRO}-tf2-sensor-msgs \
+        libuvc-dev libgoogle-glog-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Nav2. The line this replaces installed `navigation2` and `nav2_bringup` and
@@ -349,6 +401,8 @@ COPY --from=picotool-build /tmp/picotool/build/picotool /usr/local/bin/picotool
 COPY --from=uros /uros_ws/install /uros_ws/install
 # The Sim MCU (stage hostfw): the micro-ROS client libraries and the firmware.
 COPY --from=hostfw /opt/hosturos_ws /opt/hosturos_ws
+# Orbbec's Astra Pro driver (stage astra), at the path it was built at.
+COPY --from=astra /opt/astra_ws/install /opt/astra_ws/install
 
 WORKDIR /ws
 COPY . /ws

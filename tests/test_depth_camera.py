@@ -54,7 +54,7 @@ def test_the_sim_mcus_lidar_is_its_simulation():
 def test_every_upstream_camera_is_supported():
     upstream = {"realsense", "zed", "zedm", "zed2", "zed2i", "oakd", "oakdlite", "oakdpro"}
     # plus the Orbbec Astra Pro, which upstream does not list (tests/test_astra_pro.py)
-    assert set(dc.DEPTH_MODELS) == upstream | {"astra_pro"}
+    assert set(dc.DEPTH_MODELS) == upstream | {"astra_pro", "astra_pro_openni2"}
     with pytest.raises(ValueError):
         dc.depth_model({"depth_camera": {"model": "kinect"}})
 

@@ -924,8 +924,14 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
         try:
             from ament_index_python.packages import get_package_share_directory
             share = get_package_share_directory(pkg)
-            # The OpenNI2 family's launch file is ours; the driver is a package of its own.
-            get_package_share_directory(depth_camera.DRIVER_PACKAGE[family])
+            # The OpenNI2 and Astra families' launch files are ours; the driver is a
+            # package of its own -- Orbbec's ros2_astra_camera outside the ament index,
+            # in the image's own install (depth_camera.ASTRA_WS).
+            if family == "astra":
+                if depth_camera.astra_driver_missing():
+                    raise FileNotFoundError(depth_camera.ASTRA_WS)
+            else:
+                get_package_share_directory(depth_camera.DRIVER_PACKAGE[family])
         except Exception:  # PackageNotFoundError, or no ament index at all
             return [LogInfo(msg=f"[bringup] depth camera {label}: the driver package "
                                 f"'{depth_camera.DRIVER_PACKAGE[family]}' is not installed, so there is "
