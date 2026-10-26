@@ -231,10 +231,22 @@ async def api_presets_apply(request: Request):
 
 @app.get("/api/sensor_install_cmd")
 @app.post("/api/sensor_install_cmd")
-def api_sensor_install_cmd(sensor: str = "", distro: str = "lyrical", ws: str = ""):
-    # A plain apt install -- no ROS sourcing or cd needed, so the handle is the
-    # command as-is. The browser runs the handle instead of re-composing it.
-    result = build_sensor_install_cmd(sensor, distro=distro, ws=ws)
+async def api_sensor_install_cmd(request: Request, sensor: str = "", distro: str = "lyrical", ws: str = ""):
+    # The page POSTs {kind, key, skip_udev, udev_only}; a GET may name the sensor in the
+    # query. No ROS sourcing or cd needed, so the handle is the command as-is. The browser
+    # runs the handle instead of re-composing it.
+    body = {}
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+    key = str(body.get("key") or sensor or "")
+    result = build_sensor_install_cmd(key, distro=str(body.get("distro") or distro), ws=ws,
+                                      skip_udev=bool(body.get("skip_udev")),
+                                      udev_only=bool(body.get("udev_only")))
     if result.get("command"):
         result["handle"] = actions.prepare(result["command"])
     return result

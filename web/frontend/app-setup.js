@@ -28,7 +28,11 @@ function populateSensorSelects() {
   // fetch race: whichever lands last has to be the one that decides the panel.
   // Install tab -- one entry per driver package
   Object.entries(SENSORS.laser).forEach(([k, e]) => addOpt(document.getElementById("install-laser"), k, e.label));
-  Object.entries(SENSORS.depth).forEach(([k, e]) => addOpt(document.getElementById("install-depth"), k, e.label));
+  // A family whose models install differently (the Astra Pro's two drivers) lists its models.
+  Object.entries(SENSORS.depth).forEach(([k, e]) => (e.install_by_model || []).length
+    ? (e.models || []).filter((m) => e.install_by_model.includes(m.code))
+        .forEach((m) => addOpt(document.getElementById("install-depth"), m.code, m.label))
+    : addOpt(document.getElementById("install-depth"), k, e.label));
 
   // Bringup tab -- one entry per model code (LINOROBOT2_*_SENSOR value)
   Object.values(SENSORS.laser).forEach((e) =>
@@ -78,34 +82,63 @@ function populateSensorSelects() {
     });
   }
 
-  const cfgDepth = document.getElementById("cfg-depth-sensor");
-  if (cfgDepth) {
-    cfgDepth.innerHTML = "";
-    addOpt(cfgDepth, "", "None (Disabled)");
-    Object.values(SENSORS.depth).forEach((e) =>
-      (e.models || []).forEach((m) => addOpt(cfgDepth, m.code, `${m.code} — ${m.label}`)));
-    if (!cfgDepth._hasSync) {
-      cfgDepth._hasSync = true;
-      cfgDepth.addEventListener("change", () => {
-        const v = cfgDepth.value;
-        const bd = document.getElementById("bringup-depth-sensor");
-        if (bd) bd.value = v;
-        const id = document.getElementById("install-depth");
-        if (id) id.value = v;
-        if (typeof updateBringupSummary === "function") updateBringupSummary();
-      });
-    }
+  const cfgDepth = document.getElementById("cfg-depth-camera");
+  if (cfgDepth && !cfgDepth._hasSync) {
+    cfgDepth._hasSync = true;
+    cfgDepth.addEventListener("change", syncDepthCamera);
   }
+  syncDepthCamera();
 
   // There is no second pair of sensor selects, and there must not be. This
   // used to fill `env-laser-sensor` / `env-depth-sensor` for a "Robot
   // Environment" tab that does not exist in the cockpit -- the working
-  // controls are `cfg-laser-sensor` and `cfg-depth-sensor` above, which are
+  // controls are `cfg-laser-sensor` and `cfg-depth-camera`, which are
   // the ones the config is read from and written to. Two dropdowns for one
   // setting is the failure this file already carries a comment about: they
   // disagree, and the one the user changed is not the one that is saved.
   applyLaserConfigToPanel();
   if (typeof updateBringupSummary === "function") updateBringupSummary();
+}
+
+// The depth camera has ONE control, cfg-depth-camera (depth_camera.model in the robot's
+// config). A second "3D Depth Camera" select on the same tab fed the Bringup summary, the
+// Nav2 export and the Install tab while this one was saved, so each could name a different
+// camera (review 2026-10-26). Everything else follows this one.
+function depthEntryForModel(code) {
+  return Object.entries(SENSORS.depth).find(([, e]) => (e.models || []).some((m) => m.code === code));
+}
+
+function syncDepthCamera() {
+  const sel = document.getElementById("cfg-depth-camera");
+  if (!sel) return;
+  const v = sel.value && sel.value !== "none" ? sel.value : "";
+  const bd = document.getElementById("bringup-depth-sensor");
+  if (bd) {
+    if (v && ![...bd.options].some((o) => o.value === v)) addOpt(bd, v, v);
+    bd.value = v;
+  }
+  const inst = document.getElementById("install-depth");
+  if (inst) {
+    const fam = v ? depthEntryForModel(v) : null;
+    const key = [...inst.options].some((o) => o.value === v) ? v : (fam ? fam[0] : "");
+    inst.value = [...inst.options].some((o) => o.value === key) ? key : "";
+  }
+  if (typeof updateBringupSummary === "function") updateBringupSummary();
+  refreshDepthCameraStatus(v);
+}
+
+async function refreshDepthCameraStatus(model) {
+  const el = document.getElementById("depth-camera-status");
+  if (!el) return;
+  if (!model) { el.textContent = ""; return; }
+  try {
+    const r = await fetch(`/api/sensors/driver_status?sensor=${encodeURIComponent(model)}`);
+    const d = r.ok ? await r.json() : null;
+    if (!d || document.getElementById("cfg-depth-camera")?.value !== model) return;
+    el.textContent = d.installed ? "Driver: ready on this robot computer."
+      : "Driver: not installed on this robot computer. Install tab, step 3, or pull the latest cockpit image.";
+    el.style.color = d.installed ? "var(--accent-ok)" : "var(--accent-warn)";
+  } catch (e) { el.textContent = ""; }
 }
 
 function renderSerialPortList() {
@@ -243,7 +276,10 @@ async function fetchSensorInstallCmd(kind, key, { skipUdev = false, udevOnly = f
 
 async function runSensorInstall(kind, selId, skipId, titlePrefix) {
   const key = document.getElementById(selId).value;
-  if (!key) return;
+  if (!key) {
+    logLine(`[console] pick a ${kind === "depth" ? "depth camera" : "laser sensor"} in the list first.`);
+    return;
+  }
   const skip = document.getElementById(skipId).checked;
   const handle = await fetchSensorInstallCmd(kind, key, { skipUdev: skip });
   if (!handle) {

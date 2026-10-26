@@ -121,8 +121,10 @@ INSTALL_HINT = {
     "realsense": "sudo apt install ros-$ROS_DISTRO-realsense2-camera (the robot image carries it)",
     "oakd": "sudo apt install ros-$ROS_DISTRO-depthai-ros-driver (the robot image carries it)",
     "openni2": "sudo apt install ros-$ROS_DISTRO-openni2-camera (the robot image carries it)",
-    "astra": ("Orbbec's ros2_astra_camera, which the robot image builds into " + ASTRA_WS +
-              " -- update the cockpit image, or set depth_camera.model: astra_pro_openni2"),
+    "astra": ("Orbbec's ros2_astra_camera: the cockpit robot image carries it in " + ASTRA_WS +
+              ", so this image is older than the Astra Pro driver. Pull the latest cockpit image, "
+              "or choose 'Orbbec Astra Pro, depth only' as the depth camera (depth_camera.model: "
+              "astra_pro_openni2)"),
     "zed": ("the ZED SDK (CUDA) and zed-ros2-wrapper, built on the robot: "
             "https://github.com/stereolabs/zed-ros2-wrapper -- no generic image can carry them"),
 }

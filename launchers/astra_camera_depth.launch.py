@@ -20,6 +20,9 @@ Arguments:
                  and <namespace>/color/image_raw (rgb8) with color/camera_info
   camera_frame   the camera's root frame, which the robot's URDF parents to base_link
                  at geometry.depth_camera (default camera_link)
+  color_info_url a camera calibration file (file:///...yaml) for the colour stream; empty
+                 (default) publishes the device's own intrinsics, which on the units seen
+                 so far are a default (fx 570.3), not a factory calibration
 """
 import os
 import sys
@@ -75,7 +78,7 @@ def _actions(context):
             "ir_width": 640, "ir_height": 480, "ir_fps": 30, "flip_ir": False,
             "ir_qos": "default", "ir_camera_info_qos": "default",
             "publish_tf": True,
-            "ir_info_url": "", "color_info_url": "",
+            "ir_info_url": "", "color_info_url": context.launch_configurations.get("color_info_url", ""),
             "color_roi_x": -1, "color_roi_y": -1, "color_roi_width": -1, "color_roi_height": -1,
             "depth_roi_x": -1, "depth_roi_y": -1, "depth_roi_width": -1, "depth_roi_height": -1,
             "depth_scale": 1,
@@ -106,5 +109,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("namespace", default_value="camera"),
         DeclareLaunchArgument("camera_frame", default_value="camera_link"),
+        DeclareLaunchArgument("color_info_url", default_value=""),
         OpaqueFunction(function=_actions),
     ])

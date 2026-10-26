@@ -881,11 +881,6 @@
             <span class="input-hint">For live radar visualization and UDP bridge setup, use the <a class="u-font-600" href="#" onclick="document.querySelector('.tab-btn[data-tab=\'lidar\']')?.click(); return false;" style="color:var(--accent-primary);">LiDAR / Scan ➔</a> tab.</span>
           </div>
 
-          <div class="form-group">
-            <label for="cfg-depth-sensor" class="form-label">3D Depth Camera (Optional)</label>
-            <select id="cfg-depth-sensor" class="form-select"></select>
-            <span class="input-hint">Generates 3D pointclouds and synthetic 2D laser scans.</span>
-          </div>
         </div>
       </div>
 
@@ -1075,14 +1070,15 @@
               <option value="oakd">Luxonis OAK-D</option>
               <option value="oakdlite">Luxonis OAK-D Lite</option>
               <option value="oakdpro">Luxonis OAK-D Pro</option>
-              <option value="astra_pro">Orbbec Astra Pro</option>
-              <option value="astra_pro_openni2">Orbbec Astra Pro, OpenNI2 depth only (run install_orbbec_openni2.py once)</option>
+              <option value="astra_pro">Orbbec Astra Pro (recommended: depth + colour, built in)</option>
+              <option value="astra_pro_openni2">Orbbec Astra Pro, depth only (fallback: Install tab, step 3)</option>
               <option value="zed">Stereolabs ZED (needs the ZED SDK)</option>
               <option value="zedm">Stereolabs ZED Mini (needs the ZED SDK)</option>
               <option value="zed2">Stereolabs ZED 2 (needs the ZED SDK)</option>
               <option value="zed2i">Stereolabs ZED 2i (needs the ZED SDK)</option>
             </select>
-            <span class="input-hint">With no LiDAR it is the robot's <code>/scan</code> (depthimage_to_laserscan), so SLAM and Nav2 run on it. Beside a LiDAR, SLAM keeps the LiDAR and the camera is a second obstacle source for Nav2. Mount pose: <code>geometry.depth_camera</code>.</span>
+            <span class="input-hint">With no LiDAR it is the robot's <code>/scan</code> (depthimage_to_laserscan), so SLAM and Nav2 run on it. Beside a LiDAR, SLAM keeps the LiDAR and the camera is a second obstacle source for Nav2. Mount pose: <code>geometry.depth_camera</code> (metres from the robot's centre: x forward, z up). Astra Pro: the original model, <code>lsusb</code> shows 2bc5:0403 and 2bc5:0501; it sees nothing closer than 0.6 m. Check it with Bringup's health check (the depth image row).</span>
+            <span id="depth-camera-status" class="input-hint" role="status"></span>
           </div>
           <div class="form-group">
             <label for="cfg-sonar" class="form-label">Ultrasonic Sonar Range Sensor</label>
@@ -3140,7 +3136,7 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div class="card">
         <h2>2. Laser sensor (optional)</h2>
         <div class="row">
-          <select id="install-laser"><option value="">-- none --</option></select>
+          <select id="install-laser" aria-label="Laser driver to install"><option value="">-- none --</option></select>
           <label class="checkbox"><input type="checkbox" id="laser-skip-udev"> Skip udev rules</label>
           <button id="btn-install-laser" class="btn">Install</button>
         </div>
@@ -3149,8 +3145,9 @@ const int16_t ADC_LUT[4096] = { /* table */ };</code></pre>
       <div class="card">
         <h2>3. Depth camera (optional)</h2>
         <div class="row">
-          <select id="install-depth"><option value="">-- none --</option></select>
+          <select id="install-depth" aria-label="Depth camera driver to install"><option value="">-- none --</option></select>
           <label class="checkbox"><input type="checkbox" id="depth-skip-udev"> Skip udev rules</label>
+          <span class="input-hint">The udev rule lets the cockpit open the camera without root; skip it only if your robot computer already allows that.</span>
           <button id="btn-install-depth" class="btn">Install</button>
         </div>
       </div>

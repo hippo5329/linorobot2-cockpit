@@ -355,6 +355,7 @@ async function loadHardwareConfig() {
     if (depthSel) {
       const m = String((tgt.depth_camera || {}).model || "none").toLowerCase();
       depthSel.value = [...depthSel.options].some((o) => o.value === m) ? m : "none";
+      if (typeof syncDepthCamera === "function") syncDepthCamera();
     }
     if (document.getElementById("cfg-lidar-rxd")) document.getElementById("cfg-lidar-rxd").value = lidar.rx_pin !== undefined ? lidar.rx_pin : -1;
     const elLidarComm = document.getElementById("cfg-lidar-comm");
@@ -1483,7 +1484,8 @@ function updateBringupSummary() {
   const port = document.getElementById("cfg-serial-port")?.value || document.getElementById("bringup-agent-device")?.value || "/dev/ttyACM0";
   const baud = document.getElementById("cfg-baudrate")?.value || document.getElementById("bringup-agent-baud")?.value || "921600";
   const laser = document.getElementById("cfg-laser-sensor")?.value || document.getElementById("laser-driver-model")?.value || document.getElementById("bringup-laser-sensor")?.value || "ld19";
-  const depth = document.getElementById("cfg-depth-sensor")?.value || document.getElementById("bringup-depth-sensor")?.value || "";
+  const dc = document.getElementById("cfg-depth-camera")?.value;
+  const depth = dc && dc !== "none" ? dc : "";
 
   const elBase = document.getElementById("summary-bringup-base");
   if (elBase) {

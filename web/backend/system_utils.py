@@ -152,15 +152,16 @@ DEPTH_SENSORS = {
         "docker_key": "astra",
         "driver_pkg": "astra_camera",
         "models": [
-            {"code": "astra_pro", "label": "Orbbec Astra Pro"},
-            {"code": "astra_pro_openni2", "label": "Orbbec Astra Pro (OpenNI2, depth only)"},
+            {"code": "astra_pro", "label": "Orbbec Astra Pro (recommended: depth + colour, built in)"},
+            {"code": "astra_pro_openni2", "label": "Orbbec Astra Pro, depth only (fallback, needs an install)"},
         ],
-        "install": [
-            "# astra_pro: nothing to install, the robot image carries ros2_astra_camera",
-            "# astra_pro_openni2 only:",
-            "docker exec linorobot2-cockpit python3 scripts/install_orbbec_openni2.py",
-            "docker restart linorobot2-cockpit",
-        ],
+        # Two drivers, two different installs, so the Install tab lists the models, not the
+        # family. Install steps run in the cockpit container (the page's action runner).
+        "install_by_model": {
+            "astra_pro": ["echo 'Orbbec ros2_astra_camera is built into the cockpit robot image: "
+                          "nothing to install. If bringup says it is missing, pull the latest image.'"],
+            "astra_pro_openni2": ["python3 $REPO_ROOT/scripts/install_orbbec_openni2.py"],
+        },
         "udev": [
             'echo \'SUBSYSTEM=="usb", ATTRS{idVendor}=="2bc5", MODE="0666"\' | sudo tee /etc/udev/rules.d/56-orbbec-usb.rules',
             "sudo udevadm control --reload-rules && sudo udevadm trigger",
@@ -551,7 +552,8 @@ def sensor_registry() -> Dict[str, Any]:
                 "docker_key": e.get("docker_key"),
                 "driver_pkg": e.get("driver_pkg", ""),
                 "models": e.get("models", []),
-                "has_install": bool(e.get("install")),
+                "has_install": bool(e.get("install") or e.get("install_by_model")),
+                "install_by_model": sorted(e.get("install_by_model") or {}),
                 "has_udev": bool(e.get("udev")),
             }
         return out
@@ -568,11 +570,13 @@ def sensor_registry() -> Dict[str, Any]:
 # The Astra Pro's two drivers (scripts/depth_camera.py): Orbbec's ros2_astra_camera,
 # built into the image outside the ament index, and openni2_camera from apt.
 ASTRA_DRIVER_PKG = {"astra_pro": "astra_camera", "astra_pro_openni2": "openni2_camera"}
-ASTRA_NODE = "/opt/astra_ws/install/lib/astra_camera/astra_camera_node"   # depth_camera.ASTRA_WS
 
 
 def astra_camera_installed() -> bool:
-    return os.access(ASTRA_NODE, os.X_OK)
+    """The same test bringup applies (depth_camera.astra_driver_missing: the node AND Orbbec's
+    OpenNI2 beside it): a looser check here let the page say "installed" while bringup refused."""
+    import depth_camera
+    return not depth_camera.astra_driver_missing()
 
 
 def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
@@ -600,30 +604,42 @@ def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
         installed = astra_camera_installed()
     else:
         installed = ros_pkg_installed(pkg) if pkg else False
+    if installed and sensor == "astra_pro_openni2":
+        # openni2_camera alone cannot open the camera: Orbbec's OpenNI2 must be fetched too.
+        import depth_camera
+        installed = not depth_camera.orbbec_driver_missing(sensor)
     return {"sensor": sensor, "pkg": pkg, "installed": installed}
 
 
-def build_sensor_install_cmd(sensor: str, distro: str = "lyrical", ws: str = "") -> Dict[str, Any]:
-    pkg = ""
-    for k, v in {**LASER_SENSORS, **DEPTH_SENSORS}.items():
-        if k == sensor or any(m.get("code") == sensor for m in v.get("models", [])):
-            pkg = v.get("driver_pkg", "")
-            break
-    if not pkg:
-        for cat in SENSOR_REGISTRY.values():
-            for s in cat:
-                if s.get("id") == sensor:
-                    pkg = s.get("pkg", "")
-                    break
-    pkg = ASTRA_DRIVER_PKG.get(sensor, pkg)
-    if pkg == "astra_camera":
-        # Not an apt package: the robot image builds Orbbec's driver (docker/Dockerfile).
-        return {"sensor": sensor, "pkg": pkg,
-                "command": "echo 'Orbbec ros2_astra_camera is built into the cockpit robot image "
-                           "(/opt/astra_ws): update the image to get it.'"}
-    clean_pkg = pkg.replace("_", "-") if pkg else sensor.replace("_", "-")
-    cmd = f"sudo apt-get update && sudo apt-get install -y ros-{distro}-{clean_pkg}"
-    return {"sensor": sensor, "command": cmd, "pkg": pkg}
+def _sensor_entry(sensor: str):
+    for v in {**LASER_SENSORS, **DEPTH_SENSORS}.values():
+        if any(m.get("code") == sensor for m in v.get("models", [])):
+            return v
+    return {**LASER_SENSORS, **DEPTH_SENSORS}.get(sensor)
+
+
+def build_sensor_install_cmd(sensor: str, distro: str = "lyrical", ws: str = "",
+                             skip_udev: bool = False, udev_only: bool = False) -> Dict[str, Any]:
+    """The Install tab's command for one driver key or model code: the registry entry's own
+    install steps (a model's, where its models install differently), then its udev steps
+    unless skipped; udev_only gives only those. Comment lines are dropped, $ROS_DISTRO and
+    $REPO_ROOT are filled in. The endpoint used to read only a `sensor` query parameter the
+    page never sent, and ran `apt-get install -y ros-<distro>-` for every sensor (review
+    2026-10-26)."""
+    entry = _sensor_entry(sensor) if sensor else None
+    if not entry:
+        return {"sensor": sensor, "command": "", "pkg": ""}
+    by_model = entry.get("install_by_model") or {}
+    if by_model and sensor not in by_model:
+        return {"sensor": sensor, "command": "", "pkg": entry.get("driver_pkg", ""),
+                "detail": f"pick one of: {', '.join(by_model)}"}
+    install = list(by_model.get(sensor) or entry.get("install") or [])
+    if not install and entry.get("driver_pkg"):
+        install = [f"sudo apt-get update && sudo apt-get install -y ros-$ROS_DISTRO-{entry['driver_pkg'].replace('_', '-')}"]
+    steps = ([] if udev_only else install) + ([] if skip_udev else list(entry.get("udev") or []))
+    steps = [c for c in steps if c.strip() and not c.lstrip().startswith("#")]
+    cmd = " && ".join(c.replace("$ROS_DISTRO", distro).replace("$REPO_ROOT", REPO_ROOT) for c in steps)
+    return {"sensor": sensor, "command": cmd, "pkg": ASTRA_DRIVER_PKG.get(sensor, entry.get("driver_pkg", ""))}
 
 
 def build_ros2_install_cmd(distro: str = "lyrical") -> str:

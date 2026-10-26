@@ -933,15 +933,17 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
             else:
                 get_package_share_directory(depth_camera.DRIVER_PACKAGE[family])
         except Exception:  # PackageNotFoundError, or no ament index at all
-            return [LogInfo(msg=f"[bringup] depth camera {label}: the driver package "
-                                f"'{depth_camera.DRIVER_PACKAGE[family]}' is not installed, so there is "
-                                f"no /scan. Install {depth_camera.INSTALL_HINT[family]}.")]
+            return [LogInfo(msg=f"[bringup] ERROR depth camera {label}: its driver "
+                                f"'{depth_camera.DRIVER_PACKAGE[family]}' is not installed, so the camera "
+                                f"is not started and there is no {'/scan' if role == 'scan' else scan_topic}. "
+                                f"Install {depth_camera.INSTALL_HINT[family]}.")]
         if depth_camera.orbbec_driver_missing(model):
-            return [LogInfo(msg=f"[bringup] depth camera {label}: Orbbec's OpenNI2 is not installed "
+            return [LogInfo(msg=f"[bringup] ERROR depth camera {label}: Orbbec's OpenNI2 is not installed "
                                 f"in {depth_camera.orbbec_sdk_dir()}, so openni2_camera cannot see the "
-                                f"camera and there is no /scan. Run once on the robot computer: "
-                                f"python3 scripts/install_orbbec_openni2.py -- it fetches Orbbec's own SDK "
-                                f"release; the image does not carry it.")]
+                                f"camera and there is no {'/scan' if role == 'scan' else scan_topic}. "
+                                f"Install it once: the web UI's Install tab, step 3 (Astra Pro, depth only), "
+                                f"or python3 scripts/install_orbbec_openni2.py in the cockpit container -- it "
+                                f"fetches Orbbec's own SDK release; the image does not carry it.")]
         out.append(LogInfo(msg=f"[bringup] {'/scan' if role == 'scan' else scan_topic + ' (Nav2 obstacles)'} "
                                f"from the {label} via depthimage_to_laserscan"))
         out.append(IncludeLaunchDescription(

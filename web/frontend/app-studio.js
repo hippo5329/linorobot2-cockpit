@@ -583,12 +583,8 @@ async function loadRobotConfig() {
       if (lm) lm.value = lino.laser_sensor;
     }
 
-    const bDepth = document.getElementById("bringup-depth-sensor");
-    if (bDepth && lino.depth_sensor) {
-      bDepth.value = lino.depth_sensor;
-      const cd = document.getElementById("cfg-depth-sensor");
-      if (cd) cd.value = lino.depth_sensor;
-    }
+    // The depth camera is the robot config's depth_camera.model (cfg-depth-camera), which a
+    // saved bringup preference must not overwrite.
 
     const bDev = document.getElementById("bringup-agent-device");
     if (bDev && lino.micro_ros_port) {

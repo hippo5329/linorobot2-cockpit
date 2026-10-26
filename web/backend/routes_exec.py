@@ -20,6 +20,7 @@ from core import (
     bringup_runner,
     check_agent_port_status,
     check_bringup_health,
+    depth_health_rows,
     expected_scan,
     gamepad_runner,
     get_controller,
@@ -265,7 +266,8 @@ def api_bringup_health(timeout: float = 4.0):
     # Unreadable means expected: a missing /scan is exactly what this must not pass.
     has_scan, scan_why = expected_scan(get_controller(params))
     return check_bringup_health(timeout=timeout, has_imu=has_imu, has_scan=has_scan,
-                                scan_why=scan_why)
+                                scan_why=scan_why,
+                                extra_rows=depth_health_rows(get_controller(params)))
 
 
 # ==============================================================================

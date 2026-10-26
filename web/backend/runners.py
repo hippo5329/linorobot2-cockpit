@@ -38,6 +38,8 @@ BRINGUP_HEALTH_TYPES = {
     "odom_raw": "nav_msgs/msg/Odometry",
     "imu": "sensor_msgs/msg/Imu",
     "scan": "sensor_msgs/msg/LaserScan",
+    "camera_scan": "sensor_msgs/msg/LaserScan",
+    "depth_image": "sensor_msgs/msg/Image",
 }
 BRINGUP_TF_CHAIN = [
     ("odom", "base_link"),
@@ -671,8 +673,32 @@ def expected_scan(controller: Dict[str, Any]) -> tuple:
     return True, ""
 
 
+def depth_health_rows(controller: Dict[str, Any]) -> List[tuple]:
+    """The depth camera's rows for the health card, beside the fixed ones: its depth image
+    (a real camera; the simulated one renders only a scan) and, beside a LiDAR, its scan on
+    camera/scan. Without these the card had no way to show a camera working: with a LiDAR
+    fitted the camera's scan is not /scan, and nothing else on the card read it (review
+    2026-10-26). Informational -- readiness stays the board's odometry and /scan."""
+    rows: List[tuple] = []
+    try:
+        import depth_camera
+        if not depth_camera.camera_fitted(controller):
+            return rows
+        model = depth_camera.depth_model(controller)
+        label = depth_camera.DEPTH_MODELS[model][1] if model in depth_camera.DEPTH_MODELS else "depth camera"
+        if model in depth_camera.DEPTH_MODELS and not depth_camera.use_sim_depth(controller):
+            rows.append(("depth_image", depth_camera.DEPTH_MODELS[model][3], f"{label} depth image", 10.0))
+        if depth_camera.camera_role(controller) == "obstacles":
+            rows.append(("camera_scan", "/" + depth_camera.CAMERA_SCAN_TOPIC,
+                         f"{label} scan (Nav2 obstacles)", 5.0))
+    except Exception:
+        pass
+    return rows
+
+
 def check_bringup_health(timeout: float = 4.0, has_imu: bool = True,
-                         has_scan: bool = True, scan_why: str = "") -> Dict[str, Any]:
+                         has_scan: bool = True, scan_why: str = "",
+                         extra_rows: Optional[List[tuple]] = None) -> Dict[str, Any]:
     """Queries the active ROS 2 graph on this machine.
 
     Rates come from a direct rclpy subscription with the sensor-data QoS, NOT
@@ -703,7 +729,7 @@ def check_bringup_health(timeout: float = 4.0, has_imu: bool = True,
         "summary": "Checking bringup health...",
     }
 
-    for key, topic, what, min_hz in BRINGUP_HEALTH_TOPICS:
+    for key, topic, what, min_hz in list(BRINGUP_HEALTH_TOPICS) + list(extra_rows or []):
         if (key == "imu" and not has_imu) or (key == "scan" and not has_scan):
             # imu: NONE -- the board publishes no /imu/data, and that is correct; the same
             # for /scan on a robot with no LiDAR and no depth camera.
