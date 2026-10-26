@@ -123,6 +123,19 @@ def test_the_astra_status_is_bringups_test(monkeypatch):
     assert su.get_sensor_driver_status("astra_pro")["installed"] is True
 
 
+def test_a_missing_driver_says_what_to_do(monkeypatch):
+    monkeypatch.setattr(dc, "astra_driver_missing", lambda ws=None: True)
+    fix = su.get_sensor_driver_status("astra_pro")["fix"]
+    assert "pull the latest image" in fix and "Install tab" not in fix, "its Install step installs nothing"
+    monkeypatch.setattr(su, "ros_pkg_installed", lambda pkg, *a, **k: False)
+    assert "Install tab, step 3" in su.get_sensor_driver_status("astra_pro_openni2")["fix"]
+    monkeypatch.setattr(dc, "astra_driver_missing", lambda ws=None: False)
+    assert su.get_sensor_driver_status("astra_pro")["fix"] == ""
+    js = _read("web", "frontend", "app-setup.js")
+    body = js[js.index("async function refreshDepthCameraStatus"):]
+    assert "d.fix" in body[:body.index("\n}\n")]
+
+
 def test_the_fallback_is_not_installed_without_orbbecs_openni2(monkeypatch):
     monkeypatch.setattr(su, "ros_pkg_installed", lambda pkg, *a, **k: True)
     monkeypatch.setattr(dc, "orbbec_driver_missing", lambda model, config_dir=None: True)

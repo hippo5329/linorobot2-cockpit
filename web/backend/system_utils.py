@@ -608,7 +608,20 @@ def get_sensor_driver_status(sensor: str, ws: str = "") -> Dict[str, Any]:
         # openni2_camera alone cannot open the camera: Orbbec's OpenNI2 must be fetched too.
         import depth_camera
         installed = not depth_camera.orbbec_driver_missing(sensor)
-    return {"sensor": sensor, "pkg": pkg, "installed": installed}
+    # What to do about a missing driver: the built-in Astra Pro driver has nothing to install
+    # (the image predates it), everything else installs from the Install tab (review 2026-10-26:
+    # the page sent the built-in model to an Install step that only echoes "built in").
+    fix = ""
+    if not installed:
+        if sensor == "astra_pro":
+            fix = ("This cockpit image is older than the Astra Pro driver: pull the latest image, "
+                   "or choose 'Orbbec Astra Pro, depth only'.")
+        elif any(sensor == k or any(m.get("code") == sensor for m in v.get("models", []))
+                 for k, v in DEPTH_SENSORS.items()):
+            fix = "Install it on the Install tab, step 3."
+        else:
+            fix = "Install it on the Install tab."
+    return {"sensor": sensor, "pkg": pkg, "installed": installed, "fix": fix}
 
 
 def _sensor_entry(sensor: str):

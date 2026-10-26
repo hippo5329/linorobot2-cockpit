@@ -136,7 +136,7 @@ async function refreshDepthCameraStatus(model) {
     const d = r.ok ? await r.json() : null;
     if (!d || document.getElementById("cfg-depth-camera")?.value !== model) return;
     el.textContent = d.installed ? "Driver: ready on this robot computer."
-      : "Driver: not installed on this robot computer. Install tab, step 3, or pull the latest cockpit image.";
+      : `Driver: not installed on this robot computer. ${d.fix || "See the Install tab."}`;
     el.style.color = d.installed ? "var(--accent-ok)" : "var(--accent-warn)";
   } catch (e) { el.textContent = ""; }
 }
