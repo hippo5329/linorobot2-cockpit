@@ -85,6 +85,43 @@ def test_a_differential_base_keeps_the_template(tmp_path):
         assert nav2["controller_server"]["ros__parameters"]["FollowPath"] == TEMPLATE_FP
 
 
+SIMPLE_GC = {"stateful": True, "plugin": "nav2_controller::SimpleGoalChecker",
+             "xy_goal_tolerance": 0.15, "yaw_goal_tolerance": 0.07}
+
+
+def test_mecanum_goal_needs_the_robot_stopped(tmp_path):
+    # Lyrical's MPPI arrived turning at ~0.4 rad/s and coasted 5-6.6 deg past SUCCEEDED.
+    fn = _launcher_fn("mecanum_controller")
+    for distro, block in (("jazzy", JAZZY_MPPI), ("lyrical", LYRICAL_MPPI)):
+        nav2 = _nav2()
+        nav2["controller_server"]["ros__parameters"]["general_goal_checker"] = dict(SIMPLE_GC)
+        assert fn(nav2, {"kinematics": {"base_type": "mecanum"}}, _share(tmp_path / distro, block))
+        gc = nav2["controller_server"]["ros__parameters"]["general_goal_checker"]
+        assert gc["plugin"] == "nav2_controller::StoppedGoalChecker", distro
+        assert gc["rot_stopped_velocity"] == 0.10 and gc["trans_stopped_velocity"] == 0.05
+        assert {k: gc[k] for k in ("stateful", "xy_goal_tolerance", "yaw_goal_tolerance")} == \
+            {"stateful": True, "xy_goal_tolerance": 0.15, "yaw_goal_tolerance": 0.07}, "tolerances kept"
+
+
+def test_the_shim_bases_keep_the_simple_goal_checker(tmp_path):
+    # The rotation shim turns at a fixed speed: a stopped checker made it dither (+12-20 s a goal).
+    fn = _launcher_fn("mecanum_controller")
+    for base in ("2wd", "4wd"):
+        nav2 = _nav2()
+        nav2["controller_server"]["ros__parameters"]["general_goal_checker"] = dict(SIMPLE_GC)
+        assert not fn(nav2, {"kinematics": {"base_type": base}}, _share(tmp_path / base, JAZZY_MPPI))
+        assert nav2["controller_server"]["ros__parameters"]["general_goal_checker"] == SIMPLE_GC
+
+
+def test_a_robots_own_goal_checker_is_left_alone(tmp_path):
+    fn = _launcher_fn("mecanum_controller")
+    own = {"plugin": "nav2_controller::PoseProgressChecker"}
+    nav2 = _nav2()
+    nav2["controller_server"]["ros__parameters"]["general_goal_checker"] = dict(own)
+    assert fn(nav2, {"kinematics": {"base_type": "mecanum"}}, _share(tmp_path, JAZZY_MPPI))
+    assert nav2["controller_server"]["ros__parameters"]["general_goal_checker"] == own
+
+
 def test_a_robots_own_controller_is_left_alone(tmp_path):
     fn = _launcher_fn("mecanum_controller")
     own = {"plugin": "dwb_core::DWBLocalPlanner"}

@@ -271,6 +271,18 @@ def mecanum_controller(nav2_data, params, bringup_share=None) -> bool:
                      limits, so a limit the robot cannot reach wastes samples
       ax/ay/az max   the velocity smoother's accelerations
       transform_tolerance  0.3, the template's, where the release reads it
+      goal checker   the template's SimpleGoalChecker becomes StoppedGoalChecker
+                     (same tolerances, plus under 0.10 rad/s and 0.05 m/s)
+
+    The goal checker, because SimpleGoalChecker ends a goal the moment the pose
+    is inside its tolerance, whatever the robot is doing. Lyrical's MPPI reaches
+    the goal heading still turning at 0.32-0.43 rad/s, and the base turns on for
+    5-6.6 deg after Nav2's SUCCEEDED (jazzy arrives at 0.07-0.13 rad/s and settles
+    within 1-2 deg); a slow robot computer adds to it, and a 1-Click home leg came
+    back 11.7 deg off. With the robot required to be stopped, the coast was
+    within 0.6 deg on both distros, for ~3 s more per goal (Sim MCU, 2026-10-28).
+    Only MPPI: the rotation shim of the other bases turns at a fixed speed with no
+    slow-down, so it would dither inside the tolerance until it happened to stop.
 
     Returns whether FollowPath was replaced.
     """
@@ -308,6 +320,11 @@ def mecanum_controller(nav2_data, params, bringup_share=None) -> bool:
     if "transform_tolerance" in mppi:
         mppi["transform_tolerance"] = float(fp.get("transform_tolerance", mppi["transform_tolerance"]))
     cp["FollowPath"] = mppi
+    gc = cp.get("general_goal_checker")
+    if isinstance(gc, dict) and gc.get("plugin") == "nav2_controller::SimpleGoalChecker":
+        gc["plugin"] = "nav2_controller::StoppedGoalChecker"
+        gc.setdefault("rot_stopped_velocity", 0.10)
+        gc.setdefault("trans_stopped_velocity", 0.05)
     return True
 
 
