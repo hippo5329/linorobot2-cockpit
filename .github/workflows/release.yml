@@ -25,7 +25,9 @@ jobs:
   # job -- and must not manufacture a GitHub release named after the branch.
   firmware:
     name: Prebuilt firmware ${{ matrix.profile }}
-    if: startsWith(github.ref, 'refs/tags/')
+    # GitHub only: the release is published there (Docker Hub, the GitHub Release). A private
+    # mirror of this file ran on every tag and failed every job, a daily red that meant nothing.
+    if: startsWith(github.ref, 'refs/tags/') && github.server_url == 'https://github.com'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -137,7 +139,7 @@ jobs:
   # after the same /cmd_vel check on its bytes.
   firmware-unoq:
     name: Prebuilt firmware unoq-${{ matrix.distro }}
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && github.server_url == 'https://github.com'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -168,7 +170,7 @@ jobs:
     # row of green builds, no release, and nothing saying why; it has already
     # happened twice. Publish whatever built so the candidate is testable, then
     # fail the job with the reason named, so the gap cannot be missed either.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && github.server_url == 'https://github.com' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -252,6 +254,7 @@ jobs:
     # workspace (and Nav2 when the archive lags), hours under emulation.
     # The pio image stays amd64: firmware is built on a host, never on a robot.
     name: Docker image ${{ matrix.name }} (${{ matrix.arch }})
+    if: github.server_url == 'https://github.com'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
