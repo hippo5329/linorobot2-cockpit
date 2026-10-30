@@ -406,7 +406,11 @@ jobs:
       - name: The real-LiDAR-over-UDP path is in the image (lidar.cpp)
         if: startsWith(matrix.env, 'esp32')
         run: |
-          nm=$(ls ~/.platformio/packages/toolchain-xtensa-esp32*/bin/xtensa-esp32*-elf-nm | head -1)
+          # espressif32 8.x ships one toolchain, toolchain-xtensa-esp-elf; 7.x had one per chip.
+          # A fresh runner has only the new one, so the old glob alone found no nm at all.
+          nm=$(ls ~/.platformio/packages/toolchain-xtensa-esp-elf/bin/xtensa-esp-elf-nm \
+                  ~/.platformio/packages/toolchain-xtensa-esp32*/bin/xtensa-esp32*-elf-nm 2>/dev/null | head -1)
+          [ -n "$nm" ] || { echo "::error::no xtensa nm under ~/.platformio/packages"; exit 1; }
           "$nm" -C firmware/.pio/build/${{ matrix.env }}/firmware.elf | grep -q ' T rx_callback()' \
             || { echo "::error::lidar.cpp's forwarding path is not in ${{ matrix.env }}"; exit 1; }
 
