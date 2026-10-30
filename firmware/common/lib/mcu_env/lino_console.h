@@ -103,8 +103,13 @@ class LinoConsole : public Stream
 };
 extern LinoConsole lino_console;
 inline Stream &linoConsoleStream() { return lino_console.raw(); }
+// The core's own console, bound while `Serial` still names it. On ESP32 core 3.x
+// `Serial` is itself a core macro (for Serial0, HWCDCSerial or USBSerial), so
+// lino_console.cpp cannot get the real object back with an #undef alone.
+inline decltype((Serial)) linoCoreSerial() { return Serial; }
 // From here on, in every translation unit that includes this header, `Serial`
 // is the console wrapper.
+#undef Serial
 #define Serial lino_console
 #else
 #define LINO_CONSOLE_SELECTABLE 0

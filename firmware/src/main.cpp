@@ -793,8 +793,28 @@ static inline void wdtBegin()
     // panic=true so a stall REBOOTS rather than just logging: an unattended
     // robot that has stopped feeding its watchdog is not going to recover by
     // being told about it.
+#if ESP_IDF_VERSION_MAJOR >= 5
+    // IDF 5 takes a config, and the core has already started the TWDT, which
+    // init refuses (ESP_ERR_INVALID_STATE) and reconfigure changes. Keep the
+    // idle-task watch the sdkconfig set up, as IDF 4's second init did.
+    esp_task_wdt_config_t cfg = {};
+    cfg.timeout_ms = sec * 1000;
+    cfg.trigger_panic = true;
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0
+    cfg.idle_core_mask |= 1u << 0;
+#endif
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1
+    cfg.idle_core_mask |= 1u << 1;
+#endif
+    esp_err_t err = esp_task_wdt_init(&cfg);
+    if (err == ESP_ERR_INVALID_STATE)
+        err = esp_task_wdt_reconfigure(&cfg);
+    if (err != ESP_OK)
+        return;
+#else
     if (esp_task_wdt_init(sec, true) != ESP_OK)
         return;
+#endif
     if (esp_task_wdt_add(NULL) != ESP_OK)
         return;
     wdt_armed = true;

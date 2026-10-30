@@ -6,6 +6,7 @@
 
 // This file must see the REAL objects, so the macro is undone here only.
 #undef Serial
+#define Serial linoCoreSerial()
 
 LinoConsole lino_console;
 
