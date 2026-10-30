@@ -27,7 +27,8 @@ def lib_deps(ini_path: str = BASE_INI) -> list:
     cfg.read(ini_path)
     raw = cfg.get("env", "lib_deps", fallback="")
     deps = [line.strip() for line in raw.splitlines() if line.strip() and not line.strip().startswith(";")]
-    return [d for d in deps if not any(d.rstrip("/").endswith(n) or d == n for n in NOT_FOR_HOST)]
+    # A git dependency may carry a ref (`url#<sha>`); the name is what comes before it.
+    return [d for d in deps if not any(d.split("#")[0].rstrip("/").endswith(n) or d == n for n in NOT_FOR_HOST)]
 
 
 def main(argv):
