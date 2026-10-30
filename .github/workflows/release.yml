@@ -79,6 +79,11 @@ jobs:
           src="${PIO_CACHE_DIR:-/pio-host}"
           if [ -d "$src/packages" ]; then
             mkdir -p ~/.platformio
+            # Replace, never merge: actions/cache may have restored an older
+            # packages dir first, and cp -a over it left a core 2.x
+            # WiFiClient.cpp inside the core 3.x framework (2026-10-30: esp32
+            # failed to compile its own WiFi library).
+            rm -rf ~/.platformio/packages ~/.platformio/platforms
             cp -a "$src/packages" "$src/platforms" ~/.platformio/
             echo "seeded $(du -sh ~/.platformio/packages | cut -f1) from $src"
           else
