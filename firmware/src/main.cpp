@@ -308,20 +308,44 @@ static float battery_dip = 1.0f - BATTERY_DIP_PCT / 100.0f;
 // second core to pin a control loop to. Whether to actually use it is the env
 // key `dual_core`, read at boot into the flag below.
 //
-// It has to be a run-time decision because the critical section it installs is
-// not free. controlTask holds portENTER_CRITICAL(&controlMux) around moveBase()
-// every CONTROL_TIMER ms, and on an ESP32 that disables interrupts on core 0 --
-// the core the Wi-Fi driver and LwIP run on. On a released image, built for an
-// MCU rather than for a robot, baking that in means every robot on that image
-// pays for it whether or not its control loop needs the isolation.
+// It is a run-time decision because a second core costs something: controlTask
+// runs moveBase() on core 0 -- the core the Wi-Fi driver and LwIP run on -- every
+// CONTROL_TIMER ms. On a released image, built for an MCU rather than for a robot,
+// baking that in means every robot on that image pays for it whether or not its
+// control loop needs the isolation.
+//
+// The state the two cores share (twist_msg, the odometry, the motor PIDs) is
+// guarded by a recursive FreeRTOS MUTEX, never a portMUX critical section. It
+// was portENTER_CRITICAL(&controlMux) around all of moveBase(), and nothing in a
+// critical section may block -- yet moveBase() did, every tick: GCC for Xtensa
+// emits no inline fast path for a function-local static, so `static const int
+// ident_pwm_max = ...` called __cxa_guard_acquire() on every call, and ESP-IDF's
+// takes one global mutex each time. loop() takes the same mutex 50 times a second
+// (runWifis()'s statics). When the two met, core 0 blocked on a mutex with
+// interrupts off, corrupted the scheduler's event list (vListInsert never
+// returned) and held the kernel lock; core 1 spun on it until the interrupt
+// watchdog reset the board. ESP32 core 3.x (IDF 5), dual-core serial robots only,
+// once every few minutes under Nav2 (r155 gate, 2026-10-30: 4 resets on 3 GenDrv
+// boards; the panic backtraces of both cores were caught off the USB link).
+// Recursive because a portMUX was: the same task may take it again.
 #if defined(ESP32) && !defined(CONFIG_FREERTOS_UNICORE)
 #define HAS_DUAL_CORE 1
 TaskHandle_t controlTaskHandle = NULL;
-portMUX_TYPE controlMux = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t controlMutex = NULL;
 void controlTask(void *pvParameters);
 // Off unless the env's `dual_core` asks for it (config `use_dual_core`).
 static const bool DUAL_CORE_DEFAULT = false;
 static bool dual_core = false;
+static inline void controlLock()
+{
+    if (dual_core && controlMutex)
+        xSemaphoreTakeRecursive(controlMutex, portMAX_DELAY);
+}
+static inline void controlUnlock()
+{
+    if (dual_core && controlMutex)
+        xSemaphoreGiveRecursive(controlMutex);
+}
 #endif
 
 enum states 
@@ -1645,6 +1669,11 @@ void setup()
     // that should stay low while the PWM pins were still being decided.
     initBoardLate();
 #ifdef HAS_DUAL_CORE
+    if (dual_core && !(controlMutex = xSemaphoreCreateRecursiveMutex())) {
+      // No mutex, no second core: loop() then runs moveBase() itself (controlCallback).
+      dual_core = false;
+      Serial.println("[core] dual_core=1 dropped: no memory for the control mutex");
+    }
     if (dual_core)
       xTaskCreatePinnedToCore(
         controlTask,
@@ -1740,6 +1769,9 @@ void loop() {
     // drive the last twist on the other core until the reset.
     if (hostToolRequested()) {
 #ifdef HAS_DUAL_CORE
+        // Lock first: a control task suspended while it holds the mutex would leave
+        // fullStop() waiting for it forever. Never released: toolRestart() resets.
+        controlLock();
         if (dual_core && controlTaskHandle)
             vTaskSuspend(controlTaskHandle);
 #endif
@@ -1898,11 +1930,11 @@ void twistStampedCallback(const void * msgin)
 
     prev_cmd_time = millis();
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portENTER_CRITICAL_ISR(&controlMux);
+    controlLock();
 #endif
     twist_msg = twist_stamped_msg.twist;
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portEXIT_CRITICAL_ISR(&controlMux);
+    controlUnlock();
 #endif
 }
 
@@ -2252,7 +2284,7 @@ bool destroyEntities()
 void fullStop()
 {
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portENTER_CRITICAL(&controlMux);
+    controlLock();
 #endif
     twist_msg.linear.x = 0.0;
     twist_msg.linear.y = 0.0;
@@ -2263,7 +2295,7 @@ void fullStop()
     motor3_controller.brake();
     motor4_controller.brake();
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portEXIT_CRITICAL(&controlMux);
+    controlUnlock();
 #endif
 }
 
@@ -2277,9 +2309,9 @@ void controlTask(void *pvParameters)
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         if (state == AGENT_CONNECTED)
         {
-            portENTER_CRITICAL(&controlMux);
+            controlLock();
             moveBase();
-            portEXIT_CRITICAL(&controlMux);
+            controlUnlock();
         }
     }
 }
@@ -2521,11 +2553,11 @@ void publishData()
 {
     static unsigned skip_dip = 0;
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portENTER_CRITICAL(&controlMux);
+    controlLock();
 #endif
     *odom_msg = odometry->getData();
 #ifdef HAS_DUAL_CORE
-    if (dual_core) portEXIT_CRITICAL(&controlMux);
+    controlUnlock();
 #endif
     const uint32_t sens_t0 = micros();
     if (!imu_present) {
