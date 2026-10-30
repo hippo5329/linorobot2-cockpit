@@ -27,6 +27,10 @@ def fake_bus(tmp_path, vendor, mode):
 def test_an_unwritable_rp2_device_is_named_with_the_fix(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
     sys_root, dev_root, node = fake_bus(tmp_path, "2e8a", 0o444)
+    # The faked user is not root, so answer the write check as the kernel would for it: a
+    # test run as root (every CI container) may write a 0444 file and saw no problem at all.
+    real_access = os.access
+    monkeypatch.setattr(os, "access", lambda p, m, *a, **k: False if p == node and m & os.W_OK else real_access(p, m, *a, **k))
     why = flash_mcu.rp2_usb_access_problem(sys_root, dev_root)
     assert why and node in why and "install_udev_rules.sh" in why and "[NO USB ACCESS]" in why
 
