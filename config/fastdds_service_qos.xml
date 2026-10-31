@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Fast DDS profiles for the cockpit's ROS 2 stack. Two fixes live here, for two
-  different ways nav2 fails to come up with no error of its own. Every process
+  Fast DDS profiles for the cockpit's ROS 2 stack. Three fixes live here: two for
+  ways nav2 fails to come up with no error of its own, and one for a depth
+  camera's frames, which lyrical delivered a third of. Every process
   that runs ROS in the robot image gets this file through
   FASTDDS_DEFAULT_PROFILES_FILE (docker-compose.yml, docker/Dockerfile, and
   runners.py / one_click_pipeline.py for native runs).
@@ -43,11 +44,51 @@
      endpoints only and leaves ordinary topics alone. It is a ceiling, not a
      delay: the write proceeds the moment the match happens. Diagnosed on
      linorobot2's console branch (eae75c8, 0c6c779); rmw 9.x still honours it.
+
+  3. The transports: shared memory with a 4 MiB segment, and UDPv4.
+
+     A depth camera publishes one 640x480 16UC1 frame (614 KB) 30 times a
+     second; Fast DDS's built-in shared-memory segment is 512 KB, smaller than
+     one frame. Fast DDS 3.x (lyrical) then delivered a third of them or less:
+     10-12 Hz of a 30 Hz stream between two processes on one machine, 2-9 Hz of
+     the simulated Astra Pro's under a full stack, below the 8 Hz the topic check
+     asks of /scan, and an Astra exploration that does pass the check finds its
+     way home on a costmap fed at a third of the rate. Fast DDS 2.14 (jazzy)
+     delivered 28 Hz of the same stream. With the segment at 1, 2 or 4 MiB both
+     distros deliver all 30 Hz (lyrical 30.0-30.1, jazzy 26-28: its old rate).
+     4 MiB holds a frame and a 640x480 colour image beside it. The pages of a
+     segment are only taken as they are written (/dev/shm is the host's, ipc:
+     host), so a bigger segment costs what the traffic uses.
+
+     Naming any transport replaces the built-in set, so UDPv4 is listed again:
+     discovery, and every peer on another machine, go over it exactly as before.
+     A peer on the built-in transports (a desktop's rviz, the other distro)
+     still matches (30 Hz both ways, tested). Not LARGE_DATA: a participant on it
+     and one on the built-in set exchange nothing at all.
+     The descriptors sit inside <profiles>: Fast DDS 3.x rejects the whole file
+     ("Not expected tag: 'transport_descriptors'") anywhere else and runs on its
+     defaults without another word.
 -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>cockpit_shm</transport_id>
+        <type>SHM</type>
+        <segment_size>4194304</segment_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>cockpit_udp4</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
     <participant profile_name="cockpit_participant" is_default_profile="true">
       <rtps>
+        <userTransports>
+          <transport_id>cockpit_shm</transport_id>
+          <transport_id>cockpit_udp4</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
         <propertiesPolicy>
           <properties>
             <property>

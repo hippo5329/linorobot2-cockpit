@@ -57,3 +57,22 @@ def test_every_launch_path_exports_the_profile():
     runners = _read("web", "backend", "runners.py")
     assert var in runners and "fastdds_service_qos.xml" in runners, \
         "runners.py builds the ROS env for everything the web UI starts; it must export the profile too"
+
+
+def test_profile_carries_a_depth_frame_in_shared_memory_and_keeps_udp():
+    """A 640x480 16UC1 frame is 614 KB; the built-in segment is 512 KB, and lyrical's Fast DDS
+    then delivered 10-12 Hz of a 30 Hz stream (2-9 Hz of the simulated Astra Pro under a full
+    stack). Naming transports drops the built-in set, so UDPv4 must be named too, or discovery
+    and every peer on another machine go with it."""
+    root = ET.parse(PROFILE).getroot()
+    descs = root.findall("./f:profiles/f:transport_descriptors/f:transport_descriptor", NS)
+    assert descs, ("transport_descriptors must sit directly inside <profiles>: Fast DDS 3.x rejects "
+                   "the whole file anywhere else and silently runs on its defaults")
+    by_id = {d.find("f:transport_id", NS).text: d for d in descs}
+    default = [p for p in root.findall(".//f:participant", NS) if p.get("is_default_profile") == "true"][0]
+    used = [t.text for t in default.findall("./f:rtps/f:userTransports/f:transport_id", NS)]
+    kinds = {by_id[t].find("f:type", NS).text: by_id[t] for t in used}
+    assert set(kinds) == {"SHM", "UDPv4"}, f"the default participant uses SHM and UDPv4, got {sorted(kinds)}"
+    assert int(kinds["SHM"].find("f:segment_size", NS).text) >= 2 * 640 * 480 * 2, \
+        "the shared-memory segment must hold at least two 640x480 16UC1 depth frames"
+    assert default.find("./f:rtps/f:useBuiltinTransports", NS).text == "false"
