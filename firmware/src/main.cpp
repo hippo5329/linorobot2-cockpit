@@ -16,8 +16,13 @@
 #include <pico/cyw43_arch.h>   // radioField(): the W's radio answers for itself
 #include <cyw43.h>
 #endif
+#if defined(ARDUINO_ARCH_RP2040)
+#include <pico/time.h>    // time_us_64(): the epoch's monotonic base, see syncTime()
+#endif
 #ifdef ESP32
 #include <esp_system.h>   // esp_reset_reason(), see printResetReason()
+#include <esp_timer.h>    // esp_timer_get_time(): the epoch's monotonic base, see syncTime()
+#include <sys/time.h>     // settimeofday(): CLOCK_REALTIME back to 0 at boot, see setup()
 #endif
 #include <micro_ros_platformio.h>
 #include <stdio.h>
@@ -289,7 +294,6 @@ rcl_allocator_t allocator;
 rcl_node_t node;
 rcl_timer_t control_timer;
 
-unsigned long long time_offset = 0;
 unsigned long prev_cmd_time = 0;
 unsigned long prev_odom_update = 0;
 float prev_voltage;
@@ -1155,6 +1159,24 @@ void setup()
     ledInit();
 
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    // CLOCK_REALTIME back to 0, before the transport's first exchange. micro-ROS
+    // keeps its own time on this clock (uxr_nanos/uxr_millis), and the ESP32 keeps
+    // it across every reset that is not a power-on: esp_restart, the watchdogs,
+    // the USB reset esptool flashes a native-USB board with. Its time-sync request
+    // carries the client's seconds as an int32, so a clock past 2^31 s wraps in the
+    // request and the epoch the session hands back is exactly 2^31 s off -- and it
+    // stays there, since that wrong epoch is itself past 2^31 s. Firmware up to
+    // rc-20261030.2 wrote the epoch into this clock (clock_settime); a bench ESP32-S3 DevKit
+    // fell into that state at a reconnect on 2026-10-30 and kept it through two
+    // reflashes: every stamp read -354031864 s, robot_localization's EKF threw
+    // "cannot store a negative time point" on the first message, and /odom never
+    // came up, on serial and on Wi-Fi. The clock is no longer written (syncTime()); this
+    // clears what an earlier boot or an older image left in it.
+    {
+        struct timeval tv0 = {0, 0};
+        settimeofday(&tv0, NULL);
+    }
+
     // Hand back the Bluetooth controller's DRAM. Nothing in this firmware uses
     // Bluetooth -- there is no BT stack, no BLE, no pairing, not one reference
     // anywhere in the tree -- but the ESP32 reserves roughly 64 KB of DRAM for
@@ -2801,7 +2823,8 @@ void publishData()
         imu->noteSampleAge(imu_age_us);
         int64_t imu_ns = (int64_t)time_stamp.tv_sec * 1000000000LL + time_stamp.tv_nsec
                          - (int64_t)imu_age_us * 1000LL;
-        if (imu_ns < 0) imu_ns = 0;          // before the epoch sync landed
+        if (imu_ns < 0)                      // before the epoch sync landed: the
+            imu_ns = (int64_t)time_stamp.tv_sec * 1000000000LL + time_stamp.tv_nsec;   // odom stamp, never 0
         imu_msg->header.stamp.sec = (int32_t)(imu_ns / 1000000000LL);
         imu_msg->header.stamp.nanosec = (uint32_t)(imu_ns % 1000000000LL);
     }
@@ -3016,46 +3039,60 @@ struct timespec getTime()
     return tp;
 }
 #else
+// ESP32 and RP2: the epoch is an offset to a monotonic microsecond counter, as on
+// Zephyr above, and the clock micro-ROS keeps its own time on (CLOCK_REALTIME,
+// uxr_nanos) is never written. Writing the epoch into it, as this did up to
+// rc-20261030.2, moved the clock the next session's sync is measured against, and
+// once that clock read past 2^31 s the sync request's int32 seconds wrapped and
+// every later epoch came back exactly 2^31 s off (see setup()). A sync is also
+// held to a plausible epoch -- int32 seconds, after 2023 -- and, until one lands,
+// retried every second (resyncTime) instead of leaving the session on uptime stamps.
+#define TIME_EPOCH_MIN_S 1700000000LL           // 2023-11: no agent clock is older
+static int64_t epoch_offset_us = 0;             // epoch_us - monotonic_us
+static bool time_ok = false;
+
+static inline int64_t monotonicUs()
+{
+#if defined(LINO_HOST)
+    return (int64_t)_lino_host_now_us();        // the Sim MCU: CLOCK_MONOTONIC (shim/Arduino.h)
+#elif defined(ESP32)
+    return (int64_t)esp_timer_get_time();
+#else
+    return (int64_t)time_us_64();               // RP2 (pico SDK)
+#endif
+}
+
 bool syncTime()
 {
-    const int timeout_ms = 1000;
-    if (rmw_uros_epoch_synchronized()) return true; // synchronized previously
-    // get the current time from the agent
-    RCSOFTCHECK(rmw_uros_sync_session(timeout_ms));
-    if (rmw_uros_epoch_synchronized()) {
-#if (_POSIX_TIMERS > 0)
-        // Get time in milliseconds or nanoseconds
-        int64_t time_ns = rmw_uros_epoch_nanos();
-    timespec tp;
-    tp.tv_sec = time_ns / 1000000000;
-    tp.tv_nsec = time_ns % 1000000000;
-    clock_settime(CLOCK_REALTIME, &tp);
-#else
-    unsigned long long ros_time_ms = rmw_uros_epoch_millis();
-    // now we can find the difference between ROS time and uC time
-    time_offset = ros_time_ms - millis();
-#endif
-    return true;
+    if (rmw_uros_sync_session(1000) != RMW_RET_OK || !rmw_uros_epoch_synchronized())
+        return false;
+    const int64_t epoch_us = rmw_uros_epoch_nanos() / 1000;
+    const int64_t now_us = monotonicUs();
+    const int64_t epoch_s = epoch_us / 1000000;
+    if (epoch_s < TIME_EPOCH_MIN_S || epoch_s > INT32_MAX) {
+        syslog(LOG_WARNING, "%s implausible epoch %lld s refused %lu",
+               __FUNCTION__, (long long)epoch_s, millis());
+        return false;
     }
-    return false;
+    epoch_offset_us = epoch_us - now_us;
+    time_ok = true;
+    return true;
+}
+
+static void resyncTime()
+{
+    if (!time_ok)
+        EXECUTE_EVERY_N_MS(1000, { syncTime(); });
 }
 
 struct timespec getTime()
 {
     struct timespec tp = {0};
-#if (_POSIX_TIMERS > 0)
-    clock_gettime(CLOCK_REALTIME, &tp);
-#else
-    // add time difference between uC time and ROS time to
-    // synchronize time with ROS
-    unsigned long long now = millis() + time_offset;
-    tp.tv_sec = now / 1000;
-    tp.tv_nsec = (now % 1000) * 1000000;
-#endif
+    const int64_t us = monotonicUs() + epoch_offset_us;
+    tp.tv_sec = (time_t)(us / 1000000);
+    tp.tv_nsec = (long)((us % 1000000) * 1000);
     return tp;
 }
-
-static void resyncTime() {}
 #endif
 
 void rclErrorLoop() 
