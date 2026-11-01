@@ -122,3 +122,18 @@ def test_lyricals_shim_turns_to_the_goal_heading_itself():
     assert lyr.index('follow_path["primary_controller"] = {') < lyr.index(
         'follow_path["rotate_to_goal_heading"] = True')
     assert "rotate_to_goal_heading" in SHIM_READS
+
+
+def test_lyricals_rpp_leaves_the_in_place_turns_to_the_shim():
+    """Behind Lyrical's shim RPP must not turn in place itself. Near a goal the shim aims
+    at the goal point and RPP's rotate-to-path at the curvature point projected past it;
+    a replanned stub ending in a hook put those ~110 deg apart and the two took turns
+    rotating toward their own, never driving, until the leg timed out (2026-11-01). The
+    shim keeps both turns: to the path, and to the goal heading."""
+    nested = _nested_block()
+    vals = {k.value: v for k, v in zip(nested.keys, nested.values)
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    assert "use_rotate_to_heading" in vals, "the Lyrical primary_controller block must say it"
+    v = vals["use_rotate_to_heading"]
+    assert isinstance(v, ast.Constant) and v.value is False, ast.dump(v)
+    assert 'follow_path["rotate_to_goal_heading"] = True' in _src()

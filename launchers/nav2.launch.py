@@ -459,7 +459,19 @@ def launch_setup(context, *args, **kwargs):
                 "curvature_lookahead_dist": follow_path.pop("curvature_lookahead_dist", 0.6),
                 "interpolate_curvature_after_goal": follow_path.pop(
                     "interpolate_curvature_after_goal", False),
-                "use_rotate_to_heading": True,
+                # NOT RPP's own in-place turn: the shim in front of it already turns to
+                # the path (angular_dist_threshold) and, below, to the goal's heading.
+                # With both turning, near a goal they aimed at different points: the shim
+                # at the goal itself (the replanned stub is shorter than its
+                # forward_sampling_distance), RPP at the curvature point projected past
+                # the goal along the stub's last segment (interpolate_curvature_after_goal,
+                # below). A stub ending in a hook put the two ~110 deg apart; each turned
+                # in place toward its own, handing over at 45 / 22.5 deg, and neither ever
+                # drove: 0.33 rad/s back and forth 0.165 m from a 0.15 m tolerance until
+                # the leg timed out (Astra skid_steer exploration, 2026-11-01, every cycle
+                # read off controller_server's debug log). Without it RPP always drives
+                # its arc, at least min_approach_linear_velocity, and the goal closes.
+                "use_rotate_to_heading": False,
                 "allow_reversing": False,
                 "rotate_to_heading_min_angle": 0.785,
                 "max_angular_accel": follow_path.get("max_angular_accel", 3.2),
