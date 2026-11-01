@@ -89,9 +89,13 @@ def test_the_imu_stamp_is_no_longer_odoms():
 
 
 def test_a_stamp_is_never_pushed_before_the_epoch():
-    """Before the agent's epoch sync lands, getTime() is small."""
+    """Before the agent's epoch sync lands, getTime() is small: dating the IMU back by its
+    sample age can go negative. It then takes the odom stamp (the publish time), never 0 --
+    a zero stamp dates the sample to 1970 (091624f)."""
     m = _read(MAIN)
-    assert "if (imu_ns < 0) imu_ns = 0;" in m
+    assert re.search(r"if \(imu_ns < 0\)[^\n]*\n\s*imu_ns = \(int64_t\)time_stamp\.tv_sec \* 1000000000LL"
+                     r" \+ time_stamp\.tv_nsec;", m), "the negative case must fall back to the odom stamp"
+    assert "imu_ns = 0;" not in m
 
 
 def test_the_bench_can_see_the_correction_and_which_source_made_it():
