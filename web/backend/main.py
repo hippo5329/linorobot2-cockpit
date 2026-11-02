@@ -11,6 +11,7 @@ import os
 from fastapi.staticfiles import StaticFiles
 
 from core import app, FRONTEND_DIR
+from server_options import graceful_shutdown_kwargs
 
 # Importing these registers every @app route on `app` (side effect). Order is
 # irrelevant; noqa: F401 -- imported for the registration, not for a name.
@@ -55,4 +56,4 @@ if __name__ == "__main__":
     # 8000 is the cockpit's own port; a spare one keeps a test instance clear of it.
     ap.add_argument("--port", type=int, default=int(os.environ.get("COCKPIT_PORT", 8000)))
     cli_args = ap.parse_args()
-    uvicorn.run(app, host=cli_args.host, port=cli_args.port)
+    uvicorn.run(app, host=cli_args.host, port=cli_args.port, **graceful_shutdown_kwargs(uvicorn))
