@@ -124,6 +124,19 @@ def test_has_real_sonar_reads_the_pins():
     assert not has_real_sonar({"base_controller": {"pins": {"sonar": {"trigger": "", "echo": ""}}}})
 
 
+
+def test_has_real_sonar_reads_an_i2c_address():
+    """A sonar on I2C has no pins; its declared address is the robot's answer."""
+    has_real_sonar = _launcher_func("has_real_sonar")
+    assert has_real_sonar({"base_controller": {"sonar": {"i2c_address": 0x77}}})
+    assert has_real_sonar({"base_controller": {"sonar": {"i2c_address": "0x77"}}})
+    assert not has_real_sonar({"base_controller": {"sonar": {"i2c_address": -1}}})
+    assert not has_real_sonar({"base_controller": {"sonar": {"i2c_address": "none"}}})
+    # either is a sonar: no I2C one (-1) does not unwire the pins
+    assert has_real_sonar({"base_controller": {"sonar": {"i2c_address": -1},
+                                               "pins": {"sonar": {"trigger": 27, "echo": 28}}}})
+
+
 def test_the_launcher_default_follows_the_pins():
     src = _read(LAUNCHER)
     assert '"observation_sources": ["scan", "sonar"] if sonar_fitted else ["scan"]' in src

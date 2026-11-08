@@ -147,7 +147,7 @@ def _prefix_nav2_namespace(node, ns):
 
 
 def has_real_sonar(params) -> bool:
-    """Does this robot actually have an HC-SR04 wired?
+    """Does this robot actually have a sonar: an HC-SR04 wired, or one on I2C?
 
     The pins are the robot's own answer. The firmware reads the same two keys
     and publishes /sonar from the hardware only when both are >= 0; a board
@@ -164,7 +164,17 @@ def has_real_sonar(params) -> bool:
     is declared from the pins, not from taste, and a config that asks for one
     on a board with no pins is overruled below rather than obeyed.
     """
-    pins = ((params or {}).get("base_controller") or {}).get("pins") or {}
+    base = (params or {}).get("base_controller") or {}
+    # A sonar on a bus has no trigger or echo pin: its address is the answer
+    # (base_controller.sonar.i2c_address, e.g. Hiwonder's I2C module at 0x77
+    # on the miniHexa). Declared by the robot's config, like the pins.
+    i2c = (base.get("sonar") or {}).get("i2c_address")
+    try:
+        if i2c is not None and (int(i2c, 0) if isinstance(i2c, str) else int(i2c)) >= 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    pins = base.get("pins") or {}
     sonar = pins.get("sonar") or {}
     try:
         return int(sonar.get("trigger", -1)) >= 0 and int(sonar.get("echo", -1)) >= 0
