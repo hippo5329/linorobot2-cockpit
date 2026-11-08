@@ -217,6 +217,30 @@ def add_camera_obstacle_source(nav2_data, params) -> list:
     return changed
 
 
+def resolve_relative_bt_xml(nav2_data, config_file) -> list:
+    """A behaviour tree named by a relative path is the one beside the robot's config.
+
+    bt_navigator reads default_nav_to_pose_bt_xml / default_nav_through_poses_bt_xml as file paths, and a
+    robot that ships its own tree (one that backs up instead of spinning when it is boxed in) keeps it next to
+    its <robot>_config.yaml -- wherever that file is installed. An absolute path, or none, is left alone; a
+    relative one that does not exist there is left as written, and said, so bt_navigator's own error names it.
+    Returns the keys it resolved."""
+    bt = (nav2_data.get("bt_navigator") or {}).get("ros__parameters") or {}
+    base = os.path.dirname(os.path.abspath(config_file))
+    done = []
+    for key in ("default_nav_to_pose_bt_xml", "default_nav_through_poses_bt_xml"):
+        val = bt.get(key)
+        if not isinstance(val, str) or not val or os.path.isabs(val):
+            continue
+        path = os.path.join(base, val)
+        if os.path.isfile(path):
+            bt[key] = path
+            done.append(key)
+        else:
+            print(f"[nav2] bt_navigator.{key}: {val} is not beside {config_file}; left as written")
+    return done
+
+
 def amcl_params(params, map_file, pose, bringup_share=None):
     """AMCL's parameters for localising on a saved map.
 
@@ -374,6 +398,7 @@ def launch_setup(context, *args, **kwargs):
 
     params = load_yaml(config_file)
     nav2_data = copy.deepcopy(params.get("nav2", {}))
+    resolve_relative_bt_xml(nav2_data, config_file)
 
     stamped_cmd_vel_arg = context.launch_configurations.get("stamped_cmd_vel", "").strip().lower()
     if stamped_cmd_vel_arg in ("true", "1", "yes"):
