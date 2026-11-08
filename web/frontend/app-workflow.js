@@ -718,11 +718,12 @@ if (vgpPad) {
   // ---- a gamepad on this computer: the browser's Gamepad API (USB or Bluetooth, the standard mapping) ----
   // Hold LB (button 4, the deadman) to drive: it starts the publisher if it is not running, then left stick
   // forward/back (axis 1) and sideways (axis 0, omni bases; a differential base ignores linear.y), right stick
-  // turn (axis 2). Let go of LB and the command is zero at once. B (1) or Back/View (8) stops the publisher.
+  // turn (axis 2). Let go of LB and the command is zero at once. Any face button (0-3) or Back/- (8) stops the
+  // publisher: by position, since pads disagree on the letters (a Nintendo-layout pad's B is button 0).
   // Not Start: a Bluetooth Xbox-style pad on Linux reported its menu button outside the gamepad (Chrome never
   // saw it, 2026-11-08). Read at 20 Hz; the 10 Hz send above carries it, so the server's deadman and idle
   // quiet hold for it too. A pad shows up only after a button press.
-  const PAD_DEADZONE = 0.12, PAD_LB = 4, PAD_STOPS = [1, 8];
+  const PAD_DEADZONE = 0.12, PAD_LB = 4, PAD_STOPS = [0, 1, 2, 3, 8];
   const padHint = document.getElementById("vgp-hw");
   let padButtons = [];
   const deadzone = (v) => (Math.abs(v) < PAD_DEADZONE ? 0 : (v - Math.sign(v) * PAD_DEADZONE) / (1 - PAD_DEADZONE));

@@ -104,6 +104,7 @@ def test_a_gamepad_on_this_computer_drives_only_while_its_deadman_is_held():
     body = js[a:js.index("setInterval(pollPad", a)]
     assert "const enabled = held(PAD_LB);" in body
     assert "pressed(PAD_LB) && !vgpRunning" in body   # LB starts it: a BT pad's Start never reached Chrome
+    assert "PAD_STOPS = [0, 1, 2, 3, 8]" in js        # stop by position: pads disagree on the letters
     for axis in ("lx = enabled ?", "ly = enabled ?", "az: enabled ?"):
         assert axis in body, axis
     t = js[js.index("  function twist()"):js.index("  function render()")]
