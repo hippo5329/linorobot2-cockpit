@@ -10,7 +10,9 @@ It republishes the latest target at a fixed rate, which is what a real teleop
 node does: the base stops when cmd_vel goes quiet, so the command has to be
 held. It also carries a deadman timeout -- if the browser stops sending (tab
 closed, laptop asleep, Wi-Fi dropped) the robot is commanded to zero rather
-than driving on the last command it heard.
+than driving on the last command it heard. Zero is said for --idle-timeout
+(1 s), then nothing until the command moves again (cmd_idle.py): held at zero
+it fought every other driver of /cmd_vel, Nav2 included.
 
 It publishes the message type the FIRMWARE was built to hear, which is not the
 same on every distro. nav2 1.4 (kilted) flipped nav2_util::TwistPublisher to
@@ -45,6 +47,7 @@ from rclpy.node import Node
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_firmware_header import distro_stamps_cmd_vel  # noqa: E402
 import stall_check  # noqa: E402
+from cmd_idle import IdleGate  # noqa: E402
 
 
 READY_LINE = "GAMEPAD_READY"
@@ -68,12 +71,15 @@ def resolve_cmd_vel_type(choice: str, distro: str = None) -> bool:
 
 
 class GamepadPublisher(Node):
-    def __init__(self, topic, rate_hz, timeout_s, stamped=False, odom_topic="/odom", status_file=None):
+    def __init__(self, topic, rate_hz, timeout_s, stamped=False, odom_topic="/odom", status_file=None, idle_s=1.0):
         super().__init__("console_gamepad")
         self.stamped = stamped
         self.msg_type = TwistStamped if stamped else Twist
         self.pub = self.create_publisher(self.msg_type, topic, 10)
         self.timeout_s = timeout_s
+        # Zero is said for idle_s, then nothing until the command moves (cmd_idle.py): a publisher held at zero
+        # fights every other driver of /cmd_vel.
+        self.idle = IdleGate(idle_s)
         self.lock = threading.Lock()
         self.target = (0.0, 0.0, 0.0)
         self.last_cmd_time = 0.0
@@ -87,8 +93,8 @@ class GamepadPublisher(Node):
         if status_file:
             self.create_timer(0.25, self.write_status)
         self.get_logger().info(
-            "publishing %s on %s at %g Hz, deadman timeout %gs"
-            % (self.msg_type.__name__, topic, rate_hz, timeout_s)
+            "publishing %s on %s at %g Hz, deadman timeout %gs, quiet after %gs at zero"
+            % (self.msg_type.__name__, topic, rate_hz, timeout_s, idle_s)
         )
 
     def _msg(self, lx, ly, az):
@@ -152,6 +158,11 @@ class GamepadPublisher(Node):
             stale = (time.monotonic() - self.last_cmd_time) > self.timeout_s
         if stale:
             lx = ly = az = 0.0
+        was_quiet = self.idle.quiet
+        if not self.idle.publish((lx, ly, az), time.monotonic()):
+            if not was_quiet:
+                self.get_logger().info("command at zero for %gs: quiet until it moves" % self.idle.idle_s)
+            return
         self.pub.publish(self._msg(lx, ly, az))
 
     def set_target(self, lx, ly, az):
@@ -186,6 +197,8 @@ def main():
     ap.add_argument("--topic", default="/cmd_vel")
     ap.add_argument("--rate", type=float, default=20.0)
     ap.add_argument("--timeout", type=float, default=0.5)
+    ap.add_argument("--idle-timeout", type=float, default=1.0,
+                    help="at zero this long, stop publishing until the command moves (0: publish zero for ever)")
     ap.add_argument("--odom-topic", default="/odom", help="what the stall check measures against")
     ap.add_argument("--status-file", default=None, help="where the stall verdict is written (the cockpit reads it)")
     ap.add_argument("--cmd-vel-type", default="auto",
@@ -197,7 +210,8 @@ def main():
     rclpy.init()
     node = GamepadPublisher(args.topic, args.rate, args.timeout,
                             stamped=resolve_cmd_vel_type(args.cmd_vel_type),
-                            odom_topic=args.odom_topic, status_file=args.status_file)
+                            odom_topic=args.odom_topic, status_file=args.status_file,
+                            idle_s=args.idle_timeout)
     threading.Thread(target=read_stdin, args=(node,), daemon=True).start()
     # The cockpit waits for this line before it tells the page "publishing": on a slow robot
     # computer the shell, the ROS setup and rclpy take seconds, and commands sent before the

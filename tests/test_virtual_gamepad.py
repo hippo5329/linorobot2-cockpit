@@ -63,3 +63,50 @@ def test_one_click_replaces_a_bringup_tab_bringup():
     a = src.index("def stream_one_click_workflow(")
     body = src[a:src.index("subprocess.Popen(cmd", a)]
     assert "bringup_runner.is_busy()" in body and "bringup_runner.kill()" in body
+
+
+def _idle_gate():
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from cmd_idle import IdleGate
+    return IdleGate
+
+
+def test_zero_is_said_for_the_idle_time_then_nothing_until_the_command_moves():
+    """A publisher held at zero fought every other driver of /cmd_vel: Nav2's commands reached a robot
+    interleaved with twice as many zeros, and it walked a sixth of what it was told for hours (2026-11-08)."""
+    g = _idle_gate()(1.0)
+    assert g.publish((0.2, 0, 0), 0.0)
+    assert all(g.publish((0, 0, 0), t) for t in (0.05, 0.5, 1.0))   # the stop is said...
+    assert not g.publish((0, 0, 0), 1.06) and g.quiet                # ...then nothing
+    assert not g.publish((0, 0, 0), 30.0)
+    assert g.publish((0, 0, 0.3), 31.0) and not g.quiet              # it moves: published again
+    assert g.publish((0, 0, 0), 31.5) and not g.publish((0, 0, 0), 32.6)
+
+
+def test_idle_zero_keeps_publishing_zero():
+    g = _idle_gate()(0)
+    assert all(g.publish((0, 0, 0), t) for t in (0.0, 5.0, 500.0))
+
+
+def test_the_publisher_goes_quiet_at_zero():
+    src = _read("scripts", "gamepad_publisher.py")
+    assert "from cmd_idle import IdleGate" in src and "--idle-timeout" in src
+    a = src.index("    def tick(self):")
+    body = src[a:src.index("\n    def ", a + 10)]
+    assert "self.idle.publish(" in body and body.index("self.idle.publish(") < body.index("self.pub.publish(")
+
+
+def test_a_gamepad_on_this_computer_drives_only_while_its_deadman_is_held():
+    js = _read("web", "frontend", "app-workflow.js")
+    assert "navigator.getGamepads" in js
+    a = js.index("function pollPad()")
+    body = js[a:js.index("setInterval(pollPad", a)]
+    assert "const enabled = held(PAD_LB);" in body
+    assert "pressed(PAD_LB) && !vgpRunning" in body   # LB starts it: a BT pad's Start never reached Chrome
+    for axis in ("lx = enabled ?", "ly = enabled ?", "az: enabled ?"):
+        assert axis in body, axis
+    t = js[js.index("  function twist()"):js.index("  function render()")]
+    assert "hwPad && hwPad.enabled" in t and "linear_y: hwPad.ly" in t
+    html = _read("web", "frontend", "index.html")
+    assert 'id="vgp-hw"' in html and 'id="vgp-ly"' in html

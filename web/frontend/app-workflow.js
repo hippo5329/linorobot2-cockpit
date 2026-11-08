@@ -543,6 +543,7 @@ if (vgpPad) {
   const KNOB_TRAVEL = 0.42; // knob centre stays inside the pad at full deflection
 
   let vgpRunning = false;
+  let vgpStarting = false;   // a start in flight (the gamepad's LB may ask again meanwhile)
   let vgpTimer = null;
   let vgpStallTimer = null;
   let axes = { x: 0, y: 0 };   // -1..1, y positive = forward
@@ -553,17 +554,27 @@ if (vgpPad) {
     return Number.isFinite(v) ? v : fallback;
   };
 
+  // A gamepad on this computer (pollPad, below): while its deadman is held it drives, else the virtual pad.
+  let hwPad = null;   // { id, enabled, lx, ly, az }, each -1..1
+
   function twist() {
+    const maxL = num("vgp-max-linear", 0.4), maxA = num("vgp-max-angular", 1.2);
+    if (hwPad && hwPad.enabled) {
+      return { linear_x: hwPad.lx * maxL, linear_y: hwPad.ly * maxL, angular_z: hwPad.az * maxA };
+    }
     return {
-      linear_x: axes.y * num("vgp-max-linear", 0.4),
+      linear_x: axes.y * maxL,
       linear_y: 0,
-      angular_z: -axes.x * num("vgp-max-angular", 1.2),
+      angular_z: -axes.x * maxA,
     };
   }
 
   function render() {
-    document.getElementById("vgp-lx").textContent = twist().linear_x.toFixed(2);
-    document.getElementById("vgp-az").textContent = twist().angular_z.toFixed(2);
+    const t = twist();
+    document.getElementById("vgp-lx").textContent = t.linear_x.toFixed(2);
+    const ly = document.getElementById("vgp-ly");
+    if (ly) ly.textContent = t.linear_y.toFixed(2);
+    document.getElementById("vgp-az").textContent = t.angular_z.toFixed(2);
     vgpKnob.style.left = `${50 + axes.x * KNOB_TRAVEL * 100}%`;
     vgpKnob.style.top = `${50 - axes.y * KNOB_TRAVEL * 100}%`;
   }
@@ -612,10 +623,13 @@ if (vgpPad) {
   }
 
   async function startGamepad() {
+    if (vgpRunning || vgpStarting) return;
+    vgpStarting = true;
     const topic = document.getElementById("vgp-topic").value.trim() || "/cmd_vel";
     vgpState.textContent = "starting...";
     let r = null;
     try { r = await vgpPost("/api/gamepad/start", { topic }); } catch (e) { r = null; }
+    vgpStarting = false;
     if (!r || !r.started) {
       vgpState.textContent = "could not start the publisher (is ROS 2 sourced?)";
       // Whatever half-started must not be left publishing on its own.
@@ -700,6 +714,44 @@ if (vgpPad) {
     applyKeys();
   });
   vgpPad.addEventListener("blur", () => { keysHeld.clear(); applyKeys(); });
+
+  // ---- a gamepad on this computer: the browser's Gamepad API (USB or Bluetooth, the standard mapping) ----
+  // Hold LB (button 4, the deadman) to drive: it starts the publisher if it is not running, then left stick
+  // forward/back (axis 1) and sideways (axis 0, omni bases; a differential base ignores linear.y), right stick
+  // turn (axis 2). Let go of LB and the command is zero at once. B (1) or Back/View (8) stops the publisher.
+  // Not Start: a Bluetooth Xbox-style pad on Linux reported its menu button outside the gamepad (Chrome never
+  // saw it, 2026-11-08). Read at 20 Hz; the 10 Hz send above carries it, so the server's deadman and idle
+  // quiet hold for it too. A pad shows up only after a button press.
+  const PAD_DEADZONE = 0.12, PAD_LB = 4, PAD_STOPS = [1, 8];
+  const padHint = document.getElementById("vgp-hw");
+  let padButtons = [];
+  const deadzone = (v) => (Math.abs(v) < PAD_DEADZONE ? 0 : (v - Math.sign(v) * PAD_DEADZONE) / (1 - PAD_DEADZONE));
+  function pollPad() {
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter((p) => p && p.connected) : [];
+    const gp = pads.find((p) => p.mapping === "standard") || pads[0] || null;
+    if (!gp) {
+      if (hwPad) { hwPad = null; render(); }
+      if (padHint) padHint.textContent = navigator.getGamepads
+        ? "gamepad: none seen (press a button on it)" : "gamepad: this browser has no Gamepad API";
+      padButtons = [];
+      return;
+    }
+    const held = (i) => !!(gp.buttons[i] && gp.buttons[i].pressed);
+    const pressed = (i) => held(i) && !padButtons[i];
+    if (pressed(PAD_LB) && !vgpRunning) startGamepad();
+    if (vgpRunning && PAD_STOPS.some(pressed)) stopGamepad("stopped (gamepad)");
+    padButtons = gp.buttons.map((b) => b.pressed);
+    const enabled = held(PAD_LB);
+    let lx = enabled ? -deadzone(gp.axes[1] || 0) : 0, ly = enabled ? -deadzone(gp.axes[0] || 0) : 0;
+    const mag = Math.hypot(lx, ly);
+    if (mag > 1) { lx /= mag; ly /= mag; }
+    hwPad = { id: gp.id, enabled, lx, ly, az: enabled ? -deadzone(gp.axes[2] || 0) : 0 };
+    if (padHint) padHint.textContent = `gamepad: ${gp.id.slice(0, 48)} -- `
+      + (vgpStarting ? "starting..." : !vgpRunning ? "hold LB to start and drive" : enabled ? "LB held: driving" : "hold LB to drive")
+      + (gp.mapping === "standard" ? "" : " (not the standard mapping: axes may differ)");
+    render();
+  }
+  setInterval(pollPad, 50);
 
   // a page unload would otherwise leave the robot driving until the deadman trips
   window.addEventListener("pagehide", () => {
