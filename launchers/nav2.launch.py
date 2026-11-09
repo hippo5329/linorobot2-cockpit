@@ -146,6 +146,31 @@ def _prefix_nav2_namespace(node, ns):
             _prefix_nav2_namespace(item, ns)
 
 
+def drop_cm_source(cm_params, name):
+    """Take observation source `name` out of a collision_monitor block, with
+    every polygon's reference to it. A polygon may name its sources
+    (`sources_names`; unset means all of them), and the monitor refuses to
+    configure when one names a source that is not declared -- so a polygon
+    left with none is dropped too: it watched only that sensor."""
+    cm_params["observation_sources"] = [
+        s for s in (cm_params.get("observation_sources") or []) if s != name
+    ]
+    cm_params.pop(name, None)
+    kept = []
+    for poly in cm_params.get("polygons") or []:
+        block = cm_params.get(poly)
+        names = block.get("sources_names") if isinstance(block, dict) else None
+        if names is not None and name in names:
+            names = [s for s in names if s != name]
+            if not names:
+                cm_params.pop(poly, None)
+                continue
+            block["sources_names"] = names
+        kept.append(poly)
+    if "polygons" in cm_params:
+        cm_params["polygons"] = kept
+
+
 def has_real_sonar(params) -> bool:
     """Does this robot actually have a sonar: an HC-SR04 wired, or one on I2C?
 
@@ -659,10 +684,7 @@ def launch_setup(context, *args, **kwargs):
     # win and the launcher says so out loud rather than leaving a stopped robot
     # to be diagnosed from a costmap.
     if not sonar_fitted and "sonar" in (cm_params.get("observation_sources") or []):
-        cm_params["observation_sources"] = [
-            s for s in cm_params["observation_sources"] if s != "sonar"
-        ]
-        cm_params.pop("sonar", None)
+        drop_cm_source(cm_params, "sonar")
         print(
             "[nav2] collision_monitor: dropping the `sonar` source -- this robot "
             "reports no sonar pins (base_controller.pins.sonar), so the topic "

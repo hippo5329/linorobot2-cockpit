@@ -148,7 +148,29 @@ def test_a_config_may_not_ask_for_a_sonar_the_robot_does_not_have():
     launcher has to overrule them, or the pins are advice rather than fact."""
     src = _read(LAUNCHER)
     assert 'if not sonar_fitted and "sonar" in (cm_params.get("observation_sources") or []):' in src
-    assert 'cm_params.pop("sonar", None)' in src
+    assert 'drop_cm_source(cm_params, "sonar")' in src
+
+
+def test_dropping_the_sonar_takes_its_polygons_with_it():
+    """A polygon may watch named sources (minihexa's forward-only sonar zones,
+    2026-11-09). The monitor will not configure with a polygon naming a source
+    that is not declared, so the polygons go with the source; one shared with
+    the LiDAR keeps the LiDAR, and one naming no sources (all of them) stays."""
+    drop = _launcher_func("drop_cm_source")
+    cm = {
+        "observation_sources": ["scan", "sonar"],
+        "scan": {"type": "scan"}, "sonar": {"type": "range"},
+        "polygons": ["FootprintApproach", "SonarStop", "Both", "All"],
+        "FootprintApproach": {"sources_names": ["scan"]},
+        "SonarStop": {"sources_names": ["sonar"]},
+        "Both": {"sources_names": ["scan", "sonar"]},
+        "All": {"type": "polygon"},
+    }
+    drop(cm, "sonar")
+    assert cm["observation_sources"] == ["scan"] and "sonar" not in cm
+    assert cm["polygons"] == ["FootprintApproach", "Both", "All"] and "SonarStop" not in cm
+    assert cm["Both"]["sources_names"] == ["scan"]
+    assert cm["FootprintApproach"]["sources_names"] == ["scan"]
 
 
 def test_the_description_publishes_the_frame_the_firmware_stamps():
