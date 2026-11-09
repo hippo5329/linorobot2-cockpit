@@ -674,6 +674,28 @@ ports supply 3.3 V, so 3.3 V hall encoders plug straight in; GPIO 34-39 have no 
 The GH1.25 E-ports are rated 1 A continuous per pin, not the bridge's 3 A: a motor that stalls above
 that (520 class, ~2.5 A) belongs on the PH2.0 DC ports, with only its encoder on the E-port. Directions are confirmed by driving a robot, not by the build.
 
+### The GOOUUU ESP32-S3-CAM runs the ESP32-S3 image
+`config/reference/goouuu_s3_cam_config.yaml` is the GOOUUU ESP32-S3-CAM v1.3 (ESP32-S3 N16R8, OV3660) as
+a robot's only MCU: a 2WD differential drive on a dual-PWM bridge, micro-ROS over Wi-Fi and the LD19
+sent to the robot computer over UDP. It runs `esp32s3-jazzy` / `esp32s3-lyrical`; the console is the
+board's CH340 on UART0 (`console: uart0`), which frees the native USB pins for an encoder. The camera
+keeps 4-13 and 15-18, flash and PSRAM 26-37; the firmware drives neither the camera nor the bus servos
+the plan puts on UART2 (TX 40 / RX 41).
+
+| part | wiring |
+|---|---|
+| drivetrain | 2WD differential |
+| motors | dual-PWM, `in_a`/`in_b`: left 21/47, right 1/2 (no pin with a boot pull-up) |
+| encoders | left 38/39 (the board's SD-line pull-ups), right 19/20 (USB D-/D+; nothing in the native USB port) |
+| I2C | SDA 42 / SCL 14, sensors found by probing |
+| battery | GPIO 3, 10k over 2.2k (2.63 V at a full 4S LiFePO4, 14.6 V); measure r2 on the first run |
+| LiDAR | LD19 data on GPIO 48; its 5 V through a P-MOSFET switched by GPIO 46 (`gpio_out`, high = on) |
+| LED | none (`led: -1`): the WS2812 on 48 carries the LD19 |
+
+The LD19 is off through reset, boot and flashing and comes on when `gpio_out` drives 46 high; download mode
+needs 46 low, which the NPN base never prevents. Leave the microSD slot empty: it shares 38-40.
+Directions are confirmed by driving a robot, not by the build.
+
 ### The Pimoroni Motor 2040 runs the Pico image
 `config/reference/pimoroni_motor2040_config.yaml` is the Pimoroni Motor 2040: an RP2040 with two DRV8833
 dual bridges, four encoder ports and a supply sense, on micro-ROS over its native USB. Pins are from

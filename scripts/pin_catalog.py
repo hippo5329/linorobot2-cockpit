@@ -160,8 +160,16 @@ def _collect(tgt: dict) -> List[Tuple[str, int, str]]:
     sonar = pins.get("sonar") or {}
     out.append(("sonar.trigger", _pin(sonar.get("trigger", -1)), "out"))
     out.append(("sonar.echo", _pin(sonar.get("echo", -1)), "in"))
+    # The boot-time outputs (board_init driveOutputs): a list of {pin, level} or "5=1,13=0".
+    for key in ("gpio_out", "gpio_out_late"):
+        spec = pins.get(key)
+        items = spec if isinstance(spec, list) else str(spec or "").split(",")
+        for item in items:
+            gpio = item.get("pin", -1) if isinstance(item, dict) else str(item).split("=")[0].strip()
+            out.append((key, _pin(gpio), "out"))
     lidar = tgt.get("lidar") or {}
-    if str(lidar.get("comm_mode", "")).lower() == "serial":
+    # serial: the pin the bench's sim_ld19 drives out; udp: the real LD19's data line.
+    if str(lidar.get("comm_mode", "")).lower() in ("serial", "udp", "udp_server"):
         out.append(("lidar.rx_pin", _pin(lidar.get("rx_pin", -1)), "in"))
     return [(r, g, d) for (r, g, d) in out if g >= 0]
 
@@ -197,7 +205,9 @@ def check_config(params: dict) -> List[Finding]:
         # arduino-pico's PIN_LED on a W board: the CYW43's WL_GPIO0, not a header pin.
         if role == "led" and gpio == CYW43_LED and wireless_rp2:
             continue
-        if gpio not in cat["gpio"]:
+        # A boot output is the board's own wiring (the Motor 2040's sense-mux lines are RP2040
+        # pins a Pico keeps off its header): every other check applies, not the header's list.
+        if gpio not in cat["gpio"] and not role.startswith("gpio_out"):
             findings.append(("error", f"{role}: GPIO {gpio} does not exist on the {cat['label']}"))
             continue
         if gpio == 29 and board == "picow":
@@ -216,7 +226,11 @@ def check_config(params: dict) -> List[Finding]:
         if gpio in cat.get("uart0", set()):
             findings.append(("warn", f"{role}: GPIO {gpio} is UART0, the console and flashing port"))
         if gpio in cat.get("usb", set()):
-            findings.append(("warn", f"{role}: GPIO {gpio} is USB D+/D-; the native USB console dies with it"))
+            if str(tgt.get("console", "")).lower() == "uart0":
+                findings.append(("warn", f"{role}: GPIO {gpio} is USB D+/D-; the console is on UART0, "
+                                         "so nothing may use the native USB port"))
+            else:
+                findings.append(("warn", f"{role}: GPIO {gpio} is USB D+/D-; the native USB console dies with it"))
         if gpio in cat.get("psram_octal", set()):
             findings.append(("warn", f"{role}: GPIO {gpio} is PSRAM on octal-PSRAM modules"))
         if direction == "adc":

@@ -159,7 +159,9 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
 # The NULLLAB Maker-ESP32 PRO's only LEDs are the CH340's TX/RX activity LEDs (schematic,
 # maker-esp32-pro.pdf: D2 on TXD, D3 on RXD), and its GPIO 2 drives motor 2. Seen on the
 # bench 2026-10-13: D3 blinked from serial traffic alone, with no firmware involved.
-NO_USER_LED = {"nulllab_esp32_pro"}
+# The GOOUUU ESP32-S3-CAM's one driveable LED, the WS2812 on GPIO 48, carries the LD19's data in
+# that design (user, 2026-11-09: "give up rgb led, use 48 for lidar"); the rest is a power LED.
+NO_USER_LED = {"nulllab_esp32_pro", "goouuu_s3_cam"}
 
 
 def test_every_esp32_board_shares_one_led_pin(reference):
@@ -189,3 +191,40 @@ def test_the_esp32_led_is_flagged_as_a_strapping_pin(reference):
     """
     warnings = [m for l, m in pc.check_config(reference("gendrv")) if l == "warn"]
     assert any("strapping" in m and "led" in m for m in warnings), warnings
+
+
+def _s3(pins, **tgt):
+    return {"base_controller": {"mcu": "esp32s3", "pins": pins, **tgt}}
+
+
+def test_boot_outputs_are_checked_like_any_other_pin():
+    """gpio_out drives a pin from the first lines of setup(): a strapping or flash pin there is
+    exactly as dangerous as a motor line (the GOOUUU S3-CAM switches its LD19's 5 V on 46)."""
+    for spec in ([{"pin": 46, "level": 1}], "46=1"):
+        msgs = [m for _l, m in pc.check_config(_s3({"gpio_out": spec}))]
+        assert any("gpio_out: GPIO 46 is a strapping pin" in m for m in msgs), msgs
+    errs = [m for l, m in pc.check_config(_s3({"gpio_out_late": "30=1"})) if l == "error"]
+    assert any("flash/PSRAM" in m for m in errs), errs
+
+
+def test_a_boot_output_off_the_pico_header_is_the_boards_wiring():
+    """The Motor 2040's sense-mux address lines are RP2040 GPIO 22/24, which a Pico keeps off
+    its header: a board's own outputs are not held to the Pico's header list."""
+    cfg = {"base_controller": {"mcu": "rp2040", "pins": {"gpio_out": "22=0,24=0,25=1"}}}
+    assert [f for f in pc.check_config(cfg) if f[0] == "error"] == []
+
+
+def test_a_udp_lidar_pin_is_checked():
+    """On a Wi-Fi robot the LD19's data line is real wiring to an MCU pin (lidar_comm udp)."""
+    cfg = _s3({}, lidar={"comm_mode": "udp", "rx_pin": 30})
+    assert any(l == "error" and m.startswith("lidar.rx_pin") for l, m in pc.check_config(cfg))
+
+
+def test_usb_pins_with_the_console_on_uart0_say_so():
+    """With the console on UART0 (a CH340 board), 19/20 are free GPIO: the warning says what
+    is still true -- nothing may use the native USB port -- not that the console dies."""
+    enc = {"encoder1": {"pin_a": 19, "pin_b": 20}}
+    usb = [m for _l, m in pc.check_config(_s3(enc)) if "USB D+/D-" in m]
+    assert usb and all("console dies" in m for m in usb)
+    usb = [m for _l, m in pc.check_config(_s3(enc, console="uart0")) if "USB D+/D-" in m]
+    assert usb and all("console is on UART0" in m for m in usb)
