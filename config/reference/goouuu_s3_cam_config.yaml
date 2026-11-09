@@ -13,7 +13,7 @@
 #
 #   I2C          SDA 42, SCL 14 (the camera's SCCB keeps the other controller)
 #   battery      GPIO 3 (ADC1_CH2), 10 k over 2.2 k
-#   LD19 data    GPIO 48 (the RGB LED given up)
+#   LD19 data    GPIO 41 (measured on the board: 9.9 Hz, 0 CRC errors)
 #   LD19 power   GPIO 46 high = on (gpio_out below): 46 -> 2.2 k -> NPN base (10 k base to
 #                GND), collector to a P-MOSFET's gate (10 k gate to 5 V), source 5 V, drain to
 #                the LD19's 5 V. Off through reset, boot and flashing; on once the firmware runs.
@@ -24,7 +24,7 @@
 # download mode, which the NPN base never prevents.
 #
 # Also on this board and not driven by this firmware: the camera, and serial bus servos on
-# UART2 (TX 40 / RX 41, through a bus-servo driver module). Leave those pins out of `pins`.
+# UART2 (TX 40 / RX 48, through a bus-servo driver module; the RGB LED on 48 given up). Leave those pins out of `pins`.
 # The microSD slot shares 38/39/40: leave it empty.
 #
 # Kinematics below are the default-chassis placeholders every config starts from -- set
@@ -51,11 +51,11 @@ base_controller:
   use_dual_core: true
   lidar:
     model: ld19
-    # On GPIO 48 and sent to the robot computer's LD driver over UDP: with no robot computer
+    # On GPIO 41 and sent to the robot computer's LD driver over UDP: with no robot computer
     # on the robot there is no serial port to read it from, and `topic` over Wi-Fi floods the
     # micro-ROS session. In Sim mode the emulated LD19 goes out the same way.
     comm_mode: udp
-    rx_pin: 48
+    rx_pin: 41
     raw_scan_topic: raw_scan
   sensors:
     # Whatever is on the I2C bus (42/14) is found at boot; an empty bus is none.
@@ -131,7 +131,7 @@ base_controller:
       sda: 42
       scl: 14
       clock: 400000
-    # The board's only driveable LED, the RGB one on GPIO 48, carries the LD19's data here.
+    # The board's only driveable LED, the RGB one on GPIO 48, is the bus servos' RX here.
     led: -1
     # The LD19's 5 V switch, driven high at boot (board_init's gpio_out).
     gpio_out:

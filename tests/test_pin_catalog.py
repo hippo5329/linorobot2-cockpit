@@ -159,8 +159,8 @@ def test_boards_with_an_onboard_led_default_to_driving_it(reference):
 # The NULLLAB Maker-ESP32 PRO's only LEDs are the CH340's TX/RX activity LEDs (schematic,
 # maker-esp32-pro.pdf: D2 on TXD, D3 on RXD), and its GPIO 2 drives motor 2. Seen on the
 # bench 2026-10-13: D3 blinked from serial traffic alone, with no firmware involved.
-# The GOOUUU ESP32-S3-CAM's one driveable LED, the WS2812 on GPIO 48, carries the LD19's data in
-# that design (user, 2026-11-09: "give up rgb led, use 48 for lidar"); the rest is a power LED.
+# The GOOUUU ESP32-S3-CAM's one driveable LED, the WS2812 on GPIO 48, is given up in that design
+# (user, 2026-11-09: "give up rgb led"): 48 is the bus servos' RX; the rest is a power LED.
 NO_USER_LED = {"nulllab_esp32_pro", "goouuu_s3_cam"}
 
 

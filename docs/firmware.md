@@ -680,7 +680,7 @@ a robot's only MCU: a 2WD differential drive on a dual-PWM bridge, micro-ROS ove
 sent to the robot computer over UDP. It runs `esp32s3-jazzy` / `esp32s3-lyrical`; the console is the
 board's CH340 on UART0 (`console: uart0`), which frees the native USB pins for an encoder. The camera
 keeps 4-13 and 15-18, flash and PSRAM 26-37; the firmware drives neither the camera nor the bus servos
-the plan puts on UART2 (TX 40 / RX 41).
+the plan puts on UART2 (TX 40 / RX 48).
 
 | part | wiring |
 |---|---|
@@ -689,8 +689,8 @@ the plan puts on UART2 (TX 40 / RX 41).
 | encoders | left 38/39 (the board's SD-line pull-ups), right 19/20 (USB D-/D+; nothing in the native USB port) |
 | I2C | SDA 42 / SCL 14, sensors found by probing |
 | battery | GPIO 3, 10k over 2.2k (2.63 V at a full 4S LiFePO4, 14.6 V); measure r2 on the first run |
-| LiDAR | LD19 data on GPIO 48; its 5 V through a P-MOSFET switched by GPIO 46 (`gpio_out`, high = on) |
-| LED | none (`led: -1`): the WS2812 on 48 carries the LD19 |
+| LiDAR | LD19 data on GPIO 41; its 5 V through a P-MOSFET switched by GPIO 46 (`gpio_out`, high = on) |
+| LED | none (`led: -1`): the WS2812's GPIO 48 is the bus servos' RX |
 
 The LD19 is off through reset, boot and flashing and comes on when `gpio_out` drives 46 high; download mode
 needs 46 low, which the NPN base never prevents. Leave the microSD slot empty: it shares 38-40.
