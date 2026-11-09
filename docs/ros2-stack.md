@@ -162,6 +162,81 @@ origin would make `dock_robot` drive at a fiction. On jazzy these are the only t
 `… waypoint_follower, docking_server`, so a stack that reaches `docking_server` has cleared the rest.
 
 
+### A sensor inside the footprint freezes the collision monitor, backing away included
+`FootprintApproach` simulates the footprint along the command and slows the robot to keep 1.2 s
+from a collision. When at least `min_points` of a source's points are already *inside* the footprint
+the collision time is 0 (`Polygon::getCollisionTime`) for every command, reversing included: the
+monitor zeroes them all, and Nav2's own `BackUp` reports "backup failed". A front sonar is exactly
+such a source. It sees what lies under the LiDAR's plane, right at the bumper, inside a circular
+footprint (and on a small robot the sensor itself sits inside it). A hexapod with its sonar 8 cm
+from its centre and a 0.17 m footprint stood frozen against a chair leg 8.5 cm ahead, with Nav2
+logging "Failed to make progress", until it was reversed by hand (2026-11-09). The launcher now gives
+the sonar polygons of its own (`sonar_forward_zones`): `FootprintApproach` keeps the other sources
+(`sources_names`), and two `velocity_polygon`s slow (to 30 %) and stop forward motion only, at the
+footprint's reach + 0.23 m and + 0.08 m. Every other velocity (backing up, turning in place, a side
+step) selects a sliver far behind the robot, where no echo of a forward sensor can be. **Cover every
+velocity**: a velocity polygon keeps its last shape for a command none of its sub-polygons matches, so
+a gap would leave the stop zone up while reversing. A config that names the sonar in a polygon of its
+own is left as it is; a robot without a sonar loses the source *and* every polygon that watched only it
+(`drop_cm_source`: the monitor refuses to configure with a polygon naming an undeclared source).
+
+### A sonar belongs in the collision monitor, not in a costmap layer
+Two traps, both found on the hexapod. First, the beam is wider than the message says: the module
+reports 15 degrees and returns echoes from about 30. A chair 10–15 degrees off the axis read 1.42 m
+while the LiDAR saw 2.72 m clear ahead. Second, `RangeSensorLayer` marks each echo as an arc across the
+cone and clears only along the cone it is looking down. Turning in place laid one arc per heading
+until they closed into rings around the robot, and the planner refused the turns that would have
+cleared them. In the global costmap, TF misses on the layer's updates also built a backlog that froze
+the whole costmap. The sonar is now a `range` source of the collision monitor (`obstacles_angle` a
+couple of degrees between the arc's points). It slows and stops the robot near something below the
+LiDAR, which is what it is good for, and never edits a map the planner must trust.
+
+### A camera's obstacle marks: near ones never clear, and estimated far floor is a wall
+An obstacle layer clears by raytracing from the sensor, but only past `raytrace_min_range`. A mark
+nearer than that is never cleared. If one lands on the footprint's outline, every later `Spin` is
+refused ("Collision Ahead" with the LiDAR clear 0.9 m+: 5 of 21 turns-in-place on one run). So
+`obstacle_min_range` must be at least `raytrace_min_range`: never mark what you cannot clear.
+`add_camera_obstacle_source` sets both to the camera's near limit. Depth *estimated* from one camera
+(Depth Anything fitted to the floor) has a second failure. Past about a metre, a degree of tilt error
+lifts the floor by more than the climb height, so the far floor reads as a wall all round. In the
+global costmap that ring outlived every view and fenced the robot in: frontier exploration found no
+frontier. Estimated depth stays out of the global costmap and is cut at 1 m. A measured depth camera
+does not have the error, but the near-mark rule holds for any sensor.
+
+### Exploration stops at the battery floor and on a stall, then drives home
+`explore_watch.py` ends an exploration when the battery's median of its last ten readings, under load,
+falls under `--explore-stop-volts` (exit 6). It also ends one when the robot has moved under 5 cm and
+15 degrees on the map in `--explore-stall-s` (exit 7; 120 s by default on a real robot, off in
+simulation). Either way the pipeline drives home as it does for an explored room (exit 4). The battery
+stop has to leave the walk home its margin: a hexapod stopped at 7.0 V read 6.45 V under load on its way
+back. Read the median, not one sample, because a single step's load dips far below the rest. A stall
+is still a failed exploration even when the drive home succeeds. A robot pinned against a chair leg
+had otherwise spent the rest of its time limit there. The pose is taken from the map, not odometry:
+a legged robot's odometry counts steps, and it advanced 2 m in a minute while the robot slipped in
+place.
+
+### A detector's names need a shape, a size and a floor check, and low things must become obstacles
+Lessons from the hexapod's open-vocabulary camera (OWLv2 with floor-fitted depth, hexapod-cockpit's
+`camera_vision.py`), for any pipeline that names objects from a robot 15 cm off the floor:
+- **A box touching three frame edges is a surface**, not an object: a wall, a door, a bin at 0.2 m.
+  Count an edge as touched within 2 % of the frame. The detector stopped a floor band 4 px short.
+- **Check the size at the measured distance**: box px × distance / focal length against a table of
+  real sizes. A 2.5 m "refrigerator" is a wall, and a 0.3 m "bathtub" is a bin. A side cut by the
+  frame is only a lower bound.
+- **A tall label on bare floor is the floor.** With 60 % of the box within climb height of the floor
+  and under 10 % raised, nothing at least 0.15 m tall is there. One run's ~40 "bathtub" objects were
+  white tiles at the bottom of the frame.
+- **Low things the robot cannot cross are obstacles by name.** A slipper is under the climb height
+  (the depth calls it floor) and under the LiDAR. Once the detector names it, the floor under its box
+  goes into the camera's obstacle scan. The hexapod walked into one and stuck (2026-11-09).
+- **One object, many sightings**: merge detections by place (0.35 m), not by label. Vote the label by
+  summed score, and confirm an object only from two separate looks (two surveys, or two headings).
+  Otherwise one run produced 1104 "confirmed" objects.
+- **Look around only where it pays.** A 360-degree survey every few metres took 14 of 38 minutes, some
+  of it in doorways where the turns were refused. Survey only with room to turn (nearest return
+  ≥ 0.45 m) and something to see (half the directions open past 0.9 m), never within 1.2 m of an
+  earlier survey, and skip one that finds no open space within 2 m. The next run spent 5 minutes.
+
 ### "Launched" is not "active", and Nav2 will happily look launched
 `lifecycle_manager` brings the Nav2 servers up as a unit, so one node that fails to configure aborts the
 whole set — and it aborts *after* the healthy ones have logged a clean configure, so the tail of
