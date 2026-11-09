@@ -241,7 +241,7 @@ def test_a_fenced_exploration_ends_and_drives_home():
     watch = open(os.path.join(REPO_ROOT, "scripts", "explore_watch.py")).read()
     assert "return 4" in watch and "room_explored" in watch
     assert "--fence-file {run_log_path('motion_guard_fenced')}" in PIPELINE
-    home = PIPELINE.split("if ex_res.returncode == 4:")[1].split("tripped = motion_guard_tripped")[0]
+    home = PIPELINE.split("if ended in (4, 6, 7):")[1].split("tripped = motion_guard_tripped")[0]
     assert "--goal-x 0.0 --goal-y 0.0" in home and "--require-goal" in home
     assert "returned_to_origin" in home
     # a room explored round its start can end near home: that is not a vacuous goal (MC200 run 4)

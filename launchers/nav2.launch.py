@@ -171,6 +171,71 @@ def drop_cm_source(cm_params, name):
         cm_params["polygons"] = kept
 
 
+def footprint_reach(nav2_data) -> float:
+    """How far the robot reaches from its centre (m): the local costmap's robot_radius, or the
+    footprint polygon's farthest corner; 0.2 when the config says neither."""
+    import math  # here: the tests lift this function out of the module, without its imports
+    import yaml
+    lc = ((nav2_data.get("local_costmap") or {}).get("local_costmap") or {}).get("ros__parameters") or {}
+    fp = lc.get("footprint")
+    if isinstance(fp, str) and fp.strip().startswith("["):
+        try:
+            pts = yaml.safe_load(fp)
+            return max(math.hypot(float(x), float(y)) for x, y in pts)
+        except Exception:
+            pass
+    try:
+        return float(lc.get("robot_radius", 0.2))
+    except (TypeError, ValueError):
+        return 0.2
+
+
+def sonar_forward_zones(cm_params, reach):
+    """The sonar slows and stops forward motion only, in polygons of its own; the footprint polygons
+    keep the other sources.
+
+    A front sonar sees what lies under a LiDAR's plane, and right at the bumper -- inside a circular
+    footprint, or the sensor itself inside it. An echo there puts its points inside the
+    FootprintApproach polygon, whose collision time is then 0 for every command (nav2_collision_monitor
+    Polygon::getCollisionTime): the monitor zeroes all of them, backing away included, and Nav2's own
+    BackUp fails. A hexapod with its sonar inside its 0.17 m footprint stood frozen against a chair
+    leg 8.5 cm ahead until it was reversed by hand (2026-11-09). So: SonarSlow (to 30 %) and SonarStop,
+    velocity polygons that hold their zones only while x > 0.02 m/s and otherwise a sliver far behind
+    the robot, where no echo of a forward sensor can be -- a velocity polygon keeps its last shape for
+    a velocity no sub-polygon covers, so every velocity is covered. Left alone when the config already
+    gives the sonar a polygon of its own (sources_names), or when the sonar is the only source."""
+    sources = list(cm_params.get("observation_sources") or [])
+    if "sonar" not in sources:
+        return False
+    others = [s for s in sources if s != "sonar"]
+    polys = list(cm_params.get("polygons") or [])
+    named = [cm_params.get(p) or {} for p in polys]
+    if not others or any("sonar" in (b.get("sources_names") or []) for b in named if isinstance(b, dict)):
+        return False
+    for b in named:
+        if isinstance(b, dict) and b.get("sources_names") is None:
+            b["sources_names"] = list(others)
+
+    def box(x, y):
+        return f"[[{x:.2f}, {y:.2f}], [{x:.2f}, {-y:.2f}], [0.00, {-y:.2f}], [0.00, {y:.2f}]]"
+
+    behind = f"[[{-reach - 0.35:.2f}, 0.01], [{-reach - 0.35:.2f}, -0.01], [{-reach - 0.37:.2f}, -0.01], [{-reach - 0.37:.2f}, 0.01]]"
+    half = round(0.7 * reach, 2)
+    for name, action, ahead, extra in (("SonarSlow", "slowdown", reach + 0.23, {"slowdown_ratio": 0.3}),
+                                       ("SonarStop", "stop", reach + 0.08, {})):
+        cm_params[name] = dict({
+            "type": "velocity_polygon", "action_type": action, "sources_names": ["sonar"],
+            "min_points": 3, "holonomic": False, "velocity_polygons": ["ahead", "other"],
+            "ahead": {"points": box(ahead, half), "linear_min": 0.02, "linear_max": 10.0,
+                      "theta_min": -10.0, "theta_max": 10.0},
+            "other": {"points": behind, "linear_min": -10.0, "linear_max": 0.02,
+                      "theta_min": -10.0, "theta_max": 10.0},
+            "visualize": False, "enabled": True}, **extra)
+        polys.append(name)
+    cm_params["polygons"] = polys
+    return True
+
+
 def has_real_sonar(params) -> bool:
     """Does this robot actually have a sonar: an HC-SR04 wired, or one on I2C?
 
@@ -690,6 +755,11 @@ def launch_setup(context, *args, **kwargs):
             "reports no sonar pins (base_controller.pins.sonar), so the topic "
             "would never publish and the monitor would stop the robot."
         )
+
+    if sonar_forward_zones(cm_params, footprint_reach(nav2_data)):
+        print("[nav2] collision_monitor: the sonar slows and stops forward motion only (SonarSlow, SonarStop); "
+              "the footprint polygons keep " + ", ".join(
+                  s for s in cm_params["observation_sources"] if s != "sonar"))
 
     add_camera_obstacle_source(nav2_data, params)
 

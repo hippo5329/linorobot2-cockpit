@@ -1008,13 +1008,16 @@ def start_motion_guard(params_path: str, ns: str, room_bound: bool, distro: str)
     return proc, trip, "the guard never said the robot may move (logs/motion_guard.log)"
 
 
-def watch_exploration(args, trip_file: str, poll_s: float = 0.5) -> subprocess.CompletedProcess:
+def watch_exploration(args, trip_file: str, poll_s: float = 0.5, stall_s: float = 0.0,
+                      base_frame: str = "base_link") -> subprocess.CompletedProcess:
     """explore_watch.py, stopped as soon as the motion guard trips: (its output, its exit).
     Read only after it returned, a trip let explore_lite send goal after goal for up to the
     whole exploration time, the guard cancelling each within half a second -- the robot
-    moving in bursts on a stopped or starved scan."""
+    moving in bursts on a stopped or starved scan. It also stops at the battery floor
+    (--explore-stop-volts: exit 6) and on a stall (stall_s: exit 7); the caller drives home."""
     cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'explore_watch.py')} "
            f"--timeout {args.explore_timeout} --min-area {args.explore_min_area}"
+           f" --stop-volts {getattr(args, 'explore_stop_volts', 0.0)} --stall-s {stall_s} --base-frame {base_frame}"
            + (f" --fence-file {run_log_path('motion_guard_fenced')}" if trip_file else ""))
     proc = launch_bg(cmd, log_tag="explore_watch", distro=args.distro)
     deadline = time.time() + args.explore_timeout + 60
@@ -2203,6 +2206,13 @@ def main():
                              "(several rooms); by default the motion guard cancels them")
     parser.add_argument("--explore-timeout", type=int, default=900,
                         help="Seconds the frontier exploration may take (default 900)")
+    parser.add_argument("--explore-stop-volts", type=float, default=0.0,
+                        help="stop exploring and drive home when the battery's median of 10 readings, under "
+                             "load, falls under this (V; 0 = no check): a stop near the floor leaves the "
+                             "walk home none (a hexapod stopped at 7.0 V read 6.45 V on its way back)")
+    parser.add_argument("--explore-stall-s", type=float, default=None,
+                        help="stop exploring and drive home when the robot moved under 5 cm and 15 deg on "
+                             "the map in this many s (default 120 on a real robot, off in simulation; 0 = off)")
     parser.add_argument("--explore-min-area", type=float, default=0.0,
                         help="m² the explored map must reach for the run to pass (0 = no check); "
                              "a test in a known world sets it, since 'complete' only means no frontier was found")
@@ -3199,14 +3209,23 @@ def main():
                                         f"config_file:={params_path}", log_tag="explore_lite",
                                         distro=args.distro)
                     bg_processes.append(explore)
-                    ex_res = watch_exploration(args, mg["trip"])
+                    stall_s = args.explore_stall_s if args.explore_stall_s is not None else (120.0 if is_real else 0.0)
+                    try:
+                        with open(params_path, encoding="utf-8") as fh:
+                            base_frame = ((yaml.safe_load(fh) or {}).get("slam") or {}).get("base_frame", "base_link")
+                    except (OSError, yaml.YAMLError):
+                        base_frame = "base_link"
+                    ex_res = watch_exploration(args, mg["trip"], stall_s=stall_s, base_frame=base_frame)
                     stop_bg(explore)
                     print(ex_res.stdout)
-                    if ex_res.returncode == 4:
-                        # The room is explored and the rest lies beyond its outline: explore_lite
-                        # would ask for the far side until its time limit, so it is stopped and
-                        # Nav2 drives the robot home -- what explore_lite's return_to_init does.
-                        print("  The room is explored: driving home (0, 0) with Nav2...")
+                    ended = ex_res.returncode
+                    if ended in (4, 6, 7):
+                        # The room is explored and the rest lies beyond its outline (4), the battery
+                        # reached the floor (6), or the robot stalled (7): explore_lite would go on
+                        # asking, so it is stopped and Nav2 drives the robot home -- what
+                        # explore_lite's return_to_init does.
+                        why = {4: "The room is explored", 6: "At the battery floor", 7: "Stalled"}[ended]
+                        print(f"  {why}: driving home (0, 0) with Nav2...")
                         home_cmd = (f"python3 {os.path.join(REPO_ROOT, 'scripts', 'test_nav2_goal.py')} "
                                     f"--goal-x 0.0 --goal-y 0.0 --timeout {args.goal_timeout} "
                                     f"--cmd-vel-type {'twist_stamped' if stamped_cmd else 'twist'} "
@@ -3219,11 +3238,17 @@ def main():
                         home_res = run_ros(home_cmd, timeout=args.goal_timeout + 30 + COSTMAP_READY_BUDGET_S,
                                            distro=args.distro)
                         print(home_res.stdout)
-                        if home_res.returncode == 0 and not motion_guard_tripped(mg["trip"]):
-                            print("  ✅ EXPLORE: returned_to_origin (the room explored, driven home by Nav2)")
+                        home_ok = home_res.returncode == 0 and not motion_guard_tripped(mg["trip"])
+                        if ended == 7:
+                            # a stall is a failed exploration even when the robot got home
+                            print(f"  ❌ EXPLORE: stalled; the drive home {'succeeded' if home_ok else 'failed too'}")
+                        elif home_ok:
+                            what = "the room explored" if ended == 4 else "stopped at the battery floor"
+                            print(f"  ✅ EXPLORE: returned_to_origin ({what}, driven home by Nav2)")
                             ex_res = subprocess.CompletedProcess(ex_res.args, 0, ex_res.stdout, "")
                         else:
-                            print("  ❌ EXPLORE: the room was explored, but the drive home failed")
+                            what = "the room was explored" if ended == 4 else "it stopped at the battery floor"
+                            print(f"  ❌ EXPLORE: {what}, but the drive home failed")
                             ex_res = subprocess.CompletedProcess(ex_res.args, 5, ex_res.stdout, "")
                     tripped = motion_guard_tripped(mg["trip"])
                     if tripped:

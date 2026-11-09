@@ -86,3 +86,49 @@ def test_feed_map_to_simulator():
     assert 'world_map_arg' in bringup
 
 
+
+
+def _watch():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("explore_watch", os.path.join(REPO_ROOT, "scripts", "explore_watch.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_battery_stop_is_the_median_under_load():
+    """A lone dip under a step's load is not the floor; the median of ten readings is (a hexapod stopped
+    at 7.0 V read 6.45 V on its way home: the stop must leave the walk home its margin)."""
+    w = _watch()
+    assert not w.battery_low([7.4] * 10, 0.0)          # off
+    assert not w.battery_low([7.1, 7.1], 7.2)          # too few readings to judge
+    assert not w.battery_low([7.4] * 7 + [6.9] * 3, 7.2)
+    assert w.battery_low([7.4] * 3 + [7.1] * 7, 7.2)
+    assert not w.battery_low([7.0] * 20 + [7.3] * 10, 7.2)  # only the last ten count
+
+
+def test_a_robot_pinned_in_place_is_stalled():
+    """Under 5 cm and 15 deg on the map in the window: a hexapod held against a chair leg (2026-11-09).
+    Turning in place (a survey, a recovery spin) and walking are not stalls."""
+    import math
+    w = _watch()
+    still = [(t, 1.0 + 0.001 * (t % 2), 2.0, 0.1) for t in range(0, 100)]
+    assert w.stalled(still, 99, 90)
+    assert not w.stalled(still, 99, 0)                 # off
+    assert not w.stalled(still[:50], 49, 90)           # not watched long enough
+    walking = [(t, 0.01 * t, 0.0, 0.0) for t in range(100)]
+    assert not w.stalled(walking, 99, 90)
+    turning = [(t, 1.0, 2.0, math.radians(2 * t)) for t in range(100)]
+    assert not w.stalled(turning, 99, 90)
+    # it moved early, then stuck for the last 90 s
+    assert w.stalled([(t, min(t, 10) * 0.1, 0.0, 0.0) for t in range(110)], 109, 90)
+
+
+def test_the_pipeline_drives_home_after_a_battery_or_stall_stop():
+    """explore_watch's exits 6 (battery floor) and 7 (stalled) end like 4 (room explored): explore_lite
+    stopped, Nav2 drives home; a stall stays a failure even when the robot gets home."""
+    pipe = open(os.path.join(REPO_ROOT, "scripts", "one_click_pipeline.py")).read()
+    assert "if ended in (4, 6, 7):" in pipe
+    assert '"--explore-stop-volts"' in pipe and '"--explore-stall-s"' in pipe
+    assert "--stall-s {stall_s}" in pipe and "explore_stop_volts" in pipe
+    assert "(120.0 if is_real else 0.0)" in pipe   # real robots only: the simulation legs are unchanged

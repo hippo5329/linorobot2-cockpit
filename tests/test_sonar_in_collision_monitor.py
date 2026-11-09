@@ -194,3 +194,47 @@ def test_the_sonar_looks_forward_from_the_front_face():
         return
     assert geo["sonar"]["x"] > 0, geo["sonar"]
     assert geo["sonar"]["frame"] == "sonar_link"
+
+
+def test_the_sonar_stops_forward_motion_only():
+    """An echo inside the footprint froze every command, backing away included (a hexapod against a
+    chair leg, 2026-11-09). The footprint polygon keeps the LiDAR; the sonar's zones hold only while
+    moving forward, and every other velocity gets a sliver behind the robot."""
+    zones = _launcher_func("sonar_forward_zones")
+    cm = {"observation_sources": ["scan", "sonar"], "polygons": ["FootprintApproach"],
+          "FootprintApproach": {"type": "polygon", "action_type": "approach"}}
+    assert zones(cm, 0.26)
+    assert cm["polygons"] == ["FootprintApproach", "SonarSlow", "SonarStop"]
+    assert cm["FootprintApproach"]["sources_names"] == ["scan"]
+    for name, action in (("SonarSlow", "slowdown"), ("SonarStop", "stop")):
+        z = cm[name]
+        assert z["type"] == "velocity_polygon" and z["action_type"] == action and z["sources_names"] == ["sonar"]
+        ahead, other = z["ahead"], z["other"]
+        # every velocity is covered (an uncovered one keeps the last shape): ahead from 0.02 m/s up, other below
+        assert ahead["linear_min"] == other["linear_max"] == 0.02
+        assert other["linear_min"] <= -1.0 and ahead["linear_max"] >= 1.0
+        assert all(p[0] >= 0.0 for p in yaml.safe_load(ahead["points"]))
+        assert all(p[0] < -0.26 for p in yaml.safe_load(other["points"]))  # behind the robot: no echo there
+    stop = yaml.safe_load(cm["SonarStop"]["ahead"]["points"])
+    assert max(p[0] for p in stop) > 0.26  # reaches past the footprint
+    # a config that gave the sonar its own polygon is left alone; a sonar-only robot too
+    own = {"observation_sources": ["scan", "sonar"], "polygons": ["A", "S"],
+           "A": {"sources_names": ["scan"]}, "S": {"sources_names": ["sonar"]}}
+    assert not zones(own, 0.2) and own["polygons"] == ["A", "S"]
+    assert not zones({"observation_sources": ["sonar"], "polygons": ["A"], "A": {}}, 0.2)
+    assert not zones({"observation_sources": ["scan"], "polygons": ["A"], "A": {}}, 0.2)
+
+
+def test_footprint_reach_reads_radius_or_polygon():
+    reach = _launcher_func("footprint_reach")
+    lc = lambda p: {"local_costmap": {"local_costmap": {"ros__parameters": p}}}
+    assert reach(lc({"robot_radius": 0.26})) == 0.26
+    assert abs(reach(lc({"footprint": "[[0.3, 0.4], [-0.3, 0.4], [-0.3, -0.4], [0.3, -0.4]]"})) - 0.5) < 1e-9
+    assert reach({}) == 0.2
+
+
+def test_the_launcher_applies_the_sonar_zones():
+    src = _read(LAUNCHER)
+    assert "if sonar_forward_zones(cm_params, footprint_reach(nav2_data)):" in src
+    # after the no-sonar drop: a robot without one gets no zones
+    assert src.index('drop_cm_source(cm_params, "sonar")') < src.index("if sonar_forward_zones(")
