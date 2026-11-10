@@ -28,7 +28,7 @@ def test_the_yahboom_runs_micro_ros_over_wifi():
 def test_the_yahboom_lidar_is_on_its_own_header_and_goes_out_over_udp():
     lidar = _bc()["lidar"]
     assert lidar["comm_mode"] == "udp"
-    assert lidar["rx_pin"] == 18          # UART1 RX, the MS200 connector
+    assert lidar["rx_pin"] == 35          # the LiDAR header's data line (not 18)
     assert lidar["model"] == "ms200"
 
 

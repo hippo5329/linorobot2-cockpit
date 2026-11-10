@@ -19,11 +19,12 @@
 # Channel n drives wheel n in the cockpit's order (1 FL, 2 FR, 3 RL, 4 RR), so wire
 # each wheel to the channel of its number.
 # Also on the board and not in this config: servos S1 GPIO 8, S2 GPIO 21;
-# user key GPIO 42; boot key GPIO 0; buzzer GPIO 46; expansion I2C on the
-# IO35/IO36 header (GPIO 35/36 -- PSRAM pins on octal-PSRAM modules, so the
-# inspector will say so if you use them). The LiDAR header is UART1, TX GPIO 17
-# / RX GPIO 18, where the Oradar MS200 the board is sold with plugs in; an LD19
-# fits the same header (lidar.model ld19).
+# user key GPIO 42; boot key GPIO 0; buzzer GPIO 46. The LiDAR header, where the
+# Oradar MS200 the board is sold with plugs in (an LD19 fits it too: lidar.model ld19),
+# is GPIO 35 / 36: the LiDAR's TX into GPIO 35, its other line (the LD19's PWM, the
+# MS200's RX) on GPIO 36. Not 17 / 18, as an earlier reading of Yahboom's pin table had
+# it: on a V2.0 board an LD19 on the header toggled GPIO 35 at 230400 baud and left 17
+# and 18 flat. 35 and 36 are PSRAM pins on octal-PSRAM modules, so the inspector warns.
 #
 # Kinematics below are the default-chassis placeholders every config starts
 # from -- set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
@@ -58,12 +59,12 @@ base_controller:
   lidar:
     # The Oradar MS200 sends the LD19's packet (lidar_drivers.py); the LD driver reads it.
     model: ms200
-    # On the LiDAR header (UART1: TX 17, RX 18 -- the MS200 connector) and sent to the
+    # On the LiDAR header (its data on GPIO 35, the MS200 connector) and sent to the
     # robot computer's LD driver over UDP: with no robot computer on the robot there is no
     # serial port to read it from, and `topic` over Wi-Fi floods the micro-ROS session.
     # In Sim mode the emulated LD19 goes out the same way.
     comm_mode: udp
-    rx_pin: 18
+    rx_pin: 35
     raw_scan_topic: raw_scan
   sensors:
     # Yahboom's documentation names a QST QMI8658 at 0x6B; the V2.0 board on
