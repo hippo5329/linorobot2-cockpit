@@ -29,14 +29,19 @@ KIT_CHASSIS = {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
     },
-    # The MC200 4WD mecanum kit (MC200_CHASSIS below), under two designs: the Arduino
-    # UNO Q and the Pico 2 mecanum. No unit is inverted.
+    # The MC200 4WD mecanum kit (MC200_CHASSIS below), under three designs: the Arduino
+    # UNO Q, the Pico 2 mecanum and the Yahboom YB-EET01. No unit is inverted.
     "unoq": {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
         "chassis": "MC200",
     },
     "pico2_mecanum": {
+        "inverted": set(),
+        "simulation": {"robot_mass", "motor_stall_amps"},
+        "chassis": "MC200",
+    },
+    "yb_eet01": {
         "inverted": set(),
         "simulation": {"robot_mass", "motor_stall_amps"},
         "chassis": "MC200",

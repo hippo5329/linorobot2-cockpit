@@ -77,8 +77,12 @@ def test_only_mecanum_is_given_a_y_limit():
     """A non-holonomic base cannot execute a y velocity, and a smoother that
     passes one through is handing the kinematics a command it will silently
     reinterpret."""
-    for name in ("gendrv", "yb_eet01"):
-        got = dr.suggest_nav2_limits(dr.drivetrain(_cfg(name)))
+    # A 4WD skid steer: the Yahboom's four channels with the drivetrain switched
+    # (it ships as the MC200 mecanum since 2026-11-11).
+    skid = copy.deepcopy(_cfg("yb_eet01"))
+    skid["kinematics"]["base_type"] = "skid_steer"
+    for name, cfg in (("gendrv", _cfg("gendrv")), ("yb_eet01 as skid_steer", skid)):
+        got = dr.suggest_nav2_limits(dr.drivetrain(cfg))
         assert got[f"{SMOOTHER}.max_velocity"][1] == 0.0, name
         assert got[f"{SMOOTHER}.max_accel"][1] == 0.0, name
     mec = dr.suggest_nav2_limits(dr.drivetrain(_cfg("pico2_mecanum")))

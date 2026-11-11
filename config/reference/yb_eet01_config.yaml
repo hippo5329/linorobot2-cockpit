@@ -8,10 +8,10 @@
 # with its INT line broken out, a battery divider on an ADC pin, a status LED,
 # and a UART header for a LiDAR / host.
 #
-# Wired as a 4WD SKID STEER on all four channels, so the references cover the three
-# drivetrains between them: gendrv is 2wd, this is skid_steer, pico2_mecanum is
-# mecanum. Changing it is the Base tab's drivetrain (or kinematics.base_type) --
-# for 2wd, the motor3/motor4 and encoder3/encoder4 pins go back to -1.
+# Wired as a 4WD MECANUM on all four channels: the board runs an MC200 mecanum chassis
+# (user, 2026-11-11), so it ships as that kit, like pico2_mecanum and unoq. A 4WD skid
+# steer is the Base tab's drivetrain (or kinematics.base_type: skid_steer) with the
+# same pins; for 2wd, the motor3/motor4 and encoder3/encoder4 pins go back to -1.
 #   M1  PWM 4/5    ENC 6/7     front-left
 #   M2  PWM 15/16  ENC 47/48   front-right
 #   M3  PWM 9/10   ENC 11/12   rear-left
@@ -26,13 +26,17 @@
 # it: on a V2.0 board an LD19 on the header toggled GPIO 35 at 230400 baud and left 17
 # and 18 flat. 35 and 36 are PSRAM pins on octal-PSRAM modules, so the inspector warns.
 #
-# Kinematics below are the default-chassis placeholders every config starts
-# from -- set wheel_diameter, lr_wheels_distance, max_rpm and counts_per_rev for the
-# chassis this board is mounted on. The battery divider ratio (r1/r2) is now
+# Kinematics below are the MC200 kit's (tests/kit_chassis.py); on another chassis set
+# wheel_diameter, lr_wheels_distance, fr_wheels_distance, max_rpm and counts_per_rev
+# for it. The battery divider ratio (r1/r2) is now
 # the board's own 10 k/3.3 k, taken from Yahboom's battery-detection source.
 robot:
   name: yb_eet01
-  description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), 4WD skid steer
+  description: Yahboom microROS Control Board (YB-EET01-V2.0, ESP32-S3), MC200 mecanum
+  # A kit: the MC200 chassis (80 mm mecanum wheels, four 25 mm gear motors with Hall
+  # encoders, a 200 x 150 mm plate), as with the pico2_mecanum and unoq designs.
+  # Applying it brings the chassis in; the user may then override it (autosaved).
+  kit: true
 base_controller:
   name: yb_eet01
   description: Yahboom microROS Control Board YB-EET01-V2.0 (ESP32-S3)
@@ -102,7 +106,9 @@ base_controller:
     wall_y1: -1.5
     wall_x2: 2.0
     wall_y2: 1.5
-    robot_mass: 3.5                   # kg -- sets the wheels' spin-up time constant
+    # kg -- sets the wheels' spin-up time constant. The MC200 chassis is 1.0 kg as sold;
+    # built with a controller, a 3S pack and an LD19 about 1.65 kg (weigh yours).
+    robot_mass: 1.65
     wheel_noise_rpm: 1.0              # +/- peak white noise on the reported RPM
     gear_efficiency: 0.75             # fraction of motor torque the reduction returns
     gear_drag_rpm: 12.0               # constant (Coulomb) drag, RPM/s, while turning
@@ -110,7 +116,8 @@ base_controller:
     battery_sag_tau_ms: 400           # the pack sags, and recovers, over this long
     driver_drop: 0.03                 # bridge's fixed voltage floor, present at any current
     driver_resistance: 0.1            # bridge's current-proportional loss, instant
-    motor_stall_amps: 2.5             # datasheet stall current at the motor's rated voltage
+    # The MC200's 25 mm gear motor: 4.5 A locked-rotor current (the vendor's figure).
+    motor_stall_amps: 4.5
     driver_current_limit: 0.0         # 0 = none fitted; caps torque, so it bites from rest
     stall_duty: 0.04                  # a turning wheel stops below this duty (running friction)
     breakaway_duty: 0.04              # a stopped wheel needs this duty to start (static friction)
@@ -193,12 +200,18 @@ base_controller:
       trigger: -1
       echo: -1
 kinematics:
-  base_type: skid_steer
+  base_type: mecanum
   stamped_cmd_vel: auto
-  wheel_diameter: 0.1
-  lr_wheels_distance: 0.271
-  fr_wheels_distance: 0.18   # front-to-rear axle distance; skid steer turns on both axles
-  max_rpm: 140
+  # The MC200 kit's numbers, as on the pico2_mecanum and unoq designs (tests/kit_chassis.py
+  # holds all three to them): 80 mm mecanum wheels that roll as 75 mm, wheel centres
+  # 0.205 x 0.095 m, 177 rpm and 887 counts per wheel turn on a 3S pack, by tachometer.
+  # MC200s are sold with other gear motors too: one under this board has 120 rpm motors
+  # that count 473 and roll as 81.4 mm. Re-measure yours (the tool's motor test and
+  # scripts/speed_check.py).
+  wheel_diameter: 0.075
+  lr_wheels_distance: 0.205
+  fr_wheels_distance: 0.095
+  max_rpm: 177
   # DERIVED -- the driver margin, not a hand-picked derating.
   #
   # The share of the motor's no-load speed that survives the gearbox, the gear
@@ -207,21 +220,32 @@ kinematics:
   # scripts/drivetrain_report.py, so it follows the load: this chassis at 3.5 kg
   # keeps 0.87, at 8 kg it would keep 0.71. It was 0.85 for every robot.
   max_rpm_ratio: 0.8
-  counts_per_rev: 4000
+  counts_per_rev: 887
   pwm_bits: 10
   pwm_frequency: 20000
-  motor_operating_voltage: 12
-  motor_power_max_voltage: 12
+  # A 3S pack, the kit's. The board's stock divider reads 2S (battery above): for 3S or 4S
+  # change it first (the wiki's YB-EET01 page).
+  motor_operating_voltage: 11.1
+  motor_power_max_voltage: 11.1
+  # The MC200's wheel loop, tuned by hand on the floor by encoder-distance steps, and kept
+  # through the Nav2 1-Click and drive suite on this board.
   pid:
-    kp: 0.6
-    ki: 0.8
-    kd: 0.5
+    kp: 4.0
+    ki: 2.0
+    kd: 0.0
 # The robot's body, for the URDF that robot_state_publisher broadcasts as the TF tree
 # (scripts/gen_robot_description.py). Metres, kilograms, radians. The wheel radius and the
 # axle positions come from kinematics above; this block is what kinematics does not say.
-# The default chassis otherwise: derived by gen_robot_description.effective_geometry() from
-# the kinematics above -- same body and mounts as every bare module, laser at the base origin.
+# The MC200's plate and wheels; the rest derived by gen_robot_description.effective_geometry()
+# from the kinematics above, laser at the base origin.
 geometry:
+  body:
+    length: 0.2
+    width: 0.15
+    mass: 1.0
+  wheel:
+    width: 0.037
+    mass: 0.12
   # The board's front is the M1/M2 connector edge (as marked on the PCB): mount it with that
   # edge forward. Its onboard ICM-42670-P is turned 90 deg to that: +Y points back, +X left,
   # so yaw +pi/2. Measured on a real board under an MC200 mounted the other way round, M1/M2
@@ -438,7 +462,7 @@ nav2:
       controller_frequency: 20.0
       costmap_update_timeout: 0.3
       min_x_velocity_threshold: 0.001
-      min_y_velocity_threshold: 0.5
+      min_y_velocity_threshold: 0.001   # mecanum: lateral velocity is real
       min_theta_velocity_threshold: 0.001
       failure_tolerance: 0.3
       progress_checker_plugins:
@@ -470,7 +494,7 @@ nav2:
         angular_disengage_threshold: 0.3925
         forward_sampling_distance: 0.5
         rotate_to_heading_angular_vel: 0.33
-        max_angular_accel: 1.44
+        max_angular_accel: 0.87
         simulate_ahead_time: 1.0
         rotate_to_goal_heading: false
         rotate_to_heading_once: true
@@ -538,9 +562,9 @@ nav2:
       robot_base_frame: base_link
       transform_tolerance: 0.3
       simulate_ahead_time: 2.0
-      max_rotational_vel: 0.77
-      min_rotational_vel: 0.38
-      rotational_acc_lim: 2.88
+      max_rotational_vel: 0.46
+      min_rotational_vel: 0.23
+      rotational_acc_lim: 1.74
   velocity_smoother:
     ros__parameters:
       enable_stamped_cmd_vel: false
@@ -574,19 +598,19 @@ nav2:
       # given a correspondingly lower ceiling.
       max_velocity:
       - 0.29
-      - 0.0
-      - 1.15
+      - 0.29
+      - 0.69
       min_velocity:
       - -0.29
-      - 0.0
-      - -1.15
+      - -0.29
+      - -0.69
       max_accel:
       - 0.8
-      - 0.0
-      - 1.44
+      - 0.8
+      - 0.87
       max_decel:
       - -0.8
-      - 0.0
+      - -0.8
       - -3.2
       odom_topic: odom
       odom_duration: 0.1

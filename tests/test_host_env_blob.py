@@ -116,9 +116,9 @@ def test_the_firmware_reads_the_flashers_image(reader, tmp_path):
     # envIP goes through IPAddress::fromString, the path uros_transport.cpp uses.
     assert got["envIP"] == "10.11.12.13"
     # A value from the config rather than the CLI, so the config path is covered too.
-    assert got["base"] == "skid_steer"   # yb_eet01 is the 4WD skid steer reference
+    assert got["base"] == "mecanum"   # yb_eet01 runs the MC200 mecanum
     # Typed accessors, not just envGet: a float and a flag.
-    assert abs(float(got["wheel_d"]) - 0.1) < 1e-6
+    assert abs(float(got["wheel_d"]) - 0.075) < 1e-6
     assert got["sim_wheel"] in ("0", "1")
     # An absent key must yield the caller's fallback, never an empty string --
     # every accessor is documented as safe to call without checking validity.

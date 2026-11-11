@@ -1,9 +1,10 @@
-"""The reference designs cover the three drivetrains between them.
+"""Each reference's drivetrain is the chassis it runs on.
 
-gendrv is 2wd, yb_eet01 is a 4WD skid steer, pico2_mecanum is mecanum (user,
-2026-10-04: the Yahboom board drives four channels, and a user changes the
-drivetrain in one field). A skid steer with only two channels wired, or with no
-axle distance, would be a 2wd under a 4wd label.
+gendrv is 2wd; yb_eet01 and pico2_mecanum are mecanum, both on an MC200 (user,
+2026-11-11: the Yahboom board drives the MC200 mecanum; it was the 4WD skid
+steer reference from 2026-10-04). A skid steer is one field away on the same
+pins. A four-wheel base with only two channels wired, or with no axle distance,
+would be a 2wd under a 4wd label.
 """
 import os
 
@@ -19,10 +20,10 @@ def _cfg(name):
 
 def test_each_drivetrain_has_a_reference():
     got = {name: _cfg(name)["kinematics"]["base_type"] for name in ("gendrv", "yb_eet01", "pico2_mecanum")}
-    assert got == {"gendrv": "2wd", "yb_eet01": "skid_steer", "pico2_mecanum": "mecanum"}
+    assert got == {"gendrv": "2wd", "yb_eet01": "mecanum", "pico2_mecanum": "mecanum"}
 
 
-def test_the_yahboom_skid_steer_wires_all_four_channels():
+def test_the_yahboom_mecanum_wires_all_four_channels():
     cfg = _cfg("yb_eet01")
     pins = cfg["base_controller"]["pins"]
     assert [(pins[f"motor{n}"]["in_a"], pins[f"motor{n}"]["in_b"]) for n in (1, 2, 3, 4)] == \

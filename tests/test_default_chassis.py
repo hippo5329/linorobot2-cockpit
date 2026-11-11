@@ -116,7 +116,7 @@ def test_every_preset_and_reference_ships_the_same_wheel_motor_and_encoder():
 def test_kit_designs_share_their_chassis():
     """One kit chassis, one set of numbers: every design built on it ships exactly them.
 
-    The MC200 sits under two designs (the UNO Q and the Pico 2 mecanum). Each file
+    The MC200 sits under three designs (the UNO Q, the Pico 2 mecanum and the Yahboom). Each file
     spells the chassis out, because every tool reads a design as plain YAML; this keeps
     the copies equal to kit_chassis.CHASSIS, so a re-measured wheel is changed once
     there and the test names every design still on the old value.
@@ -140,7 +140,7 @@ def test_kit_designs_share_their_chassis():
             assert sim.get(key) == v, f"{name}: simulation.{key}={sim.get(key)}, the {entry['chassis']} is {v}"
         assert params.get("robot", {}).get("kit") is True, f"{name}: on a kit chassis but robot.kit is not true"
         seen.setdefault(entry["chassis"], []).append(name[: -len("_config.yaml")])
-    assert sorted(seen.get("MC200", [])) == ["pico2_mecanum", "unoq"], seen
+    assert sorted(seen.get("MC200", [])) == ["pico2_mecanum", "unoq", "yb_eet01"], seen
 
 
 def test_the_footprint_contains_every_default_body():
@@ -305,7 +305,8 @@ def test_every_reference_and_the_bare_config_share_one_nav2_ekf_slam_template():
         # A skid steer turns on both axles, (lr + fr)/2 like the mecanum, so its
         # derived yaw limits differ by the same geometry -- and so does the yaw
         # entry of the smoother vectors. It does not strafe: no odom vy, no y
-        # threshold. (yb_eet01 is the 4WD skid steer reference, 2026-10-04.)
+        # threshold. (No reference ships as a skid steer since yb_eet01 became the
+        # MC200 mecanum, 2026-11-11; a user's skid steer is still held to this.)
         if (d.get("kinematics") or {}).get("base_type") in ("skid_steer", "skid", "4wd"):
             allowed |= set(angular) | {k for k in lateral if k[1] == "velocity_smoother"}
         if kit(name):
