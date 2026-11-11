@@ -1081,6 +1081,26 @@
             <span id="depth-camera-status" class="input-hint" role="status"></span>
           </div>
           <div class="form-group">
+            <label for="cfg-tof" class="form-label">8x8 ToF Matrix <span class="input-hint u-font-normal">(DFRobot SEN0628)</span></label>
+            <select id="cfg-tof" class="form-select">
+              <option value="none" selected>None</option>
+              <option value="sen0628">DFRobot SEN0628 (VL53L7CX, 8x8 zones, 60&deg; x 60&deg;)</option>
+            </select>
+            <select id="cfg-tof-connection" class="form-select u-mt-6">
+              <option value="usb" selected>USB to the robot computer</option>
+              <option value="i2c">I2C on the MCU (Gravity connector)</option>
+            </select>
+            <input id="cfg-tof-usb-port" class="form-input u-mt-6" type="text"
+                   placeholder="/dev/serial/by-id/usb-Raspberry_Pi_Pico_<serial>-if00">
+            <select id="cfg-tof-i2c-address" class="form-select u-mt-6">
+              <option value="0x33" selected>0x33 (DFRobot's default)</option>
+              <option value="0x32">0x32</option>
+              <option value="0x31">0x31</option>
+              <option value="0x30">0x30</option>
+            </select>
+            <span class="input-hint">Not with a LiDAR: both are infrared time-of-flight and blind each other. It sees what passes under a LiDAR's plane: a point cloud for Nav2's costmaps and collision monitor, and with no LiDAR and no depth camera also the robot's <code>/scan</code> (8 beams over 60&deg;). Over USB it looks exactly like a Raspberry Pi Pico: name it by its <code>/dev/serial/by-id</code> path, and it is never offered as a board or flashed. Mount pose: <code>geometry.tof</code>.</span>
+          </div>
+          <div class="form-group">
             <label for="cfg-sonar" class="form-label">Ultrasonic Sonar Range Sensor</label>
             <select id="cfg-sonar" class="form-select">
               <option value="false" selected>Disabled (Bare Module Default)</option>

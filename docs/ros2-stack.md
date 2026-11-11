@@ -203,6 +203,37 @@ global costmap that ring outlived every view and fenced the robot in: frontier e
 frontier. Estimated depth stays out of the global costmap and is cut at 1 m. A measured depth camera
 does not have the error, but the near-mark rule holds for any sensor.
 
+### The 8x8 ToF: a point cloud from the floor up, and never beside a LiDAR
+The DFRobot SEN0628 (an ST VL53L7CX behind an RP2040) gives 64 distances over 60 x 60 degrees at
+15 Hz (`base_controller.tof`). It sees what a 2D LiDAR passes over: a box, a step, a chair leg below
+the LiDAR's plane. `tof_matrix_node.py` turns each frame into `tof/points`, read from the board's USB
+port, from the MCU's `tof/raw` (the board on its I2C bus), or rendered in simulation mode.
+`add_tof_obstacle_source` adds it to the costmaps and the collision monitor. Three traps shaped it:
+
+- **The sensor reports perpendicular distance**, not the distance along each zone's ray: a flat wall
+  square-on reads the same in all 64 zones. So a zone is the point `(d, d tan az, d tan el)`. Treated
+  as a range along the ray, a flat wall would bow towards the robot: 18 % short at the corner zones,
+  10 % at the middle of an edge.
+- **The floor is below `base_link`, and below odom.** `base_link` sits a wheel radius less the wheel's
+  z above the floor (`ground_clearance_m`), and odom starts at it. Heights from the floor
+  (`tof.floor_clearance`, `tof.max_height`) are converted to those frames. The voxel layer's grid,
+  which starts at `origin_z` 0.0, is lowered to the floor: otherwise everything under axle height --
+  what the ToF is for -- falls outside the grid unmarked.
+- **A sensor at the bumper puts points inside the footprint**, which freezes the collision monitor
+  (the section above). The ToF gets forward-only `TofSlow` and `TofStop` zones of its own, like the
+  sonar, and stays out of the footprint polygons.
+
+**A LiDAR and the ToF cannot share a robot**: both are infrared time-of-flight and blind each other.
+`depth_camera.scan_source` refuses the pair, so bringup and the pipeline stop by name, and the page
+refuses to save it. On a robot with neither a LiDAR nor a depth camera the ToF is also `/scan`: its
+two middle rows as a `LaserScan` of 8 beams over 60 degrees. That is coarse for SLAM, and is
+treated as a narrow scan (`slam.narrow_fov_overrides`).
+
+Over USB the board is a Raspberry Pi Pico to every descriptor (`2e8a:000a`, product "Pico", the
+same Arduino-Pico CDC this project's firmware uses). The port a robot config names as its ToF
+(`tof.usb_port`, by `/dev/serial/by-id`) is labelled `tof` in the board list and refused by
+`flash_mcu.py`.
+
 ### Exploration stops at the battery floor and on a stall, then drives home
 `explore_watch.py` ends an exploration when the battery's median of its last ten readings, under load,
 falls under `--explore-stop-volts` (exit 6). It also ends one when the robot has moved under 5 cm and

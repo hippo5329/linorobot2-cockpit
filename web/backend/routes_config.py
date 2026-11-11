@@ -295,6 +295,21 @@ async def api_save_hardware_config(request: Request):
         ctrl.setdefault("simulation", {}).update(data["simulation"])
     if "base_controller" in data and isinstance(data["base_controller"], dict):
         ctrl.update(data["base_controller"])
+    # The 8x8 ToF (scripts/tof_matrix.py): merged, then checked against the robot as it
+    # now stands -- after the LiDAR above, because the two cannot share a robot (both are
+    # infrared time-of-flight) and a half-configured ToF is a Nav2 source that never
+    # publishes. Refused with the same words bringup would print.
+    if "tof" in data and isinstance(data["tof"], dict):
+        import tof_matrix
+        merged = dict(ctrl.get("tof") or {})
+        merged.update(data["tof"])
+        trial = dict(ctrl)
+        trial["tof"] = merged
+        try:
+            tof_matrix.tof_settings(trial)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        ctrl["tof"] = merged
 
     # Re-derive the Nav2 limits from the motors this robot now has.
     #
@@ -325,6 +340,13 @@ async def api_save_hardware_config(request: Request):
     findings = [{"level": l, "message": m} for l, m in pin_catalog.check_config(params)]
     import lidar_link
     findings += [{"level": "error", "message": f"LiDAR link: {m}"} for m in lidar_link.problems(ctrl)]
+    # Re-checked after the simulation switches above: a bare module turns its simulated
+    # LD19 back on, and a ToF beside a LiDAR -- simulated or not -- is refused at launch.
+    import tof_matrix
+    try:
+        tof_matrix.tof_settings(ctrl)
+    except ValueError as exc:
+        findings.append({"level": "error", "message": f"8x8 ToF: {exc}"})
     res = regenerate_firmware_headers(controller_name)
     header_ok = res.returncode == 0
     description = regenerate_robot_description(params)

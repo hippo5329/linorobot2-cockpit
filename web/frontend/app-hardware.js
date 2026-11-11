@@ -83,6 +83,9 @@ async function loadHardwareConfig() {
     elSonar.addEventListener("change", syncSonarFields);
     syncSonarFields();
   }
+  ["cfg-tof", "cfg-tof-connection"].forEach((id) =>
+    document.getElementById(id)?.addEventListener("change", syncTofFields));
+  syncTofFields();
 
   const elKine = document.getElementById("cfg-kinematics");
     if (elKine) elKine.value = kine.base_type || "2wd";
@@ -350,6 +353,7 @@ async function loadHardwareConfig() {
     const elDacPin = document.getElementById("cfg-dac-pin");
     if (elDacPin && pins.dac !== undefined && pins.dac !== null) elDacPin.value = String(pins.dac);
 
+    loadTofForm(tgt.tof || {});
     const lidar = tgt.lidar || {};
     const depthSel = document.getElementById("cfg-depth-camera");
     if (depthSel) {
@@ -1218,6 +1222,48 @@ function sonarEnabled() {
   return el.value === "true";
 }
 
+// The 8x8 ToF (base_controller.tof): only the fields its connection uses are shown.
+function syncTofFields() {
+  const on = (document.getElementById("cfg-tof")?.value || "none") !== "none";
+  const conn = document.getElementById("cfg-tof-connection")?.value || "usb";
+  const show = (id, visible) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = visible ? "" : "none";
+  };
+  show("cfg-tof-connection", on);
+  show("cfg-tof-usb-port", on && conn === "usb");
+  show("cfg-tof-i2c-address", on && conn === "i2c");
+}
+
+function loadTofForm(tof) {
+  const sel = document.getElementById("cfg-tof");
+  if (!sel) return;
+  const model = String(tof.model || "none").toLowerCase();
+  sel.value = [...sel.options].some((o) => o.value === model) ? model : "none";
+  const conn = document.getElementById("cfg-tof-connection");
+  if (conn) conn.value = String(tof.connection || "usb").toLowerCase() === "i2c" ? "i2c" : "usb";
+  const port = document.getElementById("cfg-tof-usb-port");
+  if (port) port.value = tof.usb_port || "";
+  const addr = document.getElementById("cfg-tof-i2c-address");
+  if (addr && tof.i2c_address !== undefined && tof.i2c_address !== null) {
+    const n = typeof tof.i2c_address === "number" ? tof.i2c_address : parseInt(String(tof.i2c_address), 0);
+    const v = "0x" + n.toString(16);
+    if ([...addr.options].some((o) => o.value === v)) addr.value = v;
+  }
+  syncTofFields();
+}
+
+function tofForm() {
+  const model = document.getElementById("cfg-tof")?.value || "none";
+  if (model === "none") return { model: "none" };
+  return {
+    model,
+    connection: document.getElementById("cfg-tof-connection")?.value || "usb",
+    usb_port: (document.getElementById("cfg-tof-usb-port")?.value || "").trim(),
+    i2c_address: parseInt(document.getElementById("cfg-tof-i2c-address")?.value || "0x33", 16),
+  };
+}
+
 // Greys the pin fields out when the sensor is off, so the page cannot show a
 // pin pair that will not be written.
 function syncSonarFields() {
@@ -1306,6 +1352,7 @@ async function saveCurrentHardwareConfig(opts = {}) {
     geometry: readGeometryForm(kineType),
     simulation: readSimForm(),
     depth_camera: { model: document.getElementById("cfg-depth-camera")?.value || "none" },
+    tof: tofForm(),
     // Only once edited: a saved mode the selector does not list (the Sim MCU's udp_server)
     // shows as Serial, and must not be written back as Serial.
     ...(lidarLinkTouched ? { lidar: lidarLinkForm() } : {}),

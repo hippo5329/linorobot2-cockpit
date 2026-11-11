@@ -333,6 +333,15 @@ is read at 50 Hz, like every other part here.
 | BNO085 / BNO080 / BNO086 | via the BNO08x | the chip's field, its own magnetometer calibration off; only when named (never AUTO) | no |
 | BNO055 | via the BNO055 | AMG mode; AUTO takes it with the IMU | no |
 
+**The 8x8 ToF on I2C** (DFRobot SEN0628, `base_controller.tof.connection: i2c`) is not a register
+chip: an RP2040 on the board runs the VL53L7CX and answers DFRobot's command protocol at 0x30-0x33
+(`firmware/common/lib/tof`, after DFRobot_MatrixLidar, MIT). The probe names it at 0x31-0x33 by
+address alone and reads no registers from it; 0x30 is left out because an MMC5603 answers there.
+The firmware reads it only at the env's `tof_addr` (`mcu_env.py`; 0 for none, for a USB one, and in
+simulation mode). `tof.cpp` never waits: DFRobot's library sleeps 17 ms per poll and 5 s after a
+mode change, and `tofPoll()` takes one small step per loop instead. Each frame (64 x uint16 mm,
+128 bytes) goes out best effort on `tof/raw`, and the robot computer makes the point cloud.
+
 **Every part is read by polling**, at the control loop's rate. Where a chip has a FIFO with
 its own timestamp counter, that carries the sample time with the sample and needs no wiring.
 

@@ -269,3 +269,55 @@ def test_main_publishes_tof_raw_best_effort_and_masks_it_in_sim():
     i = src.index('topicName("tof/raw")')
     assert "rclc_publisher_init_best_effort" in src[i - 300:i]
     assert "tof_present = !sonar_simd && initTof(" in src
+
+
+# -- the web backend's save ----------------------------------------------------------------
+class _Req:
+    def __init__(self, body):
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+def _backend(monkeypatch, params):
+    import asyncio  # noqa: F401
+    pytest.importorskip("fastapi", reason="the cockpit backend needs fastapi/uvicorn")
+    os.environ["COCKPIT_AUTH"] = "off"
+    import sys
+    sys.path.insert(0, os.path.join(REPO, "web", "backend"))
+    import routes_config
+    saved = {}
+
+    class _Res:
+        returncode, stdout, stderr = 0, "", ""
+
+    monkeypatch.setattr(routes_config, "load_params", lambda *a, **k: params)
+    monkeypatch.setattr(routes_config, "save_params", lambda p, *a, **k: saved.update(p=copy.deepcopy(p)))
+    monkeypatch.setattr(routes_config, "regenerate_firmware_headers", lambda *a, **k: _Res())
+    monkeypatch.setattr(routes_config, "regenerate_robot_description", lambda *a, **k: {})
+    return routes_config, saved
+
+
+def test_the_page_cannot_save_a_tof_beside_a_lidar(monkeypatch):
+    import asyncio
+    from fastapi import HTTPException
+    p = _ref()                                   # has an LD19
+    rc, saved = _backend(monkeypatch, p)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(rc.api_save_hardware_config(_Req({
+            "controller": p["base_controller"]["name"],
+            "tof": {"model": "sen0628", "connection": "i2c", "i2c_address": 0x33}})))
+    assert e.value.status_code == 400 and "LiDAR" in e.value.detail
+    assert "p" not in saved
+
+
+def test_the_page_saves_a_tof_on_a_robot_without_a_lidar(monkeypatch):
+    import asyncio
+    p = _no_lidar(_ref())
+    rc, saved = _backend(monkeypatch, p)
+    asyncio.run(rc.api_save_hardware_config(_Req({
+        "controller": p["base_controller"]["name"],
+        "tof": {"model": "sen0628", "connection": "i2c", "i2c_address": 0x32}})))
+    assert saved["p"]["base_controller"]["tof"]["i2c_address"] == 0x32
+    assert tm.tof_settings(saved["p"]["base_controller"])["connection"] == "i2c"
