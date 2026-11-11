@@ -301,9 +301,9 @@ def _backend(monkeypatch, params):
 
 def test_the_page_cannot_save_a_tof_beside_a_lidar(monkeypatch):
     import asyncio
-    from fastapi import HTTPException
     p = _ref()                                   # has an LD19
-    rc, saved = _backend(monkeypatch, p)
+    rc, saved = _backend(monkeypatch, p)         # skips without fastapi, so import it after
+    from fastapi import HTTPException
     with pytest.raises(HTTPException) as e:
         asyncio.run(rc.api_save_hardware_config(_Req({
             "controller": p["base_controller"]["name"],
