@@ -2252,6 +2252,17 @@ def main() -> int:
     if _real_port != args.port:
         log(f"port {args.port} -> {_real_port}")
         args.port = _real_port
+    # The 8x8 ToF on USB enumerates as a Raspberry Pi Pico. A port a robot config names as
+    # its ToF (base_controller.tof.usb_port) is never flashed: robot firmware there would
+    # replace the sensor's own (recoverable only by copying DFRobot's UF2 back).
+    try:
+        import tof_matrix
+        if args.port and tof_matrix.is_claimed_tof(args.port):
+            log(f"[NOT A BOARD] {args.port} is the 8x8 ToF a robot config names "
+                f"(base_controller.tof.usb_port), not an MCU: refusing to flash it")
+            return 1
+    except ImportError:
+        pass
 
 
 

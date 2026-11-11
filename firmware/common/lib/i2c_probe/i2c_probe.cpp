@@ -159,6 +159,15 @@ void identify(Sink &sink, uint8_t addr)
         }
     }
 
+    // DFRobot SEN0628 8x8 ToF: an RP2040 speaking DFRobot's command protocol, not a
+    // register map, so it gets NO register reads (a stray byte reads as a broken
+    // packet to it). Named by address only; tof.cpp reads it at the env's tof_addr.
+    // 0x30 is left out: an MMC5603 magnetometer answers there too.
+    if (addr >= 0x31 && addr <= 0x33) {
+        sink.add(addr, "tof", "SEN0628", "sen0628",
+                 "DFRobot SEN0628 8x8 ToF (VL53L7CX)");
+        return;
+    }
     if (addr >= 0x40 && addr <= 0x45) {
         sink.add(addr, "current", "INA219", "ina219",
                  "INA219 High-Side DC Current & Power Sensor");

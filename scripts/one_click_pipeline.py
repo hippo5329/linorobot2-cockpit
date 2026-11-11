@@ -2540,6 +2540,15 @@ def main():
     # is no real one to read, and a robot with a camera and no LiDAR would
     # otherwise have no scan at all. `auto` lets the config's use_sim_depth stand.
     sim_depth = depth_camera.camera_fitted(controller_cfg) and (args.mode == "sim" or sim_mcu)
+    # The 8x8 ToF likewise: in simulation mode it is rendered in the simulated room
+    # (tof_matrix_node.py, connection sim), so Nav2's tof source has data and the
+    # firmware's I2C driver stays off (mcu_env: tof_addr 0 under --mode sim).
+    import tof_matrix
+    try:
+        sim_tof = tof_matrix.tof_fitted(controller_cfg) and (args.mode == "sim" or sim_mcu)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
 
     # On a real base the sensors are soldered to the board and named in the
     # config, so their topics are evidence, not options. The firmware probes the
@@ -2846,6 +2855,7 @@ def main():
         bringup_cmd = (f"ros2 launch linorobot2_cockpit bringup.launch.py controller:={controller} "
                        f"distro:={args.distro} robot:={robot_name} config_file:={params_path}"
                        + (" sim_depth:=true" if sim_depth else "")
+                       + (" sim_tof:=true" if sim_tof else "")
                        + f" mode:={"real" if is_real else "sim"}"
                        + (f" world:={args.world}" if (args.world and not is_real) else "")
                        + (f" world_map:={args.world_map}" if (args.world_map and not is_real) else "")

@@ -853,6 +853,8 @@ def launch_setup(context, *args, **kwargs):
         ))
     nodes += depth_scan_actions(context, controller, params, geometry, frame_prefix,
                                 no_board or controller_name == "sim", scan_from, scan_error)
+    nodes += tof_actions(context, controller, params, geometry, frame_prefix,
+                         no_board or controller_name == "sim")
 
     # `None` is the "this robot has no such node" placeholder above; launch
     # rejects it, so it never reaches the description.
@@ -969,6 +971,66 @@ def depth_scan_actions(context, controller, params, geometry, frame_prefix, boar
     return out
 
 
+def tof_actions(context, controller, params, geometry, frame_prefix, boardless):
+    """The 8x8 ToF (base_controller.tof): tof_matrix_node.py, publishing tof/points.
+
+    usb  the node reads the board's USB port (tof.usb_port, by its /dev/serial/by-id name)
+    i2c  the MCU reads it and publishes tof/raw; the node converts
+    sim  simulation mode (sim_tof:=true from the pipeline) or no board: the node renders
+         the room the simulated LiDAR and camera see, so Nav2's tof source still has data.
+    Nothing when no ToF is fitted; a config naming one it cannot drive stops here by name,
+    because nav2.launch.py would otherwise declare a source that never publishes.
+    """
+    import tof_matrix
+    try:
+        tof = tof_matrix.tof_settings(controller)
+    except ValueError as e:
+        return [LogInfo(msg=f"[bringup] ERROR 8x8 ToF: {e}")]
+    if not tof:
+        return []
+    geo = geometry["tof"]
+    frame = frame_prefix + str(geo["frame"])
+    sim_arg = str(context.launch_configurations.get("sim_tof", "false")).strip().lower() in ("true", "1", "yes")
+    conn = "sim" if (sim_arg or boardless) else tof["connection"]
+    # With no LiDAR and no depth camera the ToF is /scan too (depth_camera.scan_source).
+    try:
+        scan_from = depth_camera.scan_source(controller)
+    except ValueError as e:
+        return [LogInfo(msg=f"[bringup] ERROR 8x8 ToF: {e}")]
+    node_params = {"connection": conn, "frame_id": frame,
+                   "rotation": tof["rotation"], "mirror": tof["mirror"],
+                   "max_range": tof["max_range"],
+                   "points_topic": tof_matrix.POINTS_TOPIC, "raw_topic": tof_matrix.RAW_TOPIC,
+                   "scan_topic": "scan" if scan_from == "tof" else ""}
+    if conn == "usb":
+        node_params["port"] = tof["usb_port"]
+        how = f"its USB port {tof['usb_port']}"
+    elif conn == "i2c":
+        how = f"the MCU over I2C (0x{tof['i2c_address']:02x}, {tof_matrix.RAW_TOPIC})"
+    else:
+        room = depth_camera.sim_room(params)
+        wm, ws = depth_camera.world_map(params)
+        node_params.update({
+            "offset_x": float(geo["x"]), "offset_y": float(geo["y"]), "offset_yaw": float(geo["yaw"]),
+            "map_width": float(room["map_width"]), "map_height": float(room["map_height"]),
+            "wall_obstacle": bool(room["wall_obstacle"]),
+            "wall_x1": float(room["wall_x1"]), "wall_y1": float(room["wall_y1"]),
+            "wall_x2": float(room["wall_x2"]), "wall_y2": float(room["wall_y2"]),
+            "walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),
+            **({"world_map": wm, "world_start": list(ws)} if wm else {}),
+            "pose_topic": "odom/unfiltered"})
+        how = "SIMULATION (the room's walls, 8 x 8 over 60 x 60 degrees)"
+    return [
+        LogInfo(msg=f"[bringup] 8x8 ToF ({tof['model']}) from {how} -> {tof_matrix.POINTS_TOPIC}"
+                    f"{' and /scan (no LiDAR, no depth camera)' if scan_from == 'tof' else ''} in {frame}"),
+        Node(executable=sys.executable,
+             arguments=[os.path.join(REPO_ROOT, "scripts", "tof_matrix_node.py")],
+             name="tof_matrix_node", output="screen",
+             respawn=True, respawn_delay=2.0,
+             parameters=[node_params]),
+    ]
+
+
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -1068,6 +1130,12 @@ def generate_launch_description():
             default_value="false",
             description="Use the simulated depth camera instead of the configured one "
                         "(the pipeline sets it in simulation mode)",
+        ),
+        DeclareLaunchArgument(
+            "sim_tof",
+            default_value="false",
+            description="Render the 8x8 ToF (base_controller.tof) in the simulated room instead of "
+                        "reading the board (the pipeline sets it in simulation mode)",
         ),
         DeclareLaunchArgument(
             "world",

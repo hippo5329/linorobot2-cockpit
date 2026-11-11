@@ -549,6 +549,10 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None, holds_map: 
         env["sim_ld19"] = "1"
         env["sim_env"] = "1"
         env["sim_battery"] = "1"
+        # The 8x8 ToF is rendered by the host in simulation mode (bringup sim_tof):
+        # the board leaves the real one alone.
+        if "tof_addr" in env:
+            env["tof_addr"] = 0
         # ...except the LD19 on a robot whose scan comes from a depth camera: it
         # has no LiDAR to simulate, and the host's simulated camera is its scan
         # (depth_camera.scan_source). An emulated LD19 there streams frames to a
@@ -560,7 +564,9 @@ def apply_sensor_mode(env: dict, mode: str, params_path: str = None, holds_map: 
                 whole = yaml.safe_load(fh) or {}
             controller = whole.get("base_controller", {}) or {}
             try:
-                if depth_camera.scan_source(controller) == "depth":
+                # ...and on a robot whose scan is the 8x8 ToF: it has no LiDAR at all (the two
+                # blind each other), and the host renders the ToF (bringup sim_tof).
+                if depth_camera.scan_source(controller) in ("depth", "tof"):
                     env["sim_ld19"] = "0"
                 # ...and on a saved-map world, where the host's laser raycasts
                 # the map and the board's emulator knows only its box -- except
@@ -871,6 +877,17 @@ def hardware_env(params: dict) -> dict:
     sonar = pins.get("sonar") if isinstance(pins.get("sonar"), dict) else {}
     env["sonar_trig"] = int(sonar.get("trigger", -1))
     env["sonar_echo"] = int(sonar.get("echo", -1))
+    # The 8x8 ToF on the MCU's I2C bus (base_controller.tof, connection i2c): its address,
+    # 0 when it is not the MCU's to read (none fitted, or on the robot computer's USB).
+    # Always written, like the sonar's pins: a board must never keep an address from a
+    # previous robot. The firmware (tof.cpp) reads the board only at this address, so the
+    # probe's 0x30 -- also an MMC5603's -- is never guessed at.
+    import tof_matrix
+    try:
+        _tof = tof_matrix.tof_settings(tgt)
+    except ValueError:
+        _tof = None
+    env["tof_addr"] = _tof["i2c_address"] if (_tof and _tof["connection"] == "i2c") else 0
     # The pin adc_calibrate sweeps its DAC out of, jumpered to the battery ADC
     # input. firmware/src/tools/adc_calibrate.cpp has always read it --
     # envU16("dac_pin", DAC_PIN) -- and nothing has ever written it, so the

@@ -143,6 +143,23 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
     camera.setdefault("frame", depth_camera.DEPTH_MODELS[model][2] if model else depth_camera.SIM_FRAME)
     camera["fitted"] = model is not None or depth_camera.use_sim_depth(params.get("base_controller") or {})
 
+    # The 8x8 ToF looks forward from the front face at axle height, like the sonar: low
+    # enough to see what passes under the LiDAR's plane. Its frame is stamped by
+    # tof_matrix_node.py on the robot computer in every connection (the MCU sends raw
+    # bytes), so it exists only on a robot that has one (base_controller.tof.model).
+    import tof_matrix
+    tof = dict(geo.get("tof") or {})
+    tof.setdefault("x", round(_f(body["length"]) / 2.0, 4))
+    tof.setdefault("y", 0.0)
+    tof.setdefault("z", 0.0)
+    for k in ("roll", "pitch", "yaw"):
+        tof.setdefault(k, 0.0)
+    tof.setdefault("frame", tof_matrix.DEFAULT_FRAME)
+    try:
+        tof["fitted"] = tof_matrix.tof_fitted(params.get("base_controller") or {})
+    except ValueError:
+        tof["fitted"] = False     # the launcher refuses the config by name; the description stays valid
+
     imu = dict(geo.get("imu") or {})
     for k in ("x", "y", "z", "roll", "pitch", "yaw"):
         imu.setdefault(k, 0.0)
@@ -152,7 +169,7 @@ def effective_geometry(params: Dict[str, Any]) -> Dict[str, Any]:
     mesh.setdefault("wheel", "")
 
     return {"body": body, "wheel": wheel, "casters": casters, "laser": laser,
-            "sonar": sonar, "imu": imu, "mesh": mesh, "depth_camera": camera}
+            "sonar": sonar, "imu": imu, "mesh": mesh, "depth_camera": camera, "tof": tof}
 
 
 def geometry_warnings(params: Dict[str, Any]) -> List[str]:
@@ -281,6 +298,18 @@ def wheel_positions(params: Dict[str, Any]) -> List[Tuple[str, float, float]]:
             ("rear_left", -half_x, half_y), ("rear_right", -half_x, -half_y)]
 
 
+def ground_clearance_m(params: Dict[str, Any]) -> float:
+    """How far base_link's origin is above the floor: the wheel radius less the wheel's z.
+
+    base_link (and so odom, which starts at it) is NOT at the floor: anything that filters
+    points by height -- the costmap's voxel layer, the collision monitor -- has the floor
+    at minus this.
+    """
+    kine = params.get("kinematics") or {}
+    wheel = effective_geometry(params)["wheel"]
+    return _f(kine.get("wheel_diameter")) / 2.0 - _f(wheel["z"])
+
+
 def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
     kine = params.get("kinematics") or {}
     geo = effective_geometry(params)
@@ -290,7 +319,7 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
 
     radius = _f(kine.get("wheel_diameter")) / 2.0
     wheel_z = _f(wheel["z"])
-    ground_clearance = radius - wheel_z        # base_link origin above the floor
+    ground_clearance = ground_clearance_m(params)        # base_link origin above the floor
 
     robot = ET.Element("robot", name=str(name))
     robot.append(ET.Comment(
@@ -354,6 +383,12 @@ def build_urdf(params: Dict[str, Any], robot_name: str = None) -> str:
         ET.SubElement(robot, "link", name=camera["frame"])
         _joint(robot, f"{camera['frame']}_to_base_link", "fixed", BASE_FRAME, camera["frame"],
                (camera["x"], camera["y"], camera["z"]), (camera["roll"], camera["pitch"], camera["yaw"]))
+
+    tof = geo["tof"]
+    if tof["fitted"]:
+        ET.SubElement(robot, "link", name=tof["frame"])
+        _joint(robot, f"{tof['frame']}_to_base_link", "fixed", BASE_FRAME, tof["frame"],
+               (tof["x"], tof["y"], tof["z"]), (tof["roll"], tof["pitch"], tof["yaw"]))
 
     ET.indent(robot, space="  ")
     return '<?xml version="1.0"?>\n' + ET.tostring(robot, encoding="unicode") + "\n"

@@ -91,6 +91,7 @@ static uint32_t  bt_heap_before = 0, bt_heap_after = 0;
 // the UART, whatever its env said.
 #include "battery.h"
 #include "range.h"
+#include "tof.h"
 #include "env.h"
 #include "lidar.h"
 #include "wifis.h"
@@ -445,6 +446,14 @@ static bool publish_range = false;
 static bool range_sim = false;
 static SimLD19::CommMode sim_lidar_comm = SimLD19::COMM_SERIAL;
 rcl_publisher_t raw_scan_publisher;
+// The 8x8 ToF on the I2C bus (tof.cpp), at the env's tof_addr: its 64 zones as 128 bytes
+// on tof/raw, converted on the robot computer (tof_matrix_node.py). The message borrows
+// tof_buf, so it is handed back before __fini, like raw_scan's batch.
+rcl_publisher_t tof_publisher;
+std_msgs__msg__UInt8MultiArray tof_msg;
+static uint8_t tof_buf[TOF_FRAME_BYTES];
+static bool tof_present = false;
+static bool tof_pub_ready = false;
 std_msgs__msg__UInt8MultiArray raw_scan_msg;
 // Heap, and only on a board that actually publishes raw_scan. Held statically
 // this was 512 bytes of .bss on every image, including every serial robot whose
@@ -1483,6 +1492,10 @@ void setup()
     // the LiDAR block and the answer is the same either way.
     const bool sonar_simd = sim_wheels || envFlag("sim_ld19", SIM_LD19_DEFAULT);
     initRange(!sonar_simd);
+    // The 8x8 ToF, read here only when the config put it on this board's I2C bus
+    // (tof_addr, mcu_env.py: 0 for none, for one on the robot computer's USB, and under
+    // simulation mode, where the host renders it). Masked like the sonar.
+    tof_present = !sonar_simd && initTof((uint8_t)envInt("tof_addr", 0));
     env_present = initEnv();
     // Three states, carried by one optional env key:
     //
@@ -1804,6 +1817,10 @@ void loop() {
     reportSampleAge();
     diagCount(DIAG_LOOP);
     diagState((int)state);
+    // One small non-blocking step of the ToF's I2C exchange (tof.cpp), agent or not: the
+    // board keeps ranging and the next frame is ready the moment the agent is.
+    if (tof_present)
+        tofPoll();
     switch (state) 
     {
         case WAITING_AGENT:
@@ -2139,6 +2156,19 @@ bool createEntities()
         std_msgs__msg__UInt8MultiArray__init(&raw_scan_msg);
         raw_scan_pub_ready = true;
     }
+    // The 8x8 ToF's frames: 128 bytes, best effort like raw_scan (a stream; well inside one
+    // 1024-byte transport frame, which a best-effort message cannot exceed).
+    if (tof_present)
+    {
+        RCCHECK(rclc_publisher_init_best_effort(
+            &tof_publisher,
+            &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray),
+            topicName("tof/raw")
+        ));
+        std_msgs__msg__UInt8MultiArray__init(&tof_msg);
+        tof_pub_ready = true;
+    }
 #if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
     RCCHECK(rclc_publisher_init_best_effort(&mcu_stats_publisher, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt32MultiArray), topicName("mcu_stats")));
@@ -2281,6 +2311,16 @@ bool destroyEntities()
         raw_scan_msg.data.capacity = 0;
         std_msgs__msg__UInt8MultiArray__fini(&raw_scan_msg);
         RCSOFTCHECK(rcl_publisher_fini(&raw_scan_publisher, &node));
+    }
+    if (tof_pub_ready)
+    {
+        tof_pub_ready = false;
+        // tof_msg borrows the static tof_buf: hand it back before __fini frees data.data.
+        tof_msg.data.data = NULL;
+        tof_msg.data.size = 0;
+        tof_msg.data.capacity = 0;
+        std_msgs__msg__UInt8MultiArray__fini(&tof_msg);
+        RCSOFTCHECK(rcl_publisher_fini(&tof_publisher, &node));
     }
 #if defined(LINO_ZEPHYR) && defined(LINO_MCU_STATS)
     if (mcu_stats_ready) {
@@ -2920,6 +2960,14 @@ void publishData()
             range_msg->header.stamp.sec = time_stamp.tv_sec;
             range_msg->header.stamp.nanosec = time_stamp.tv_nsec;
             RCSOFTCHECK(rcl_publish(&range_publisher, range_msg, NULL)) });
+    }
+    // The 8x8 ToF: each frame as it completes (15 Hz, tof.cpp paces the requests).
+    if (tof_pub_ready && tofTakeFrame(tof_buf))
+    {
+        tof_msg.data.data = tof_buf;
+        tof_msg.data.size = TOF_FRAME_BYTES;
+        tof_msg.data.capacity = TOF_FRAME_BYTES;
+        RCSOFTCHECK(rcl_publish(&tof_publisher, &tof_msg, NULL));
     }
     // PHASE 60 ms — the barometer's 1 Hz burst lands between the /sonar (≈20 ms)
     // and /battery (40 ms) cycles, not on top of them.

@@ -215,9 +215,18 @@ def list_serial_ports() -> List[Dict[str, Any]]:
     """Every USB serial device present, with the MCU family guessed from its USB IDs."""
     ports = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
     out = []
+    # The 8x8 ToF (DFRobot SEN0628) is a Raspberry Pi Pico to every USB descriptor; a port
+    # a robot config names as its ToF is that, not a board (tof_matrix.claimed_serials).
+    try:
+        import tof_matrix
+        tof_serials = tof_matrix.claimed_serials()
+    except Exception:
+        tof_matrix, tof_serials = None, set()
     for port in ports:
         vid, pid, product = _usb_ids_for_port(port)
-        if vid in RP_VENDOR_IDS:
+        if tof_serials and tof_matrix.tty_usb_serial(port).lower() in tof_serials:
+            family = "tof"
+        elif vid in RP_VENDOR_IDS:
             family = "rp"
         elif vid in ESP_VENDOR_IDS:
             family = "esp"

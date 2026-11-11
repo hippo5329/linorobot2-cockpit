@@ -71,6 +71,7 @@ SCAN_STALE_FORWARDED_S = 2.0
 # rate is no reference: an Astra Pro on a Pi 5 gave 22 Hz while the guard got ready and 17.7 Hz
 # 0.2 m later, and 80 % of the 22 cancelled a healthy run (2026-10-21).
 DEPTH_SCAN_HZ = 10.0
+TOF_SCAN_HZ = 15.0          # the 8x8 ToF ranges at 15 Hz in 8x8 (tof_matrix_node.py)
 READY_WINDOW_S = 6.0       # at least SCAN_WINDOW_S: the rate is judged only over a full window
 CANCEL_EVERY_S = 0.5
 OUTLINE_SCANS = 10
@@ -286,6 +287,9 @@ def want_hz(params: dict) -> float:
     camera's scan, or 0 (the rate measured while getting ready)."""
     if depth_scan(params):
         return DEPTH_SCAN_HZ
+    import depth_camera
+    if depth_camera.scan_source((params or {}).get("base_controller") or {}) == "tof":
+        return TOF_SCAN_HZ
     return lidar_check.expected_hz(params)
 
 

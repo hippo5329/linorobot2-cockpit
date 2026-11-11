@@ -93,11 +93,12 @@ def test_the_room_is_the_one_the_firmware_gets():
 
 
 def test_both_simulated_scanners_read_the_configured_room():
-    """sim_laser_node hardcoded 10 x 6 m; it now takes the room bringup hands both nodes."""
+    """sim_laser_node hardcoded 10 x 6 m; it now takes the room bringup hands every host
+    scanner: the laser, the depth camera and the 8x8 ToF (tof_actions)."""
     laser = read("scripts", "sim_laser_node.py")
     assert "ROOM_MIN_X" not in laser and "dc.room_segments(room, dc.walls_from_flat(" in laser
     launch = read("launchers", "bringup.launch.py")
-    assert launch.count("depth_camera.sim_room(params)") == 2
+    assert launch.count("depth_camera.sim_room(params)") == 3
 
 
 def test_a_wall_facing_the_camera_is_one_depth_across_the_image():

@@ -272,6 +272,141 @@ def has_real_sonar(params) -> bool:
         return False
 
 
+def add_tof_obstacle_source(nav2_data, params) -> list:
+    """The 8x8 ToF (base_controller.tof) is an obstacle source for the costmaps and the
+    collision monitor: tof/points, a PointCloud2 from tof_matrix_node.py.
+
+    It is there for what a 2D LiDAR passes over -- a box, a step, a chair leg below the
+    LiDAR's plane -- so its points are taken from just above the floor up to the robot's
+    height (tof.floor_clearance, tof.max_height, both measured from the floor). Those two
+    are converted here: base_link, and odom which starts at it, are ground_clearance ABOVE
+    the floor (gen_robot_description.ground_clearance_m), so the floor is at minus that in
+    the frames Nav2 filters in. For the same reason the voxel layer's grid is lowered to
+    the floor (origin_z), or everything under axle height would fall outside it unmarked.
+
+    In the collision monitor it gets its own forward slow/stop zones (TofSlow, TofStop),
+    like the sonar (sonar_forward_zones): a sensor at the bumper puts points inside the
+    footprint polygon, whose collision time is then 0 for every command, backing away
+    included. The footprint polygons keep the other sources.
+
+    Returns what it changed. Nothing when no ToF is fitted -- a declared source that never
+    publishes stops the robot.
+    """
+    import math  # here: the tests lift this function out of the module
+    import tof_matrix
+    import gen_robot_description as grd
+    controller = (params or {}).get("base_controller") or {}
+    try:
+        tof = tof_matrix.tof_settings(controller)
+    except ValueError as e:
+        print(f"[nav2] 8x8 ToF not added: {e}")
+        return []
+    if not tof:
+        return []
+    clearance = grd.ground_clearance_m(params or {})
+    lo = round(tof["floor_clearance"] - clearance, 3)      # in base_link / odom: the floor is -clearance
+    hi = round(tof["max_height"] - clearance, 3)
+    topic = "/" + tof_matrix.POINTS_TOPIC
+    changed = []
+    for cm in ("local_costmap", "global_costmap"):
+        block = nav2_data.get(cm) or {}
+        rp = (block.get(cm) or {}).get("ros__parameters") or block.get("ros__parameters") or {}
+        for layer in rp.get("plugins") or []:
+            lp = rp.get(layer)
+            if not isinstance(lp, dict):
+                continue
+            raw = lp.get("observation_sources") or ""
+            sources = list(raw) if isinstance(raw, (list, tuple)) else str(raw).split()
+            if "scan" not in sources or "tof" in sources or not isinstance(lp.get("scan"), dict):
+                continue
+            src = dict(lp["scan"])
+            src.update({
+                "topic": topic,
+                "data_type": "PointCloud2",
+                "min_obstacle_height": lo,
+                "max_obstacle_height": hi,
+                "obstacle_min_range": 0.0,
+                "obstacle_max_range": min(tof["max_range"], 2.5),
+                "raytrace_min_range": 0.0,
+                "raytrace_max_range": tof["max_range"],
+                "inf_is_valid": False,
+            })
+            lp["tof"] = src
+            lp["observation_sources"] = (sources + ["tof"]) if isinstance(raw, (list, tuple)) \
+                else " ".join(sources + ["tof"])
+            # A voxel grid starts at origin_z; lower it to the floor so the ToF's low points
+            # land in it (the LiDAR's, above, are unaffected).
+            if "z_voxels" in lp:
+                origin = float(lp.get("origin_z", 0.0))
+                if origin > -clearance:
+                    res = float(lp.get("z_resolution", 0.05))
+                    lp["origin_z"] = -math.ceil(clearance * 1000.0) / 1000.0   # rounded DOWN: at or below the floor
+                    lp["z_voxels"] = min(16, int(lp.get("z_voxels", 16)) + int(math.ceil((origin + clearance) / res)))
+            changed.append(f"{cm}.{layer}")
+
+    cm_params = (nav2_data.get("collision_monitor") or {}).get("ros__parameters")
+    if isinstance(cm_params, dict) and "tof" not in (cm_params.get("observation_sources") or []):
+        sources = list(cm_params.get("observation_sources") or [])
+        others = [s for s in sources if s != "tof"]
+        for p in cm_params.get("polygons") or []:
+            b = cm_params.get(p)
+            if isinstance(b, dict) and b.get("sources_names") is None and others:
+                b["sources_names"] = list(others)
+        cm_params["observation_sources"] = sources + ["tof"]
+        cm_params["tof"] = {"type": "pointcloud", "topic": tof_matrix.POINTS_TOPIC,
+                            "min_height": lo, "max_height": hi, "enabled": True}
+        reach = footprint_reach(nav2_data)
+
+        def box(x, y):
+            return f"[[{x:.2f}, {y:.2f}], [{x:.2f}, {-y:.2f}], [0.00, {-y:.2f}], [0.00, {y:.2f}]]"
+
+        behind = (f"[[{-reach - 0.35:.2f}, 0.01], [{-reach - 0.35:.2f}, -0.01], "
+                  f"[{-reach - 0.37:.2f}, -0.01], [{-reach - 0.37:.2f}, 0.01]]")
+        half = round(0.7 * reach, 2)
+        polys = list(cm_params.get("polygons") or [])
+        for name, action, ahead, extra in (("TofSlow", "slowdown", reach + 0.23, {"slowdown_ratio": 0.3}),
+                                           ("TofStop", "stop", reach + 0.08, {})):
+            cm_params[name] = dict({
+                "type": "velocity_polygon", "action_type": action, "sources_names": ["tof"],
+                "min_points": 3, "holonomic": False, "velocity_polygons": ["ahead", "other"],
+                "ahead": {"points": box(ahead, half), "linear_min": 0.02, "linear_max": 10.0,
+                          "theta_min": -10.0, "theta_max": 10.0},
+                "other": {"points": behind, "linear_min": -10.0, "linear_max": 0.02,
+                          "theta_min": -10.0, "theta_max": 10.0},
+                "visualize": False, "enabled": True}, **extra)
+            polys.append(name)
+        cm_params["polygons"] = polys
+        # A robot whose /scan IS the ToF (no LiDAR, no depth camera) would hear the same
+        # sensor twice, and its `scan` copy feeds the footprint polygon -- the freeze above.
+        # The ToF's own zones are its voice in the monitor: drop `scan`, and a polygon left
+        # watching nothing with it.
+        import depth_camera
+        try:
+            tof_is_scan = depth_camera.scan_source(controller) == "tof"
+        except ValueError:
+            tof_is_scan = False
+        if tof_is_scan and "scan" in cm_params["observation_sources"]:
+            cm_params["observation_sources"] = [s for s in cm_params["observation_sources"] if s != "scan"]
+            cm_params.pop("scan", None)
+            kept = []
+            for p in cm_params["polygons"]:
+                b = cm_params.get(p)
+                names = b.get("sources_names") if isinstance(b, dict) else None
+                if names is not None and "scan" in names:
+                    names = [s for s in names if s != "scan"]
+                    if not names:
+                        cm_params.pop(p, None)
+                        continue
+                    b["sources_names"] = names
+                kept.append(p)
+            cm_params["polygons"] = kept
+        changed.append("collision_monitor")
+    if changed:
+        print(f"[nav2] 8x8 ToF ({tof['connection']}): an obstacle source in {', '.join(changed)}, "
+              f"points {tof['floor_clearance']:.2f}-{tof['max_height']:.2f} m above the floor")
+    return changed
+
+
 def add_camera_obstacle_source(nav2_data, params) -> list:
     """A depth camera beside a LiDAR is a second obstacle source for the costmaps.
 
@@ -762,6 +897,7 @@ def launch_setup(context, *args, **kwargs):
                   s for s in cm_params["observation_sources"] if s != "sonar"))
 
     add_camera_obstacle_source(nav2_data, params)
+    add_tof_obstacle_source(nav2_data, params)
 
     # docking_server is the second node of that same class, and it surfaced only
     # once bt_navigator stopped aborting the stack first: it reads `dock_plugins`

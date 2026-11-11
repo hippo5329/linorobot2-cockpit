@@ -13,11 +13,11 @@
 # (metas/colcon.meta: 5 subscriptions, 1 service, 1 client, history 4) were
 # headroom for experiments that this tree no longer needs. Against those:
 #
-#   MAX_PUBLISHERS   10  UNCHANGED, and do not "optimise" it. The worst case
-#                        really is ten -- odom, imu, mag, battery, safety_stop,
-#                        range, pressure, temperature, humidity, raw_scan --
-#                        and nine are conditional, so some config somewhere
-#                        turns them all on. Running out of slots fails at
+#   MAX_PUBLISHERS   11  and do not "optimise" it. The worst case really is
+#                        eleven -- odom, imu, mag, battery, safety_stop, range,
+#                        pressure, temperature, humidity, raw_scan, tof/raw
+#                        (the 8x8 ToF on I2C, 2026-11-11) -- and ten are
+#                        conditional, so some config somewhere turns them all on. Running out of slots fails at
 #                        RUNTIME inside RCCHECK: a board that reboots in a
 #                        loop, not a build error anyone would catch.
 #   MAX_SUBSCRIPTIONS 2  main.cpp creates two (twist + twist_stamped) under
@@ -41,7 +41,7 @@
         "rmw_microxrcedds": {
             "cmake-args": [
                 "-DRMW_UXRCE_MAX_NODES=1",
-                "-DRMW_UXRCE_MAX_PUBLISHERS=10",
+                "-DRMW_UXRCE_MAX_PUBLISHERS=11",
                 "-DRMW_UXRCE_MAX_SUBSCRIPTIONS=2",
                 "-DRMW_UXRCE_MAX_SERVICES=0",
                 "-DRMW_UXRCE_MAX_CLIENTS=0",

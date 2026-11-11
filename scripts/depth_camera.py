@@ -191,10 +191,25 @@ def scan_source(controller: dict):
     `lidar: {model: none}`, which bringup launched a driver for and the
     pipeline did not wait for.
     """
+    import tof_matrix
+    tof = tof_matrix.tof_configured(controller)
     if lidar_fitted(controller):
+        # A LiDAR and the 8x8 ToF are both infrared ranging lasers: each blinds the other,
+        # so a robot has one or the other (user, 2026-11-11). Refused here, where bringup
+        # and the pipeline both ask, so neither starts a robot that has both.
+        if tof:
+            raise ValueError(
+                "base_controller.tof: an 8x8 ToF cannot be used beside a LiDAR (both are infrared "
+                "time-of-flight and blind each other) -- set lidar.model none (and use_sim_ld19 "
+                "false), or tof.model none")
         return "lidar"
     if camera_fitted(controller):
         return "depth"
+    # With neither, the 8x8 ToF is the scan: its middle rows as a narrow LaserScan
+    # (tof_matrix_node.py, 8 beams over 60 degrees) -- coarse, but a map.
+    if tof:
+        tof_matrix.tof_settings(controller)       # a half-configured one raises by name
+        return "tof"
     return None
 
 
@@ -297,6 +312,9 @@ def scan_fov_deg(controller: dict):
     src = scan_source(controller)
     if src == "depth":
         return depth_optics(controller)[0]
+    if src == "tof":
+        import tof_matrix
+        return tof_matrix.FOV_DEG
     if src == "lidar":
         import lidar_mask
         blocked = sum(w for _, w in lidar_mask.mask_config(controller)["sectors"])
@@ -324,7 +342,7 @@ def narrow_slam_overrides(params: dict) -> dict:
     """
     narrow = ((params or {}).get("slam") or {}).get("narrow_fov_overrides")
     bc = (params or {}).get("base_controller") or {}
-    if isinstance(narrow, dict) and narrow and scan_source(bc) == "depth":
+    if isinstance(narrow, dict) and narrow and scan_source(bc) in ("depth", "tof"):
         return dict(narrow)
     return {}
 

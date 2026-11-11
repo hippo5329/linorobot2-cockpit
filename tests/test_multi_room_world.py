@@ -47,7 +47,8 @@ def test_the_host_sensors_see_the_same_walls():
     assert dc.raycast(0.0, 0.0, math.pi, segs, 10.0) == pytest.approx(5.0)
     assert dc.walls_from_flat(dc.walls_flat(walls)) == walls
     launch = open(os.path.join(REPO_ROOT, "launchers", "bringup.launch.py")).read()
-    assert launch.count('"walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),') == 2
+    # the laser, the depth camera and the 8x8 ToF: every host scanner sees the same walls
+    assert launch.count('"walls": depth_camera.walls_flat(depth_camera.sim_walls(params)),') == 3
 
 
 def test_the_multi_room_doors_fit_the_robot():
